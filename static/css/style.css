@@ -551,11 +551,19 @@ body {
 }
 
 /* Admin Page */
+body.admin-page {
+    overflow: auto;
+}
 .admin-container {
     max-width: 1000px;
     margin: 0 auto;
     padding: 20px;
-    min-height: 100vh;
+    padding-bottom: 100px;
+}
+.admin-content {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
 }
 .admin-header {
     display: flex;

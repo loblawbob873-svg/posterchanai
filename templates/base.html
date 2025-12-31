@@ -14,7 +14,7 @@
     <link rel="manifest" href="/static/manifest.json">
     {% block head %}{% endblock %}
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
     {% block content %}{% endblock %}
     {% block scripts %}{% endblock %}
     <script>
