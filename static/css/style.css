@@ -51,8 +51,27 @@ body {
     cursor: pointer;
     text-decoration: none;
     display: inline-block;
+    text-align: center;
 }
 .btn-secondary:hover { background: var(--bg-secondary); }
+
+.btn-admin {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    text-align: center;
+    font-weight: 500;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.btn-admin:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
 
 .btn-danger {
     background: var(--danger);
@@ -61,6 +80,10 @@ body {
     padding: 10px 20px;
     border-radius: 8px;
     cursor: pointer;
+    text-align: center;
+}
+.btn-danger:hover {
+    background: #ff5252;
 }
 
 .btn-icon {
