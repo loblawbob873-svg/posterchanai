@@ -111,5 +111,120 @@ class ChatService:
                 yield f"Error: {str(e)}"
 
 
+    async def modify_prompt_for_img2img(self, user_prompt: str) -> tuple[str, float, str]:
+        """
+        Use AI to create optimized img2img parameters from user's request.
+        Returns: (prompt, denoise, negative_prompt)
+        """
+        if not self.openwebui_url or not self.api_key:
+            # Fallback: use user prompt directly with high denoise
+            return user_prompt + ", vibrant colors, sharp, high quality", 1.0, "bad quality, blurry, distorted"
+
+        system_prompt = """Output EXACTLY 3 lines. NO explanations. ONLY tags.
+DENOISE: <number>
+TAGS: <tags>
+NEGATIVE: <tags>
+
+DENOISE values:
+- 1.0 = completely new image from prompt (ignore source image structure)
+- 0.80 = color changes (hair, eyes, skin), clothing removal (naked/nude)
+- 0.75 = background/scene changes
+- 0.70 = object changes (holding different items)
+- 0.65 = style changes (anime, realistic)
+- 0.50 = body modifications (breast size)
+- 0.20 = minor changes (accessories)
+
+RULES:
+1. Output ONLY the 3 lines above, nothing else
+2. Hair/eye color changes: weight 2.0, add TWICE
+3. Skin color changes: weight 2.0, add synonyms
+4. Small breasts: weight 3.0, add to NEGATIVE: large breasts, cleavage
+5. Big breasts: weight 3.0, add cleavage, NEGATIVE: small breasts, flat chest
+6. Naked/nude: weight 3.0, add clothing to NEGATIVE
+7. Object changes: weight 2.5, put original object in NEGATIVE
+8. Always end TAGS with "vibrant colors, sharp, high quality"
+9. NEVER put the same tag in both TAGS and NEGATIVE
+10. Always add to NEGATIVE: "deformed, extra limbs, bad anatomy, blurry, distorted"
+
+Examples:
+User wants: "red hair girl"
+DENOISE: 0.80
+TAGS: 1girl, (red hair:2.0), red hair, vibrant colors, sharp, high quality
+NEGATIVE: deformed, extra limbs, bad anatomy, blurry, distorted
+
+User wants: "anime style beach scene"
+DENOISE: 0.75
+TAGS: (anime:1.5), (beach:1.5), ocean, sand, sunny, vibrant colors, sharp, high quality
+NEGATIVE: deformed, extra limbs, bad anatomy, blurry, distorted
+
+User wants: "naked woman"
+DENOISE: 0.80
+TAGS: 1girl, (naked:3.0), (nude:2.5), bare skin, vibrant colors, sharp, high quality
+NEGATIVE: clothing, clothed, shirt, dress, deformed, extra limbs, bad anatomy, blurry, distorted
+
+User wants: "cyberpunk city at night"
+DENOISE: 1.0
+TAGS: (cyberpunk:1.5), city, night, neon lights, futuristic, vibrant colors, sharp, high quality
+NEGATIVE: daytime, rural, deformed, blurry, distorted"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"User wants: \"{user_prompt}\""}
+        ]
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            try:
+                response = await client.post(
+                    f"{self.openwebui_url}/api/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "temperature": 0.2,
+                        "max_tokens": 400,
+                        "stream": False
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+                content = data["choices"][0]["message"]["content"]
+
+                # Strip thinking tags
+                content = self.strip_thinking_tags(content)
+
+                # Parse response
+                denoise = 1.0
+                tags = user_prompt
+                negative = "bad quality, blurry, distorted, deformed"
+
+                denoise_match = re.search(r'DENOISE:\s*([\d.]+)', content)
+                tags_match = re.search(r'TAGS:\s*(.+?)(?:\n|$)', content)
+                negative_match = re.search(r'NEGATIVE:\s*(.+?)(?:\n|$)', content)
+
+                if denoise_match:
+                    try:
+                        denoise = float(denoise_match.group(1))
+                        denoise = max(0.20, min(1.0, denoise))
+                    except ValueError:
+                        pass
+
+                if tags_match:
+                    tags = tags_match.group(1).strip().strip('"').strip("'")
+
+                if negative_match:
+                    negative = negative_match.group(1).strip().strip('"').strip("'")
+
+                print(f"[IMG2IMG] Denoise: {denoise}, Tags: {tags[:80]}...")
+                print(f"[IMG2IMG] Negative: {negative[:80]}...")
+                return tags, denoise, negative
+
+            except Exception as e:
+                print(f"[IMG2IMG] Prompt modification failed: {e}")
+                return user_prompt + ", vibrant colors, sharp, high quality", 1.0, "bad quality, blurry, distorted"
+
+
 def get_chat_service(db: Session) -> ChatService:
     return ChatService(db)

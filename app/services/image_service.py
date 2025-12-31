@@ -200,10 +200,16 @@ class ImageService:
                 print(f"Error uploading image to ComfyUI: {e}")
                 return None
 
-    def _build_img2img_workflow(self, prompt: str, model: str, uploaded_filename: str, denoise: float = 1.0) -> dict:
+    def _build_img2img_workflow(self, prompt: str, model: str, uploaded_filename: str,
+                                 denoise: float = 1.0, negative_prompt: str = None) -> dict:
         """Build ComfyUI workflow for img2img generation"""
         clean_prompt = self._sanitize_prompt(prompt)
-        base_negative = "distorted, warped, disfigured, deformed, mutated, extra fingers, ugly, missing fingers, censored, blury face, ugly face, low quality, blury, low res, low resolution, Cropped, Out of frame, Out of focus, watermark, banner, extra digits, Jpeg artifacts, Grainy, Bad anatomy, Bad proportions, Deformed, Disfigured, Extra arms, Extra limbs, Extra hands, Fused fingers, Gross proportions, Long neck, Malformed limbs, Mutated, Mutated hands, Mutated limbs, Missing arms, bad quality hands, Poorly drawn hands, Poorly drawn face"
+        base_negative = "distorted, warped, disfigured, deformed, mutated, extra fingers, ugly, missing fingers, censored, blury face, ugly face, low quality, blury, low res, low resolution, Cropped, Out of frame, Out of focus, watermark, banner, extra digits, Jpeg artifacts, Grainy, Bad anatomy, Bad proportions, Extra arms, Extra limbs, Extra hands, Fused fingers, Gross proportions, Long neck, Malformed limbs, Mutated hands, Missing arms, bad quality hands, Poorly drawn hands, Poorly drawn face"
+
+        if negative_prompt:
+            full_negative = f"{self._sanitize_prompt(negative_prompt)}, {base_negative}"
+        else:
+            full_negative = base_negative
 
         return {
             "3": {
@@ -237,7 +243,7 @@ class ImageService:
             "7": {
                 "class_type": "CLIPTextEncode",
                 "inputs": {
-                    "text": base_negative,
+                    "text": full_negative,
                     "clip": ["4", 1]
                 }
             },
@@ -281,7 +287,8 @@ class ImageService:
             }
         }
 
-    async def generate_img2img(self, prompt: str, image_bytes: bytes, denoise: float = 1.0) -> Optional[str]:
+    async def generate_img2img(self, prompt: str, image_bytes: bytes, denoise: float = 1.0,
+                               negative_prompt: str = None) -> Optional[str]:
         """
         Generate image from prompt using source image as base.
         denoise=1.0 means full denoising (prompt controls everything)
@@ -305,7 +312,7 @@ class ImageService:
         if not model:
             return None
 
-        workflow = self._build_img2img_workflow(prompt, model, uploaded_filename, denoise)
+        workflow = self._build_img2img_workflow(prompt, model, uploaded_filename, denoise, negative_prompt)
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:

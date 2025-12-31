@@ -117,8 +117,15 @@ class CommandService:
         except Exception as e:
             return {"type": "text", "content": f"Invalid image data: {e}"}
 
-        # Generate with full denoise (1.0) so prompt controls everything
-        result_image = await self.image_service.generate_img2img(prompt, image_bytes, denoise=1.0)
+        # Use AI to optimize the prompt and get proper denoise/negative
+        optimized_prompt, denoise, negative_prompt = await self.chat_service.modify_prompt_for_img2img(prompt)
+
+        # Generate with AI-determined parameters
+        result_image = await self.image_service.generate_img2img(
+            optimized_prompt, image_bytes,
+            denoise=denoise,
+            negative_prompt=negative_prompt
+        )
         if not result_image:
             return {"type": "text", "content": "Failed to transform image. Please try again."}
 
@@ -126,7 +133,7 @@ class CommandService:
             "type": "generated_image",
             "content": f"Transformed image: {prompt}",
             "image": result_image,
-            "prompt": prompt
+            "prompt": optimized_prompt  # Store optimized prompt for regen
         }
 
     async def _regen_command(self, last_prompt: Optional[str]) -> dict:
