@@ -213,22 +213,22 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         })
                     else:
                         # Regular chat - stream response
-                        # Build message history
+                        # Build message history (exclude the just-added user message)
                         messages = [
                             {"role": "system", "content": "You are a helpful, friendly AI assistant. Be concise but thorough."}
                         ]
-                        for msg in conversation.messages[-20:]:  # Last 20 messages for context
+                        # Get last 19 messages (excluding the one we just added)
+                        for msg in conversation.messages[-21:-1]:
                             messages.append({"role": msg.role, "content": msg.content})
 
-                        # Include file content if provided
+                        # Add current message with file content if provided
                         if file_content:
                             messages.append({
                                 "role": "user",
                                 "content": f"Here is a file the user uploaded:\n\n```\n{file_content}\n```\n\nUser's message: {content}"
                             })
                         else:
-                            # Already added via conversation.messages, but ensure current message is included
-                            pass
+                            messages.append({"role": "user", "content": content})
 
                         # Stream response
                         full_response = ""

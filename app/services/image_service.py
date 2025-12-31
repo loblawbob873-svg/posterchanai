@@ -33,6 +33,7 @@ class ImageService:
 
     def _build_workflow(self, prompt: str, model: str) -> dict:
         """Build ComfyUI workflow for image generation"""
+        clean_prompt = self._sanitize_prompt(prompt)
         return {
             "3": {
                 "class_type": "KSampler",
@@ -67,7 +68,7 @@ class ImageService:
                 "class_type": "CLIPTextEncode",
                 "inputs": {
                     "clip": ["4", 1],
-                    "text": prompt
+                    "text": clean_prompt
                 }
             },
             "7": {

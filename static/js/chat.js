@@ -318,6 +318,20 @@ class ChatHandler {
         }
     }
 
+    escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    escapeUrl(url) {
+        if (!url) return '';
+        // Only allow http/https URLs
+        if (!url.match(/^https?:\/\//i)) return '#';
+        return encodeURI(url);
+    }
+
     handleCommandResponse(data) {
         this.hideTypingIndicator();
 
@@ -327,7 +341,10 @@ class ChatHandler {
         if (data.type === 'images' && data.images) {
             html += '<div class="image-grid">';
             for (const img of data.images) {
-                html += `<img src="${img.img_src}" alt="${img.title || ''}" onclick="window.open('${img.url}', '_blank')">`;
+                const safeSrc = this.escapeUrl(img.img_src);
+                const safeUrl = this.escapeUrl(img.url);
+                const safeTitle = this.escapeHtml(img.title || '');
+                html += `<img src="${safeSrc}" alt="${safeTitle}" onclick="window.open('${safeUrl}', '_blank')">`;
             }
             html += '</div>';
         } else if (data.type === 'generated_image' && data.image) {
@@ -340,9 +357,12 @@ class ChatHandler {
         } else if (data.type === 'search' && data.results) {
             html += '<div class="search-results">';
             for (const r of data.results) {
+                const safeUrl = this.escapeUrl(r.url);
+                const safeTitle = this.escapeHtml(r.title);
+                const safeContent = this.escapeHtml(r.content);
                 html += `<div class="search-result">
-                    <a href="${r.url}" target="_blank">${r.title}</a>
-                    <p>${r.content}</p>
+                    <a href="${safeUrl}" target="_blank">${safeTitle}</a>
+                    <p>${safeContent}</p>
                 </div>`;
             }
             html += '</div>';
