@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Login - Posterchanai{% endblock %}
+
+{% block content %}
+<div class="login-container">
+    <div class="login-box">
+        <div class="login-header">
+            <img src="/static/mascot/mascot-neutral-front-00.png" alt="Mascot" class="login-mascot">
+            <h1>Posterchanai</h1>
+            <p>AI Chat Assistant</p>
+        </div>
+
+        <form id="loginForm" class="login-form">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required autofocus>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <div id="errorMessage" class="error-message"></div>
+            <button type="submit" class="btn-primary">Login</button>
+        </form>
+    </div>
+</div>
+
+<script>
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    const errorEl = document.getElementById('errorMessage');
+
+    try {
+        const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+
+        if (response.ok) {
+            window.location.href = '/';
+        } else {
+            const data = await response.json();
+            errorEl.textContent = data.detail || 'Login failed';
+        }
+    } catch (err) {
+        errorEl.textContent = 'Connection error';
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Chat - Posterchanai{% endblock %}
+
+{% block content %}
+<div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h2>Chats</h2>
+            <button class="btn-icon" id="newChatBtn" title="New Chat">+</button>
+        </div>
+        <div class="conversation-list" id="conversationList">
+            <!-- Conversations loaded here -->
+        </div>
+        <div class="sidebar-footer">
+            <button class="btn-danger" id="deleteAllBtn">Delete All Chats</button>
+            {% if user.is_admin %}
+            <a href="/admin" class="btn-secondary">Admin Panel</a>
+            {% endif %}
+            <button class="btn-secondary" id="logoutBtn">Logout</button>
+        </div>
+    </aside>
+
+    <!-- Main Chat Area -->
+    <main class="chat-main">
+        <!-- Header -->
+        <header class="chat-header">
+            <button class="btn-icon mobile-menu" id="menuBtn">☰</button>
+            <div class="chat-title" id="chatTitle">Select a chat or start a new one</div>
+            <div class="header-actions">
+                <button class="btn-icon tts-toggle" id="ttsToggle" title="Toggle TTS">🔊</button>
+                <button class="btn-icon" id="deleteChatBtn" title="Delete Chat">🗑️</button>
+            </div>
+        </header>
+
+        <!-- Mascot Section -->
+        <div class="mascot-section" id="mascotSection">
+            <div class="mascot-container">
+                <img src="/static/mascot/mascot-neutral-front-00.png" alt="Mascot" class="mascot-image" id="mascotImage">
+                <div class="speech-bubble" id="speechBubble"></div>
+            </div>
+            <div class="particles" id="particles"></div>
+        </div>
+
+        <!-- Messages -->
+        <div class="messages-container" id="messagesContainer">
+            <div class="messages" id="messages">
+                <!-- Messages loaded here -->
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="quick-actions" id="quickActions">
+            <button class="quick-btn" data-cmd="help">Help</button>
+            <button class="quick-btn" data-cmd="search ">Search</button>
+            <button class="quick-btn" data-cmd="images ">Images</button>
+            <button class="quick-btn" data-cmd="geni ">Generate</button>
+            <button class="quick-btn" data-cmd="trending">Trending</button>
+            <button class="quick-btn" data-cmd="randompost">Random</button>
+        </div>
+
+        <!-- Input Area -->
+        <div class="input-area">
+            <textarea id="messageInput" placeholder="Type a message or command..." rows="1"></textarea>
+            <button class="btn-send" id="sendBtn">Send</button>
+        </div>
+    </main>
+</div>
+
+<script src="/static/js/mascot.js"></script>
+<script src="/static/js/tts.js"></script>
+<script src="/static/js/chat.js"></script>
+<script src="/static/js/app.js"></script>
+{% endblock %}

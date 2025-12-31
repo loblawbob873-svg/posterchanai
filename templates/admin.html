@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+
+{% block title %}Admin - Posterchanai{% endblock %}
+
+{% block content %}
+<div class="admin-container">
+    <header class="admin-header">
+        <h1>Admin Panel</h1>
+        <a href="/" class="btn-secondary">Back to Chat</a>
+    </header>
+
+    <div class="admin-content">
+        <!-- Settings Section -->
+        <section class="admin-section">
+            <h2>AI Settings</h2>
+            <form id="settingsForm" class="settings-form">
+                <fieldset>
+                    <legend>Open WebUI</legend>
+                    <div class="form-group">
+                        <label for="openwebui_url">URL</label>
+                        <input type="url" id="openwebui_url" name="openwebui_url" placeholder="https://ai.example.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="openwebui_api_key">API Key</label>
+                        <input type="password" id="openwebui_api_key" name="openwebui_api_key" placeholder="sk-...">
+                    </div>
+                    <div class="form-group">
+                        <label for="openwebui_model">Model</label>
+                        <input type="text" id="openwebui_model" name="openwebui_model" placeholder="llama3">
+                    </div>
+                    <div class="form-group">
+                        <label for="openwebui_timeout">Timeout (ms)</label>
+                        <input type="number" id="openwebui_timeout" name="openwebui_timeout" value="60000">
+                    </div>
+                </fieldset>
+
+                <fieldset>
+                    <legend>ComfyUI</legend>
+                    <div class="form-group">
+                        <label for="comfyui_url">URL</label>
+                        <input type="url" id="comfyui_url" name="comfyui_url" placeholder="http://localhost:8188">
+                    </div>
+                    <div class="form-group">
+                        <label for="comfyui_default_model">Default Model</label>
+                        <input type="text" id="comfyui_default_model" name="comfyui_default_model" placeholder="model.safetensors">
+                    </div>
+                    <div class="form-group">
+                        <label for="comfyui_anime_model">Anime Model</label>
+                        <input type="text" id="comfyui_anime_model" name="comfyui_anime_model" placeholder="anime_model.safetensors">
+                    </div>
+                    <div class="form-group">
+                        <label for="comfyui_timeout">Timeout (ms)</label>
+                        <input type="number" id="comfyui_timeout" name="comfyui_timeout" value="300000">
+                    </div>
+                </fieldset>
+
+                <fieldset>
+                    <legend>SearXNG</legend>
+                    <div class="form-group">
+                        <label for="searxng_url">URL</label>
+                        <input type="url" id="searxng_url" name="searxng_url" placeholder="https://search.example.com">
+                    </div>
+                </fieldset>
+
+                <fieldset>
+                    <legend>TTS</legend>
+                    <div class="form-group">
+                        <label for="tts_voice">Default Voice</label>
+                        <input type="text" id="tts_voice" name="tts_voice" value="zh-CN-XiaoxiaoNeural">
+                    </div>
+                    <div class="form-group">
+                        <label for="tts_rate">Rate</label>
+                        <input type="text" id="tts_rate" name="tts_rate" value="+5%">
+                    </div>
+                    <div class="form-group">
+                        <label for="tts_pitch">Pitch</label>
+                        <input type="text" id="tts_pitch" name="tts_pitch" value="+10Hz">
+                    </div>
+                </fieldset>
+
+                <button type="submit" class="btn-primary">Save Settings</button>
+            </form>
+        </section>
+
+        <!-- Users Section -->
+        <section class="admin-section">
+            <h2>Users</h2>
+            <div id="userList" class="user-list">
+                <!-- Users loaded here -->
+            </div>
+
+            <h3>Create User</h3>
+            <form id="createUserForm" class="user-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="newUsername">Username</label>
+                        <input type="text" id="newUsername" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="newPassword">Password</label>
+                        <input type="password" id="newPassword" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="newIsAdmin">
+                            <input type="checkbox" id="newIsAdmin"> Admin
+                        </label>
+                    </div>
+                    <button type="submit" class="btn-primary">Create</button>
+                </div>
+            </form>
+        </section>
+    </div>
+</div>
+
+<script>
+// Load settings
+async function loadSettings() {
+    try {
+        const response = await fetch('/api/admin/settings');
+        if (response.ok) {
+            const settings = await response.json();
+            for (const [key, value] of Object.entries(settings)) {
+                const input = document.getElementById(key);
+                if (input) input.value = value || '';
+            }
+        }
+    } catch (err) {
+        console.error('Failed to load settings:', err);
+    }
+}
+
+// Save settings
+document.getElementById('settingsForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const settings = {};
+    for (const input of form.querySelectorAll('input')) {
+        settings[input.name] = input.value;
+    }
+
+    try {
+        const response = await fetch('/api/admin/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ settings })
+        });
+        if (response.ok) {
+            alert('Settings saved!');
+        } else {
+            alert('Failed to save settings');
+        }
+    } catch (err) {
+        alert('Error saving settings');
+    }
+});
+
+// Load users
+async function loadUsers() {
+    try {
+        const response = await fetch('/api/admin/users');
+        if (response.ok) {
+            const users = await response.json();
+            const list = document.getElementById('userList');
+            list.innerHTML = users.map(u => `
+                <div class="user-item">
+                    <span class="username">${u.username}</span>
+                    <span class="badge ${u.is_admin ? 'admin' : ''}">${u.is_admin ? 'Admin' : 'User'}</span>
+                    <button class="btn-danger btn-small" onclick="deleteUser(${u.id})">Delete</button>
+                </div>
+            `).join('');
+        }
+    } catch (err) {
+        console.error('Failed to load users:', err);
+    }
+}
+
+// Delete user
+async function deleteUser(id) {
+    if (!confirm('Delete this user?')) return;
+    try {
+        const response = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+        if (response.ok) {
+            loadUsers();
+        } else {
+            const data = await response.json();
+            alert(data.detail || 'Failed to delete user');
+        }
+    } catch (err) {
+        alert('Error deleting user');
+    }
+}
+
+// Create user
+document.getElementById('createUserForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('newUsername').value;
+    const password = document.getElementById('newPassword').value;
+    const is_admin = document.getElementById('newIsAdmin').checked;
+
+    try {
+        const response = await fetch('/api/admin/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password, is_admin })
+        });
+        if (response.ok) {
+            document.getElementById('newUsername').value = '';
+            document.getElementById('newPassword').value = '';
+            document.getElementById('newIsAdmin').checked = false;
+            loadUsers();
+        } else {
+            const data = await response.json();
+            alert(data.detail || 'Failed to create user');
+        }
+    } catch (err) {
+        alert('Error creating user');
+    }
+});
+
+// Initialize
+loadSettings();
+loadUsers();
+</script>
+{% endblock %}
