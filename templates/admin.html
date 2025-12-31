@@ -334,6 +334,15 @@
                         <small>Command to restart Ollama (requires proper permissions)</small>
                     </div>
                 </fieldset>
+
+                <fieldset>
+                    <legend>Storage</legend>
+                    <div class="form-group">
+                        <label for="upload_path">Upload Path</label>
+                        <input type="text" id="upload_path" name="upload_path" value="/var/lib/posterchanai">
+                        <small>Directory where user uploads and generated images are stored</small>
+                    </div>
+                </fieldset>
             </div>
 
             <button type="submit" class="btn-primary save-btn">Save Settings</button>
