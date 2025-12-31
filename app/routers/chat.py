@@ -129,19 +129,12 @@ manager = ConnectionManager()
 @router.websocket("/ws/chat/{conversation_id}")
 async def websocket_chat(websocket: WebSocket, conversation_id: int):
     await websocket.accept()
-    print("WS CONNECTED!")  # Debug
 
     db = SessionLocal()
     try:
         user = await get_user_from_websocket(websocket, db)
-
-        # Temp: if no user from token, get first user for testing
         if not user:
-            user = db.query(User).first()
-            print(f"WS: Using fallback user: {user.username if user else 'None'}")
-
-        if not user:
-            await websocket.send_json({"type": "error", "message": "Auth failed"})
+            await websocket.send_json({"type": "error", "message": "Please log in again"})
             await websocket.close(code=4001)
             return
 

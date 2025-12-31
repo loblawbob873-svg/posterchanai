@@ -40,9 +40,14 @@ class ChatHandler {
     }
 
     connect(conversationId) {
+        // Close existing connection and clear state
         if (this.ws) {
+            this.ws.onclose = null; // Prevent reconnect attempts
             this.ws.close();
+            this.ws = null;
         }
+        this.streamingMessage = null;
+        this.hideTypingIndicator();
 
         this.currentConversationId = conversationId;
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -163,6 +168,9 @@ class ChatHandler {
     }
 
     handleStreamChunk(content) {
+        // Ignore if no active connection
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
         this.hideTypingIndicator();
 
         if (!this.streamingMessage) {
