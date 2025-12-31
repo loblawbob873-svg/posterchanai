@@ -49,7 +49,7 @@ class ChatHandler {
 
         // Get token from cookie and pass as query param
         const token = this.getCookie('access_token');
-        let wsUrl = `${protocol}//${window.location.host}/ws/chat/${conversationId}`;
+        let wsUrl = `${protocol}//${window.location.host}/api/ws/chat/${conversationId}`;
         if (token) {
             wsUrl += `?token=${encodeURIComponent(token)}`;
         }
