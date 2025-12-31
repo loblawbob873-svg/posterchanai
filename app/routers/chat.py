@@ -128,6 +128,9 @@ manager = ConnectionManager()
 
 @router.websocket("/ws/chat/{conversation_id}")
 async def websocket_chat(websocket: WebSocket, conversation_id: int):
+    # Accept connection first to access cookies
+    await websocket.accept()
+
     db = SessionLocal()
     try:
         user = await get_user_from_websocket(websocket, db)
@@ -144,7 +147,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             await websocket.close(code=4004, reason="Conversation not found")
             return
 
-        await manager.connect(user.id, websocket)
+        manager.active_connections[user.id] = websocket
 
         chat_service = ChatService(db)
         command_service = CommandService(db)
