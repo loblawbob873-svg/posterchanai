@@ -23,7 +23,7 @@ def login(user_data: UserLogin, response: Response, db: Session = Depends(get_db
     response.set_cookie(
         key="access_token",
         value=token,
-        httponly=True,
+        httponly=False,  # Allow JS to read for WebSocket auth
         max_age=30 * 24 * 60 * 60,  # 30 days
         samesite="lax"
     )

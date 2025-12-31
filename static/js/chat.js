@@ -32,6 +32,13 @@ class ChatHandler {
         });
     }
 
+    getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return null;
+    }
+
     connect(conversationId) {
         if (this.ws) {
             this.ws.close();
@@ -39,7 +46,13 @@ class ChatHandler {
 
         this.currentConversationId = conversationId;
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/chat/${conversationId}`;
+
+        // Get token from cookie and pass as query param
+        const token = this.getCookie('access_token');
+        let wsUrl = `${protocol}//${window.location.host}/ws/chat/${conversationId}`;
+        if (token) {
+            wsUrl += `?token=${encodeURIComponent(token)}`;
+        }
 
         this.ws = new WebSocket(wsUrl);
 
