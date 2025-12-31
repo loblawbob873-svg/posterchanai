@@ -184,7 +184,7 @@ DENOISE values:
 RULES:
 1. Output ONLY the 3 lines above, nothing else
 2. Hair/eye color changes: weight 2.0, add TWICE
-3. Skin color changes: weight 2.0, add synonyms (dark skin, black skin for dark; pale skin, fair skin for light)
+3. Skin color changes: weight 2.0, add synonyms (dark skin, black skin for dark; pale skin, white skin, fair skin for light)
 4. Small breasts: weight 3.0, REMOVE cleavage/large breasts/lingerie/corset from TAGS, add NEGATIVE
 5. Big breasts: weight 3.0, add cleavage, NEGATIVE should be "small breasts, flat chest, petite" ONLY
 6. Naked/nude: weight 3.0, REMOVE ALL clothing tags (shirt, skirt, dress, bra, underwear, sportswear, uniform, etc.) from TAGS, add clothing to NEGATIVE
@@ -200,6 +200,8 @@ RULES:
 16. For multiple people (2girls, 3girls): keep exact count, avoid generating extra people
 17. Always add to NEGATIVE: "deformed, extra limbs, bad anatomy, blurry, distorted, extra people"
 18. PRESERVE original clothing tags (shirt, dress, uniform, skirt, etc.) IN TAGS unless user asks to change/remove clothing (nude, naked, different outfit)
+19. Multi-attribute changes (skin + hair + style): use DENOISE 0.80, weight 2.0 for each change, keep all original tags not being changed
+20. Style change with color changes: apply style tag with weight 1.5, color tags with weight 2.0, use higher DENOISE (0.80) to allow more change
 
 Examples:
 Tags: "1girl, blonde hair, blue eyes, red dress" Change: "red hair"
@@ -211,6 +213,21 @@ Tags: "1girl, orange hair, yellow eyes, black hoodie, stars, white background, a
 DENOISE: 0.80
 TAGS: 1girl, (brown skin:2.0), (dark skin:2.0), brown skin, orange hair, yellow eyes, black hoodie, stars, anime, vibrant colors, sharp, high quality
 NEGATIVE: light skin, pale skin, fair skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, dark skin, black hair" Change: "white skin"
+DENOISE: 0.80
+TAGS: 1girl, (pale skin:2.0), (white skin:2.0), (fair skin:2.0), pale skin, white skin, black hair, vibrant colors, sharp, high quality
+NEGATIVE: dark skin, black skin, tan skin, brown skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, dark skin, black hair, realistic" Change: "white skin blonde hair anime"
+DENOISE: 0.80
+TAGS: 1girl, (pale skin:2.0), (white skin:2.0), (blonde hair:2.0), blonde hair, (anime:1.5), anime style, vibrant colors, sharp, high quality
+NEGATIVE: dark skin, black skin, tan skin, black hair, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, brown skin, brown hair, brown eyes" Change: "pale skin red hair green eyes"
+DENOISE: 0.80
+TAGS: 1girl, (pale skin:2.0), (white skin:2.0), (red hair:2.0), red hair, (green eyes:2.0), green eyes, vibrant colors, sharp, high quality
+NEGATIVE: brown skin, tan skin, dark skin, brown hair, brown eyes, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
 Tags: "3girls, anime, purple hair, green hair, black hair, red shirt, uniform, mcdonalds, indoors" Change: "nude"
 DENOISE: 0.80
