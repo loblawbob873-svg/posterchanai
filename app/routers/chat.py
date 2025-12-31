@@ -10,6 +10,7 @@ from app.schemas import ConversationCreate, ConversationResponse, ConversationWi
 from app.auth import get_current_user, get_user_from_websocket
 from app.services.chat_service import ChatService
 from app.services.command_service import CommandService
+from app.services.storage_service import StorageService
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -70,6 +71,10 @@ def delete_conversation(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
+    # Delete associated files
+    storage = StorageService(db)
+    storage.delete_conversation_files(current_user.username, conversation_id)
+
     db.delete(conversation)
     db.commit()
     return {"message": "Conversation deleted"}
@@ -80,6 +85,10 @@ def delete_all_conversations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    # Delete all user files
+    storage = StorageService(db)
+    storage.delete_user_files(current_user.username)
+
     db.query(Conversation).filter(
         Conversation.user_id == current_user.id
     ).delete()
@@ -152,6 +161,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
         chat_service = ChatService(db)
         command_service = CommandService(db)
+        storage_service = StorageService(db)
 
         try:
             while True:
@@ -164,6 +174,12 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                     if not content and not file_content:
                         continue
+
+                    # Save uploaded files to disk
+                    if image_data:
+                        storage_service.save_image(user.username, conversation_id, image_data, "upload")
+                    if file_content:
+                        storage_service.save_file(user.username, conversation_id, file_content)
 
                     # Save user message
                     user_msg = Message(
@@ -196,6 +212,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         # Track image prompts for regen
                         if result.get("type") == "generated_image" and result.get("prompt"):
                             manager.last_image_prompts[user.id] = result["prompt"]
+                            # Save generated image to disk
+                            if result.get("image"):
+                                storage_service.save_image(user.username, conversation_id, result["image"], "generated")
 
                         # Save assistant response
                         assistant_msg = Message(

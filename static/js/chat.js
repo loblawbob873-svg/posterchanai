@@ -348,7 +348,14 @@ class ChatHandler {
             }
             html += '</div>';
         } else if (data.type === 'generated_image' && data.image) {
-            html += `<img src="data:image/png;base64,${data.image}" alt="Generated image" class="generated-image">`;
+            const imageId = 'img_' + Date.now();
+            html += `<div class="image-wrapper">
+                <img src="data:image/png;base64,${data.image}" alt="Generated image" class="generated-image" id="${imageId}">
+                <div class="image-actions">
+                    <button class="btn-action" onclick="window.chatHandler.downloadImage('${imageId}')" title="Download">⬇️</button>
+                    <button class="btn-action" onclick="window.chatHandler.copyImage('${imageId}')" title="Copy to clipboard">📋</button>
+                </div>
+            </div>`;
 
             // Notify mascot for image generation
             if (window.mascotController) {
@@ -404,10 +411,66 @@ class ChatHandler {
         }
 
         messageEl.appendChild(contentEl);
+
+        // Add copy button for assistant messages
+        if (role === 'assistant') {
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'btn-copy';
+            copyBtn.innerHTML = '📋';
+            copyBtn.title = 'Copy to clipboard';
+            copyBtn.onclick = () => this.copyText(contentEl.textContent);
+            messageEl.appendChild(copyBtn);
+        }
+
         this.messagesContainer.appendChild(messageEl);
         this.scrollToBottom();
 
         return messageEl;
+    }
+
+    downloadImage(imageId) {
+        const img = document.getElementById(imageId);
+        if (!img) return;
+
+        const link = document.createElement('a');
+        link.download = `posterchanai_${Date.now()}.png`;
+        link.href = img.src;
+        link.click();
+    }
+
+    async copyImage(imageId) {
+        const img = document.getElementById(imageId);
+        if (!img) return;
+
+        try {
+            const response = await fetch(img.src);
+            const blob = await response.blob();
+            await navigator.clipboard.write([
+                new ClipboardItem({ 'image/png': blob })
+            ]);
+            this.showToast('Image copied to clipboard!');
+        } catch (err) {
+            console.error('Failed to copy image:', err);
+            this.showToast('Failed to copy image');
+        }
+    }
+
+    async copyText(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            this.showToast('Copied to clipboard!');
+        } catch (err) {
+            console.error('Failed to copy:', err);
+            this.showToast('Failed to copy');
+        }
+    }
+
+    showToast(message) {
+        const toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 2000);
     }
 
     formatMessage(text) {

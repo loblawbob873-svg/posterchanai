@@ -4,6 +4,15 @@ set -e
 
 echo "Setting up Posterchanai..."
 
+# Create upload directory
+UPLOAD_PATH="/var/lib/posterchanai"
+if [ ! -d "$UPLOAD_PATH" ]; then
+    echo "Creating upload directory at $UPLOAD_PATH..."
+    sudo mkdir -p "$UPLOAD_PATH"
+    sudo chown $(whoami):$(whoami) "$UPLOAD_PATH"
+    echo "Upload directory created."
+fi
+
 # Create virtual environment if it doesn't exist
 if [ ! -d "venv" ]; then
     echo "Creating virtual environment..."
@@ -31,3 +40,4 @@ echo "  python run.py"
 echo ""
 echo "Default login: admin / admin"
 echo "Access at: http://localhost:8000"
+echo "Uploads stored at: $UPLOAD_PATH"

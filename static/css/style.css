@@ -666,3 +666,81 @@ fieldset legend {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--accent);
 }
+
+/* Image wrapper with action buttons */
+.image-wrapper {
+    position: relative;
+    display: inline-block;
+}
+.image-actions {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+.image-wrapper:hover .image-actions {
+    opacity: 1;
+}
+.btn-action {
+    background: rgba(0, 0, 0, 0.7);
+    border: none;
+    border-radius: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background 0.2s;
+}
+.btn-action:hover {
+    background: rgba(0, 0, 0, 0.9);
+}
+
+/* Copy button for messages */
+.message {
+    position: relative;
+}
+.btn-copy {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: transparent;
+    border: none;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 14px;
+    opacity: 0;
+    transition: opacity 0.2s;
+    border-radius: 4px;
+}
+.message:hover .btn-copy {
+    opacity: 0.6;
+}
+.btn-copy:hover {
+    opacity: 1 !important;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* Toast notification */
+.toast {
+    position: fixed;
+    bottom: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    padding: 12px 24px;
+    border-radius: 8px;
+    z-index: 10000;
+    animation: toastIn 0.3s ease, toastOut 0.3s ease 1.7s forwards;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+@keyframes toastIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+@keyframes toastOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}

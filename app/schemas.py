@@ -86,6 +86,7 @@ class SettingsResponse(BaseModel):
     tts_voice: str = "zh-CN-XiaoxiaoNeural"
     tts_rate: str = "+5%"
     tts_pitch: str = "+10Hz"
+    upload_path: str = "/var/lib/posterchanai"
 
 
 # TTS schema
