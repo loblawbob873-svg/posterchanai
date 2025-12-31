@@ -1,7 +1,7 @@
 import httpx
 import asyncio
 import base64
-import re
+import random
 from typing import Optional
 from sqlalchemy.orm import Session
 from app.models import Setting
@@ -43,7 +43,7 @@ class ImageService:
                     "positive": ["6", 0],
                     "sampler_name": "euler_ancestral",
                     "scheduler": "normal",
-                    "seed": -1,
+                    "seed": random.randint(0, 2**32 - 1),
                     "steps": 25
                 }
             },
