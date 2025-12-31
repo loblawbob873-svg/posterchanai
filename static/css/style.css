@@ -580,6 +580,7 @@ fieldset legend {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    margin-bottom: 24px;
 }
 .user-item {
     display: flex;
@@ -592,6 +593,24 @@ fieldset legend {
 .user-item .username {
     flex: 1;
     font-weight: 500;
+}
+.user-form {
+    background: var(--bg-primary);
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+.user-form .form-row {
+    margin-bottom: 0;
+}
+.user-form .form-group label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.user-form input[type="checkbox"] {
+    width: auto;
+    margin: 0;
 }
 .badge {
     padding: 4px 12px;

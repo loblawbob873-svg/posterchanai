@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
+from pydantic import BaseModel
 from app.database import get_db
 from app.models import User, Setting
 from app.schemas import UserCreate, UserResponse, SettingsUpdate, SettingsResponse
@@ -91,10 +92,13 @@ def delete_user(
     return {"message": "User deleted"}
 
 
+class PasswordUpdate(BaseModel):
+    password: str
+
 @router.put("/users/{user_id}/password")
 def update_user_password(
     user_id: int,
-    password: str,
+    data: PasswordUpdate,
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
@@ -105,6 +109,6 @@ def update_user_password(
             detail="User not found"
         )
 
-    user.password_hash = get_password_hash(password)
+    user.password_hash = get_password_hash(data.password)
     db.commit()
     return {"message": "Password updated"}

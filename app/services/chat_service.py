@@ -187,13 +187,13 @@ RULES:
 3. Skin color changes: weight 2.0, add synonyms (dark skin, black skin for dark; pale skin, white skin, fair skin for light)
 4. Small breasts: weight 3.0, REMOVE cleavage/large breasts/lingerie/corset from TAGS, add NEGATIVE
 5. Big breasts: weight 3.0, add cleavage, NEGATIVE should be "small breasts, flat chest, petite" ONLY
-6. Naked/nude: weight 3.0, REMOVE ALL clothing tags (shirt, skirt, dress, bra, underwear, sportswear, uniform, etc.) from TAGS, add clothing to NEGATIVE
+6. Naked/nude: add (nude:2.0), (naked:2.0) to TAGS, REMOVE ALL clothing tags from TAGS, put clothing in NEGATIVE. KEEP original skin color - nude does NOT mean white skin!
 7. Object changes (holding items): weight 2.5, REMOVE original object tags (racket, ball, phone, etc.) from TAGS, add new object, put original object in NEGATIVE
 8. Keep original tags for people count (2girls, multiple girls, etc)
 9. Always end TAGS with "vibrant colors, sharp, high quality"
 10. NEVER put the same tag in both TAGS and NEGATIVE - they must be opposites
 11. NEVER put character features in NEGATIVE (hair color, eye color, face features, body type) - only put things you want to REMOVE like clothing or objects
-12. Combined changes (e.g., "nude small breasts"): use DENOISE 0.65, weight 2.0, add "natural skin, realistic skin tone" to TAGS, add "pale skin, washed out, desaturated" to NEGATIVE
+12. Combined changes (e.g., "nude big breasts", "white skin nude"): use DENOISE 0.65, apply ALL requested changes - remove clothing for nude, add breast tags for breasts, change colors as requested
 13. CRITICAL: Keep background/setting tags IN TAGS (indoors, outdoors, beach, city, mcdonalds, etc.) - do NOT put them in NEGATIVE unless user asks to change background
 14. CRITICAL: Keep ALL original character features (hair color, eye color, accessories) IN TAGS - only remove what user specifically asks to change
 15. For anime: use weight 2.0 (NOT 3.0) for nude/body changes - anime models are sensitive to high weights
@@ -240,6 +240,16 @@ Tags: "3girls, anime, purple hair, green hair, black hair, red shirt, uniform, m
 DENOISE: 0.80
 TAGS: 3girls, anime, purple hair, green hair, black hair, (naked:2.0), (nude:2.0), mcdonalds, indoors, multiple girls, vibrant colors, sharp, high quality
 NEGATIVE: red shirt, uniform, clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, dark skin, pink hair, orange eyes, school uniform, skirt, thigh highs, anime" Change: "nude"
+DENOISE: 0.80
+TAGS: 1girl, dark skin, pink hair, orange eyes, (naked:2.0), (nude:2.0), anime, vibrant colors, sharp, high quality
+NEGATIVE: school uniform, skirt, thigh highs, clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted
+
+Tags: "1girl, dark skin, pink hair, orange eyes, school uniform, skirt, anime" Change: "white skin blonde hair nude"
+DENOISE: 0.65
+TAGS: 1girl, (pale skin:2.0), (white skin:2.0), (blonde hair:2.0), blonde hair, orange eyes, (naked:2.0), (nude:2.0), anime, vibrant colors, sharp, high quality
+NEGATIVE: dark skin, tan skin, pink hair, school uniform, skirt, clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted
 
 Tags: "1girl, blonde hair, blue eyes, grey top, large breasts" Change: "nude small breasts"
 DENOISE: 0.65
