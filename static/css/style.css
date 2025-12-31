@@ -997,25 +997,48 @@ fieldset legend {
     margin-bottom: 20px;
 }
 .new-key-alert {
-    background: linear-gradient(135deg, rgba(74, 158, 255, 0.15), rgba(74, 158, 255, 0.05));
-    border: 1px solid var(--accent);
-    border-radius: 8px;
-    padding: 16px;
+    background: linear-gradient(135deg, rgba(74, 158, 255, 0.2), rgba(74, 158, 255, 0.05));
+    border: 2px solid #4a9eff;
+    border-radius: 12px;
+    padding: 20px;
 }
-.new-key-alert strong {
+.new-key-header {
+    margin-bottom: 12px;
+}
+.new-key-header strong {
     display: block;
-    margin-bottom: 8px;
-    color: var(--accent);
+    font-size: 16px;
+    color: #4a9eff;
+    margin-bottom: 4px;
+}
+.new-key-header .warning {
+    color: #f39c12;
+    font-size: 13px;
+    margin: 0;
+}
+.new-key-content {
+    margin-bottom: 16px;
 }
 .key-full {
     display: block;
     background: var(--bg-primary);
-    padding: 12px;
-    border-radius: 6px;
-    margin: 8px 0;
-    font-size: 12px;
+    padding: 14px;
+    border-radius: 8px;
+    font-size: 13px;
     word-break: break-all;
     color: var(--text-primary);
+    font-family: 'Courier New', monospace;
+    border: 1px solid var(--border-color);
+}
+.new-key-actions {
+    display: flex;
+    gap: 10px;
+}
+.copy-key-btn {
+    flex: 1;
+    padding: 12px 20px;
+    font-size: 14px;
+    font-weight: 600;
 }
 .new-key-alert .warning {
     color: #f39c12;

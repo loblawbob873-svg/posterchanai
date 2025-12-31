@@ -96,18 +96,24 @@ class APIKeysManager {
         keyDisplay.className = 'new-key-display';
         keyDisplay.innerHTML = `
             <div class="new-key-alert">
-                <strong>Your new API key:</strong>
-                <code class="key-full">${key}</code>
-                <button class="btn-small btn-primary" onclick="apiKeysManager.copyKey('${key}', this)">Copy</button>
-                <p class="warning">Save this key! It won't be shown again.</p>
+                <div class="new-key-header">
+                    <strong>Your new API key:</strong>
+                    <p class="warning">Save this key! It won't be shown again.</p>
+                </div>
+                <div class="new-key-content">
+                    <code class="key-full">${key}</code>
+                </div>
+                <div class="new-key-actions">
+                    <button class="btn-primary copy-key-btn" onclick="apiKeysManager.copyKey('${key}', this)">Copy to Clipboard</button>
+                </div>
             </div>
         `;
 
         // Insert at the top of the key list
         this.keyList.insertBefore(keyDisplay, this.keyList.firstChild);
 
-        // Auto-remove after 60 seconds
-        setTimeout(() => keyDisplay.remove(), 60000);
+        // Auto-remove after 120 seconds
+        setTimeout(() => keyDisplay.remove(), 120000);
     }
 
     copyKey(key, btn) {
