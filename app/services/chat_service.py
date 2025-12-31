@@ -329,6 +329,31 @@ DENOISE: 0.80
 TAGS: 1girl, black hair, fox ears, fox tail, (nude:2.0), (naked:2.0), anime, vibrant colors, sharp, high quality
 NEGATIVE: sweater, skirt, clothing, clothed, deformed, extra limbs, bad anatomy, blurry
 
+Tags: "1girl, long black hair, brown eyes, tan skin, traditional Japanese kimono, cherry blossom accessory, anime" Change: "nude"
+DENOISE: 0.80
+TAGS: 1girl, long black hair, brown eyes, tan skin, (nude:2.0), (naked:2.0), cherry blossom accessory, anime, vibrant colors, sharp, high quality
+NEGATIVE: traditional Japanese kimono, kimono, clothing, clothed, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, long black hair, brown eyes, tan skin, traditional kimono, cherry blossom, anime" Change: "white skin"
+DENOISE: 0.80
+TAGS: 1girl, long black hair, brown eyes, (pale skin:2.0), (white skin:2.0), (fair skin:2.0), traditional kimono, cherry blossom, anime, vibrant colors, sharp, high quality
+NEGATIVE: tan skin, dark skin, brown skin, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, brown hair, blue eyes, light skin, casual outfit, anime, sitting pose" Change: "dark skin"
+DENOISE: 0.80
+TAGS: 1girl, brown hair, blue eyes, (dark skin:2.0), (brown skin:2.0), casual outfit, anime, sitting pose, vibrant colors, sharp, high quality
+NEGATIVE: light skin, pale skin, white skin, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, long black hair, brown eyes, light skin, white dress, flower accessory, garden, anime" Change: "nude"
+DENOISE: 0.80
+TAGS: 1girl, long black hair, brown eyes, light skin, (nude:2.0), (naked:2.0), flower accessory, garden, anime, vibrant colors, sharp, high quality
+NEGATIVE: white dress, dress, clothing, clothed, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, brown hair, green eyes, tan skin, casual outfit, anime" Change: "blonde hair"
+DENOISE: 0.80
+TAGS: 1girl, (blonde hair:2.0), blonde hair, green eyes, tan skin, casual outfit, anime, vibrant colors, sharp, high quality
+NEGATIVE: brown hair, deformed, extra limbs, bad anatomy, blurry
+
 User wants: "cyberpunk city at night"
 DENOISE: 1.0
 TAGS: (cyberpunk:1.5), city, night, neon lights, futuristic, vibrant colors, sharp, high quality
