@@ -102,7 +102,7 @@ class SettingsResponse(BaseModel):
     ollama_top_k: str = "40"
     ollama_repeat_penalty: str = "1.1"
     ollama_num_ctx: str = "32768"
-    ollama_num_predict: str = "4096"
+    ollama_num_predict: str = "8192"
     ollama_keep_alive: str = "-1"
     ollama_stop: str = ""
     ollama_seed: str = ""
