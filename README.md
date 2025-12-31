@@ -5,13 +5,18 @@ AI Chat Application with image generation, web search, and text-to-speech capabi
 ## Features
 
 - AI Chat with streaming responses
+- Vision support (upload images and ask questions about them)
 - Image Generation (geni command)
 - Image-to-Image transformation (img2img command)
 - Web Search with AI summarization
 - Image Search
 - Text-to-Speech
-- File uploads (images and text files)
-- Persistent chat history
+- File uploads:
+  - Images (with vision AI support)
+  - PDF documents (text extraction and summarization)
+  - Office documents (Word, Excel, PowerPoint)
+  - Text files
+- Persistent chat history with file storage
 - PWA support (installable on mobile/desktop)
 
 ## Installation
@@ -82,6 +87,17 @@ Type these commands in the chat:
 | `geni <prompt>` | Generate an AI image from your prompt |
 | `img2img <prompt>` | Transform an uploaded image with your prompt |
 | `regen` | Regenerate the last image with a new seed |
+
+## Supported File Types
+
+| Type | Extensions | Description |
+|------|------------|-------------|
+| Images | jpg, png, gif, webp | Sent to vision AI for analysis |
+| PDF | pdf | Text extracted and sent to AI |
+| Word | docx, doc | Text and tables extracted |
+| Excel | xlsx, xls | Spreadsheet data extracted |
+| PowerPoint | pptx, ppt | Slide text extracted |
+| Text | txt, md, json, etc. | Sent directly to AI |
 
 ## File Storage
 
