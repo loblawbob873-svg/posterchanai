@@ -200,8 +200,10 @@ RULES:
 16. For multiple people (2girls, 3girls): keep exact count, avoid generating extra people
 17. Always add to NEGATIVE: "deformed, extra limbs, bad anatomy, blurry, distorted, extra people"
 18. PRESERVE original clothing tags (shirt, dress, uniform, skirt, etc.) IN TAGS unless user asks to change/remove clothing (nude, naked, different outfit)
-19. Multi-attribute changes (skin + hair + style): use DENOISE 0.80, weight 2.0 for each change, keep all original tags not being changed
+19. Multi-attribute changes (skin + hair + style): use DENOISE 0.80, weight 2.0 for each change, KEEP ALL original tags not being changed in TAGS
 20. Style change with color changes: apply style tag with weight 1.5, color tags with weight 2.0, use higher DENOISE (0.80) to allow more change
+21. CRITICAL: Only put in NEGATIVE what you are REPLACING - do NOT put clothing, accessories, or features in NEGATIVE unless user asked to change them
+22. CRITICAL: COPY most original tags to TAGS - only modify/remove the specific attributes user asked to change
 
 Examples:
 Tags: "1girl, blonde hair, blue eyes, red dress" Change: "red hair"
@@ -219,10 +221,15 @@ DENOISE: 0.80
 TAGS: 1girl, (pale skin:2.0), (white skin:2.0), (fair skin:2.0), pale skin, white skin, black hair, vibrant colors, sharp, high quality
 NEGATIVE: dark skin, black skin, tan skin, brown skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
-Tags: "1girl, dark skin, black hair, realistic" Change: "white skin blonde hair anime"
+Tags: "1girl, dark skin, black hair, realistic, dress, smile" Change: "white skin blonde hair anime"
 DENOISE: 0.80
-TAGS: 1girl, (pale skin:2.0), (white skin:2.0), (blonde hair:2.0), blonde hair, (anime:1.5), anime style, vibrant colors, sharp, high quality
+TAGS: 1girl, (pale skin:2.0), (white skin:2.0), (blonde hair:2.0), blonde hair, (anime:1.5), anime style, dress, smile, vibrant colors, sharp, high quality
 NEGATIVE: dark skin, black skin, tan skin, black hair, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, solo, dark skin, blue hair, yellow eyes, cat ears, dress, skirt, thighhighs" Change: "white skin blonde hair"
+DENOISE: 0.80
+TAGS: 1girl, solo, (pale skin:2.0), (white skin:2.0), (blonde hair:2.0), blonde hair, yellow eyes, cat ears, dress, skirt, thighhighs, vibrant colors, sharp, high quality
+NEGATIVE: dark skin, tan skin, brown skin, blue hair, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
 Tags: "1girl, brown skin, brown hair, brown eyes" Change: "pale skin red hair green eyes"
 DENOISE: 0.80
