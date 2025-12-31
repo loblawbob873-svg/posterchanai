@@ -3,6 +3,31 @@ import io
 from typing import Optional
 
 
+def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[str]:
+    """Extract text from an image using OCR (pytesseract)"""
+    try:
+        import pytesseract
+        from PIL import Image
+
+        image_bytes = base64.b64decode(image_base64)
+        image = Image.open(io.BytesIO(image_bytes))
+
+        # Run OCR
+        text = pytesseract.image_to_string(image)
+
+        if text and text.strip():
+            result = text.strip()
+            if len(result) > max_chars:
+                result = result[:max_chars] + "\n\n[Text truncated...]"
+            print(f"[OCR] Extracted {len(result)} characters from image")
+            return result
+
+        return None
+    except Exception as e:
+        print(f"[OCR] Extraction error: {e}")
+        return None
+
+
 def extract_pdf_text(pdf_base64: str, max_chars: int = 50000) -> Optional[str]:
     """Extract text from a base64-encoded PDF"""
     try:

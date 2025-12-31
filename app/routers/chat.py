@@ -11,7 +11,7 @@ from app.auth import get_current_user, get_user_from_websocket
 from app.services.chat_service import ChatService
 from app.services.command_service import CommandService
 from app.services.storage_service import StorageService
-from app.services.document_service import extract_pdf_text, extract_document_text
+from app.services.document_service import extract_pdf_text, extract_document_text, extract_image_text
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -289,12 +289,20 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 "content": chunk
                             })
 
-                        # Fallback if vision failed - retry without image
+                        # Fallback if vision failed - try OCR then retry
                         if vision_failed and has_vision_message:
-                            messages[-1] = {
-                                "role": "user",
-                                "content": f"{content or 'The user uploaded an image.'} [Note: Image was uploaded but vision is not available]"
-                            }
+                            # Try OCR to extract any text from the image
+                            ocr_text = extract_image_text(image_data) if image_data else None
+                            if ocr_text:
+                                messages[-1] = {
+                                    "role": "user",
+                                    "content": f"{content or 'The user uploaded an image.'}\n\n[OCR extracted text from image:]\n{ocr_text}"
+                                }
+                            else:
+                                messages[-1] = {
+                                    "role": "user",
+                                    "content": f"{content or 'The user uploaded an image.'} [Note: Image was uploaded but vision is not available and no text was detected]"
+                                }
                             async for chunk in chat_service.chat_stream(messages):
                                 full_response += chunk
                                 await manager.send_json(user.id, {
