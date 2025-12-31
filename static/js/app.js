@@ -134,7 +134,14 @@ class App {
             if (response.ok) {
                 const conv = await response.json();
                 this.conversations.unshift(conv);
-                this.selectConversation(conv.id);
+
+                // For new conversations, just connect without loading messages
+                // (selectConversation would fetch empty messages anyway)
+                this.currentConversation = conv;
+                this.chatTitle.textContent = conv.title;
+                this.renderConversationList();
+                window.chatHandler.clear();  // Ensure clean slate
+                window.chatHandler.connect(conv.id);
             }
         } catch (err) {
             console.error('Failed to create conversation:', err);
