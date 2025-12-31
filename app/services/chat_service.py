@@ -174,16 +174,19 @@ NEGATIVE: <tags>
 
 DENOISE values:
 - 1.0 = completely new image from prompt (ignore source image structure)
+- 0.85 = hair STYLE changes (afro, ponytail, straight, curly, short, long), ANIMAL changes (pig to cat, dog to wolf)
 - 0.80 = color changes (hair, eyes, skin), clothing removal (naked/nude)
 - 0.75 = background/scene changes
 - 0.70 = object changes (holding different items)
-- 0.65 = style changes (anime, realistic)
+- 0.65 = art style changes (anime, realistic)
 - 0.50 = body modifications (breast size)
 - 0.20 = minor changes (accessories)
 
 RULES:
 1. Output ONLY the 3 lines above, nothing else
 2. Hair/eye color changes: weight 2.0, add TWICE
+2b. Hair STYLE changes (afro, ponytail, etc.): weight 2.5, DENOISE 0.85, put original style in NEGATIVE
+2c. ANIMAL changes (pig to cat, etc.): weight 2.5, DENOISE 0.85, put original animal in NEGATIVE, keep background
 3. Skin color changes: weight 2.0, add synonyms (dark skin, black skin for dark; pale skin, white skin, fair skin for light)
 4. Small breasts: weight 3.0, REMOVE cleavage/large breasts/lingerie/corset from TAGS, add NEGATIVE
 5. Big breasts: weight 3.0, add cleavage, NEGATIVE should be "small breasts, flat chest, petite" ONLY
@@ -210,6 +213,11 @@ Tags: "1girl, blonde hair, blue eyes, red dress" Change: "red hair"
 DENOISE: 0.80
 TAGS: 1girl, (red hair:2.0), red hair, blue eyes, red dress, vibrant colors, sharp, high quality
 NEGATIVE: blonde hair, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, straight hair, twintails, silver hair" Change: "afro"
+DENOISE: 0.85
+TAGS: 1girl, (afro:2.5), (afro hair:2.5), curly hair, silver hair, vibrant colors, sharp, high quality
+NEGATIVE: straight hair, twintails, deformed, extra limbs, bad anatomy, blurry
 
 Tags: "1girl, orange hair, yellow eyes, black hoodie, stars, white background, anime" Change: "brown skin"
 DENOISE: 0.80
@@ -260,6 +268,66 @@ Tags: "1girl, holding tennis racket, sportswear" Change: "holding gun"
 DENOISE: 0.70
 TAGS: 1girl, sportswear, (holding gun:2.5), (pistol:2.0), holding weapon, vibrant colors, sharp, high quality
 NEGATIVE: tennis racket, racket, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "pig, barn, fireworks, night sky" Change: "cat"
+DENOISE: 0.85
+TAGS: (cat:2.5), (feline:2.0), barn, fireworks, night sky, vibrant colors, sharp, high quality
+NEGATIVE: pig, swine, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, blonde hair, green eyes, red dress, cosplay, realistic" Change: "black hair"
+DENOISE: 0.80
+TAGS: 1girl, (black hair:2.0), black hair, green eyes, red dress, cosplay, realistic, vibrant colors, sharp, high quality
+NEGATIVE: blonde hair, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, dark skin, gray dress, realistic" Change: "white skin"
+DENOISE: 0.80
+TAGS: 1girl, (pale skin:2.0), (white skin:2.0), (fair skin:2.0), gray dress, realistic, vibrant colors, sharp, high quality
+NEGATIVE: dark skin, tan skin, brown skin, black skin, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, dark skin, gray dress, realistic" Change: "nude"
+DENOISE: 0.80
+TAGS: 1girl, dark skin, (nude:2.0), (naked:2.0), realistic, vibrant colors, sharp, high quality
+NEGATIVE: gray dress, clothing, clothed, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, silver hair, twintails, elf ears, green eyes, red earrings, anime" Change: "dark skin"
+DENOISE: 0.80
+TAGS: 1girl, (dark skin:2.0), (brown skin:2.0), silver hair, twintails, elf ears, green eyes, red earrings, anime, vibrant colors, sharp, high quality
+NEGATIVE: light skin, pale skin, white skin, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, purple hair, white dress, venice, water, buildings" Change: "beach"
+DENOISE: 0.75
+TAGS: 1girl, purple hair, white dress, (beach:2.0), (ocean:1.5), sand, sunny, vibrant colors, sharp, high quality
+NEGATIVE: venice, buildings, canal, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1boy 1girl, blonde hair, black hair, school uniform, blue sky, anime" Change: "red hair"
+DENOISE: 0.80
+TAGS: 1boy 1girl, (red hair:2.0), red hair, black hair, school uniform, blue sky, anime, vibrant colors, sharp, high quality
+NEGATIVE: blonde hair, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "4girls, blonde hair, red uniform, hats, eating, night, anime" Change: "dark skin"
+DENOISE: 0.80
+TAGS: 4girls, (dark skin:2.0), (brown skin:2.0), blonde hair, red uniform, hats, eating, night, anime, vibrant colors, sharp, high quality
+NEGATIVE: light skin, pale skin, white skin, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, brown hair, blue eyes, santa outfit, christmas tree, anime" Change: "blonde hair"
+DENOISE: 0.80
+TAGS: 1girl, (blonde hair:2.0), blonde hair, blue eyes, santa outfit, christmas tree, anime, vibrant colors, sharp, high quality
+NEGATIVE: brown hair, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, orange hair, blue eyes, santa costume, realistic" Change: "nude"
+DENOISE: 0.80
+TAGS: 1girl, orange hair, blue eyes, (nude:2.0), (naked:2.0), realistic, vibrant colors, sharp, high quality
+NEGATIVE: santa costume, clothing, clothed, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, black hair, blue eyes, fox ears, fox tail, brown sweater, skirt, anime" Change: "blonde hair"
+DENOISE: 0.80
+TAGS: 1girl, (blonde hair:2.0), blonde hair, blue eyes, fox ears, fox tail, brown sweater, skirt, anime, vibrant colors, sharp, high quality
+NEGATIVE: black hair, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, black hair, fox ears, fox tail, sweater, skirt, anime" Change: "nude"
+DENOISE: 0.80
+TAGS: 1girl, black hair, fox ears, fox tail, (nude:2.0), (naked:2.0), anime, vibrant colors, sharp, high quality
+NEGATIVE: sweater, skirt, clothing, clothed, deformed, extra limbs, bad anatomy, blurry
 
 User wants: "cyberpunk city at night"
 DENOISE: 1.0

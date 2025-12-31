@@ -365,6 +365,7 @@ body {
     padding: 12px 16px;
     border-radius: 16px;
     line-height: 1.5;
+    position: relative;
 }
 .message.user .message-content {
     background: var(--message-user);
@@ -748,9 +749,6 @@ fieldset legend {
 }
 
 /* Copy button for messages */
-.message {
-    position: relative;
-}
 .btn-copy {
     position: absolute;
     top: 4px;
@@ -764,10 +762,50 @@ fieldset legend {
     transition: opacity 0.2s;
     border-radius: 4px;
 }
-.message:hover .btn-copy {
+.message-content:hover .btn-copy {
     opacity: 0.6;
 }
 .btn-copy:hover {
+    opacity: 1 !important;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* Retry button */
+.btn-retry {
+    display: inline-block;
+    margin-left: 12px;
+    padding: 6px 12px;
+    background: linear-gradient(135deg, #e74c3c, #c0392b);
+    border: none;
+    border-radius: 4px;
+    color: white;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-retry:hover {
+    background: linear-gradient(135deg, #c0392b, #a93226);
+    transform: scale(1.05);
+}
+
+/* Regenerate button */
+.btn-regenerate {
+    position: absolute;
+    top: 4px;
+    right: 32px;
+    background: transparent;
+    border: none;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 14px;
+    opacity: 0;
+    transition: opacity 0.2s;
+    border-radius: 4px;
+}
+.message-content:hover .btn-regenerate {
+    opacity: 0.8;
+}
+.btn-regenerate:hover {
     opacity: 1 !important;
     background: rgba(255, 255, 255, 0.1);
 }

@@ -23,6 +23,10 @@ class ChatHandler {
         this.uploadedPDF = null;    // base64 PDF data
         this.uploadedDocument = null; // base64 office document data
 
+        // Last payload for retry functionality
+        this.lastPayload = null;
+        this.lastUserMessage = null;  // Reference to last user message element
+
         this.init();
     }
 
@@ -213,10 +217,15 @@ class ChatHandler {
 
     disconnect() {
         if (this.ws) {
+            this.ws.onclose = null;  // Prevent reconnect attempts
             this.ws.close();
             this.ws = null;
         }
         this.currentConversationId = null;
+        this.lastPayload = null;
+        this.lastUserMessage = null;
+        this.streamingMessage = null;
+        this.reconnectAttempts = 0;
     }
 
     async sendMessage() {
@@ -258,7 +267,21 @@ class ChatHandler {
         }
 
         // Add user message to UI (show what user typed, not the command)
-        this.addMessage('user', displayMsg || '[File uploaded]');
+        this.lastUserMessage = this.addMessage('user', displayMsg || '[File uploaded]');
+
+        // Add regenerate button to user message (for retrying)
+        const userContentEl = this.lastUserMessage.querySelector('.message-content');
+
+        // Remove regenerate button from previous user messages
+        const prevUserRegenBtns = this.messagesContainer.querySelectorAll('.message.user .btn-regenerate');
+        prevUserRegenBtns.forEach(btn => btn.remove());
+
+        const userRegenBtn = document.createElement('button');
+        userRegenBtn.className = 'btn-regenerate';
+        userRegenBtn.innerHTML = '🔄';
+        userRegenBtn.title = 'Retry this message';
+        userRegenBtn.onclick = () => this.retryLastMessage();
+        userContentEl.appendChild(userRegenBtn);
 
         // Clear input
         this.messageInput.value = '';
@@ -292,6 +315,9 @@ class ChatHandler {
         if (this.uploadedDocument) {
             payload.document_data = this.uploadedDocument;
         }
+
+        // Store payload for potential retry
+        this.lastPayload = payload;
 
         // Send to server (with command prepended)
         this.ws.send(JSON.stringify(payload));
@@ -358,7 +384,31 @@ class ChatHandler {
 
     handleStreamEnd() {
         if (this.streamingMessage) {
-            const content = this.streamingMessage.querySelector('.message-content').textContent;
+            const contentEl = this.streamingMessage.querySelector('.message-content');
+            const content = contentEl.textContent;
+
+            // Add copy button
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'btn-copy';
+            copyBtn.innerHTML = '📋';
+            copyBtn.title = 'Copy to clipboard';
+            copyBtn.onclick = () => this.copyText(content);
+            contentEl.appendChild(copyBtn);
+
+            // Add regenerate button (only on latest message)
+            if (this.lastPayload) {
+                // Remove regenerate button from previous assistant messages
+                const prevRegenBtns = this.messagesContainer.querySelectorAll('.message.assistant .btn-regenerate');
+                prevRegenBtns.forEach(btn => btn.remove());
+
+                const messageEl = this.streamingMessage;
+                const regenBtn = document.createElement('button');
+                regenBtn.className = 'btn-regenerate';
+                regenBtn.innerHTML = '🔄';
+                regenBtn.title = 'Regenerate response';
+                regenBtn.onclick = () => this.regenerateResponse(messageEl);
+                contentEl.appendChild(regenBtn);
+            }
 
             // Notify mascot
             if (window.mascotController) {
@@ -446,11 +496,93 @@ class ChatHandler {
 
     handleError(message) {
         this.hideTypingIndicator();
+
+        // Show error as assistant message
         this.addMessage('assistant', `Error: ${message}`);
+
+        // Add retry button to the last user message
+        if (this.lastUserMessage && this.lastPayload) {
+            // Remove existing retry button if any
+            const existingBtn = this.lastUserMessage.querySelector('.btn-retry');
+            if (existingBtn) existingBtn.remove();
+
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'btn-retry';
+            retryBtn.innerHTML = '🔄 Retry';
+            retryBtn.onclick = () => this.retryLastMessage();
+            this.lastUserMessage.querySelector('.message-content').appendChild(retryBtn);
+        }
 
         if (window.mascotController) {
             window.mascotController.onError();
         }
+    }
+
+    retryLastMessage() {
+        if (!this.lastPayload) {
+            this.showToast('No message to retry');
+            return;
+        }
+
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            this.showToast('Not connected');
+            return;
+        }
+
+        // Remove retry button from user message
+        if (this.lastUserMessage) {
+            const retryBtn = this.lastUserMessage.querySelector('.btn-retry');
+            if (retryBtn) retryBtn.remove();
+        }
+
+        // Show user that we're retrying
+        this.showTypingIndicator();
+
+        // Notify mascot
+        if (window.mascotController) {
+            const mode = window.app ? window.app.getMode() : '';
+            if (mode === 'geni' || mode === 'img2img') {
+                window.mascotController.onGeneratingImage();
+            } else {
+                window.mascotController.onUserMessage();
+            }
+        }
+
+        // Resend the last payload
+        this.ws.send(JSON.stringify(this.lastPayload));
+    }
+
+    regenerateResponse(messageEl) {
+        if (!this.lastPayload) {
+            this.showToast('No message to regenerate');
+            return;
+        }
+
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            this.showToast('Not connected');
+            return;
+        }
+
+        // Remove the current assistant message
+        if (messageEl) {
+            messageEl.remove();
+        }
+
+        // Show typing indicator
+        this.showTypingIndicator();
+
+        // Notify mascot
+        if (window.mascotController) {
+            const mode = window.app ? window.app.getMode() : '';
+            if (mode === 'geni' || mode === 'img2img') {
+                window.mascotController.onGeneratingImage();
+            } else {
+                window.mascotController.onUserMessage();
+            }
+        }
+
+        // Resend the last payload
+        this.ws.send(JSON.stringify(this.lastPayload));
     }
 
     addMessage(role, content, isHtml = false) {
@@ -466,17 +598,35 @@ class ChatHandler {
             contentEl.innerHTML = this.formatMessage(content);
         }
 
-        messageEl.appendChild(contentEl);
+        // Add buttons (skip for empty assistant messages - those are streaming placeholders)
+        // But not if isHtml is true (that's a command response, not streaming)
+        const isStreamingPlaceholder = role === 'assistant' && !content && !isHtml;
 
-        // Add copy button for assistant messages
-        if (role === 'assistant') {
+        if (!isStreamingPlaceholder) {
+            // Add copy button to all messages
             const copyBtn = document.createElement('button');
             copyBtn.className = 'btn-copy';
             copyBtn.innerHTML = '📋';
             copyBtn.title = 'Copy to clipboard';
             copyBtn.onclick = () => this.copyText(contentEl.textContent);
-            messageEl.appendChild(copyBtn);
+            contentEl.appendChild(copyBtn);
+
+            // Add regenerate button for assistant messages
+            if (role === 'assistant' && this.lastPayload) {
+                // Remove regenerate button from previous assistant messages
+                const prevRegenBtns = this.messagesContainer.querySelectorAll('.btn-regenerate');
+                prevRegenBtns.forEach(btn => btn.remove());
+
+                const regenBtn = document.createElement('button');
+                regenBtn.className = 'btn-regenerate';
+                regenBtn.innerHTML = '🔄';
+                regenBtn.title = 'Regenerate response';
+                regenBtn.onclick = () => this.regenerateResponse(messageEl);
+                contentEl.appendChild(regenBtn);
+            }
         }
+
+        messageEl.appendChild(contentEl);
 
         this.messagesContainer.appendChild(messageEl);
         this.scrollToBottom();
@@ -511,10 +661,27 @@ class ChatHandler {
         }
     }
 
-    async copyText(text) {
+    copyText(text) {
+        // Clean up text - remove button text that might be included
+        const cleanText = text.replace(/🔄$/, '').replace(/📋$/, '').replace(/🔄 Retry$/, '').trim();
+
+        // Use fallback method that works in all contexts
         try {
-            await navigator.clipboard.writeText(text);
-            this.showToast('Copied to clipboard!');
+            const textArea = document.createElement('textarea');
+            textArea.value = cleanText;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-9999px';
+            textArea.style.top = '0';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            const success = document.execCommand('copy');
+            document.body.removeChild(textArea);
+            if (success) {
+                this.showToast('Copied to clipboard!');
+            } else {
+                this.showToast('Failed to copy');
+            }
         } catch (err) {
             console.error('Failed to copy:', err);
             this.showToast('Failed to copy');
@@ -592,6 +759,8 @@ class ChatHandler {
     clear() {
         this.messagesContainer.innerHTML = '';
         this.streamingMessage = null;
+        this.lastPayload = null;
+        this.lastUserMessage = null;
     }
 }
 
