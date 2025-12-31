@@ -156,6 +156,24 @@ def create_api_key(
     )
 
 
+@router.get("/api-keys/{key_id}")
+def get_api_key(
+    key_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get the full API key (for copying)"""
+    api_key = db.query(APIKey).filter(
+        APIKey.id == key_id,
+        APIKey.user_id == current_user.id
+    ).first()
+
+    if not api_key:
+        raise HTTPException(status_code=404, detail="API key not found")
+
+    return {"key": api_key.key}
+
+
 @router.delete("/api-keys/{key_id}")
 def delete_api_key(
     key_id: int,

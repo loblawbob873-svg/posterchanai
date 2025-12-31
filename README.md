@@ -64,7 +64,7 @@ sudo systemctl status posterchanai
 
 ## Configuration
 
-Access the admin panel at `http://localhost:8000/admin` (default login: admin/admin)
+Access the admin panel at `http://localhost:3051/admin`
 
 ### AI Settings (Ollama)
 
@@ -119,7 +119,7 @@ Posterchanai provides an OpenAI-compatible API for external applications.
 Use your API key in the Authorization header:
 
 ```bash
-curl http://localhost:8000/v1/chat/completions \
+curl http://localhost:3051/v1/chat/completions \
   -H "Authorization: Bearer sk-your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -135,7 +135,7 @@ curl http://localhost:8000/v1/chat/completions \
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:8000/v1",
+    base_url="http://localhost:3051/v1",
     api_key="sk-your-api-key"
 )
 

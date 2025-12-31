@@ -56,7 +56,7 @@ class APIKeysManager {
                     ${key.last_used_at ? `<span class="key-used">Last used: ${new Date(key.last_used_at).toLocaleDateString()}</span>` : ''}
                 </div>
                 <div class="key-actions">
-                    <button class="btn-small btn-secondary" onclick="apiKeysManager.copyKeyPreview('${key.key_preview}', this)" title="Copy key preview">Copy</button>
+                    <button class="btn-small btn-primary" onclick="apiKeysManager.copyFullKey(${key.id}, this)">Copy</button>
                     <button class="btn-small ${key.is_active ? 'btn-warning' : 'btn-success'}" onclick="apiKeysManager.toggleKey(${key.id})">
                         ${key.is_active ? 'Disable' : 'Enable'}
                     </button>
@@ -119,30 +119,33 @@ class APIKeysManager {
     }
 
     copyKey(key, btn) {
-        navigator.clipboard.writeText(key).then(() => {
-            btn.textContent = 'Copied!';
-            setTimeout(() => btn.textContent = 'Copy to Clipboard', 2000);
-        }).catch(() => {
-            // Fallback for non-HTTPS
-            const textarea = document.createElement('textarea');
-            textarea.value = key;
-            document.body.appendChild(textarea);
-            textarea.select();
-            document.execCommand('copy');
-            document.body.removeChild(textarea);
-            btn.textContent = 'Copied!';
-            setTimeout(() => btn.textContent = 'Copy to Clipboard', 2000);
-        });
+        this.copyToClipboard(key, btn);
+        // Reset to "Copy to Clipboard" for new key display
+        setTimeout(() => btn.textContent = 'Copy to Clipboard', 2000);
     }
 
-    copyKeyPreview(preview, btn) {
-        navigator.clipboard.writeText(preview).then(() => {
+    async copyFullKey(keyId, btn) {
+        try {
+            const response = await fetch(`/api/auth/api-keys/${keyId}`);
+            if (response.ok) {
+                const data = await response.json();
+                this.copyToClipboard(data.key, btn);
+            } else {
+                alert('Failed to retrieve API key');
+            }
+        } catch (err) {
+            alert('Error retrieving API key');
+        }
+    }
+
+    copyToClipboard(text, btn) {
+        navigator.clipboard.writeText(text).then(() => {
             btn.textContent = 'Copied!';
             setTimeout(() => btn.textContent = 'Copy', 2000);
         }).catch(() => {
             // Fallback for non-HTTPS
             const textarea = document.createElement('textarea');
-            textarea.value = preview;
+            textarea.value = text;
             document.body.appendChild(textarea);
             textarea.select();
             document.execCommand('copy');
