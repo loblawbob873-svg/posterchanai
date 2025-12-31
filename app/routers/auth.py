@@ -25,7 +25,8 @@ def login(user_data: UserLogin, response: Response, db: Session = Depends(get_db
         value=token,
         httponly=False,  # Allow JS to read for WebSocket auth
         max_age=30 * 24 * 60 * 60,  # 30 days
-        samesite="lax"
+        samesite="lax",
+        path="/"  # Cookie available for all paths
     )
 
     return {"access_token": token, "token_type": "bearer"}
