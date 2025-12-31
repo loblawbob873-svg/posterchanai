@@ -12,8 +12,6 @@ class CommandService:
         "geni": "Generate an AI image from your prompt",
         "regen": "Regenerate the last image with a new seed",
         "factcheck": "Fact-check a statement",
-        "randompost": "Generate a random creative post",
-        "trending": "Get trending topics",
         "help": "Show available commands",
     }
 
@@ -49,10 +47,6 @@ class CommandService:
             return await self._regen_command(last_prompt)
         elif command == "factcheck":
             return await self._factcheck_command(arg)
-        elif command == "randompost":
-            return await self._randompost_command(arg)
-        elif command == "trending":
-            return await self._trending_command()
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -148,34 +142,6 @@ Sources: [If applicable, mention reliable sources]"""},
         result = await self.chat_service.chat(messages)
 
         return {"type": "text", "content": result}
-
-    async def _randompost_command(self, topic: str) -> dict:
-        prompt = "Generate a creative, engaging social media post"
-        if topic:
-            prompt += f" about {topic}"
-        prompt += ". Make it interesting and shareable. Keep it under 280 characters."
-
-        messages = [
-            {"role": "system", "content": "You are a creative social media content creator. Generate engaging, fun posts."},
-            {"role": "user", "content": prompt}
-        ]
-        result = await self.chat_service.chat(messages)
-
-        return {
-            "type": "randompost",
-            "content": result
-        }
-
-    async def _trending_command(self) -> dict:
-        # Simplified trending - just return some generic trending topics
-        # In a real implementation, this could fetch from an API
-        messages = [
-            {"role": "system", "content": "Generate 5 currently trending topics or hashtags that might be popular on social media. Be creative and current."},
-            {"role": "user", "content": "What's trending right now?"}
-        ]
-        result = await self.chat_service.chat(messages)
-
-        return {"type": "text", "content": f"**Trending Topics:**\n\n{result}"}
 
 
 def get_command_service(db: Session) -> CommandService:
