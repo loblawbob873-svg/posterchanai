@@ -29,10 +29,6 @@ def init_db():
     db = SessionLocal()
     try:
         default_settings = {
-            "openwebui_url": "https://ai.poster.place",
-            "openwebui_api_key": "sk-cc101c9fbdbe4781b07fe2b290e95928",
-            "openwebui_model": "richardyoung/qwen3-14b-abliterated:Q5_K_M",
-            "openwebui_timeout": "60000",
             "comfyui_url": "http://192.168.0.85:8188",
             "comfyui_default_model": "halcyonSDXL_v19.safetensors",
             "comfyui_anime_model": "nova3DCGXL_ilV80.safetensors",

@@ -81,10 +81,6 @@ class SettingsUpdate(BaseModel):
 
 
 class SettingsResponse(BaseModel):
-    openwebui_url: str = ""
-    openwebui_api_key: str = ""
-    openwebui_model: str = ""
-    openwebui_timeout: str = "60000"
     comfyui_url: str = ""
     comfyui_default_model: str = ""
     comfyui_anime_model: str = ""
