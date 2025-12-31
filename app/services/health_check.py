@@ -3,12 +3,22 @@ Ollama Health Check Service
 Periodically pings Ollama and restarts it if unresponsive.
 """
 import asyncio
+import logging
 import subprocess
+from datetime import datetime
 from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import Setting
+
+# Configure logging
+logger = logging.getLogger("health_check")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('%(asctime)s [HEALTH] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+    logger.addHandler(handler)
 
 
 # Global state for the health check
@@ -31,7 +41,7 @@ def _get_settings(db: Session) -> dict:
 
 def restart_ollama(restart_command: str):
     """Restart Ollama using the configured command"""
-    print(f"[HEALTH] Restarting Ollama with: {restart_command}")
+    logger.warning(f"Restarting Ollama with: {restart_command}")
 
     # Validate restart command - only allow specific safe commands
     allowed_commands = [
@@ -42,8 +52,8 @@ def restart_ollama(restart_command: str):
     ]
 
     if restart_command not in allowed_commands:
-        print(f"[HEALTH] ERROR: Restart command '{restart_command}' is not in allowed list")
-        print(f"[HEALTH] Allowed commands: {', '.join(allowed_commands)}")
+        logger.error(f"Restart command '{restart_command}' is not in allowed list")
+        logger.error(f"Allowed commands: {', '.join(allowed_commands)}")
         return False
 
     try:
@@ -64,17 +74,17 @@ def restart_ollama(restart_command: str):
             )
 
         if result.returncode == 0:
-            print("[HEALTH] Ollama restart successful")
+            logger.info("Ollama restart successful")
             return True
         else:
-            print(f"[HEALTH] Ollama restart failed: {result.stderr.decode()}")
+            logger.error(f"Ollama restart failed: {result.stderr.decode()}")
             return False
 
     except subprocess.TimeoutExpired:
-        print("[HEALTH] Ollama restart timed out")
+        logger.error("Ollama restart timed out")
         return False
     except Exception as e:
-        print(f"[HEALTH] Ollama restart error: {e}")
+        logger.error(f"Ollama restart error: {e}")
         return False
 
 
@@ -107,7 +117,7 @@ async def ping_ollama(ollama_url: str, model: str = "llama3", timeout: float = 3
             return response.status_code == 200
 
     except Exception as e:
-        print(f"[HEALTH] Ping failed: {e}")
+        logger.error(f"Ping failed: {e}")
         return False
 
 
@@ -115,7 +125,7 @@ async def health_check_loop():
     """Main health check loop"""
     global _consecutive_failures
 
-    print("[HEALTH] Health check loop started")
+    logger.info("Health check loop started")
 
     while True:
         try:
@@ -127,22 +137,22 @@ async def health_check_loop():
                 db.close()
 
             if not settings["enabled"]:
-                print("[HEALTH] Health check disabled, stopping loop")
+                logger.info("Health check disabled, stopping loop")
                 break
 
             # Ping Ollama
-            print("[HEALTH] Pinging Ollama...")
+            logger.debug(f"Pinging Ollama at {settings['ollama_url']}...")
             success = await ping_ollama(settings["ollama_url"], settings["ollama_model"])
 
             if success:
-                print("[HEALTH] Ping OK")
+                logger.info("Ping OK")
                 _consecutive_failures = 0
             else:
                 _consecutive_failures += 1
-                print(f"[HEALTH] Ping FAILED ({_consecutive_failures}/{settings['restart_after_failures']})")
+                logger.warning(f"Ping FAILED ({_consecutive_failures}/{settings['restart_after_failures']})")
 
                 if _consecutive_failures >= settings["restart_after_failures"]:
-                    print("[HEALTH] Too many failures, restarting Ollama...")
+                    logger.error("Too many failures, restarting Ollama...")
                     restart_ollama(settings["restart_command"])
                     _consecutive_failures = 0
                     # Wait a bit for Ollama to restart
@@ -152,10 +162,10 @@ async def health_check_loop():
             await asyncio.sleep(settings["ping_interval"])
 
         except asyncio.CancelledError:
-            print("[HEALTH] Health check loop cancelled")
+            logger.info("Health check loop cancelled")
             break
         except Exception as e:
-            print(f"[HEALTH] Error in health check loop: {e}")
+            logger.error(f"Error in health check loop: {e}")
             await asyncio.sleep(30)  # Wait before retrying
 
 
@@ -165,7 +175,7 @@ def start_health_check():
 
     # Check if already running
     if _health_check_task and not _health_check_task.done():
-        print("[HEALTH] Health check already running")
+        logger.info("Health check already running")
         return
 
     # Check if enabled
@@ -173,7 +183,7 @@ def start_health_check():
     try:
         settings = _get_settings(db)
         if not settings["enabled"]:
-            print("[HEALTH] Health check is disabled")
+            logger.info("Health check is disabled")
             return
     finally:
         db.close()
@@ -186,7 +196,7 @@ def start_health_check():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     _health_check_task = loop.create_task(health_check_loop())
-    print("[HEALTH] Health check started")
+    logger.info("Health check started")
 
 
 def stop_health_check():
@@ -196,7 +206,7 @@ def stop_health_check():
     if _health_check_task and not _health_check_task.done():
         _health_check_task.cancel()
         _health_check_task = None
-        print("[HEALTH] Health check stopped")
+        logger.info("Health check stopped")
 
 
 def is_health_check_running() -> bool:

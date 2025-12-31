@@ -84,7 +84,7 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "ollama_top_p": "0.9",
             "ollama_top_k": "40",
             "ollama_repeat_penalty": "1.1",
-            "ollama_num_ctx": "28024",
+            "ollama_num_ctx": "32768",
             "ollama_num_predict": "28024",
             "ollama_keep_alive": "-1",
             "ollama_stop": "",
