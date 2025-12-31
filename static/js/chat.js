@@ -75,15 +75,47 @@ class ChatHandler {
     }
 
     sendMessage() {
-        const content = this.messageInput.value.trim();
+        let content = this.messageInput.value.trim();
         if (!content || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-        // Add user message to UI
-        this.addMessage('user', content);
+        // Get current mode and prepend command if needed
+        const mode = window.app ? window.app.getMode() : '';
+        const displayContent = content;
+        if (mode) {
+            content = `${mode} ${content}`;
+        }
+
+        // Add user message to UI (show what user typed, not the command)
+        this.addMessage('user', displayContent);
 
         // Clear input
         this.messageInput.value = '';
         this.messageInput.style.height = 'auto';
+
+        // Notify mascot
+        if (window.mascotController) {
+            if (mode === 'geni') {
+                window.mascotController.onGeneratingImage();
+            } else {
+                window.mascotController.onUserMessage();
+            }
+        }
+
+        // Send to server (with command prepended)
+        this.ws.send(JSON.stringify({
+            type: 'message',
+            content: content
+        }));
+
+        // Show typing indicator
+        this.showTypingIndicator();
+    }
+
+    sendMessageDirect(content) {
+        if (!content || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+        // Add to UI
+        this.addMessage('user', content);
 
         // Notify mascot
         if (window.mascotController) {

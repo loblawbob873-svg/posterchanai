@@ -3,11 +3,13 @@ class App {
     constructor() {
         this.conversations = [];
         this.currentConversation = null;
+        this.currentMode = ''; // '', 'search', 'images', 'geni'
 
         this.sidebar = document.getElementById('sidebar');
         this.conversationList = document.getElementById('conversationList');
         this.chatTitle = document.getElementById('chatTitle');
         this.quickActions = document.getElementById('quickActions');
+        this.messageInput = document.getElementById('messageInput');
 
         this.init();
     }
@@ -41,13 +43,20 @@ class App {
         // Mobile menu
         document.getElementById('menuBtn').addEventListener('click', () => this.toggleSidebar());
 
-        // Quick action buttons
-        document.querySelectorAll('.quick-btn').forEach(btn => {
+        // Mode buttons (Chat, Search, Images, Generate)
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.setMode(btn.dataset.mode);
+            });
+        });
+
+        // Command buttons (Help)
+        document.querySelectorAll('.quick-btn[data-cmd]').forEach(btn => {
             btn.addEventListener('click', () => {
                 const cmd = btn.dataset.cmd;
-                const input = document.getElementById('messageInput');
-                input.value = cmd;
-                input.focus();
+                if (window.chatHandler && window.chatHandler.ws) {
+                    window.chatHandler.sendMessageDirect(cmd);
+                }
             });
         });
 
@@ -220,6 +229,29 @@ class App {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    setMode(mode) {
+        this.currentMode = mode;
+
+        // Update button states
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === mode);
+        });
+
+        // Update placeholder
+        const placeholders = {
+            '': 'Type a message...',
+            'search': 'Enter search query...',
+            'images': 'Search for images...',
+            'geni': 'Describe the image to generate...'
+        };
+        this.messageInput.placeholder = placeholders[mode] || 'Type a message...';
+        this.messageInput.focus();
+    }
+
+    getMode() {
+        return this.currentMode;
     }
 }
 

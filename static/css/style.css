@@ -416,6 +416,10 @@ body {
     background: var(--accent);
     border-color: var(--accent);
 }
+.quick-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+}
 
 /* Input Area */
 .input-area {
