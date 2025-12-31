@@ -117,8 +117,12 @@ class CommandService:
         except Exception as e:
             return {"type": "text", "content": f"Invalid image data: {e}"}
 
-        # Use AI to optimize the prompt and get proper denoise/negative
-        optimized_prompt, denoise, negative_prompt = await self.chat_service.modify_prompt_for_img2img(prompt)
+        # First, analyze the image to get original tags
+        print("[IMG2IMG] Analyzing source image...")
+        original_tags = await self.chat_service.analyze_image_tags(image_data)
+
+        # Use AI to optimize the prompt with original tags context
+        optimized_prompt, denoise, negative_prompt = await self.chat_service.modify_prompt_for_img2img(prompt, original_tags)
 
         # Generate with AI-determined parameters
         result_image = await self.image_service.generate_img2img(

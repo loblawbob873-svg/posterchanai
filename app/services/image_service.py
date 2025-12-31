@@ -274,8 +274,8 @@ class ImageService:
                 "inputs": {
                     "upscale_method": "lanczos",
                     "width": 1024,
-                    "height": 1024,
-                    "crop": "center",
+                    "height": 1536,
+                    "crop": "disabled",
                     "image": ["10", 0]
                 }
             },

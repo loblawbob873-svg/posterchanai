@@ -111,9 +111,56 @@ class ChatService:
                 yield f"Error: {str(e)}"
 
 
-    async def modify_prompt_for_img2img(self, user_prompt: str) -> tuple[str, float, str]:
+    async def analyze_image_tags(self, image_base64: str) -> str:
+        """
+        Use vision AI to analyze image and extract tags describing it.
+        Returns comma-separated tags or empty string on failure.
+        """
+        if not self.openwebui_url or not self.api_key:
+            return ""
+
+        system_prompt = """Analyze this image and output ONLY comma-separated tags describing it.
+Include: character count (1girl, 2girls, 1boy, etc.), hair color, eye color, clothing, accessories, background/setting, art style (anime, realistic, etc.), pose, expression.
+Output ONLY tags, no sentences. Example: 1girl, orange hair, yellow eyes, black hoodie, stars pattern, white background, anime style, upper body"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": [
+                {"type": "text", "text": "Describe this image with tags:"},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
+            ]}
+        ]
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            try:
+                response = await client.post(
+                    f"{self.openwebui_url}/api/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "temperature": 0.3,
+                        "max_tokens": 200,
+                        "stream": False
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+                content = data["choices"][0]["message"]["content"]
+                tags = self.strip_thinking_tags(content).strip()
+                print(f"[VISION] Analyzed image tags: {tags[:100]}...")
+                return tags
+            except Exception as e:
+                print(f"[VISION] Image analysis failed: {e}")
+                return ""
+
+    async def modify_prompt_for_img2img(self, user_prompt: str, original_tags: str = "") -> tuple[str, float, str]:
         """
         Use AI to create optimized img2img parameters from user's request.
+        original_tags: tags describing the source image (from vision analysis)
         Returns: (prompt, denoise, negative_prompt)
         """
         if not self.openwebui_url or not self.api_key:
@@ -155,44 +202,45 @@ RULES:
 18. PRESERVE original clothing tags (shirt, dress, uniform, skirt, etc.) IN TAGS unless user asks to change/remove clothing (nude, naked, different outfit)
 
 Examples:
-User wants: "red hair girl"
+Tags: "1girl, blonde hair, blue eyes, red dress" Change: "red hair"
 DENOISE: 0.80
-TAGS: 1girl, (red hair:2.0), red hair, vibrant colors, sharp, high quality
-NEGATIVE: deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+TAGS: 1girl, (red hair:2.0), red hair, blue eyes, red dress, vibrant colors, sharp, high quality
+NEGATIVE: blonde hair, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
-User wants: "anime style beach scene"
-DENOISE: 0.75
-TAGS: (anime:1.5), (beach:1.5), ocean, sand, sunny, vibrant colors, sharp, high quality
-NEGATIVE: deformed, extra limbs, bad anatomy, blurry, distorted, extra people
-
-User wants: "naked woman"
+Tags: "1girl, orange hair, yellow eyes, black hoodie, stars, white background, anime" Change: "brown skin"
 DENOISE: 0.80
-TAGS: 1girl, (naked:3.0), (nude:2.5), bare skin, vibrant colors, sharp, high quality
-NEGATIVE: clothing, clothed, shirt, dress, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+TAGS: 1girl, (brown skin:2.0), (dark skin:2.0), brown skin, orange hair, yellow eyes, black hoodie, stars, anime, vibrant colors, sharp, high quality
+NEGATIVE: light skin, pale skin, fair skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
-User wants: "3 anime girls nude at mcdonalds"
+Tags: "3girls, anime, purple hair, green hair, black hair, red shirt, uniform, mcdonalds, indoors" Change: "nude"
 DENOISE: 0.80
-TAGS: 3girls, anime, (naked:2.0), (nude:2.0), mcdonalds, indoors, multiple girls, vibrant colors, sharp, high quality
-NEGATIVE: clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+TAGS: 3girls, anime, purple hair, green hair, black hair, (naked:2.0), (nude:2.0), mcdonalds, indoors, multiple girls, vibrant colors, sharp, high quality
+NEGATIVE: red shirt, uniform, clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
-User wants: "girl holding gun"
+Tags: "1girl, blonde hair, blue eyes, grey top, large breasts" Change: "nude small breasts"
+DENOISE: 0.65
+TAGS: 1girl, blonde hair, blue eyes, (naked:2.0), (nude:2.0), (small breasts:2.0), natural skin, realistic skin tone, vibrant colors, sharp, high quality
+NEGATIVE: grey top, clothing, clothed, large breasts, big breasts, pale skin, washed out, desaturated, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, holding tennis racket, sportswear" Change: "holding gun"
 DENOISE: 0.70
-TAGS: 1girl, (holding gun:2.5), (pistol:2.0), (handgun:2.0), holding weapon, vibrant colors, sharp, high quality
-NEGATIVE: deformed, extra limbs, bad anatomy, blurry, distorted, extra people
-
-User wants: "small breasts"
-DENOISE: 0.50
-TAGS: 1girl, (small breasts:3.0), (flat chest:2.5), (petite:2.0), small breasts, flat chest, vibrant colors, sharp, high quality
-NEGATIVE: large breasts, huge breasts, big breasts, cleavage, busty, curvy, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+TAGS: 1girl, sportswear, (holding gun:2.5), (pistol:2.0), holding weapon, vibrant colors, sharp, high quality
+NEGATIVE: tennis racket, racket, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
 User wants: "cyberpunk city at night"
 DENOISE: 1.0
 TAGS: (cyberpunk:1.5), city, night, neon lights, futuristic, vibrant colors, sharp, high quality
 NEGATIVE: daytime, rural, deformed, blurry, distorted, extra people"""
 
+        # Format message based on whether we have original tags
+        if original_tags:
+            user_message = f'Tags: "{original_tags}" Change: "{user_prompt}"'
+        else:
+            user_message = f'User wants: "{user_prompt}"'
+
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"User wants: \"{user_prompt}\""}
+            {"role": "user", "content": user_message}
         ]
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
