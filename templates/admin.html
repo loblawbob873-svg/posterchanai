@@ -11,44 +11,126 @@
         <a href="/" class="btn-secondary">Back to Chat</a>
     </header>
 
+    <!-- Tab Navigation -->
+    <div class="admin-tabs">
+        <button class="tab-btn active" data-tab="ai">AI Settings</button>
+        <button class="tab-btn" data-tab="services">Services</button>
+        <button class="tab-btn" data-tab="site">Site Settings</button>
+        <button class="tab-btn" data-tab="users">Users</button>
+    </div>
+
     <div class="admin-content">
-        <!-- Settings Section -->
-        <section class="admin-section">
-            <h2>AI Settings</h2>
-            <form id="settingsForm" class="settings-form">
+        <form id="settingsForm" class="settings-form">
+            <!-- AI Settings Tab -->
+            <div class="tab-content active" id="tab-ai">
                 <fieldset>
-                    <legend>Open WebUI</legend>
+                    <legend>Ollama Connection</legend>
                     <div class="form-group">
-                        <label for="openwebui_url">URL</label>
-                        <input type="url" id="openwebui_url" name="openwebui_url" placeholder="https://ai.example.com">
+                        <label for="ollama_url">URL</label>
+                        <input type="url" id="ollama_url" name="ollama_url" placeholder="http://localhost:11434">
                     </div>
                     <div class="form-group">
-                        <label for="openwebui_api_key">API Key</label>
-                        <input type="password" id="openwebui_api_key" name="openwebui_api_key" placeholder="sk-...">
+                        <label for="ollama_model">Default Model</label>
+                        <input type="text" id="ollama_model" name="ollama_model" placeholder="llama3">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ollama_timeout">Timeout (ms)</label>
+                            <input type="number" id="ollama_timeout" name="ollama_timeout" value="120000">
+                        </div>
+                        <div class="form-group">
+                            <label for="ollama_max_concurrent">Max Concurrent</label>
+                            <input type="number" id="ollama_max_concurrent" name="ollama_max_concurrent" value="2" min="1" max="10">
+                        </div>
                     </div>
                     <div class="form-group">
-                        <label for="openwebui_model">Model</label>
-                        <input type="text" id="openwebui_model" name="openwebui_model" placeholder="llama3">
-                    </div>
-                    <div class="form-group">
-                        <label for="openwebui_timeout">Timeout (ms)</label>
-                        <input type="number" id="openwebui_timeout" name="openwebui_timeout" value="60000">
+                        <label for="ollama_system_prompt">System Prompt</label>
+                        <textarea id="ollama_system_prompt" name="ollama_system_prompt" rows="3" placeholder="You are a helpful AI assistant."></textarea>
                     </div>
                 </fieldset>
 
                 <fieldset>
-                    <legend>ComfyUI</legend>
+                    <legend>Model Parameters</legend>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ollama_temperature">Temperature</label>
+                            <input type="number" id="ollama_temperature" name="ollama_temperature" value="0.7" min="0" max="2" step="0.1">
+                        </div>
+                        <div class="form-group">
+                            <label for="ollama_top_p">Top P</label>
+                            <input type="number" id="ollama_top_p" name="ollama_top_p" value="0.9" min="0" max="1" step="0.05">
+                        </div>
+                        <div class="form-group">
+                            <label for="ollama_top_k">Top K</label>
+                            <input type="number" id="ollama_top_k" name="ollama_top_k" value="40" min="1" max="100">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ollama_repeat_penalty">Repeat Penalty</label>
+                            <input type="number" id="ollama_repeat_penalty" name="ollama_repeat_penalty" value="1.1" min="0" max="2" step="0.05">
+                        </div>
+                        <div class="form-group">
+                            <label for="ollama_num_ctx">Context Length</label>
+                            <input type="number" id="ollama_num_ctx" name="ollama_num_ctx" value="4096" min="512" step="512">
+                        </div>
+                        <div class="form-group">
+                            <label for="ollama_num_predict">Max Tokens</label>
+                            <input type="number" id="ollama_num_predict" name="ollama_num_predict" value="2048" min="64">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ollama_mirostat">Mirostat</label>
+                            <select id="ollama_mirostat" name="ollama_mirostat">
+                                <option value="0">Disabled</option>
+                                <option value="1">Mirostat 1</option>
+                                <option value="2">Mirostat 2</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="ollama_mirostat_eta">Mirostat Eta</label>
+                            <input type="number" id="ollama_mirostat_eta" name="ollama_mirostat_eta" value="0.1" min="0" max="1" step="0.01">
+                        </div>
+                        <div class="form-group">
+                            <label for="ollama_mirostat_tau">Mirostat Tau</label>
+                            <input type="number" id="ollama_mirostat_tau" name="ollama_mirostat_tau" value="5.0" min="0" max="10" step="0.1">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ollama_tfs_z">TFS Z</label>
+                            <input type="number" id="ollama_tfs_z" name="ollama_tfs_z" value="1.0" min="0" max="2" step="0.1">
+                        </div>
+                        <div class="form-group">
+                            <label for="ollama_seed">Seed (empty=random)</label>
+                            <input type="text" id="ollama_seed" name="ollama_seed" placeholder="Leave empty for random">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="ollama_stop">Stop Sequences (comma-separated)</label>
+                        <input type="text" id="ollama_stop" name="ollama_stop" placeholder="</s>, [INST]">
+                    </div>
+                </fieldset>
+            </div>
+
+            <!-- Services Tab -->
+            <div class="tab-content" id="tab-services">
+                <fieldset>
+                    <legend>ComfyUI (Image Generation)</legend>
                     <div class="form-group">
                         <label for="comfyui_url">URL</label>
                         <input type="url" id="comfyui_url" name="comfyui_url" placeholder="http://localhost:8188">
                     </div>
-                    <div class="form-group">
-                        <label for="comfyui_default_model">Default Model</label>
-                        <input type="text" id="comfyui_default_model" name="comfyui_default_model" placeholder="model.safetensors">
-                    </div>
-                    <div class="form-group">
-                        <label for="comfyui_anime_model">Anime Model</label>
-                        <input type="text" id="comfyui_anime_model" name="comfyui_anime_model" placeholder="anime_model.safetensors">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="comfyui_default_model">Default Model</label>
+                            <input type="text" id="comfyui_default_model" name="comfyui_default_model" placeholder="model.safetensors">
+                        </div>
+                        <div class="form-group">
+                            <label for="comfyui_anime_model">Anime Model</label>
+                            <input type="text" id="comfyui_anime_model" name="comfyui_anime_model" placeholder="anime_model.safetensors">
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="comfyui_timeout">Timeout (ms)</label>
@@ -57,7 +139,7 @@
                 </fieldset>
 
                 <fieldset>
-                    <legend>SearXNG</legend>
+                    <legend>SearXNG (Search)</legend>
                     <div class="form-group">
                         <label for="searxng_url">URL</label>
                         <input type="url" id="searxng_url" name="searxng_url" placeholder="https://search.example.com">
@@ -65,56 +147,314 @@
                 </fieldset>
 
                 <fieldset>
-                    <legend>TTS</legend>
+                    <legend>Text-to-Speech</legend>
                     <div class="form-group">
                         <label for="tts_voice">Default Voice</label>
                         <input type="text" id="tts_voice" name="tts_voice" value="zh-CN-XiaoxiaoNeural">
                     </div>
-                    <div class="form-group">
-                        <label for="tts_rate">Rate</label>
-                        <input type="text" id="tts_rate" name="tts_rate" value="+5%">
-                    </div>
-                    <div class="form-group">
-                        <label for="tts_pitch">Pitch</label>
-                        <input type="text" id="tts_pitch" name="tts_pitch" value="+10Hz">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="tts_rate">Rate</label>
+                            <input type="text" id="tts_rate" name="tts_rate" value="+5%">
+                        </div>
+                        <div class="form-group">
+                            <label for="tts_pitch">Pitch</label>
+                            <input type="text" id="tts_pitch" name="tts_pitch" value="+10Hz">
+                        </div>
                     </div>
                 </fieldset>
 
-                <button type="submit" class="btn-primary">Save Settings</button>
-            </form>
-        </section>
-
-        <!-- Users Section -->
-        <section class="admin-section">
-            <h2>Users</h2>
-            <div id="userList" class="user-list">
-                <!-- Users loaded here -->
-            </div>
-
-            <h3>Create User</h3>
-            <form id="createUserForm" class="user-form">
-                <div class="form-row">
+                <fieldset>
+                    <legend>Open WebUI (Legacy)</legend>
                     <div class="form-group">
-                        <label for="newUsername">Username</label>
-                        <input type="text" id="newUsername" required>
+                        <label for="openwebui_url">URL</label>
+                        <input type="url" id="openwebui_url" name="openwebui_url" placeholder="https://ai.example.com">
                     </div>
                     <div class="form-group">
-                        <label for="newPassword">Password</label>
-                        <input type="password" id="newPassword" required>
+                        <label for="openwebui_api_key">API Key</label>
+                        <input type="password" id="openwebui_api_key" name="openwebui_api_key" placeholder="sk-...">
                     </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="openwebui_model">Model</label>
+                            <input type="text" id="openwebui_model" name="openwebui_model" placeholder="llama3">
+                        </div>
+                        <div class="form-group">
+                            <label for="openwebui_timeout">Timeout (ms)</label>
+                            <input type="number" id="openwebui_timeout" name="openwebui_timeout" value="60000">
+                        </div>
+                    </div>
+                </fieldset>
+
+                <fieldset>
+                    <legend>Email (SMTP)</legend>
                     <div class="form-group">
-                        <label for="newIsAdmin">
-                            <input type="checkbox" id="newIsAdmin"> Admin
+                        <label for="smtp_enabled">
+                            <input type="checkbox" id="smtp_enabled" name="smtp_enabled"> Enable SMTP
                         </label>
                     </div>
-                    <button type="submit" class="btn-primary">Create</button>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="smtp_host">SMTP Host</label>
+                            <input type="text" id="smtp_host" name="smtp_host" placeholder="smtp.example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="smtp_port">Port</label>
+                            <input type="number" id="smtp_port" name="smtp_port" value="587">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="smtp_username">Username</label>
+                            <input type="text" id="smtp_username" name="smtp_username" placeholder="user@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="smtp_password">Password</label>
+                            <input type="password" id="smtp_password" name="smtp_password">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="smtp_from_email">From Email</label>
+                            <input type="email" id="smtp_from_email" name="smtp_from_email" placeholder="noreply@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="smtp_from_name">From Name</label>
+                            <input type="text" id="smtp_from_name" name="smtp_from_name" value="Posterchanai">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="smtp_use_tls">
+                                <input type="checkbox" id="smtp_use_tls" name="smtp_use_tls"> Use STARTTLS
+                            </label>
+                            <small>For port 587</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="smtp_use_ssl">
+                                <input type="checkbox" id="smtp_use_ssl" name="smtp_use_ssl"> Use SSL
+                            </label>
+                            <small>For port 465</small>
+                        </div>
+                    </div>
+                    <div class="form-row test-email-row">
+                        <div class="form-group">
+                            <label for="test_email_address">Test Email</label>
+                            <input type="email" id="test_email_address" placeholder="your@email.com">
+                        </div>
+                        <button type="button" class="btn-secondary" id="sendTestEmailBtn">Send Test</button>
+                    </div>
+                    <div id="testEmailResult" class="test-result"></div>
+                </fieldset>
+
+                <fieldset>
+                    <legend>Email (IMAP - Sent Folder)</legend>
+                    <div class="form-group">
+                        <label for="imap_enabled">
+                            <input type="checkbox" id="imap_enabled" name="imap_enabled"> Enable IMAP
+                        </label>
+                        <small>Save sent emails to IMAP Sent folder</small>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="imap_host">IMAP Host</label>
+                            <input type="text" id="imap_host" name="imap_host" placeholder="imap.example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="imap_port">Port</label>
+                            <input type="number" id="imap_port" name="imap_port" value="993">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="imap_username">Username (if different)</label>
+                            <input type="text" id="imap_username" name="imap_username" placeholder="Leave empty to use SMTP username">
+                        </div>
+                        <div class="form-group">
+                            <label for="imap_password">Password (if different)</label>
+                            <input type="password" id="imap_password" name="imap_password" placeholder="Leave empty to use SMTP password">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="imap_use_ssl">
+                                <input type="checkbox" id="imap_use_ssl" name="imap_use_ssl" checked> Use SSL
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label for="imap_sent_folder">Sent Folder Name</label>
+                            <input type="text" id="imap_sent_folder" name="imap_sent_folder" value="Sent">
+                        </div>
+                    </div>
+                </fieldset>
+            </div>
+
+            <!-- Site Settings Tab -->
+            <div class="tab-content" id="tab-site">
+                <fieldset>
+                    <legend>Registration</legend>
+                    <div class="form-group">
+                        <label for="allow_registration">
+                            <input type="checkbox" id="allow_registration" name="allow_registration"> Allow User Registration
+                        </label>
+                        <small>Enable self-registration on the login page</small>
+                    </div>
+                </fieldset>
+
+                <fieldset>
+                    <legend>API Access</legend>
+                    <div class="form-group">
+                        <label for="openai_api_key">Global API Key (optional)</label>
+                        <input type="password" id="openai_api_key" name="openai_api_key" placeholder="sk-... (leave empty for user keys only)">
+                        <small>Global key for /v1/chat/completions. Users can also generate their own keys.</small>
+                    </div>
+                </fieldset>
+
+                <fieldset>
+                    <legend>Ollama Health Check</legend>
+                    <div class="form-group">
+                        <label for="ollama_ping_enabled">
+                            <input type="checkbox" id="ollama_ping_enabled" name="ollama_ping_enabled"> Enable Health Check
+                        </label>
+                        <small>Periodically ping Ollama and restart if unresponsive</small>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ollama_ping_interval">Ping Interval (seconds)</label>
+                            <input type="number" id="ollama_ping_interval" name="ollama_ping_interval" value="90" min="30">
+                        </div>
+                        <div class="form-group">
+                            <label for="ollama_restart_after_failures">Restart After Failures</label>
+                            <input type="number" id="ollama_restart_after_failures" name="ollama_restart_after_failures" value="5" min="1">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="ollama_restart_command">Restart Command</label>
+                        <input type="text" id="ollama_restart_command" name="ollama_restart_command" value="sudo systemctl restart ollama">
+                        <small>Command to restart Ollama (requires proper permissions)</small>
+                    </div>
+                </fieldset>
+            </div>
+
+            <button type="submit" class="btn-primary save-btn">Save Settings</button>
+        </form>
+
+        <!-- Users Tab -->
+        <div class="tab-content" id="tab-users">
+            <div class="admin-section">
+                <h3>User Management</h3>
+                <div id="userList" class="user-list">
+                    <!-- Users loaded here -->
                 </div>
-            </form>
-        </section>
+
+                <h3>Create User</h3>
+                <form id="createUserForm" class="user-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="newUsername">Username</label>
+                            <input type="text" id="newUsername" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="newPassword">Password</label>
+                            <input type="password" id="newPassword" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="newIsAdmin">
+                                <input type="checkbox" id="newIsAdmin"> Admin
+                            </label>
+                        </div>
+                        <button type="submit" class="btn-primary">Create</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 
+<style>
+/* Tab styles */
+.admin-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid var(--border-color);
+    padding-bottom: 0;
+}
+.tab-btn {
+    padding: 12px 24px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: all 0.2s;
+}
+.tab-btn:hover {
+    color: var(--text-primary);
+}
+.tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+.tab-content {
+    display: none;
+}
+.tab-content.active {
+    display: block;
+}
+.save-btn {
+    margin-top: 20px;
+}
+.test-email-row {
+    align-items: flex-end;
+}
+.test-email-row .btn-secondary {
+    margin-bottom: 0;
+    white-space: nowrap;
+}
+.test-result {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 6px;
+    display: none;
+}
+.test-result.success {
+    display: block;
+    background: rgba(39, 174, 96, 0.2);
+    border: 1px solid #27ae60;
+    color: #27ae60;
+}
+.test-result.error {
+    display: block;
+    background: rgba(231, 76, 60, 0.2);
+    border: 1px solid #e74c3c;
+    color: #e74c3c;
+}
+.test-result.loading {
+    display: block;
+    background: rgba(74, 158, 255, 0.2);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+}
+</style>
+
 <script>
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        // Update button states
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        // Update content
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+});
+
 // Load settings
 async function loadSettings() {
     try {
@@ -122,8 +462,16 @@ async function loadSettings() {
         if (response.ok) {
             const settings = await response.json();
             for (const [key, value] of Object.entries(settings)) {
-                const input = document.getElementById(key);
-                if (input) input.value = value || '';
+                const el = document.getElementById(key);
+                if (el) {
+                    if (el.type === 'checkbox') {
+                        el.checked = value === 'true' || value === true;
+                    } else if (el.tagName === 'SELECT') {
+                        el.value = value || el.options[0].value;
+                    } else {
+                        el.value = value || '';
+                    }
+                }
             }
         }
     } catch (err) {
@@ -136,8 +484,14 @@ document.getElementById('settingsForm').addEventListener('submit', async (e) => 
     e.preventDefault();
     const form = e.target;
     const settings = {};
-    for (const input of form.querySelectorAll('input')) {
-        settings[input.name] = input.value;
+    for (const el of form.querySelectorAll('input, textarea, select')) {
+        if (el.name) {
+            if (el.type === 'checkbox') {
+                settings[el.name] = el.checked ? 'true' : 'false';
+            } else {
+                settings[el.name] = el.value;
+            }
+        }
     }
 
     try {
@@ -245,6 +599,43 @@ document.getElementById('createUserForm').addEventListener('submit', async (e) =
         }
     } catch (err) {
         alert('Error creating user');
+    }
+});
+
+// Test email
+document.getElementById('sendTestEmailBtn').addEventListener('click', async () => {
+    const emailInput = document.getElementById('test_email_address');
+    const resultDiv = document.getElementById('testEmailResult');
+    const email = emailInput.value.trim();
+
+    if (!email) {
+        resultDiv.className = 'test-result error';
+        resultDiv.textContent = 'Please enter an email address';
+        return;
+    }
+
+    resultDiv.className = 'test-result loading';
+    resultDiv.textContent = 'Sending test email...';
+
+    try {
+        const response = await fetch('/api/admin/test-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ to_email: email })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            resultDiv.className = 'test-result success';
+            resultDiv.textContent = data.message || 'Test email sent successfully!';
+        } else {
+            resultDiv.className = 'test-result error';
+            resultDiv.textContent = data.detail || 'Failed to send test email';
+        }
+    } catch (err) {
+        resultDiv.className = 'test-result error';
+        resultDiv.textContent = 'Error: ' + err.message;
     }
 });
 

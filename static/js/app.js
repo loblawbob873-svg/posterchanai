@@ -34,6 +34,23 @@ class App {
         // Delete chat button
         document.getElementById('deleteChatBtn').addEventListener('click', () => this.deleteCurrentConversation());
 
+        // User menu toggle
+        const userMenuBtn = document.getElementById('userMenuBtn');
+        const userMenuContainer = document.querySelector('.user-menu-container');
+        if (userMenuBtn && userMenuContainer) {
+            userMenuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                userMenuContainer.classList.toggle('open');
+            });
+
+            // Close menu when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!userMenuContainer.contains(e.target)) {
+                    userMenuContainer.classList.remove('open');
+                }
+            });
+        }
+
         // Delete all button
         document.getElementById('deleteAllBtn').addEventListener('click', () => this.deleteAllConversations());
 

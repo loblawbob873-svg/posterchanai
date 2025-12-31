@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models import User, Setting
 from app.schemas import UserCreate, UserResponse, SettingsUpdate, SettingsResponse
 from app.auth import get_admin_user, get_password_hash
+from app.services.email_service import get_email_service
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -112,3 +113,33 @@ def update_user_password(
     user.password_hash = get_password_hash(data.password)
     db.commit()
     return {"message": "Password updated"}
+
+
+class TestEmailRequest(BaseModel):
+    to_email: str
+
+
+@router.post("/test-email")
+def send_test_email(
+    data: TestEmailRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Send a test email to verify SMTP configuration"""
+    email_service = get_email_service(db)
+
+    if not email_service.smtp_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SMTP is not enabled. Enable it in settings first."
+        )
+
+    success, message = email_service.send_test_email(data.to_email)
+
+    if success:
+        return {"success": True, "message": message}
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=message
+        )

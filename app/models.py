@@ -9,6 +9,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(50), unique=True, nullable=False, index=True)
+    email = Column(String(255), unique=True, nullable=True, index=True)
     password_hash = Column(String(255), nullable=False)
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -46,3 +47,17 @@ class Setting(Base):
 
     key = Column(String(100), primary_key=True)
     value = Column(Text)
+
+
+class APIKey(Base):
+    __tablename__ = "api_keys"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    key = Column(String(64), unique=True, nullable=False, index=True)
+    name = Column(String(100), default="Default")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True)
+
+    user = relationship("User", backref="api_keys")

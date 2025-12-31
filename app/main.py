@@ -8,7 +8,7 @@ import os
 from app.database import init_db, get_db
 from app.auth import get_current_user_optional
 from app.models import User
-from app.routers import auth, chat, admin, tts
+from app.routers import auth, chat, admin, tts, openai_api
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -30,11 +30,22 @@ app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
 app.include_router(tts.router)
+app.include_router(openai_api.router)
 
 
 @app.on_event("startup")
-def startup():
+async def startup():
     init_db()
+    # Start health check if enabled
+    from app.services.health_check import start_health_check
+    start_health_check()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    # Stop health check
+    from app.services.health_check import stop_health_check
+    stop_health_check()
 
 
 @app.get("/")

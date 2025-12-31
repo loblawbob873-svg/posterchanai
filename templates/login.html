@@ -11,6 +11,7 @@
             <p>AI Chat Assistant</p>
         </div>
 
+        <!-- Login Form -->
         <form id="loginForm" class="login-form">
             <div class="form-group">
                 <label for="username">Username</label>
@@ -23,10 +24,81 @@
             <div id="errorMessage" class="error-message"></div>
             <button type="submit" class="btn-primary">Login</button>
         </form>
+
+        <!-- Register Form (hidden by default) -->
+        <form id="registerForm" class="login-form" style="display: none;">
+            <div class="form-group">
+                <label for="regUsername">Username</label>
+                <input type="text" id="regUsername" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="regEmail">Email (optional)</label>
+                <input type="email" id="regEmail" name="email">
+            </div>
+            <div class="form-group">
+                <label for="regPassword">Password</label>
+                <input type="password" id="regPassword" name="password" required minlength="4">
+            </div>
+            <div class="form-group">
+                <label for="regPasswordConfirm">Confirm Password</label>
+                <input type="password" id="regPasswordConfirm" name="password_confirm" required>
+            </div>
+            <div id="regErrorMessage" class="error-message"></div>
+            <button type="submit" class="btn-primary">Register</button>
+        </form>
+
+        <!-- Toggle between login/register -->
+        <div id="toggleSection" class="toggle-section" style="display: none;">
+            <span id="toggleText">Don't have an account?</span>
+            <button type="button" id="toggleBtn" class="btn-link">Register</button>
+        </div>
     </div>
 </div>
 
 <script>
+let isLoginMode = true;
+let registrationEnabled = false;
+
+// Check if registration is enabled
+async function checkRegistration() {
+    try {
+        const response = await fetch('/api/auth/registration-enabled');
+        if (response.ok) {
+            const data = await response.json();
+            registrationEnabled = data.enabled;
+            if (registrationEnabled) {
+                document.getElementById('toggleSection').style.display = 'block';
+            }
+        }
+    } catch (err) {
+        console.error('Failed to check registration status:', err);
+    }
+}
+
+// Toggle between login and register forms
+document.getElementById('toggleBtn').addEventListener('click', () => {
+    isLoginMode = !isLoginMode;
+    const loginForm = document.getElementById('loginForm');
+    const registerForm = document.getElementById('registerForm');
+    const toggleText = document.getElementById('toggleText');
+    const toggleBtn = document.getElementById('toggleBtn');
+
+    if (isLoginMode) {
+        loginForm.style.display = 'block';
+        registerForm.style.display = 'none';
+        toggleText.textContent = "Don't have an account?";
+        toggleBtn.textContent = 'Register';
+        document.getElementById('username').focus();
+    } else {
+        loginForm.style.display = 'none';
+        registerForm.style.display = 'block';
+        toggleText.textContent = 'Already have an account?';
+        toggleBtn.textContent = 'Login';
+        document.getElementById('regUsername').focus();
+    }
+});
+
+// Login form handler
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const username = document.getElementById('username').value;
@@ -50,5 +122,64 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         errorEl.textContent = 'Connection error';
     }
 });
+
+// Register form handler
+document.getElementById('registerForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('regUsername').value;
+    const email = document.getElementById('regEmail').value;
+    const password = document.getElementById('regPassword').value;
+    const passwordConfirm = document.getElementById('regPasswordConfirm').value;
+    const errorEl = document.getElementById('regErrorMessage');
+
+    // Validate passwords match
+    if (password !== passwordConfirm) {
+        errorEl.textContent = 'Passwords do not match';
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, email: email || null, password })
+        });
+
+        if (response.ok) {
+            window.location.href = '/';
+        } else {
+            const data = await response.json();
+            errorEl.textContent = data.detail || 'Registration failed';
+        }
+    } catch (err) {
+        errorEl.textContent = 'Connection error';
+    }
+});
+
+// Initialize
+checkRegistration();
 </script>
+
+<style>
+.toggle-section {
+    margin-top: 1rem;
+    text-align: center;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color, #333);
+}
+.toggle-section span {
+    color: var(--text-secondary, #888);
+}
+.btn-link {
+    background: none;
+    border: none;
+    color: var(--primary-color, #4a9eff);
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    font-size: inherit;
+}
+.btn-link:hover {
+    text-decoration: underline;
+}
+</style>
 {% endblock %}

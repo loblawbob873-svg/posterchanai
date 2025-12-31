@@ -14,11 +14,30 @@
             <!-- Conversations loaded here -->
         </div>
         <div class="sidebar-footer">
-            <button class="btn-danger" id="deleteAllBtn">🗑️ Delete All Chats</button>
-            {% if user.is_admin %}
-            <a href="/admin" class="btn-admin">⚙️ Admin Panel</a>
-            {% endif %}
-            <button class="btn-secondary" id="logoutBtn">🚪 Logout</button>
+            <div class="user-menu-container">
+                <button class="user-menu-btn" id="userMenuBtn">
+                    <span class="user-icon">{{ user.username[0].upper() }}</span>
+                    <span class="user-name">{{ user.username }}</span>
+                    <span class="menu-arrow">&#9662;</span>
+                </button>
+                <div class="user-menu" id="userMenu">
+                    <button class="menu-item" id="apiKeysBtn">
+                        <span class="menu-icon">🔑</span> API Keys
+                    </button>
+                    {% if user.is_admin %}
+                    <a href="/admin" class="menu-item">
+                        <span class="menu-icon">⚙️</span> Admin Panel
+                    </a>
+                    {% endif %}
+                    <div class="menu-divider"></div>
+                    <button class="menu-item text-danger" id="deleteAllBtn">
+                        <span class="menu-icon">🗑️</span> Delete All Chats
+                    </button>
+                    <button class="menu-item" id="logoutBtn">
+                        <span class="menu-icon">🚪</span> Logout
+                    </button>
+                </div>
+            </div>
         </div>
     </aside>
 
@@ -78,8 +97,29 @@
     </main>
 </div>
 
+<!-- API Keys Modal -->
+<div class="modal" id="apiKeysModal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>API Keys</h2>
+            <button class="btn-icon modal-close" id="closeApiKeysModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="modal-info">API keys allow external applications to access the AI API.</p>
+            <div class="api-key-form">
+                <input type="text" id="newKeyName" placeholder="Key name (optional)">
+                <button class="btn-primary" id="createApiKey">Generate New Key</button>
+            </div>
+            <div class="api-key-list" id="apiKeyList">
+                <!-- Keys loaded here -->
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="/static/js/mascot.js"></script>
 <script src="/static/js/tts.js"></script>
 <script src="/static/js/chat.js"></script>
 <script src="/static/js/app.js"></script>
+<script src="/static/js/apikeys.js"></script>
 {% endblock %}
