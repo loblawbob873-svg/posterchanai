@@ -240,8 +240,17 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         for msg in conversation.messages[-21:-1]:
                             messages.append({"role": msg.role, "content": msg.content})
 
-                        # Add current message with file content if provided
-                        if file_content:
+                        # Add current message with file/image content if provided
+                        if image_data:
+                            # Vision API format for image
+                            messages.append({
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": content or "What is this image?"},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}}
+                                ]
+                            })
+                        elif file_content:
                             messages.append({
                                 "role": "user",
                                 "content": f"Here is a file the user uploaded:\n\n```\n{file_content}\n```\n\nUser's message: {content}"
