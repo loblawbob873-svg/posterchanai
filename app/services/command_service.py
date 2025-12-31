@@ -11,7 +11,6 @@ class CommandService:
         "images": "Search for images",
         "geni": "Generate an AI image from your prompt",
         "regen": "Regenerate the last image with a new seed",
-        "factcheck": "Fact-check a statement",
         "help": "Show available commands",
     }
 
@@ -45,8 +44,6 @@ class CommandService:
             return await self._geni_command(arg)
         elif command == "regen":
             return await self._regen_command(last_prompt)
-        elif command == "factcheck":
-            return await self._factcheck_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -126,22 +123,6 @@ class CommandService:
             "image": image_data,
             "prompt": last_prompt
         }
-
-    async def _factcheck_command(self, statement: str) -> dict:
-        if not statement:
-            return {"type": "text", "content": "Please provide a statement to fact-check. Example: `factcheck The Earth is flat`"}
-
-        messages = [
-            {"role": "system", "content": """You are a fact-checker. Analyze the given statement and rate its accuracy.
-Provide your response in this format:
-Rating: [True/Mostly True/Mixed/Mostly False/False/Unverifiable]
-Explanation: [Your analysis]
-Sources: [If applicable, mention reliable sources]"""},
-            {"role": "user", "content": f"Fact-check this statement: {statement}"}
-        ]
-        result = await self.chat_service.chat(messages)
-
-        return {"type": "text", "content": result}
 
 
 def get_command_service(db: Session) -> CommandService:
