@@ -4,6 +4,14 @@ __pycache__/
 *$py.class
 *.so
 .Python
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+pip-log.txt
+
+# Virtual environments
 venv/
 env/
 .venv/
@@ -12,19 +20,46 @@ ENV/
 # Database
 *.db
 *.sqlite3
+*.sqlite
 
 # Environment
 .env
+.env.local
+.env.*.local
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Logs
 *.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Type checking
+.mypy_cache/
+.ruff_cache/
+
+# Security
+*.pem
+*.key
+
+# Claude Code
+.claude/
+
+# Uploads/Generated files
+uploads/
+generated/
