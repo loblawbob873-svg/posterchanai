@@ -20,6 +20,8 @@ class ChatHandler {
         // Stored upload data
         this.uploadedImage = null;  // base64 image data
         this.uploadedFile = null;   // text file content
+        this.uploadedPDF = null;    // base64 PDF data
+        this.uploadedDocument = null; // base64 office document data
 
         this.init();
     }
@@ -58,6 +60,7 @@ class ChatHandler {
         if (!file) return;
 
         const isImage = file.type.startsWith('image/');
+        const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 
         if (isImage) {
             // Handle image upload
@@ -66,6 +69,7 @@ class ChatHandler {
                 const base64 = e.target.result.split(',')[1];  // Remove data:image/...;base64, prefix
                 this.uploadedImage = base64;
                 this.uploadedFile = null;
+                this.uploadedPDF = null;
 
                 // Show preview
                 this.imagePreview.src = e.target.result;
@@ -75,12 +79,50 @@ class ChatHandler {
                 this.uploadPreview.style.display = 'flex';
             };
             reader.readAsDataURL(file);
+        } else if (isPDF) {
+            // Handle PDF upload - send as base64
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const base64 = e.target.result.split(',')[1];
+                this.uploadedPDF = base64;
+                this.uploadedImage = null;
+                this.uploadedFile = null;
+                this.uploadedDocument = null;
+
+                // Show preview
+                this.imagePreview.style.display = 'none';
+                this.filePreview.textContent = `📕 ${file.name} (${this.formatFileSize(file.size)})`;
+                this.filePreview.style.display = 'block';
+                this.uploadPreview.style.display = 'flex';
+            };
+            reader.readAsDataURL(file);
+        } else if (this.isOfficeFile(file.name)) {
+            // Handle Office documents - send as base64
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const base64 = e.target.result.split(',')[1];
+                this.uploadedDocument = base64;
+                this.uploadedImage = null;
+                this.uploadedFile = null;
+                this.uploadedPDF = null;
+
+                // Show preview with appropriate icon
+                const icon = file.name.endsWith('.docx') ? '📝' :
+                            file.name.endsWith('.xlsx') ? '📊' :
+                            file.name.endsWith('.pptx') ? '📽️' : '📄';
+                this.imagePreview.style.display = 'none';
+                this.filePreview.textContent = `${icon} ${file.name} (${this.formatFileSize(file.size)})`;
+                this.filePreview.style.display = 'block';
+                this.uploadPreview.style.display = 'flex';
+            };
+            reader.readAsDataURL(file);
         } else {
             // Handle text file upload
             const reader = new FileReader();
             reader.onload = (e) => {
                 this.uploadedFile = e.target.result;
                 this.uploadedImage = null;
+                this.uploadedPDF = null;
 
                 // Show preview
                 this.imagePreview.style.display = 'none';
@@ -101,9 +143,17 @@ class ChatHandler {
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     }
 
+    isOfficeFile(filename) {
+        const ext = filename.toLowerCase();
+        return ext.endsWith('.docx') || ext.endsWith('.xlsx') || ext.endsWith('.pptx') ||
+               ext.endsWith('.doc') || ext.endsWith('.xls') || ext.endsWith('.ppt');
+    }
+
     clearUpload() {
         this.uploadedImage = null;
         this.uploadedFile = null;
+        this.uploadedPDF = null;
+        this.uploadedDocument = null;
         this.uploadPreview.style.display = 'none';
         this.imagePreview.src = '';
         this.filePreview.textContent = '';
@@ -235,6 +285,12 @@ class ChatHandler {
         }
         if (this.uploadedFile) {
             payload.file_content = this.uploadedFile;
+        }
+        if (this.uploadedPDF) {
+            payload.pdf_data = this.uploadedPDF;
+        }
+        if (this.uploadedDocument) {
+            payload.document_data = this.uploadedDocument;
         }
 
         // Send to server (with command prepended)

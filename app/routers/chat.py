@@ -11,6 +11,7 @@ from app.auth import get_current_user, get_user_from_websocket
 from app.services.chat_service import ChatService
 from app.services.command_service import CommandService
 from app.services.storage_service import StorageService
+from app.services.document_service import extract_pdf_text, extract_document_text
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -171,8 +172,22 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     content = data.get("content", "").strip()
                     image_data = data.get("image_data")  # base64 image
                     file_content = data.get("file_content")  # text file content
+                    pdf_data = data.get("pdf_data")  # base64 PDF
+                    document_data = data.get("document_data")  # base64 Office document
 
-                    if not content and not file_content:
+                    # Extract text from PDF if provided
+                    if pdf_data:
+                        extracted = extract_pdf_text(pdf_data)
+                        if extracted:
+                            file_content = f"[PDF Document]\n\n{extracted}"
+
+                    # Extract text from Office document if provided
+                    if document_data:
+                        extracted = extract_document_text(document_data)
+                        if extracted:
+                            file_content = f"[Office Document]\n\n{extracted}"
+
+                    if not content and not file_content and not image_data:
                         continue
 
                     # Save uploaded files to disk
@@ -241,8 +256,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             messages.append({"role": msg.role, "content": msg.content})
 
                         # Add current message with file/image content if provided
+                        has_vision_message = False
                         if image_data:
-                            # Vision API format for image
+                            # Try vision API format for image
                             messages.append({
                                 "role": "user",
                                 "content": [
@@ -250,6 +266,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}}
                                 ]
                             })
+                            has_vision_message = True
                         elif file_content:
                             messages.append({
                                 "role": "user",
@@ -260,12 +277,30 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                         # Stream response
                         full_response = ""
+                        vision_failed = False
                         async for chunk in chat_service.chat_stream(messages):
+                            # Check for vision API errors
+                            if has_vision_message and "Error:" in chunk and full_response == "":
+                                vision_failed = True
+                                break
                             full_response += chunk
                             await manager.send_json(user.id, {
                                 "type": "stream",
                                 "content": chunk
                             })
+
+                        # Fallback if vision failed - retry without image
+                        if vision_failed and has_vision_message:
+                            messages[-1] = {
+                                "role": "user",
+                                "content": f"{content or 'The user uploaded an image.'} [Note: Image was uploaded but vision is not available]"
+                            }
+                            async for chunk in chat_service.chat_stream(messages):
+                                full_response += chunk
+                                await manager.send_json(user.id, {
+                                    "type": "stream",
+                                    "content": chunk
+                                })
 
                         # Save assistant response
                         if full_response:
