@@ -78,10 +78,11 @@ class APIKeysManager {
 
             if (response.ok) {
                 const data = await response.json();
+                nameInput.value = '';
+                // Load keys first, then show the new key on top
+                await this.loadKeys();
                 // Show the key once (it won't be shown again)
                 this.showNewKey(data.key);
-                nameInput.value = '';
-                this.loadKeys();
             } else {
                 const error = await response.json();
                 alert(error.detail || 'Failed to create API key');
