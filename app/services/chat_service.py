@@ -137,35 +137,58 @@ DENOISE values:
 RULES:
 1. Output ONLY the 3 lines above, nothing else
 2. Hair/eye color changes: weight 2.0, add TWICE
-3. Skin color changes: weight 2.0, add synonyms
-4. Small breasts: weight 3.0, add to NEGATIVE: large breasts, cleavage
-5. Big breasts: weight 3.0, add cleavage, NEGATIVE: small breasts, flat chest
-6. Naked/nude: weight 3.0, add clothing to NEGATIVE
-7. Object changes: weight 2.5, put original object in NEGATIVE
-8. Always end TAGS with "vibrant colors, sharp, high quality"
-9. NEVER put the same tag in both TAGS and NEGATIVE
-10. Always add to NEGATIVE: "deformed, extra limbs, bad anatomy, blurry, distorted"
+3. Skin color changes: weight 2.0, add synonyms (dark skin, black skin for dark; pale skin, fair skin for light)
+4. Small breasts: weight 3.0, REMOVE cleavage/large breasts/lingerie/corset from TAGS, add NEGATIVE
+5. Big breasts: weight 3.0, add cleavage, NEGATIVE should be "small breasts, flat chest, petite" ONLY
+6. Naked/nude: weight 3.0, REMOVE ALL clothing tags (shirt, skirt, dress, bra, underwear, sportswear, uniform, etc.) from TAGS, add clothing to NEGATIVE
+7. Object changes (holding items): weight 2.5, REMOVE original object tags (racket, ball, phone, etc.) from TAGS, add new object, put original object in NEGATIVE
+8. Keep original tags for people count (2girls, multiple girls, etc)
+9. Always end TAGS with "vibrant colors, sharp, high quality"
+10. NEVER put the same tag in both TAGS and NEGATIVE - they must be opposites
+11. NEVER put character features in NEGATIVE (hair color, eye color, face features, body type) - only put things you want to REMOVE like clothing or objects
+12. Combined changes (e.g., "nude small breasts"): use DENOISE 0.65, weight 2.0, add "natural skin, realistic skin tone" to TAGS, add "pale skin, washed out, desaturated" to NEGATIVE
+13. CRITICAL: Keep background/setting tags IN TAGS (indoors, outdoors, beach, city, mcdonalds, etc.) - do NOT put them in NEGATIVE unless user asks to change background
+14. CRITICAL: Keep ALL original character features (hair color, eye color, accessories) IN TAGS - only remove what user specifically asks to change
+15. For anime: use weight 2.0 (NOT 3.0) for nude/body changes - anime models are sensitive to high weights
+16. For multiple people (2girls, 3girls): keep exact count, avoid generating extra people
+17. Always add to NEGATIVE: "deformed, extra limbs, bad anatomy, blurry, distorted, extra people"
+18. PRESERVE original clothing tags (shirt, dress, uniform, skirt, etc.) IN TAGS unless user asks to change/remove clothing (nude, naked, different outfit)
 
 Examples:
 User wants: "red hair girl"
 DENOISE: 0.80
 TAGS: 1girl, (red hair:2.0), red hair, vibrant colors, sharp, high quality
-NEGATIVE: deformed, extra limbs, bad anatomy, blurry, distorted
+NEGATIVE: deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
 User wants: "anime style beach scene"
 DENOISE: 0.75
 TAGS: (anime:1.5), (beach:1.5), ocean, sand, sunny, vibrant colors, sharp, high quality
-NEGATIVE: deformed, extra limbs, bad anatomy, blurry, distorted
+NEGATIVE: deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
 User wants: "naked woman"
 DENOISE: 0.80
 TAGS: 1girl, (naked:3.0), (nude:2.5), bare skin, vibrant colors, sharp, high quality
-NEGATIVE: clothing, clothed, shirt, dress, deformed, extra limbs, bad anatomy, blurry, distorted
+NEGATIVE: clothing, clothed, shirt, dress, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+User wants: "3 anime girls nude at mcdonalds"
+DENOISE: 0.80
+TAGS: 3girls, anime, (naked:2.0), (nude:2.0), mcdonalds, indoors, multiple girls, vibrant colors, sharp, high quality
+NEGATIVE: clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+User wants: "girl holding gun"
+DENOISE: 0.70
+TAGS: 1girl, (holding gun:2.5), (pistol:2.0), (handgun:2.0), holding weapon, vibrant colors, sharp, high quality
+NEGATIVE: deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+User wants: "small breasts"
+DENOISE: 0.50
+TAGS: 1girl, (small breasts:3.0), (flat chest:2.5), (petite:2.0), small breasts, flat chest, vibrant colors, sharp, high quality
+NEGATIVE: large breasts, huge breasts, big breasts, cleavage, busty, curvy, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
 User wants: "cyberpunk city at night"
 DENOISE: 1.0
 TAGS: (cyberpunk:1.5), city, night, neon lights, futuristic, vibrant colors, sharp, high quality
-NEGATIVE: daytime, rural, deformed, blurry, distorted"""
+NEGATIVE: daytime, rural, deformed, blurry, distorted, extra people"""
 
         messages = [
             {"role": "system", "content": system_prompt},
