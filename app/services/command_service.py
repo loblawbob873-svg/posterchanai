@@ -1,3 +1,4 @@
+import base64
 from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from app.services.search_service import SearchService
@@ -10,8 +11,8 @@ class CommandService:
         "search": "Search the web and get AI-summarized results",
         "images": "Search for images",
         "geni": "Generate an AI image from your prompt",
+        "img2img": "Transform an uploaded image with your prompt",
         "regen": "Regenerate the last image with a new seed",
-        "help": "Show available commands",
     }
 
     def __init__(self, db: Session):
@@ -32,27 +33,21 @@ class CommandService:
 
         return None, message
 
-    async def execute_command(self, command: str, arg: str, last_prompt: Optional[str] = None) -> dict:
+    async def execute_command(self, command: str, arg: str, last_prompt: Optional[str] = None,
+                              image_data: Optional[str] = None, file_content: Optional[str] = None) -> dict:
         """Execute a command and return the result"""
-        if command == "help":
-            return await self._help_command()
-        elif command == "search":
+        if command == "search":
             return await self._search_command(arg)
         elif command == "images":
             return await self._images_command(arg)
         elif command == "geni":
             return await self._geni_command(arg)
+        elif command == "img2img":
+            return await self._img2img_command(arg, image_data)
         elif command == "regen":
             return await self._regen_command(last_prompt)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
-
-    async def _help_command(self) -> dict:
-        help_text = "**Available Commands:**\n\n"
-        for cmd, desc in self.COMMANDS.items():
-            help_text += f"**{cmd}** - {desc}\n"
-        help_text += "\nJust type your message to chat normally!"
-        return {"type": "text", "content": help_text}
 
     async def _search_command(self, query: str) -> dict:
         if not query:
@@ -106,6 +101,31 @@ class CommandService:
             "type": "generated_image",
             "content": f"Generated image for: {prompt}",
             "image": image_data,
+            "prompt": prompt
+        }
+
+    async def _img2img_command(self, prompt: str, image_data: Optional[str]) -> dict:
+        if not prompt:
+            return {"type": "text", "content": "Please provide a prompt describing what you want."}
+
+        if not image_data:
+            return {"type": "text", "content": "Please upload an image to transform."}
+
+        try:
+            # Decode base64 image
+            image_bytes = base64.b64decode(image_data)
+        except Exception as e:
+            return {"type": "text", "content": f"Invalid image data: {e}"}
+
+        # Generate with full denoise (1.0) so prompt controls everything
+        result_image = await self.image_service.generate_img2img(prompt, image_bytes, denoise=1.0)
+        if not result_image:
+            return {"type": "text", "content": "Failed to transform image. Please try again."}
+
+        return {
+            "type": "generated_image",
+            "content": f"Transformed image: {prompt}",
+            "image": result_image,
             "prompt": prompt
         }
 

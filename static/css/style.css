@@ -424,10 +424,16 @@ body {
 /* Input Area */
 .input-area {
     display: flex;
-    gap: 12px;
+    flex-direction: column;
+    gap: 8px;
     padding: 16px 20px;
     background: var(--bg-secondary);
     border-top: 1px solid var(--border-color);
+}
+.input-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
 }
 .input-area textarea {
     flex: 1;
@@ -444,6 +450,45 @@ body {
 .input-area textarea:focus {
     outline: none;
     border-color: var(--accent);
+}
+.upload-btn {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.upload-btn:hover {
+    background: var(--bg-tertiary);
+}
+.upload-preview {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+}
+.upload-preview img {
+    max-width: 80px;
+    max-height: 60px;
+    border-radius: 8px;
+    object-fit: cover;
+}
+.upload-preview #filePreview {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.remove-upload {
+    font-size: 16px;
+    color: var(--text-secondary);
+}
+.remove-upload:hover {
+    color: var(--danger);
 }
 .btn-send {
     background: var(--accent);

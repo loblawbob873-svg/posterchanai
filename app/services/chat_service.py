@@ -77,6 +77,7 @@ class ChatService:
                 ) as response:
                     response.raise_for_status()
                     buffer = ""
+                    thinking_done = False
                     async for line in response.aiter_lines():
                         if line.startswith("data: "):
                             data_str = line[6:]
@@ -89,11 +90,19 @@ class ChatService:
                                     content = delta.get("content", "")
                                     if content:
                                         buffer += content
-                                        # Check for thinking tags and strip them
-                                        clean = self.strip_thinking_tags(buffer)
-                                        if clean != buffer:
-                                            buffer = clean
-                                        yield content
+                                        # Check if we're past thinking tags
+                                        if not thinking_done:
+                                            match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
+                                            if match:
+                                                thinking_done = True
+                                                # Yield everything after the closing tag
+                                                after_think = buffer[match.end():]
+                                                if after_think:
+                                                    yield after_think
+                                                buffer = after_think
+                                            # Don't yield if we're still in thinking mode
+                                        else:
+                                            yield content
                             except json.JSONDecodeError:
                                 continue
             except httpx.HTTPStatusError as e:

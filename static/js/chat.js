@@ -10,6 +10,17 @@ class ChatHandler {
         this.sendBtn = document.getElementById('sendBtn');
         this.streamingMessage = null;
 
+        // File upload elements
+        this.fileInput = document.getElementById('fileInput');
+        this.uploadPreview = document.getElementById('uploadPreview');
+        this.imagePreview = document.getElementById('imagePreview');
+        this.filePreview = document.getElementById('filePreview');
+        this.removeUpload = document.getElementById('removeUpload');
+
+        // Stored upload data
+        this.uploadedImage = null;  // base64 image data
+        this.uploadedFile = null;   // text file content
+
         this.init();
     }
 
@@ -30,6 +41,72 @@ class ChatHandler {
             this.messageInput.style.height = 'auto';
             this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 120) + 'px';
         });
+
+        // File input change
+        if (this.fileInput) {
+            this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+        }
+
+        // Remove upload button
+        if (this.removeUpload) {
+            this.removeUpload.addEventListener('click', () => this.clearUpload());
+        }
+    }
+
+    handleFileSelect(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const isImage = file.type.startsWith('image/');
+
+        if (isImage) {
+            // Handle image upload
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const base64 = e.target.result.split(',')[1];  // Remove data:image/...;base64, prefix
+                this.uploadedImage = base64;
+                this.uploadedFile = null;
+
+                // Show preview
+                this.imagePreview.src = e.target.result;
+                this.imagePreview.style.display = 'block';
+                this.filePreview.textContent = '';
+                this.filePreview.style.display = 'none';
+                this.uploadPreview.style.display = 'flex';
+            };
+            reader.readAsDataURL(file);
+        } else {
+            // Handle text file upload
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                this.uploadedFile = e.target.result;
+                this.uploadedImage = null;
+
+                // Show preview
+                this.imagePreview.style.display = 'none';
+                this.filePreview.textContent = `📄 ${file.name} (${this.formatFileSize(file.size)})`;
+                this.filePreview.style.display = 'block';
+                this.uploadPreview.style.display = 'flex';
+            };
+            reader.readAsText(file);
+        }
+
+        // Clear input so same file can be selected again
+        this.fileInput.value = '';
+    }
+
+    formatFileSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    clearUpload() {
+        this.uploadedImage = null;
+        this.uploadedFile = null;
+        this.uploadPreview.style.display = 'none';
+        this.imagePreview.src = '';
+        this.filePreview.textContent = '';
     }
 
     getCookie(name) {
@@ -92,19 +169,46 @@ class ChatHandler {
         this.currentConversationId = null;
     }
 
-    sendMessage() {
+    async sendMessage() {
         let content = this.messageInput.value.trim();
-        if (!content || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+        // Auto-create conversation if none exists
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            if (window.app && !window.app.currentConversation) {
+                await window.app.createConversation();
+                // Wait a bit for WebSocket to connect
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        }
 
         // Get current mode and prepend command if needed
         const mode = window.app ? window.app.getMode() : '';
         const displayContent = content;
+
+        // Check if we have an upload without text for img2img mode
+        if (mode === 'img2img' && this.uploadedImage && !content) {
+            this.addMessage('user', '[Uploaded image - please add a prompt]');
+            return;
+        }
+
+        // Need either content or a file upload
+        if (!content && !this.uploadedFile && !this.uploadedImage) return;
+
         if (mode) {
             content = `${mode} ${content}`;
         }
 
+        // Build display message
+        let displayMsg = displayContent;
+        if (this.uploadedImage) {
+            displayMsg = displayContent + ' [with image]';
+        } else if (this.uploadedFile) {
+            displayMsg = displayContent + ' [with file]';
+        }
+
         // Add user message to UI (show what user typed, not the command)
-        this.addMessage('user', displayContent);
+        this.addMessage('user', displayMsg || '[File uploaded]');
 
         // Clear input
         this.messageInput.value = '';
@@ -112,18 +216,32 @@ class ChatHandler {
 
         // Notify mascot
         if (window.mascotController) {
-            if (mode === 'geni') {
+            if (mode === 'geni' || mode === 'img2img') {
                 window.mascotController.onGeneratingImage();
             } else {
                 window.mascotController.onUserMessage();
             }
         }
 
-        // Send to server (with command prepended)
-        this.ws.send(JSON.stringify({
+        // Build message payload
+        const payload = {
             type: 'message',
             content: content
-        }));
+        };
+
+        // Include uploaded data
+        if (this.uploadedImage) {
+            payload.image_data = this.uploadedImage;
+        }
+        if (this.uploadedFile) {
+            payload.file_content = this.uploadedFile;
+        }
+
+        // Send to server (with command prepended)
+        this.ws.send(JSON.stringify(payload));
+
+        // Clear upload after sending
+        this.clearUpload();
 
         // Show typing indicator
         this.showTypingIndicator();

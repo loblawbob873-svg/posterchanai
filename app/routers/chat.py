@@ -159,7 +159,10 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                 if data.get("type") == "message":
                     content = data.get("content", "").strip()
-                    if not content:
+                    image_data = data.get("image_data")  # base64 image
+                    file_content = data.get("file_content")  # text file content
+
+                    if not content and not file_content:
                         continue
 
                     # Save user message
@@ -184,7 +187,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     if command:
                         # Execute command
                         last_prompt = manager.last_image_prompts.get(user.id)
-                        result = await command_service.execute_command(command, arg, last_prompt)
+                        result = await command_service.execute_command(
+                            command, arg, last_prompt,
+                            image_data=image_data,
+                            file_content=file_content
+                        )
 
                         # Track image prompts for regen
                         if result.get("type") == "generated_image" and result.get("prompt"):
@@ -212,6 +219,16 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         ]
                         for msg in conversation.messages[-20:]:  # Last 20 messages for context
                             messages.append({"role": msg.role, "content": msg.content})
+
+                        # Include file content if provided
+                        if file_content:
+                            messages.append({
+                                "role": "user",
+                                "content": f"Here is a file the user uploaded:\n\n```\n{file_content}\n```\n\nUser's message: {content}"
+                            })
+                        else:
+                            # Already added via conversation.messages, but ensure current message is included
+                            pass
 
                         # Stream response
                         full_response = ""

@@ -56,13 +56,24 @@
             <button class="quick-btn mode-btn" data-mode="search">Search</button>
             <button class="quick-btn mode-btn" data-mode="images">Images</button>
             <button class="quick-btn mode-btn" data-mode="geni">Generate</button>
-            <button class="quick-btn" data-cmd="help">Help</button>
+            <button class="quick-btn mode-btn" data-mode="img2img">Img2Img</button>
         </div>
 
         <!-- Input Area -->
         <div class="input-area">
-            <textarea id="messageInput" placeholder="Type a message or command..." rows="1"></textarea>
-            <button class="btn-send" id="sendBtn">Send</button>
+            <div class="upload-preview" id="uploadPreview" style="display: none;">
+                <img id="imagePreview" alt="Preview">
+                <div id="filePreview"></div>
+                <button class="btn-icon remove-upload" id="removeUpload">×</button>
+            </div>
+            <div class="input-row">
+                <label class="btn-icon upload-btn" title="Attach file or image">
+                    📎
+                    <input type="file" id="fileInput" accept="image/*,.txt,.py,.js,.ts,.json,.md,.csv,.html,.css" style="display: none;">
+                </label>
+                <textarea id="messageInput" placeholder="Type a message or command..." rows="1"></textarea>
+                <button class="btn-send" id="sendBtn">Send</button>
+            </div>
         </div>
     </main>
 </div>
