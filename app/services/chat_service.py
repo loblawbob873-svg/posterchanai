@@ -164,12 +164,10 @@ class ChatService:
 Include: character count (1girl, 2girls, 1boy, etc.), hair color, eye color, clothing, accessories, background/setting, art style (anime, realistic, etc.), pose, expression.
 Output ONLY tags, no sentences. Example: 1girl, orange hair, yellow eyes, black hoodie, stars pattern, white background, anime style, upper body"""
 
+        # Ollama uses a different format for vision - images array separate from content
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": [
-                {"type": "text", "text": "Describe this image with tags:"},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
-            ]}
+            {"role": "user", "content": "Describe this image with tags:", "images": [image_base64]}
         ]
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -249,6 +247,9 @@ RULES:
 20. Style change with color changes: apply style tag with weight 1.5, color tags with weight 2.0, use higher DENOISE (0.80) to allow more change
 21. CRITICAL: Only put in NEGATIVE what you are REPLACING - do NOT put clothing, accessories, or features in NEGATIVE unless user asked to change them
 22. CRITICAL: COPY most original tags to TAGS - only modify/remove the specific attributes user asked to change
+24. CLOTHING CHANGES (swimsuit, bikini, dress, etc.): weight 2.0, DENOISE 0.75, REMOVE original clothing/bondage tags from TAGS, add new clothing, put original clothing in NEGATIVE
+25. For swimsuit/bikini: add (swimsuit:2.0), (bikini:1.5), optionally add wet, water droplets for beach/pool vibes
+26. Bondage/rope to clothing: REMOVE rope, bondage, shibari, restraints from TAGS, add to NEGATIVE, add the new clothing type
 
 Examples:
 Tags: "1girl, blonde hair" Change: "red hair"
@@ -498,6 +499,16 @@ Tags: "1girl, brown hair, brown eyes, anime, portrait" Change: "gawr gura face, 
 DENOISE: 0.85
 TAGS: (gawr gura:2.5), (gawr gura \(hololive\):2.0), 1girl, blue hair, blue eyes, shark hair ornament, shark hoodie, anime, portrait, vibrant colors, sharp, high quality
 NEGATIVE: brown hair, brown eyes, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, blue hair, purple hair, blue eyes, bamboo forest, red rope, bondage, shibari, topless, nude, breasts, anime" Change: "swimsuit, anime"
+DENOISE: 0.75
+TAGS: 1girl, blue hair, purple hair, blue eyes, bamboo forest, (swimsuit:2.0), (bikini:1.5), wet, water droplets, anime, vibrant colors, sharp, high quality
+NEGATIVE: red rope, bondage, shibari, topless, nude, naked, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, solo, long hair, breasts, looking at viewer, blush, smile, open mouth, large breasts, black hair, dress, holding, cleavage, bare shoulders, jewelry, standing, collarbone, earrings, choker, fang, nail polish, black eyes, black dress, hands up, strapless, covered navel, black choker, strapless dress, red nails" Change: "dark brown skin afro hair, anime"
+DENOISE: 0.85
+TAGS: (afro:2.5), (afro hair:2.5), (dark brown skin:2.0), (brown skin:2.0), (dark-skinned female:2.0), 1girl, solo, breasts, looking at viewer, blush, smile, open mouth, large breasts, black eyes, dress, holding, cleavage, bare shoulders, jewelry, standing, collarbone, earrings, choker, fang, nail polish, black dress, hands up, strapless, covered navel, black choker, strapless dress, red nails, (anime:1.5), vibrant colors, sharp, high quality
+NEGATIVE: long hair, black hair, straight hair, pale skin, white skin, light skin, fair skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
 User wants: "cyberpunk city at night"
 DENOISE: 1.0

@@ -150,15 +150,18 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: dict[int, WebSocket] = {}
         self.connection_ids: dict[int, int] = {}  # Track connection ID per user to detect stale connections
+        self.conversation_ids: dict[int, int] = {}  # Track which conversation each user is connected to
         self.last_image_prompts: dict[int, str] = {}  # Track last image prompt per user
         self.stop_flags: dict[int, bool] = {}  # Stop streaming flags per user
+        self.pending_results: dict[tuple, list] = {}  # (user_id, conv_id) -> list of pending results
         self._next_conn_id = 0
 
-    async def connect(self, user_id: int, websocket: WebSocket) -> int:
+    async def connect(self, user_id: int, conversation_id: int, websocket: WebSocket) -> int:
         await websocket.accept()
         # Stop any previous streaming for this user (prevents messages going to wrong chat)
         self.stop_flags[user_id] = True
         self.active_connections[user_id] = websocket
+        self.conversation_ids[user_id] = conversation_id
         # Increment connection ID so old streams know they're stale
         self._next_conn_id += 1
         self.connection_ids[user_id] = self._next_conn_id
@@ -169,6 +172,7 @@ class ConnectionManager:
     def disconnect(self, user_id: int):
         self.active_connections.pop(user_id, None)
         self.stop_flags.pop(user_id, None)
+        self.conversation_ids.pop(user_id, None)
 
     def should_stop(self, user_id: int, conn_id: int = None) -> bool:
         # Stop if flag is set OR if connection ID doesn't match (user switched chats)
@@ -181,15 +185,37 @@ class ConnectionManager:
     def set_stop(self, user_id: int, value: bool):
         self.stop_flags[user_id] = value
 
-    async def send_json(self, user_id: int, data: dict, conn_id: int = None):
-        # Only send if connection ID matches (prevents sending to wrong chat)
+    def queue_result(self, user_id: int, conversation_id: int, data: dict):
+        """Queue a result for later delivery when user reconnects to this conversation"""
+        key = (user_id, conversation_id)
+        if key not in self.pending_results:
+            self.pending_results[key] = []
+        self.pending_results[key].append(data)
+        print(f"[QUEUE] Saved pending result for user {user_id}, conv {conversation_id}")
+
+    def get_pending_results(self, user_id: int, conversation_id: int) -> list:
+        """Get and clear pending results for a conversation"""
+        key = (user_id, conversation_id)
+        results = self.pending_results.pop(key, [])
+        if results:
+            print(f"[QUEUE] Delivering {len(results)} pending result(s) to user {user_id}, conv {conversation_id}")
+        return results
+
+    async def send_json(self, user_id: int, data: dict, conn_id: int = None, conversation_id: int = None):
+        # Check if connection ID matches (prevents sending to wrong chat)
         if conn_id is not None and self.connection_ids.get(user_id) != conn_id:
+            # Connection is stale - queue the result for later
+            if conversation_id is not None and data.get("type") == "response":
+                self.queue_result(user_id, conversation_id, data)
             return
         ws = self.active_connections.get(user_id)
         if ws:
             try:
                 await ws.send_json(data)
             except Exception:
+                # Failed to send - queue for later if it's a response
+                if conversation_id is not None and data.get("type") == "response":
+                    self.queue_result(user_id, conversation_id, data)
                 pass  # Connection may be closed
 
 
@@ -221,7 +247,15 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             return
 
         # Use manager.connect() which handles stopping old streams and returns connection ID
-        conn_id = await manager.connect(user.id, websocket)
+        conn_id = await manager.connect(user.id, conversation_id, websocket)
+
+        # Check for and deliver any pending results from previous sessions
+        pending = manager.get_pending_results(user.id, conversation_id)
+        for pending_data in pending:
+            try:
+                await websocket.send_json(pending_data)
+            except Exception:
+                pass
 
         chat_service = ChatService(db)
         command_service = CommandService(db)
@@ -229,7 +263,18 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
         try:
             while True:
-                data = await websocket.receive_json()
+                try:
+                    # Use receive_text to get better error info, then parse JSON
+                    raw_text = await websocket.receive_text()
+                    print(f"[DEBUG] Received raw text length: {len(raw_text)}")
+                    data = json.loads(raw_text)
+                except json.JSONDecodeError as json_err:
+                    print(f"[DEBUG] JSON parse failed: {json_err}")
+                    continue
+                except Exception as recv_err:
+                    print(f"[DEBUG] Failed to receive: {type(recv_err).__name__}: {recv_err}")
+                    raise
+                print(f"[DEBUG] Received: type={data.get('type')}, content={data.get('content', '')[:50] if data.get('content') else ''}, has_image={data.get('image_data') is not None}")
 
                 if data.get("type") == "stop":
                     manager.set_stop(user.id, True)
@@ -285,12 +330,20 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                     if command:
                         # Execute command
-                        last_prompt = manager.last_image_prompts.get(user.id)
-                        result = await command_service.execute_command(
-                            command, arg, last_prompt,
-                            image_data=image_data,
-                            file_content=file_content
-                        )
+                        try:
+                            print(f"[DEBUG] Executing command: {command} with arg: {arg[:50] if arg else ''}, has_image: {image_data is not None}")
+                            last_prompt = manager.last_image_prompts.get(user.id)
+                            result = await command_service.execute_command(
+                                command, arg, last_prompt,
+                                image_data=image_data,
+                                file_content=file_content
+                            )
+                            print(f"[DEBUG] Command result type: {result.get('type')}")
+                        except Exception as cmd_err:
+                            print(f"[DEBUG] Command execution failed: {type(cmd_err).__name__}: {cmd_err}")
+                            import traceback
+                            traceback.print_exc()
+                            result = {"type": "text", "content": f"Error: {cmd_err}"}
 
                         # Track image prompts for regen
                         if result.get("type") == "generated_image" and result.get("prompt"):
@@ -308,11 +361,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         db.add(assistant_msg)
                         db.commit()
 
-                        # Send response (with conn_id to ensure it goes to correct chat)
+                        # Send response (with conn_id to ensure it goes to correct chat, queue if stale)
                         await manager.send_json(user.id, {
                             "type": "response",
                             "data": result
-                        }, conn_id)
+                        }, conn_id, conversation_id)
                     else:
                         # Regular chat - stream response
                         # Build message history (exclude the just-added user message)

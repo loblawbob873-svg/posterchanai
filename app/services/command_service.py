@@ -105,6 +105,7 @@ class CommandService:
         }
 
     async def _img2img_command(self, prompt: str, image_data: Optional[str]) -> dict:
+        print(f"[IMG2IMG] Starting - prompt: {prompt[:50] if prompt else 'None'}, has_image: {image_data is not None}")
         if not prompt:
             return {"type": "text", "content": "Please provide a prompt describing what you want."}
 
@@ -113,8 +114,11 @@ class CommandService:
 
         try:
             # Decode base64 image
+            print(f"[IMG2IMG] Decoding base64 image, length: {len(image_data)}")
             image_bytes = base64.b64decode(image_data)
+            print(f"[IMG2IMG] Decoded to {len(image_bytes)} bytes")
         except Exception as e:
+            print(f"[IMG2IMG] Failed to decode image: {e}")
             return {"type": "text", "content": f"Invalid image data: {e}"}
 
         # First, analyze the image to get original tags
@@ -132,6 +136,13 @@ class CommandService:
         )
         if not result_image:
             return {"type": "text", "content": "Failed to transform image. Please try again."}
+
+        # Auto-log for training
+        try:
+            from regen_trainer import log_regen_request
+            log_regen_request(image_bytes, prompt, source_tags=original_tags)
+        except Exception as train_err:
+            print(f"[TRAINER] Log failed: {train_err}")
 
         return {
             "type": "generated_image",
