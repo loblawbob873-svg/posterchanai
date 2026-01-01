@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -25,7 +26,8 @@ if not logger.handlers:
 
 # Global model instance (singleton)
 _llama_instance: Optional["LlamaService"] = None
-_executor = ThreadPoolExecutor(max_workers=2)
+_executor = ThreadPoolExecutor(max_workers=1)  # Single worker to prevent concurrent inference
+_inference_lock = threading.Lock()  # Ensure only one inference at a time
 
 
 class LlamaService:
@@ -99,6 +101,8 @@ class LlamaService:
                 n_ctx=self.num_ctx,
                 n_gpu_layers=self.n_gpu_layers,
                 n_threads=self.n_threads,
+                n_batch=512,  # Larger batch for faster prompt processing
+                flash_attn=True,  # Enable flash attention if supported
                 verbose=False,
                 chat_format="chatml",  # Works with most models
             )
@@ -150,27 +154,28 @@ class LlamaService:
 
         params = self._get_sampling_params(**kwargs)
 
-        try:
-            result = self._model.create_chat_completion(
-                messages=messages,
-                **params
-            )
+        with _inference_lock:
+            try:
+                result = self._model.create_chat_completion(
+                    messages=messages,
+                    **params
+                )
 
-            # Strip thinking tags from response
-            content = result["choices"][0]["message"]["content"]
-            content = self.strip_thinking_tags(content)
-            result["choices"][0]["message"]["content"] = content
+                # Strip thinking tags from response
+                content = result["choices"][0]["message"]["content"]
+                content = self.strip_thinking_tags(content)
+                result["choices"][0]["message"]["content"] = content
 
-            return result
+                return result
 
-        except Exception as e:
-            logger.error(f"Chat completion error: {e}")
-            return {
-                "error": {
-                    "message": str(e),
-                    "type": "inference_error"
+            except Exception as e:
+                logger.error(f"Chat completion error: {e}")
+                return {
+                    "error": {
+                        "message": str(e),
+                        "type": "inference_error"
+                    }
                 }
-            }
 
     async def chat_completion(
         self,
@@ -202,6 +207,7 @@ class LlamaService:
         """
         Streaming chat completion.
         Yields SSE-formatted chunks compatible with OpenAI API.
+        Uses async queue to avoid blocking the event loop.
         """
         self._ensure_model_loaded()
 
@@ -210,83 +216,103 @@ class LlamaService:
         created = int(time.time())
         model_name = model or self.default_model
 
-        buffer = ""
-        thinking_done = False
+        queue = asyncio.Queue()
+        loop = asyncio.get_event_loop()
 
-        try:
-            # llama-cpp-python streaming is synchronous, run in executor
-            loop = asyncio.get_event_loop()
+        def run_streaming():
+            """Run synchronous generation in thread, put SSE chunks in queue"""
+            with _inference_lock:
+                try:
+                    for chunk in self._model.create_chat_completion(
+                        messages=messages,
+                        stream=True,
+                        **params
+                    ):
+                        content = ""
+                        if "choices" in chunk and len(chunk["choices"]) > 0:
+                            delta = chunk["choices"][0].get("delta", {})
+                            content = delta.get("content", "")
 
-            def generate():
-                return self._model.create_chat_completion(
+                        if content:
+                            sse_chunk = {
+                                "id": completion_id,
+                                "object": "chat.completion.chunk",
+                                "created": created,
+                                "model": model_name,
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {"content": content},
+                                    "finish_reason": None
+                                }]
+                            }
+                            loop.call_soon_threadsafe(
+                                queue.put_nowait,
+                                f"data: {json.dumps(sse_chunk)}\n\n"
+                            )
+
+                        # Check for finish
+                        if "choices" in chunk and len(chunk["choices"]) > 0:
+                            finish_reason = chunk["choices"][0].get("finish_reason")
+                            if finish_reason:
+                                break
+
+                    loop.call_soon_threadsafe(queue.put_nowait, "data: [DONE]\n\n")
+                except Exception as e:
+                    logger.error(f"Streaming error: {e}")
+                    error_chunk = {
+                        "error": {
+                            "message": str(e),
+                            "type": "inference_error"
+                        }
+                    }
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait,
+                        f"data: {json.dumps(error_chunk)}\n\n"
+                    )
+                finally:
+                    loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        # Start streaming in background thread
+        _executor.submit(run_streaming)
+
+        # Yield from queue as chunks arrive
+        while True:
+            chunk = await queue.get()
+            if chunk is None:
+                break
+            yield chunk
+
+    def stream_chat_content(
+        self,
+        messages: List[Dict[str, Any]],
+        **kwargs
+    ):
+        """
+        Direct content streaming generator (no SSE formatting).
+        For internal use by web UI - more efficient than parsing SSE.
+        """
+        self._ensure_model_loaded()
+        params = self._get_sampling_params(**kwargs)
+
+        with _inference_lock:
+            try:
+                for chunk in self._model.create_chat_completion(
                     messages=messages,
                     stream=True,
                     **params
-                )
+                ):
+                    if "choices" in chunk and len(chunk["choices"]) > 0:
+                        delta = chunk["choices"][0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield content
 
-            stream_gen = await loop.run_in_executor(_executor, generate)
-
-            for chunk in stream_gen:
-                content = ""
-                if "choices" in chunk and len(chunk["choices"]) > 0:
-                    delta = chunk["choices"][0].get("delta", {})
-                    content = delta.get("content", "")
-
-                if content:
-                    buffer += content
-
-                    # Handle thinking tags
-                    if not thinking_done:
-                        match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
-                        if match:
-                            thinking_done = True
-                            after_think = buffer[match.end():]
-                            if after_think:
-                                sse_chunk = {
-                                    "id": completion_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": created,
-                                    "model": model_name,
-                                    "choices": [{
-                                        "index": 0,
-                                        "delta": {"content": after_think},
-                                        "finish_reason": None
-                                    }]
-                                }
-                                yield f"data: {json.dumps(sse_chunk)}\n\n"
-                            buffer = after_think
-                    else:
-                        # Normal content streaming
-                        sse_chunk = {
-                            "id": completion_id,
-                            "object": "chat.completion.chunk",
-                            "created": created,
-                            "model": model_name,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": content},
-                                "finish_reason": None
-                            }]
-                        }
-                        yield f"data: {json.dumps(sse_chunk)}\n\n"
-
-                # Check for finish
-                if "choices" in chunk and len(chunk["choices"]) > 0:
-                    finish_reason = chunk["choices"][0].get("finish_reason")
-                    if finish_reason:
-                        break
-
-            yield "data: [DONE]\n\n"
-
-        except Exception as e:
-            logger.error(f"Streaming error: {e}")
-            error_chunk = {
-                "error": {
-                    "message": str(e),
-                    "type": "inference_error"
-                }
-            }
-            yield f"data: {json.dumps(error_chunk)}\n\n"
+                        finish_reason = chunk["choices"][0].get("finish_reason")
+                        if finish_reason:
+                            break
+            except Exception as e:
+                logger.error(f"Stream content error: {e}")
+                yield f"Error: {e}"
 
     async def list_models(self) -> List[Dict[str, Any]]:
         """List available models (returns the loaded model)"""

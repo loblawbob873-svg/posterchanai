@@ -84,7 +84,13 @@ class IPEXService:
         try:
             # Check if GGUF model - use llama.cpp backend
             if self.model_path.endswith('.gguf'):
-                from ipex_llm.llama_cpp import Llama
+                # Try ipex_llm.llama_cpp first, fall back to regular llama_cpp
+                try:
+                    from ipex_llm.llama_cpp import Llama
+                    logger.info("Using IPEX-LLM llama.cpp backend")
+                except ImportError as e:
+                    logger.warning(f"IPEX-LLM llama.cpp not available ({e}), using standard llama-cpp-python")
+                    from llama_cpp import Llama
 
                 self._model = Llama(
                     model_path=self.model_path,
@@ -94,7 +100,7 @@ class IPEXService:
                 )
                 self._tokenizer = None  # llama.cpp handles tokenization
                 self._is_gguf = True
-                logger.info("GGUF model loaded with IPEX-LLM llama.cpp backend")
+                logger.info("GGUF model loaded successfully")
             else:
                 # Load HuggingFace model with IPEX-LLM
                 import torch

@@ -1,11 +1,15 @@
-import httpx
 import json
 import re
 import asyncio
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, Optional
 from sqlalchemy.orm import Session
 from app.models import Setting
+from app.services.inference_factory import get_inference_service
+
+# Thread pool for running synchronous generators
+_stream_executor = ThreadPoolExecutor(max_workers=4)
 
 # Import WD14 tagger from posterchan's comfyui module
 import sys
@@ -19,32 +23,13 @@ class ChatService:
         self._load_settings()
 
     def _load_settings(self):
+        """Load settings - inference factory handles all backend-specific settings"""
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
-        # Use Ollama directly
-        self.ollama_url = settings.get("ollama_url", "http://localhost:11434")
-        self.model = settings.get("ollama_model", "llama3")
-        self.timeout = int(settings.get("ollama_timeout", "120000")) / 1000  # Convert to seconds
         self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
-
-        # Advanced model settings
+        # These are used for chat_stream kwargs
         self.temperature = float(settings.get("ollama_temperature", "0.7"))
         self.top_p = float(settings.get("ollama_top_p", "0.9"))
-        self.top_k = int(settings.get("ollama_top_k", "40"))
-        self.repeat_penalty = float(settings.get("ollama_repeat_penalty", "1.1"))
-        self.num_ctx = int(settings.get("ollama_num_ctx", "4096"))
         self.num_predict = int(settings.get("ollama_num_predict", "2048"))
-        # keep_alive: -1 = forever, 0 = unload immediately, positive = seconds
-        keep_alive_str = settings.get("ollama_keep_alive", "-1")
-        self.keep_alive = int(keep_alive_str) if keep_alive_str.lstrip('-').isdigit() else -1
-        self.stop_sequences = [s.strip() for s in settings.get("ollama_stop", "").split(",") if s.strip()]
-
-        # Additional advanced settings (consistent with OllamaService)
-        seed_str = settings.get("ollama_seed", "")
-        self.seed = int(seed_str) if seed_str.strip() else None
-        self.mirostat = int(settings.get("ollama_mirostat", "0"))
-        self.mirostat_eta = float(settings.get("ollama_mirostat_eta", "0.1"))
-        self.mirostat_tau = float(settings.get("ollama_mirostat_tau", "5.0"))
-        self.tfs_z = float(settings.get("ollama_tfs_z", "1.0"))
 
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
@@ -54,109 +39,117 @@ class ChatService:
             return response[last_match.end():].strip()
         return response
 
-    def _get_options(self) -> dict:
-        """Get Ollama model options (consistent with OllamaService)"""
-        options = {
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "top_k": self.top_k,
-            "repeat_penalty": self.repeat_penalty,
-            "num_ctx": self.num_ctx,
-            "num_predict": self.num_predict,
-            "mirostat": self.mirostat,
-            "mirostat_eta": self.mirostat_eta,
-            "mirostat_tau": self.mirostat_tau,
-            "tfs_z": self.tfs_z,
-        }
-
-        # Add seed if set
-        if self.seed is not None:
-            options["seed"] = self.seed
-
-        # Add stop sequences if set
-        if self.stop_sequences:
-            options["stop"] = self.stop_sequences
-
-        return options
-
     async def chat(self, messages: list[dict]) -> str:
-        """Non-streaming chat completion using native Ollama API"""
-        if not self.ollama_url:
-            return "Error: Ollama not configured. Please ask an admin to configure it."
-
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                response = await client.post(
-                    f"{self.ollama_url}/api/chat",
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "stream": False,
-                        "options": self._get_options(),
-                        "keep_alive": self.keep_alive
-                    }
-                )
-                response.raise_for_status()
-                data = response.json()
-                content = data["message"]["content"]
-                return self.strip_thinking_tags(content)
-            except httpx.HTTPStatusError as e:
-                return f"Error: API returned status {e.response.status_code}"
-            except Exception as e:
-                return f"Error: {str(e)}"
+        """Non-streaming chat completion using inference factory"""
+        try:
+            service = get_inference_service(self.db)
+            result = await service.chat_completion(
+                messages=messages,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                max_tokens=self.num_predict
+            )
+            if "error" in result:
+                return f"Error: {result['error'].get('message', 'Unknown error')}"
+            content = result["choices"][0]["message"]["content"]
+            return self.strip_thinking_tags(content)
+        except Exception as e:
+            return f"Error: {str(e)}"
 
     async def chat_stream(self, messages: list[dict]) -> AsyncGenerator[str, None]:
-        """Streaming chat completion using native Ollama API"""
-        if not self.ollama_url:
-            yield "Error: Ollama not configured. Please ask an admin to configure it."
-            return
+        """Streaming chat completion - uses async queue to avoid blocking event loop"""
+        try:
+            service = get_inference_service(self.db)
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                async with client.stream(
-                    "POST",
-                    f"{self.ollama_url}/api/chat",
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "stream": True,
-                        "options": self._get_options(),
-                        "keep_alive": self.keep_alive
-                    }
-                ) as response:
-                    response.raise_for_status()
-                    buffer = ""
-                    thinking_done = False
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
+            # Use direct content streaming for native backend
+            if hasattr(service, 'stream_chat_content'):
+                queue = asyncio.Queue()
+                loop = asyncio.get_event_loop()
+
+                def run_streaming():
+                    """Run synchronous generator in thread, put results in queue"""
+                    try:
+                        for content in service.stream_chat_content(
+                            messages=messages,
+                            temperature=self.temperature,
+                            top_p=self.top_p,
+                            max_tokens=self.num_predict
+                        ):
+                            loop.call_soon_threadsafe(queue.put_nowait, content)
+                    except Exception as e:
+                        loop.call_soon_threadsafe(queue.put_nowait, f"Error: {e}")
+                    finally:
+                        loop.call_soon_threadsafe(queue.put_nowait, None)  # Signal end
+
+                # Start streaming in background thread
+                _stream_executor.submit(run_streaming)
+
+                # Process queue with think tag filtering
+                buffer = ""
+                thinking_mode = None  # None=unknown, True=in thinking, False=no thinking
+
+                while True:
+                    content = await queue.get()
+                    if content is None:
+                        break
+
+                    if content.startswith("Error:"):
+                        yield content
+                        return
+
+                    buffer += content
+
+                    if thinking_mode is None:
+                        # Check if model started with <think> tag
+                        if '<think' in buffer.lower():
+                            thinking_mode = True
+                        elif len(buffer) > 20:
+                            # No think tag in first 20 chars - assume no thinking
+                            thinking_mode = False
+                            yield buffer
+                            buffer = ""
+
+                    if thinking_mode is True:
+                        # In thinking mode - look for end tag
+                        match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
+                        if match:
+                            thinking_mode = False
+                            after_think = buffer[match.end():]
+                            buffer = ""
+                            if after_think.strip():
+                                yield after_think
+                    elif thinking_mode is False:
+                        # Not thinking - stream directly
+                        yield content
+                        buffer = ""
+
+                # Yield any remaining buffer
+                if buffer:
+                    # Strip think tags if present
+                    clean = self.strip_thinking_tags(buffer)
+                    if clean:
+                        yield clean
+            else:
+                # Fallback to SSE parsing for Ollama
+                async for chunk in service.chat_completion_stream(
+                    messages=messages,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.num_predict
+                ):
+                    if chunk.startswith("data: "):
+                        data_str = chunk[6:].strip()
+                        if data_str == "[DONE]":
+                            break
                         try:
-                            data = json.loads(line)
-                            content = data.get("message", {}).get("content", "")
+                            data = json.loads(data_str)
+                            content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                             if content:
-                                buffer += content
-                                # Check if we're past thinking tags
-                                if not thinking_done:
-                                    match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
-                                    if match:
-                                        thinking_done = True
-                                        # Yield everything after the closing tag
-                                        after_think = buffer[match.end():]
-                                        if after_think:
-                                            yield after_think
-                                        buffer = after_think
-                                    # Don't yield if we're still in thinking mode
-                                else:
-                                    yield content
-                            # Check if done
-                            if data.get("done", False):
-                                break
+                                yield content
                         except json.JSONDecodeError:
                             continue
-            except httpx.HTTPStatusError as e:
-                yield f"Error: API returned status {e.response.status_code}"
-            except Exception as e:
-                yield f"Error: {str(e)}"
+        except Exception as e:
+            yield f"Error: {str(e)}"
 
 
     async def analyze_image_tags(self, image_base64: str) -> str:
@@ -190,9 +183,6 @@ class ChatService:
         original_tags: tags describing the source image (from vision analysis)
         Returns: (prompt, denoise, negative_prompt)
         """
-        if not self.ollama_url:
-            # Fallback: use user prompt directly with high denoise
-            return user_prompt + ", vibrant colors, sharp, high quality", 1.0, "bad quality, blurry, distorted"
 
         system_prompt = """Output EXACTLY 3 lines. NO explanations. ONLY tags.
 DENOISE: <number>
@@ -545,58 +535,50 @@ NEGATIVE: daytime, rural, deformed, blurry, distorted, extra people"""
             {"role": "user", "content": user_message}
         ]
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                response = await client.post(
-                    f"{self.ollama_url}/api/chat",
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "options": {
-                            "temperature": 0.2,
-                            "num_predict": 400,
-                            "num_ctx": self.num_ctx
-                        },
-                        "stream": False,
-                        "keep_alive": self.keep_alive
-                    }
-                )
-                response.raise_for_status()
-                data = response.json()
-                content = data["message"]["content"]
+        try:
+            service = get_inference_service(self.db)
+            result = await service.chat_completion(
+                messages=messages,
+                temperature=0.2,
+                max_tokens=400
+            )
 
-                # Strip thinking tags
-                content = self.strip_thinking_tags(content)
-
-                # Parse response
-                denoise = 1.0
-                tags = user_prompt
-                negative = "bad quality, blurry, distorted, deformed"
-
-                denoise_match = re.search(r'DENOISE:\s*([\d.]+)', content)
-                tags_match = re.search(r'TAGS:\s*(.+?)(?:\n|$)', content)
-                negative_match = re.search(r'NEGATIVE:\s*(.+?)(?:\n|$)', content)
-
-                if denoise_match:
-                    try:
-                        denoise = float(denoise_match.group(1))
-                        denoise = max(0.20, min(1.0, denoise))
-                    except ValueError:
-                        pass
-
-                if tags_match:
-                    tags = tags_match.group(1).strip().strip('"').strip("'")
-
-                if negative_match:
-                    negative = negative_match.group(1).strip().strip('"').strip("'")
-
-                print(f"[IMG2IMG] Denoise: {denoise}, Tags: {tags[:80]}...")
-                print(f"[IMG2IMG] Negative: {negative[:80]}...")
-                return tags, denoise, negative
-
-            except Exception as e:
-                print(f"[IMG2IMG] Prompt modification failed: {e}")
+            if "error" in result:
+                print(f"[IMG2IMG] Inference error: {result['error']}")
                 return user_prompt + ", vibrant colors, sharp, high quality", 1.0, "bad quality, blurry, distorted"
+
+            content = result["choices"][0]["message"]["content"]
+            content = self.strip_thinking_tags(content)
+
+            # Parse response
+            denoise = 1.0
+            tags = user_prompt
+            negative = "bad quality, blurry, distorted, deformed"
+
+            denoise_match = re.search(r'DENOISE:\s*([\d.]+)', content)
+            tags_match = re.search(r'TAGS:\s*(.+?)(?:\n|$)', content)
+            negative_match = re.search(r'NEGATIVE:\s*(.+?)(?:\n|$)', content)
+
+            if denoise_match:
+                try:
+                    denoise = float(denoise_match.group(1))
+                    denoise = max(0.20, min(1.0, denoise))
+                except ValueError:
+                    pass
+
+            if tags_match:
+                tags = tags_match.group(1).strip().strip('"').strip("'")
+
+            if negative_match:
+                negative = negative_match.group(1).strip().strip('"').strip("'")
+
+            print(f"[IMG2IMG] Denoise: {denoise}, Tags: {tags[:80]}...")
+            print(f"[IMG2IMG] Negative: {negative[:80]}...")
+            return tags, denoise, negative
+
+        except Exception as e:
+            print(f"[IMG2IMG] Prompt modification failed: {e}")
+            return user_prompt + ", vibrant colors, sharp, high quality", 1.0, "bad quality, blurry, distorted"
 
 
 def get_chat_service(db: Session) -> ChatService:

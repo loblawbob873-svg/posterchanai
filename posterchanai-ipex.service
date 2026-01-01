@@ -1,0 +1,16 @@
+[Unit]
+Description=Posterchan AI (IPEX-LLM)
+After=network.target
+
+[Service]
+Type=simple
+User=verita84
+WorkingDirectory=/home/verita84/posterchanai
+Environment="PATH=/home/verita84/posterchanai/venv-ipex/bin:/usr/local/bin:/usr/bin"
+Environment="VIRTUAL_ENV=/home/verita84/posterchanai/venv-ipex"
+ExecStart=/home/verita84/posterchanai/run-ipex.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
