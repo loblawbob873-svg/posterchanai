@@ -42,7 +42,8 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 
 ### System
 - User registration (admin configurable)
-- Ollama health check with auto-restart
+- LLM health check with auto-recovery (supports Native, IPEX, and Ollama backends)
+- GPU VRAM monitoring with automatic model reload when memory threshold exceeded
 - PWA support (installable on mobile/desktop)
 
 ## Installation
@@ -432,25 +433,57 @@ Key settings for WebSocket and streaming:
 - `proxy_buffering off` - Disable buffering for SSE streaming
 - Long timeouts for AI generation requests
 
-## Ollama Health Check
+## LLM Health Check
 
-Posterchanai includes an automatic health check that monitors Ollama and restarts it if unresponsive.
+Posterchanai includes an automatic health check that monitors the LLM backend and recovers if unresponsive. Works with all backends: Native GPU, IPEX-LLM, and Ollama.
 
 ### Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `ollama_ping_enabled` | false | Enable/disable health check |
-| `ollama_ping_interval` | 90 | Seconds between pings |
-| `ollama_restart_after_failures` | 2 | Consecutive failures before restart |
-| `ollama_restart_command` | `sudo systemctl restart ollama` | Command to restart Ollama |
+| `ollama_ping_interval` | 120 | Seconds between health checks |
+| `ollama_restart_after_failures` | 2 | Consecutive failures before recovery |
+| `ollama_restart_command` | `sudo systemctl restart ollama` | Command to restart Ollama (Ollama backend only) |
+
+### GPU VRAM Monitoring
+
+The health check can also monitor GPU memory usage and automatically reload the model when VRAM exceeds a threshold. This prevents out-of-memory crashes from memory fragmentation over time.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `gpu_memory_check_enabled` | false | Enable GPU VRAM monitoring |
+| `gpu_memory_threshold` | 99 | VRAM usage percentage to trigger reload |
+| `gpu_type` | nvidia | GPU type: `nvidia` or `intel` |
+
+**Supported GPUs:**
+- **NVIDIA**: Uses `nvidia-smi` to query memory
+- **Intel Arc**: Uses debugfs via sudo helper script (`scripts/gpu_memory.sh`)
+
+**Intel Arc Setup:**
+
+For Intel Arc GPUs, the helper script needs passwordless sudo access:
+
+```bash
+# Add to sudoers (run once)
+echo 'youruser ALL=(root) NOPASSWD: /path/to/posterchanai/scripts/gpu_memory.sh' | \
+    sudo tee /etc/sudoers.d/gpu_memory
+sudo chmod 440 /etc/sudoers.d/gpu_memory
+```
 
 ### How it works
 
-1. Sends a test prompt to Ollama every 90 seconds
-2. If Ollama fails to respond, increments failure counter
-3. After 5 consecutive failures, executes restart command
-4. Logs all activity: `[HEALTH] Ping OK` or `[HEALTH] Ping FAILED (1/5)`
+1. Checks if the LLM backend is responsive every 120 seconds
+   - **Native/IPEX**: Verifies model is loaded in memory
+   - **Ollama**: Pings the Ollama API
+2. If check fails, increments failure counter
+3. After consecutive failures, triggers recovery:
+   - **Native/IPEX**: Reloads the model in-process
+   - **Ollama**: Executes the configured restart command
+4. If GPU memory monitoring is enabled and VRAM >= threshold:
+   - Logs: `GPU VRAM usage at 99.2% (>= 99% threshold) - triggering model reload to free memory`
+   - Reloads the model to free fragmented VRAM
+5. All activity logged with `[HEALTH]` prefix
 
 ## Architecture
 
