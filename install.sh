@@ -45,6 +45,125 @@ print_error() {
     echo -e "${RED}✗ $1${NC}"
 }
 
+detect_distro() {
+    if [ -f /etc/gentoo-release ]; then
+        DISTRO="gentoo"
+    elif [ -f /etc/arch-release ]; then
+        DISTRO="arch"
+    elif [ -f /etc/debian_version ]; then
+        DISTRO="debian"
+    elif [ -f /etc/fedora-release ]; then
+        DISTRO="fedora"
+    else
+        DISTRO="unknown"
+    fi
+}
+
+check_dependencies() {
+    print_step "Checking system dependencies..."
+
+    MISSING_DEPS=""
+
+    # Check for Python 3.10+
+    if ! command -v python3 &>/dev/null; then
+        MISSING_DEPS="$MISSING_DEPS python3"
+    else
+        PY_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+        if [ "$(echo "$PY_VERSION < 3.10" | bc -l 2>/dev/null || echo 1)" = "1" ]; then
+            print_warning "Python $PY_VERSION detected. Python 3.10+ recommended."
+        else
+            print_success "Python $PY_VERSION"
+        fi
+    fi
+
+    # Check for pip
+    if ! command -v pip3 &>/dev/null && ! python3 -m pip --version &>/dev/null 2>&1; then
+        MISSING_DEPS="$MISSING_DEPS pip"
+    fi
+
+    # Check for gcc (needed to compile llama-cpp-python)
+    if ! command -v gcc &>/dev/null; then
+        MISSING_DEPS="$MISSING_DEPS gcc"
+    fi
+
+    # Check for cmake
+    if ! command -v cmake &>/dev/null; then
+        MISSING_DEPS="$MISSING_DEPS cmake"
+    fi
+
+    # Check for git
+    if ! command -v git &>/dev/null; then
+        MISSING_DEPS="$MISSING_DEPS git"
+    fi
+
+    if [ -n "$MISSING_DEPS" ]; then
+        print_error "Missing dependencies:$MISSING_DEPS"
+        echo ""
+        show_install_instructions
+        exit 1
+    fi
+
+    print_success "All base dependencies found"
+}
+
+show_install_instructions() {
+    detect_distro
+
+    echo -e "${YELLOW}Please install the required packages:${NC}"
+    echo ""
+
+    case "$DISTRO" in
+        gentoo)
+            echo -e "${BOLD}Gentoo Linux:${NC}"
+            echo ""
+            echo "  # Base dependencies"
+            echo "  emerge -av dev-lang/python dev-python/pip dev-build/cmake sys-devel/gcc"
+            echo ""
+            echo "  # For Intel Arc GPU (optional):"
+            echo "  emerge -av dev-libs/intel-compute-runtime dev-libs/level-zero"
+            echo "  # Install Intel oneAPI from Intel's repo or manually"
+            echo "  # See: https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html"
+            echo ""
+            echo "  # For NVIDIA GPU (optional):"
+            echo "  emerge -av x11-drivers/nvidia-drivers dev-util/nvidia-cuda-toolkit"
+            echo ""
+            echo "  # For OCR support (optional):"
+            echo "  emerge -av app-text/tesseract"
+            echo ""
+            echo "  # For PDF support (optional):"
+            echo "  emerge -av app-text/poppler"
+            echo ""
+            echo "  # For HEIC image support (optional):"
+            echo "  emerge -av media-libs/libheif"
+            ;;
+        arch)
+            echo -e "${BOLD}Arch Linux:${NC}"
+            echo "  pacman -S python python-pip cmake gcc git"
+            echo ""
+            echo "  # For Intel Arc GPU: Install intel-oneapi-basekit from AUR"
+            echo "  # For NVIDIA GPU: pacman -S nvidia cuda"
+            ;;
+        debian)
+            echo -e "${BOLD}Debian/Ubuntu:${NC}"
+            echo "  apt install python3 python3-pip python3-venv cmake build-essential git"
+            echo ""
+            echo "  # For Intel Arc GPU:"
+            echo "  # See: https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html"
+            echo "  # For NVIDIA GPU: apt install nvidia-driver nvidia-cuda-toolkit"
+            ;;
+        fedora)
+            echo -e "${BOLD}Fedora:${NC}"
+            echo "  dnf install python3 python3-pip cmake gcc-c++ git"
+            echo ""
+            echo "  # For NVIDIA GPU: dnf install nvidia-driver cuda"
+            ;;
+        *)
+            echo "  Please install: python3, pip, cmake, gcc, git"
+            ;;
+    esac
+    echo ""
+}
+
 detect_gpu() {
     print_step "Detecting GPU..."
 
@@ -408,8 +527,31 @@ print_summary() {
     echo ""
 }
 
+# Handle --help and --packages options
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Posterchanai Installer"
+    echo ""
+    echo "Usage: ./install.sh [options]"
+    echo ""
+    echo "Options:"
+    echo "  --help, -h       Show this help message"
+    echo "  --packages       Show required packages for your distro"
+    echo ""
+    exit 0
+fi
+
+if [ "$1" = "--packages" ]; then
+    print_banner
+    detect_distro
+    echo -e "${BOLD}Required packages for your system:${NC}"
+    echo ""
+    show_install_instructions
+    exit 0
+fi
+
 # Main
 print_banner
+check_dependencies
 detect_gpu
 select_backend
 setup_directories

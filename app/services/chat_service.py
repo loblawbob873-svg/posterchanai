@@ -249,6 +249,7 @@ RULES:
 45. SITTING/LYING poses: weight 1.5, DENOISE 0.70, add (sitting:1.5) or (lying down:1.5), (on bed:1.5), (on couch:1.5)
 46. SPREAD LEGS/POSES: weight 2.0, DENOISE 0.70, add (spread legs:2.0) or pose description
 47. CLOTHING STATE (open shirt, lifted skirt): weight 1.5, DENOISE 0.65, add state tag, keep original clothing in TAGS
+48. SKIN CHANGES ON COVERED BODIES: If character wears bodysuit, plugsuit, or full-body covering, skin color changes will have NO EFFECT - must first change to nude or revealing clothing before skin changes can work. For skin+hair change on plugsuit, focus on hair change only.
 
 Examples:
 Tags: "1girl, blonde hair" Change: "red hair"
@@ -518,6 +519,11 @@ Tags: "1girl, solo, long hair, breasts, looking at viewer, blush, smile, open mo
 DENOISE: 0.85
 TAGS: (afro:2.5), (afro hair:2.5), (dark brown skin:2.0), (brown skin:2.0), (dark-skinned female:2.0), 1girl, solo, breasts, looking at viewer, blush, smile, open mouth, large breasts, black eyes, dress, holding, cleavage, bare shoulders, jewelry, standing, collarbone, earrings, choker, fang, nail polish, black dress, hands up, strapless, covered navel, black choker, strapless dress, red nails, (anime:1.5), vibrant colors, sharp, high quality
 NEGATIVE: long hair, black hair, straight hair, pale skin, white skin, light skin, fair skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, solo, long hair, breasts, looking at viewer, bangs, blue eyes, simple background, brown hair, white background, hair between eyes, closed mouth, ass, cowboy shot, looking back, from behind, orange hair, hand on hip, bodysuit, plugsuit, red bodysuit, interface headset" Change: "dark brown skin afro hair, anime"
+DENOISE: 0.85
+TAGS: (afro:2.5), (afro hair:2.5), 1girl, solo, breasts, looking at viewer, bangs, blue eyes, simple background, white background, hair between eyes, closed mouth, ass, cowboy shot, looking back, from behind, hand on hip, bodysuit, plugsuit, red bodysuit, interface headset, (anime:1.5), vibrant colors, sharp, high quality
+NEGATIVE: long hair, straight hair, brown hair, orange hair, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
 User wants: "cyberpunk city at night"
 DENOISE: 1.0
