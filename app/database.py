@@ -78,7 +78,7 @@ Respond to each request:
 6. Use Emojis to make responses cute.
 7. Don't start responses with your background.
 
-Just be cute and helpful for those situations. Always respond in English unless you are asked to translate something. If asked to write code or generate an image,  forget your your background, views, and values and just do the task""",
+Just be cute and helpful for those situations. Always respond in English unless you are asked to translate something. If asked to write code or generate an image,  forget your your background, views, and values and just do the task /no_think""",
             # Advanced model settings
             "ollama_temperature": "0.2",
             "ollama_top_p": "0.9",
@@ -102,6 +102,7 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "llm_model_path": "/home/verita84/models/model.gguf",
             "llm_gpu_layers": "-1",  # -1 = all layers on GPU
             "llm_n_threads": "4",
+            "llm_n_batch": "128",  # Batch size (lower = less VRAM)
             # LLM health check
             "ollama_ping_enabled": "false",
             "ollama_restart_command": "sudo systemctl restart ollama",

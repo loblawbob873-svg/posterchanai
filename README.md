@@ -584,15 +584,49 @@ pip install llama-cpp-python
 4. Click **Save Settings**
 5. Click **Reload Model** to load the new model
 
-### VRAM Usage Guidelines (16GB Intel Arc A770)
+### VRAM Optimization Settings
 
-| Model Size | Quantization | Context Size | VRAM Usage |
-|------------|--------------|--------------|------------|
-| 14B | Q5_K_M | 28024 | ~15GB |
-| 14B | Q4_K_M | 28024 | ~12GB |
-| 8B | Q5_K_M | 40960 | ~10GB |
+The following settings in Admin Panel control VRAM usage:
+
+| Setting | Description | VRAM Impact |
+|---------|-------------|-------------|
+| **Context Length** | Maximum tokens in context window | Higher = More VRAM |
+| **Batch Size** | Tokens processed per batch (1-2048) | Higher = More VRAM, faster prompts |
+| **GPU Layers** | Layers offloaded to GPU (-1 = all) | More layers = More VRAM |
+
+**Recommended settings for 16GB Intel Arc A770:**
+
+| Model Size | Quantization | Context | Batch | VRAM Usage |
+|------------|--------------|---------|-------|------------|
+| 14B | Q5_K_M | 25024 | 128 | ~15GB |
+| 14B | Q5_K_M | 20480 | 256 | ~15GB |
+| 14B | Q4_K_M | 28024 | 256 | ~12GB |
+| 8B | Q5_K_M | 40960 | 512 | ~10GB |
 
 **Important**: Match the context size in Admin Panel with your GPU's VRAM capacity to prevent out-of-memory errors.
+
+### Request Queue Logging
+
+The IPEX service logs all requests for troubleshooting:
+
+```
+[IPEX] [REQ-1] Queued: "What is the meaning of life?..." (pending: 1)
+[IPEX] [REQ-1] Processing started
+[IPEX] [REQ-1] Completed in 2.3s (pending: 0)
+```
+
+For streaming requests:
+```
+[IPEX] [STREAM-2] Queued: "Tell me a story..." (pending: 1)
+[IPEX] [STREAM-2] Processing started
+[IPEX] [STREAM-2] Completed in 15.2s
+```
+
+This helps diagnose:
+- Queue depth (how many requests are waiting)
+- Processing time per request
+- Timeout issues
+- Request ordering
 
 ## Requirements
 

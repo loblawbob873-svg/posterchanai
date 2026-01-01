@@ -8,14 +8,8 @@ User=verita84
 Group=verita84
 WorkingDirectory=/home/verita84/posterchanai
 
-# Intel oneAPI environment for native GPU inference (SYCL)
-Environment="PATH=/home/verita84/posterchanai/venv/bin:/home/verita84/intel/oneapi/compiler/2025.3/bin:/home/verita84/intel/oneapi/2025.3/bin:/usr/local/bin:/usr/bin:/bin"
-Environment="LD_LIBRARY_PATH=/home/verita84/intel/oneapi/compiler/2025.3/lib:/home/verita84/intel/oneapi/2025.3/lib:/home/verita84/intel/oneapi/mkl/2025.3/lib:/home/verita84/intel/oneapi/tbb/2022.3/lib"
-Environment="ONEAPI_ROOT=/home/verita84/intel/oneapi"
-Environment="OCL_ICD_FILENAMES=/usr/lib64/libintelocl.so"
-Environment="ZES_ENABLE_SYSMAN=1"
-
-ExecStart=/home/verita84/posterchanai/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 3051
+# Uses start.sh to properly source Intel oneAPI environment
+ExecStart=/home/verita84/posterchanai/start.sh
 Restart=always
 RestartSec=5
 

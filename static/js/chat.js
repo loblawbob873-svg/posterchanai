@@ -404,7 +404,8 @@ class ChatHandler {
         }
 
         // Add user message to UI (show what user typed, not the command)
-        this.lastUserMessage = this.addMessage('user', displayMsg || '[File uploaded]');
+        // skipUserButtons=true because we add them manually below with proper cleanup
+        this.lastUserMessage = this.addMessage('user', displayMsg || '[File uploaded]', false, true);
 
         // Add action buttons to user message
         const userContentEl = this.lastUserMessage.querySelector('.message-content');
@@ -924,7 +925,7 @@ class ChatHandler {
         this.ws.send(JSON.stringify(payload));
     }
 
-    addMessage(role, content, isHtml = false) {
+    addMessage(role, content, isHtml = false, skipUserButtons = false) {
         const messageEl = document.createElement('div');
         messageEl.className = `message ${role}`;
 
@@ -950,8 +951,8 @@ class ChatHandler {
             copyBtn.onclick = () => this.copyText(contentEl.textContent);
             contentEl.appendChild(copyBtn);
 
-            // Add edit button for user messages (for editing and resubmitting)
-            if (role === 'user') {
+            // Add edit button for user messages (only when loading history, not when sending)
+            if (role === 'user' && !skipUserButtons) {
                 const editBtn = document.createElement('button');
                 editBtn.className = 'btn-edit';
                 editBtn.innerHTML = '✏️';

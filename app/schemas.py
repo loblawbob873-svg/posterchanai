@@ -90,7 +90,13 @@ class SettingsResponse(BaseModel):
     tts_rate: str = "+5%"
     tts_pitch: str = "+10Hz"
     upload_path: str = "/var/lib/posterchanai"
-    # Ollama settings
+    # LLM Backend settings
+    llm_backend: str = "native"  # "native" or "ollama"
+    llm_model_path: str = ""
+    llm_gpu_layers: str = "-1"
+    llm_n_threads: str = "4"
+    llm_n_batch: str = "128"  # Batch size for prompt processing (lower = less VRAM)
+    # Ollama settings (also used for native backend sampling parameters)
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "richardyoung/qwen3-14b-abliterated:Q5_K_M"
     ollama_timeout: str = "120000"

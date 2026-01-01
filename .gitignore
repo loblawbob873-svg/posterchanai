@@ -63,3 +63,4 @@ htmlcov/
 # Uploads/Generated files
 uploads/
 generated/
+venv-ipex/

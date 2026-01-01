@@ -36,8 +36,10 @@ def _get_settings(db: Session) -> dict:
         "ollama_url": settings.get("ollama_url", "http://localhost:11434"),
         "ollama_model": settings.get("ollama_model", "llama3"),
         "model_path": settings.get("llm_model_path", ""),
-        "ping_interval": int(settings.get("ollama_ping_interval", "90")),
-        "restart_after_failures": int(settings.get("ollama_restart_after_failures", "5")),
+        # 120 seconds (2 min) interval for IPEX/Intel Arc GPU health check query
+        "ping_interval": int(settings.get("ollama_ping_interval", "120")),
+        # Restart after 2 consecutive failures (Intel Arc GPU can be flaky)
+        "restart_after_failures": int(settings.get("ollama_restart_after_failures", "2")),
         "restart_command": settings.get("ollama_restart_command", "sudo docker restart ollama-intel-arc"),
     }
 
@@ -162,7 +164,7 @@ async def ping_native(db: Session) -> bool:
 
 
 async def ping_ipex(db: Session) -> bool:
-    """Check if IPEX-LLM is loaded and responsive"""
+    """Check if IPEX-LLM is loaded and responsive by running a test query"""
     try:
         from app.services.ipex_service import get_ipex_service
 
@@ -174,14 +176,40 @@ async def ping_ipex(db: Session) -> bool:
             try:
                 service._ensure_model_loaded()
                 logger.info("IPEX model loaded successfully")
-                return True
             except Exception as e:
                 logger.error(f"Failed to load IPEX model: {e}")
                 return False
 
-        # Model is loaded
-        logger.debug("IPEX model is loaded")
-        return True
+        # Run a quick test query to verify GPU is responsive
+        logger.info("Running health check query...")
+        try:
+            test_messages = [
+                {"role": "user", "content": "What color is the ocean? Reply in one word."}
+            ]
+            result = await service.chat_completion(
+                messages=test_messages,
+                max_tokens=10,
+                temperature=0.1
+            )
+
+            if "error" in result:
+                logger.error(f"Health check query failed: {result['error']}")
+                return False
+
+            response = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if response:
+                logger.info(f"Health check query OK: {response[:30]}")
+                return True
+            else:
+                logger.warning("Health check query returned empty response")
+                return False
+
+        except asyncio.TimeoutError:
+            logger.error("Health check query timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Health check query error: {e}")
+            return False
 
     except Exception as e:
         logger.error(f"IPEX ping failed: {e}")
