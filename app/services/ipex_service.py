@@ -473,29 +473,38 @@ class IPEXService:
             logger.info(f"[STREAM-{request_id}] Processing started")
             try:
                 if self._is_gguf:
-                    # Use llama.cpp streaming for GGUF
+                    # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()
-                    for chunk in self._model.create_chat_completion(
-                        messages=messages,
-                        max_tokens=kwargs.get("max_tokens", self.num_predict),
-                        temperature=kwargs.get("temperature", self.temperature),
-                        top_p=kwargs.get("top_p", self.top_p),
-                        top_k=kwargs.get("top_k", self.top_k),
-                        repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-                        stream=True,
-                    ):
-                        # Check for timeout between tokens
-                        current_time = time.time()
-                        if current_time - last_token_time > token_timeout:
-                            logger.error(f"Streaming timeout: no token in {token_timeout}s")
-                            yield "Error: Generation timed out"
-                            return
-                        last_token_time = current_time
+                    try:
+                        for chunk in self._model.create_chat_completion(
+                            messages=messages,
+                            max_tokens=kwargs.get("max_tokens", self.num_predict),
+                            temperature=kwargs.get("temperature", self.temperature),
+                            top_p=kwargs.get("top_p", self.top_p),
+                            top_k=kwargs.get("top_k", self.top_k),
+                            repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                            stream=True,
+                        ):
+                            # Check for timeout between tokens
+                            current_time = time.time()
+                            if current_time - last_token_time > token_timeout:
+                                logger.error(f"Streaming timeout: no token in {token_timeout}s")
+                                yield "\n\n[Generation timed out]"
+                                return
+                            last_token_time = current_time
 
-                        delta = chunk.get("choices", [{}])[0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            yield content
+                            delta = chunk.get("choices", [{}])[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield content
+                    except Exception as stream_error:
+                        error_msg = str(stream_error)
+                        # Handle llama_decode errors gracefully
+                        if "llama_decode" in error_msg or isinstance(stream_error, (RuntimeError, IndexError)):
+                            logger.error(f"[STREAM-{request_id}] Inference error: {error_msg}")
+                            yield f"\n\n[Generation error: {error_msg}]"
+                            return
+                        raise
                 else:
                     # Use HuggingFace streaming
                     import torch
