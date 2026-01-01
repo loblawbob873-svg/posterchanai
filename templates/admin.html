@@ -337,12 +337,12 @@
                 </fieldset>
 
                 <fieldset>
-                    <legend>Ollama Health Check</legend>
+                    <legend>LLM Health Check</legend>
                     <div class="form-group">
                         <label for="ollama_ping_enabled">
                             <input type="checkbox" id="ollama_ping_enabled" name="ollama_ping_enabled"> Enable Health Check
                         </label>
-                        <small>Periodically ping Ollama and restart if unresponsive</small>
+                        <small>Periodically check LLM backend and recover if unresponsive</small>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
@@ -355,9 +355,28 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label for="ollama_restart_command">Restart Command</label>
+                        <label for="ollama_restart_command">Restart Command (Ollama only)</label>
                         <input type="text" id="ollama_restart_command" name="ollama_restart_command" value="sudo systemctl restart ollama">
-                        <small>Command to restart Ollama (requires proper permissions)</small>
+                        <small>Command to restart Ollama service. Native/IPEX backends reload the model in-process instead.</small>
+                    </div>
+                    <div class="form-group" style="margin-top: 15px;">
+                        <label for="gpu_memory_check_enabled">
+                            <input type="checkbox" id="gpu_memory_check_enabled" name="gpu_memory_check_enabled"> Enable GPU Memory Monitoring
+                        </label>
+                        <small>Reload model when GPU VRAM usage exceeds threshold</small>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="gpu_memory_threshold">VRAM Threshold (%)</label>
+                            <input type="number" id="gpu_memory_threshold" name="gpu_memory_threshold" value="99" min="50" max="100">
+                        </div>
+                        <div class="form-group">
+                            <label for="gpu_type">GPU Type</label>
+                            <select id="gpu_type" name="gpu_type">
+                                <option value="nvidia">NVIDIA</option>
+                                <option value="intel">Intel Arc</option>
+                            </select>
+                        </div>
                     </div>
                 </fieldset>
 

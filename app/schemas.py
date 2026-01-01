@@ -126,6 +126,10 @@ class SettingsResponse(BaseModel):
     ollama_restart_command: str = "sudo systemctl restart ollama"
     ollama_ping_interval: str = "90"
     ollama_restart_after_failures: str = "5"
+    # GPU memory monitoring
+    gpu_memory_check_enabled: str = "false"
+    gpu_memory_threshold: str = "99"
+    gpu_type: str = "nvidia"
     # Email settings (SMTP)
     smtp_enabled: str = "false"
     smtp_host: str = ""

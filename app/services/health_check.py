@@ -41,6 +41,10 @@ def _get_settings(db: Session) -> dict:
         # Restart after 2 consecutive failures (Intel Arc GPU can be flaky)
         "restart_after_failures": int(settings.get("ollama_restart_after_failures", "2")),
         "restart_command": settings.get("ollama_restart_command", "sudo docker restart ollama-intel-arc"),
+        # GPU memory monitoring
+        "gpu_memory_check_enabled": settings.get("gpu_memory_check_enabled", "false").lower() == "true",
+        "gpu_memory_threshold": int(settings.get("gpu_memory_threshold", "99")),
+        "gpu_type": settings.get("gpu_type", "nvidia"),  # "nvidia" or "intel"
     }
 
 
@@ -136,6 +140,144 @@ def reload_ipex_model(db: Session) -> bool:
         return False
 
 
+def get_gpu_memory_usage(gpu_type: str = "nvidia") -> Optional[float]:
+    """
+    Get GPU memory utilization percentage.
+    Returns None if unable to get GPU info.
+    """
+    try:
+        if gpu_type == "nvidia":
+            # Use nvidia-smi to get memory usage
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                # Parse output like "8192, 16384" (used, total in MiB)
+                line = result.stdout.strip().split('\n')[0]  # First GPU
+                used, total = map(float, line.split(','))
+                percentage = (used / total) * 100
+                logger.debug(f"NVIDIA GPU memory: {used:.0f}/{total:.0f} MiB ({percentage:.1f}%)")
+                return percentage
+            else:
+                logger.warning(f"nvidia-smi failed: {result.stderr}")
+                return None
+        elif gpu_type == "intel":
+            # For Intel Arc GPUs, read from i915 debugfs
+            # This shows visible_size (total) and visible_avail (free)
+            try:
+                import re
+                # Try debugfs first (most reliable for Intel Arc)
+                debugfs_path = "/sys/kernel/debug/dri/0/i915_gem_objects"
+                with open(debugfs_path) as f:
+                    content = f.read()
+
+                # Parse visible_size and visible_avail (in MiB)
+                size_match = re.search(r'visible_size:\s*(\d+)MiB', content)
+                avail_match = re.search(r'visible_avail:\s*(\d+)MiB', content)
+
+                if size_match and avail_match:
+                    total = int(size_match.group(1))
+                    avail = int(avail_match.group(1))
+                    used = total - avail
+                    percentage = (used / total) * 100
+                    logger.debug(f"Intel Arc GPU memory: {used}/{total} MiB ({percentage:.1f}%)")
+                    return percentage
+            except PermissionError:
+                # Try using helper script with sudo
+                pass
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                logger.debug(f"Intel debugfs failed: {e}")
+
+            # Fallback: try helper script with sudo (for non-root processes)
+            try:
+                import os
+                script_path = os.path.join(os.path.dirname(__file__), "../../scripts/gpu_memory.sh")
+                script_path = os.path.abspath(script_path)
+                if os.path.exists(script_path):
+                    result = subprocess.run(
+                        ["/usr/bin/sudo", "-n", script_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                    if result.returncode == 0:
+                        percentage = float(result.stdout.strip())
+                        logger.info(f"Intel Arc GPU VRAM: {percentage:.1f}%")
+                        return percentage
+            except Exception as e:
+                logger.debug(f"GPU helper script failed: {e}")
+
+            # Fallback: try xpu-smi (Intel oneAPI)
+            try:
+                result = subprocess.run(
+                    ["xpu-smi", "stats", "-d", "0", "-j"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    import json
+                    data = json.loads(result.stdout)
+                    for device in data.get("device_list", [data]):
+                        mem_used = device.get("memory_used", 0)
+                        mem_total = device.get("memory_physical_size", 0)
+                        if mem_total > 0:
+                            percentage = (mem_used / mem_total) * 100
+                            logger.debug(f"Intel GPU memory (xpu-smi): {mem_used}/{mem_total} ({percentage:.1f}%)")
+                            return percentage
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+
+            logger.warning("Could not get Intel GPU memory info")
+            return None
+        else:
+            logger.warning(f"Unknown GPU type: {gpu_type}")
+            return None
+    except subprocess.TimeoutExpired:
+        logger.error("GPU memory check timed out")
+        return None
+    except Exception as e:
+        logger.error(f"Error getting GPU memory: {e}")
+        return None
+
+
+def check_gpu_memory_and_reload(db: Session, settings: dict) -> bool:
+    """
+    Check GPU memory usage and reload model if above threshold.
+    Returns True if reload was triggered, False otherwise.
+    """
+    if not settings["gpu_memory_check_enabled"]:
+        return False
+
+    usage = get_gpu_memory_usage(settings["gpu_type"])
+    if usage is None:
+        return False
+
+    threshold = settings["gpu_memory_threshold"]
+    if usage >= threshold:
+        logger.warning(f"GPU memory at {usage:.1f}% (threshold: {threshold}%), triggering model reload")
+
+        backend = settings["backend"]
+        if backend == "native":
+            reload_native_model(db)
+        elif backend == "ipex":
+            reload_ipex_model(db)
+        else:
+            # For Ollama, restart the service
+            restart_ollama(settings["restart_command"])
+
+        return True
+
+    return False
+
+
 async def ping_native(db: Session) -> bool:
     """Check if native LLM is loaded and responsive"""
     try:
@@ -164,34 +306,26 @@ async def ping_native(db: Session) -> bool:
 
 
 async def ping_ipex(db: Session) -> bool:
-    """Check if IPEX-LLM is responsive by making a simple HTTP API request"""
-    import httpx
-
+    """Check if IPEX-LLM is loaded and responsive"""
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            # Make a simple API request like any other client would
-            response = await client.post(
-                "http://localhost:3051/api/chat/completions",
-                json={
-                    "model": "ipex",
-                    "messages": [{"role": "user", "content": "What color is the ocean? Reply in one word."}],
-                    "max_tokens": 10,
-                    "temperature": 0.1
-                }
-            )
+        from app.services.ipex_service import get_ipex_service
 
-            if response.status_code == 200:
-                data = response.json()
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                if content:
-                    logger.info(f"IPEX health check OK: {content[:30]}")
-                    return True
-                else:
-                    logger.warning("IPEX health check returned empty response")
-                    return False
-            else:
-                logger.error(f"IPEX health check failed: {response.status_code}")
+        service = get_ipex_service(db)
+        info = service.get_model_info()
+
+        if not info["loaded"]:
+            logger.warning("IPEX model not loaded, attempting to load...")
+            try:
+                service._ensure_model_loaded()
+                logger.info("IPEX model loaded successfully")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to load IPEX model: {e}")
                 return False
+
+        # Model is loaded - that's enough, skip inference test to avoid blocking user requests
+        logger.debug("IPEX model is loaded")
+        return True
 
     except Exception as e:
         logger.error(f"IPEX ping failed: {e}")
@@ -277,6 +411,23 @@ async def health_check_loop():
 
                 if success:
                     _consecutive_failures = 0
+
+                    # Check GPU memory utilization (only if ping succeeded)
+                    if settings["gpu_memory_check_enabled"]:
+                        usage = get_gpu_memory_usage(settings["gpu_type"])
+                        if usage is not None and usage >= settings["gpu_memory_threshold"]:
+                            logger.warning(
+                                f"GPU VRAM usage at {usage:.1f}% (>= {settings['gpu_memory_threshold']}% threshold) - "
+                                f"triggering model reload to free memory"
+                            )
+                            if backend == "native":
+                                reload_native_model(db)
+                            elif backend == "ipex":
+                                reload_ipex_model(db)
+                            else:
+                                restart_ollama(settings["restart_command"])
+                            # Wait a bit for recovery
+                            await asyncio.sleep(10)
                 else:
                     _consecutive_failures += 1
                     logger.warning(f"Ping FAILED ({_consecutive_failures}/{settings['restart_after_failures']})")
