@@ -75,6 +75,7 @@ class DiffusersService:
 
         # Model settings
         self.model_path = settings.get("image_model_path", "")
+        self.anime_model_path = settings.get("image_anime_model_path", "")
         self.model_type = settings.get("image_model_type", "sdxl")  # sd15, sdxl, sd3, flux
 
         # Generation defaults
@@ -93,26 +94,46 @@ class DiffusersService:
         # Backend setting
         self.backend = settings.get("image_backend", "comfyui")  # "native" or "comfyui"
 
-    def _ensure_model_loaded(self):
+    def _is_anime_prompt(self, prompt: str) -> bool:
+        """Check if prompt is for anime-style image"""
+        anime_keywords = [
+            "anime", "manga", "waifu", "chibi", "kawaii",
+            "moe", "otaku", "hentai", "ecchi", "shoujo",
+            "seinen", "shonen", "isekai", "2d", "cel-shaded"
+        ]
+        prompt_lower = prompt.lower()
+        return any(keyword in prompt_lower for keyword in anime_keywords)
+
+    def _get_model_for_prompt(self, prompt: str) -> str:
+        """Select appropriate model based on prompt content"""
+        if self.anime_model_path and self._is_anime_prompt(prompt):
+            logger.debug(f"Using anime model for prompt: {prompt[:50]}...")
+            return self.anime_model_path
+        return self.model_path
+
+    def _ensure_model_loaded(self, target_model: str = None):
         """Load model if not already loaded or if path changed"""
-        if self._pipe is not None and self._model_path == self.model_path:
+        # Use specified model or default
+        model_to_load = target_model or self.model_path
+
+        if self._pipe is not None and self._model_path == model_to_load:
             return
 
         with _load_lock:
             # Double-check after acquiring lock
-            if self._pipe is not None and self._model_path == self.model_path:
+            if self._pipe is not None and self._model_path == model_to_load:
                 return
 
             # Unload previous model
             if self._pipe is not None:
-                logger.info("Unloading previous model...")
+                logger.info("Unloading previous model for model switch...")
                 self._unload_model_internal()
 
-            if not self.model_path:
+            if not model_to_load:
                 logger.warning("No model path configured")
                 return
 
-            logger.info(f"Loading diffusers model: {self.model_path}")
+            logger.info(f"Loading diffusers model: {model_to_load}")
             logger.info(f"  Device: {self._device}, Type: {self.model_type}")
 
             try:
@@ -133,24 +154,24 @@ class DiffusersService:
                     dtype = torch.float16
 
                 # Load based on model type
-                if self.model_path.endswith(".safetensors") or self.model_path.endswith(".ckpt"):
+                if model_to_load.endswith(".safetensors") or model_to_load.endswith(".ckpt"):
                     # Single file checkpoint
                     if self.model_type == "sdxl":
                         self._pipe = StableDiffusionXLPipeline.from_single_file(
-                            self.model_path,
+                            model_to_load,
                             torch_dtype=dtype,
-                            use_safetensors=self.model_path.endswith(".safetensors")
+                            use_safetensors=model_to_load.endswith(".safetensors")
                         )
                     else:
                         self._pipe = StableDiffusionPipeline.from_single_file(
-                            self.model_path,
+                            model_to_load,
                             torch_dtype=dtype,
-                            use_safetensors=self.model_path.endswith(".safetensors")
+                            use_safetensors=model_to_load.endswith(".safetensors")
                         )
                 else:
                     # HuggingFace model ID or local diffusers folder
                     self._pipe = AutoPipelineForText2Image.from_pretrained(
-                        self.model_path,
+                        model_to_load,
                         torch_dtype=dtype,
                     )
 
@@ -171,7 +192,7 @@ class DiffusersService:
                     except Exception:
                         pass
 
-                self._model_path = self.model_path
+                self._model_path = model_to_load
                 self._model_type = self.model_type
                 logger.info("Model loaded successfully")
 
@@ -237,7 +258,9 @@ class DiffusersService:
         seed: int = None,
     ) -> Optional[bytes]:
         """Synchronous image generation"""
-        self._ensure_model_loaded()
+        # Select model based on prompt (anime vs default)
+        target_model = self._get_model_for_prompt(prompt)
+        self._ensure_model_loaded(target_model)
 
         if self._pipe is None:
             logger.error("No model loaded")
@@ -299,7 +322,9 @@ class DiffusersService:
         seed: int = None,
     ) -> Optional[bytes]:
         """Synchronous img2img generation"""
-        self._ensure_model_loaded()
+        # Select model based on prompt (anime vs default)
+        target_model = self._get_model_for_prompt(prompt)
+        self._ensure_model_loaded(target_model)
 
         if self._pipe is None:
             logger.error("No model loaded")

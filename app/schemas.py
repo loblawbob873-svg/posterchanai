@@ -88,6 +88,7 @@ class SettingsResponse(BaseModel):
     # Native image generation settings
     image_backend: str = "comfyui"  # "native" or "comfyui"
     image_model_path: str = ""
+    image_anime_model_path: str = ""  # Optional anime model for style switching
     image_model_type: str = "sdxl"  # "sd15", "sdxl", "sd3", "flux"
     image_default_steps: str = "20"
     image_default_cfg: str = "7.0"

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Posterchanai Installer
 # Interactive setup for GPU acceleration and systemd service
+# Supports modular installation: LLM, Image Generation, or Full Stack
 
 set -e
 
@@ -17,13 +18,19 @@ BOLD='\033[1m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Installation mode flags
+INSTALL_LLM=0
+INSTALL_IMAGE=0
+LLM_BACKEND=""
+IMAGE_BACKEND=""
+
 print_banner() {
     echo -e "${CYAN}"
     echo -e "╔═══════════════════════════════════════════════════════════════╗"
     echo -e "║                                                               ║"
     echo -e "║   ${BOLD}POSTERCHANAI INSTALLER${NC}${CYAN}                                      ║"
     echo -e "║                                                               ║"
-    echo -e "║   AI Chat with Local LLM Support                              ║"
+    echo -e "║   AI Chat + Image Generation                                  ║"
     echo -e "║                                                               ║"
     echo -e "╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -196,8 +203,61 @@ detect_gpu() {
     echo -e "  Detected: ${BOLD}$GPU_NAME${NC}"
 }
 
+select_components() {
+    print_step "Select installation type:"
+    echo ""
+    echo -e "  1) ${BOLD}Full Stack${NC} (Recommended)"
+    echo "     LLM + Image Generation - Everything you need"
+    echo ""
+    echo -e "  2) ${BOLD}LLM Only${NC}"
+    echo "     Chat and text generation only (no image features)"
+    echo ""
+    echo -e "  3) ${BOLD}Image Only${NC}"
+    echo "     Image generation only (use external LLM like Ollama)"
+    echo ""
+    echo -e "  4) ${BOLD}Lightweight${NC}"
+    echo "     Web UI only (use external Ollama + ComfyUI)"
+    echo ""
+
+    read -p "Select installation type [1-4, default=1]: " INSTALL_TYPE
+    INSTALL_TYPE=${INSTALL_TYPE:-1}
+
+    case "$INSTALL_TYPE" in
+        1)
+            INSTALL_LLM=1
+            INSTALL_IMAGE=1
+            echo -e "  ${GREEN}✓ Full Stack: LLM + Image Generation${NC}"
+            ;;
+        2)
+            INSTALL_LLM=1
+            INSTALL_IMAGE=0
+            echo -e "  ${GREEN}✓ LLM Only${NC}"
+            ;;
+        3)
+            INSTALL_LLM=0
+            INSTALL_IMAGE=1
+            echo -e "  ${GREEN}✓ Image Only${NC}"
+            ;;
+        4)
+            INSTALL_LLM=0
+            INSTALL_IMAGE=0
+            echo -e "  ${GREEN}✓ Lightweight (external services)${NC}"
+            ;;
+        *)
+            INSTALL_LLM=1
+            INSTALL_IMAGE=1
+            ;;
+    esac
+}
+
 select_backend() {
-    print_step "Select inference backend:"
+    # Skip if not installing LLM
+    if [ "$INSTALL_LLM" = "0" ]; then
+        LLM_BACKEND="ollama"  # Default to external Ollama
+        return
+    fi
+
+    print_step "Select LLM inference backend:"
     echo ""
     echo -e "  1) ${BOLD}Intel Arc GPU${NC} (IPEX-LLM + llama.cpp SYCL)"
     echo "     Best for Intel Arc A770, A750, A380, etc."
@@ -219,15 +279,49 @@ select_backend() {
         *) DEFAULT=3 ;;
     esac
 
-    read -p "Select backend [1-4, default=$DEFAULT]: " BACKEND_CHOICE
+    read -p "Select LLM backend [1-4, default=$DEFAULT]: " BACKEND_CHOICE
     BACKEND_CHOICE=${BACKEND_CHOICE:-$DEFAULT}
 
     case "$BACKEND_CHOICE" in
-        1) BACKEND="intel" ;;
-        2) BACKEND="nvidia" ;;
-        3) BACKEND="cpu" ;;
-        4) BACKEND="ollama" ;;
-        *) BACKEND="cpu" ;;
+        1) LLM_BACKEND="intel" ;;
+        2) LLM_BACKEND="nvidia" ;;
+        3) LLM_BACKEND="cpu" ;;
+        4) LLM_BACKEND="ollama" ;;
+        *) LLM_BACKEND="cpu" ;;
+    esac
+
+    # Set BACKEND for backward compatibility with rest of script
+    BACKEND="$LLM_BACKEND"
+}
+
+select_image_backend() {
+    # Skip if not installing image generation
+    if [ "$INSTALL_IMAGE" = "0" ]; then
+        IMAGE_BACKEND="comfyui"  # Default to external ComfyUI
+        return
+    fi
+
+    print_step "Select image generation backend:"
+    echo ""
+    echo -e "  1) ${BOLD}Native (diffusers)${NC} - Recommended"
+    echo "     Built-in Stable Diffusion using HuggingFace diffusers"
+    echo "     Supports: NVIDIA (CUDA), Intel Arc (XPU), AMD (ROCm), CPU"
+    echo ""
+    echo -e "  2) ${BOLD}ComfyUI${NC} (External)"
+    echo "     Use existing ComfyUI installation"
+    echo "     More features but requires separate setup"
+    echo ""
+
+    # Default based on GPU detection
+    DEFAULT=1
+
+    read -p "Select image backend [1-2, default=$DEFAULT]: " IMAGE_CHOICE
+    IMAGE_CHOICE=${IMAGE_CHOICE:-$DEFAULT}
+
+    case "$IMAGE_CHOICE" in
+        1) IMAGE_BACKEND="native" ;;
+        2) IMAGE_BACKEND="comfyui" ;;
+        *) IMAGE_BACKEND="native" ;;
     esac
 }
 
@@ -355,6 +449,64 @@ STUBCODE
     esac
 
     print_success "llama-cpp-python installed"
+}
+
+setup_image_deps() {
+    # Skip if not installing native image backend
+    if [ "$INSTALL_IMAGE" = "0" ] || [ "$IMAGE_BACKEND" != "native" ]; then
+        return
+    fi
+
+    print_step "Installing image generation dependencies..."
+
+    # Install base diffusers dependencies
+    pip install -r requirements-image.txt -q
+    print_success "Diffusers installed"
+
+    # Install GPU-specific PyTorch if needed
+    case "$GPU_TYPE" in
+        nvidia)
+            # Check if torch with CUDA is already installed
+            if ! python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+                echo "  Installing PyTorch with CUDA support..."
+                pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 -q
+            fi
+            print_success "PyTorch CUDA ready"
+            ;;
+        intel)
+            # Intel XPU requires specific torch version
+            echo "  Intel XPU: Using existing IPEX PyTorch from venv-ipex"
+            print_success "PyTorch XPU ready"
+            ;;
+        amd)
+            # Check for ROCm PyTorch
+            if ! python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+                echo "  Installing PyTorch with ROCm support..."
+                pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm5.7 -q
+            fi
+            print_success "PyTorch ROCm ready"
+            ;;
+        *)
+            # CPU fallback
+            if ! python3 -c "import torch" 2>/dev/null; then
+                echo "  Installing PyTorch (CPU)..."
+                pip install torch torchvision -q
+            fi
+            print_success "PyTorch CPU ready"
+            ;;
+    esac
+
+    # Optional: Install xformers for faster attention (NVIDIA only)
+    if [ "$GPU_TYPE" = "nvidia" ]; then
+        read -p "Install xformers for faster image generation? [Y/n]: " INSTALL_XFORMERS
+        INSTALL_XFORMERS=${INSTALL_XFORMERS:-Y}
+        if [[ "$INSTALL_XFORMERS" =~ ^[Yy] ]]; then
+            echo "  Installing xformers..."
+            pip install xformers -q 2>/dev/null || print_warning "xformers install failed (optional)"
+        fi
+    fi
+
+    print_success "Image generation dependencies installed"
 }
 
 setup_systemd() {
@@ -521,7 +673,21 @@ print_summary() {
     echo -e "${GREEN}║  ${BOLD}Installation Complete!${NC}${GREEN}                                      ║${NC}"
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "  Backend: $BACKEND"
+
+    # Show component info
+    echo -e "  ${BOLD}Components:${NC}"
+    if [ "$INSTALL_LLM" = "1" ]; then
+        echo "    LLM Backend: $LLM_BACKEND"
+    else
+        echo "    LLM Backend: external (Ollama)"
+    fi
+    if [ "$INSTALL_IMAGE" = "1" ]; then
+        echo "    Image Backend: $IMAGE_BACKEND"
+    else
+        echo "    Image Backend: external (ComfyUI)"
+    fi
+    echo ""
+
     echo "  Service: $SERVICE_NAME"
     echo ""
     echo -e "  ${BOLD}Access:${NC} http://localhost:3051"
@@ -531,6 +697,25 @@ print_summary() {
     echo "    Start:   sudo systemctl start $SERVICE_NAME"
     echo "    Stop:    sudo systemctl stop $SERVICE_NAME"
     echo "    Logs:    sudo journalctl -u $SERVICE_NAME -f"
+    echo ""
+
+    # Show next steps based on configuration
+    echo -e "  ${BOLD}Next Steps:${NC}"
+    if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "ollama" ]; then
+        echo "    1. Download a GGUF model to /var/lib/posterchanai/models/"
+        echo "    2. Configure model path in Admin > AI Settings"
+    else
+        echo "    1. Configure Ollama URL in Admin > AI Settings"
+    fi
+
+    if [ "$INSTALL_IMAGE" = "1" ] && [ "$IMAGE_BACKEND" = "native" ]; then
+        echo "    • Download a Stable Diffusion model (SDXL recommended)"
+        echo "    • Configure image model in Admin > Image Generation"
+        echo "    • Tip: Use an anime model (e.g., Animagine) for anime-style prompts"
+    elif [ "$IMAGE_BACKEND" = "comfyui" ]; then
+        echo "    • Configure ComfyUI URL in Admin > Image Generation"
+        echo "    • Set both Default Model and Anime Model for auto-switching"
+    fi
     echo ""
 }
 
@@ -543,6 +728,22 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "Options:"
     echo "  --help, -h       Show this help message"
     echo "  --packages       Show required packages for your distro"
+    echo ""
+    echo "Installation Types:"
+    echo "  Full Stack       LLM + Image Generation (recommended)"
+    echo "  LLM Only         Chat/text generation only"
+    echo "  Image Only       Image generation only (use external LLM)"
+    echo "  Lightweight      Web UI only (external Ollama + ComfyUI)"
+    echo ""
+    echo "LLM Backends:"
+    echo "  Intel Arc        IPEX-LLM + llama.cpp SYCL"
+    echo "  NVIDIA           llama.cpp CUDA"
+    echo "  CPU              llama.cpp (slow)"
+    echo "  Ollama           External Ollama service"
+    echo ""
+    echo "Image Backends:"
+    echo "  Native           Built-in diffusers (CUDA/XPU/ROCm/CPU)"
+    echo "  ComfyUI          External ComfyUI service"
     echo ""
     exit 0
 fi
@@ -560,14 +761,25 @@ fi
 print_banner
 check_dependencies
 detect_gpu
+select_components
 select_backend
+select_image_backend
 setup_directories
 setup_python_env
 
-if [ "$BACKEND" != "ollama" ]; then
+# Install LLM dependencies if selected and not using Ollama
+if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "ollama" ]; then
     setup_llama_cpp
 fi
 
+# Install image generation dependencies if selected
+setup_image_deps
+
 setup_systemd
-download_model
+
+# Only offer model download if installing local LLM
+if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "ollama" ]; then
+    download_model
+fi
+
 print_summary

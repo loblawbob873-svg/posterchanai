@@ -181,9 +181,14 @@
                 <fieldset id="native-image-settings" style="display: none;">
                     <legend>Native Image Settings</legend>
                     <div class="form-group">
-                        <label for="image_model_path">Model Path</label>
+                        <label for="image_model_path">Default Model Path</label>
                         <input type="text" id="image_model_path" name="image_model_path" placeholder="/path/to/model.safetensors">
-                        <small>Path to .safetensors or HuggingFace model ID</small>
+                        <small>Path to .safetensors or HuggingFace model ID (e.g., stabilityai/stable-diffusion-xl-base-1.0)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="image_anime_model_path">Anime Model Path (Optional)</label>
+                        <input type="text" id="image_anime_model_path" name="image_anime_model_path" placeholder="/path/to/anime_model.safetensors">
+                        <small>Used when prompt contains anime keywords. Leave empty to use default for all.</small>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
