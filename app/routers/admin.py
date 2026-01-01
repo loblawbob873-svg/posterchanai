@@ -143,3 +143,40 @@ def send_test_email(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=message
         )
+
+
+@router.post("/reload-model")
+def reload_model(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Reload the LLM model (for native backend)"""
+    from app.services.inference_factory import get_backend_type, reload_inference_model
+
+    backend = get_backend_type(db)
+
+    if backend != "native":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Model reload is only available for native backend. Current backend: " + backend
+        )
+
+    try:
+        reload_inference_model(db)
+        return {"success": True, "message": "Model reloaded successfully"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reload model: {str(e)}"
+        )
+
+
+@router.get("/model-status")
+def get_model_status(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Get the current LLM model status"""
+    from app.services.inference_factory import get_inference_status
+
+    return get_inference_status(db)

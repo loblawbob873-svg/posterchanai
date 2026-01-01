@@ -4,7 +4,9 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 
 ## Features
 
-- AI Chat with streaming responses (direct Ollama connection)
+- AI Chat with streaming responses
+- **Native GPU inference** with llama-cpp-python (Intel SYCL, NVIDIA CUDA, CPU fallback)
+- Ollama backend support (optional, for Docker-based setups)
 - OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`)
 - Per-user API keys for external app integration
 - Vision support (upload images and ask questions about them)
@@ -291,9 +293,88 @@ Posterchanai includes an automatic health check that monitors Ollama and restart
 3. After 5 consecutive failures, executes restart command
 4. Logs all activity: `[HEALTH] Ping OK` or `[HEALTH] Ping FAILED (1/5)`
 
-## Intel Arc GPU Setup
+## GPU Acceleration
 
-For running Ollama on Intel Arc GPUs (A770, A750, etc.), use the BigDL/IPEX-LLM container:
+Poster-chan AI supports two LLM backends:
+
+1. **Native GPU** (Recommended) - Direct llama-cpp-python with SYCL (Intel) or CUDA (NVIDIA)
+2. **Ollama** - External Ollama instance (Docker or native)
+
+### Native GPU Setup (No Docker Required)
+
+Native GPU mode runs the LLM directly in the Python process using llama-cpp-python with GPU acceleration.
+
+#### Intel Arc GPU (SYCL)
+
+**Ubuntu/Debian:**
+```bash
+# Install Intel oneAPI Base Toolkit
+wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | \
+  sudo gpg --dearmor -o /usr/share/keyrings/intel.gpg
+echo "deb [signed-by=/usr/share/keyrings/intel.gpg] https://apt.repos.intel.com/oneapi all main" | \
+  sudo tee /etc/apt/sources.list.d/intel-oneapi.list
+sudo apt update && sudo apt install intel-oneapi-base-toolkit
+
+# Build llama-cpp-python with SYCL
+source /opt/intel/oneapi/setvars.sh
+CMAKE_ARGS="-DGGML_SYCL=on -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
+    pip install llama-cpp-python==0.2.90 --force-reinstall --no-cache-dir
+```
+
+**Gentoo:**
+```bash
+# Download and install Intel oneAPI Base Toolkit
+cd /tmp
+wget https://registrationcenter-download.intel.com/akdlm/IRC_NAS/e6ff8e9c-ee28-47fb-abd7-5c524c983e1c/l_BaseKit_p_2024.2.1.100_offline.sh
+chmod +x l_BaseKit_p_2024.2.1.100_offline.sh
+sudo ./l_BaseKit_p_2024.2.1.100_offline.sh -a --silent --eula accept
+
+# Build llama-cpp-python with SYCL
+source /opt/intel/oneapi/2024.2/oneapi-vars.sh
+CMAKE_ARGS="-DGGML_SYCL=on -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
+    pip install llama-cpp-python==0.2.90 --force-reinstall --no-cache-dir
+```
+
+#### NVIDIA GPU (CUDA)
+
+**Ubuntu/Debian:**
+```bash
+# Ensure CUDA toolkit is installed
+sudo apt install nvidia-cuda-toolkit
+
+# Build llama-cpp-python with CUDA
+CMAKE_ARGS="-DGGML_CUDA=on" \
+    pip install llama-cpp-python --force-reinstall --no-cache-dir
+```
+
+**Gentoo:**
+```bash
+# Ensure CUDA is installed
+emerge dev-util/nvidia-cuda-toolkit
+
+# Build llama-cpp-python with CUDA
+CMAKE_ARGS="-DGGML_CUDA=on" \
+    pip install llama-cpp-python --force-reinstall --no-cache-dir
+```
+
+#### CPU Fallback
+
+If no GPU is available:
+```bash
+pip install llama-cpp-python
+```
+
+### Native GPU Configuration
+
+1. In Admin Panel, set **Backend Type** to "Native GPU"
+2. Set **Model Path** to your GGUF model file (e.g., `/home/user/models/model.gguf`)
+3. Set **GPU Layers** to `-1` (all layers on GPU) or a specific number
+4. Click **Save Settings**
+5. Click **Reload Model** to load the new model
+
+### Ollama Setup (Docker)
+
+For running Ollama on Intel Arc GPUs, use the BigDL/IPEX-LLM container:
 
 ```yaml
 # docker-compose.yml
@@ -313,8 +394,8 @@ services:
       - DEVICE=Arc
       - OLLAMA_INTEL_GPU=true
       - OLLAMA_NUM_GPU=999
-      - OLLAMA_NUM_CTX=28024      # Context size - adjust based on VRAM
-      - OLLAMA_KEEP_ALIVE=-1      # Keep model loaded forever
+      - OLLAMA_NUM_CTX=28024
+      - OLLAMA_KEEP_ALIVE=-1
       - ZES_ENABLE_SYSMAN=1
     command: sh -c 'mkdir -p /llm/ollama && cd /llm/ollama && init-ollama && exec ./ollama serve'
 
@@ -322,7 +403,7 @@ volumes:
   ollama-volume: {}
 ```
 
-### VRAM Usage Guidelines (16GB Arc A770)
+### VRAM Usage Guidelines (16GB Intel Arc A770)
 
 | Model Size | Quantization | Context Size | VRAM Usage |
 |------------|--------------|--------------|------------|
@@ -330,11 +411,16 @@ volumes:
 | 14B | Q4_K_M | 28024 | ~12GB |
 | 8B | Q5_K_M | 40960 | ~10GB |
 
-**Important**: Set `ollama_num_ctx` in the Admin Panel to match `OLLAMA_NUM_CTX` in docker-compose to prevent model reloads when switching between applications.
+**Important**: Match the context size in Admin Panel with your GPU's VRAM capacity to prevent out-of-memory errors.
 
 ## Requirements
 
 - Python 3.11+
-- Ollama instance (for chat)
+- **For Native GPU mode:**
+  - Intel Arc: Intel oneAPI Base Toolkit
+  - NVIDIA: CUDA Toolkit
+  - GGUF model file
+- **For Ollama mode:**
+  - Ollama instance (local or Docker)
 - ComfyUI instance (optional, for image generation)
 - SearXNG instance (optional, for web search)

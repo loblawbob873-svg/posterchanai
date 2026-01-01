@@ -1,5 +1,6 @@
 """
-OpenAI-compatible API router for Ollama backend.
+OpenAI-compatible API router for LLM backend.
+Supports both native llama-cpp-python and Ollama backends.
 Provides both /v1/* and /api/* endpoints for maximum compatibility.
 """
 import time
@@ -21,7 +22,7 @@ from app.schemas import (
     ModelInfo,
     ModelsResponse,
 )
-from app.services.ollama_service import get_ollama_service
+from app.services.inference_factory import get_inference_service
 
 
 router = APIRouter(tags=["OpenAI API"])
@@ -138,7 +139,7 @@ async def root_list_models(
 
 async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
     """Handle chat completions request"""
-    ollama = get_ollama_service(db)
+    service = get_inference_service(db)
 
     # Convert messages to dict format
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
@@ -157,7 +158,7 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
     # Handle streaming vs non-streaming
     if request.stream:
         return StreamingResponse(
-            ollama.chat_completion_stream(
+            service.chat_completion_stream(
                 messages=messages,
                 model=request.model,
                 **kwargs
@@ -170,7 +171,7 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
             }
         )
     else:
-        result = await ollama.chat_completion(
+        result = await service.chat_completion(
             messages=messages,
             model=request.model,
             **kwargs
@@ -188,8 +189,11 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
 
 async def _handle_list_models(db: Session):
     """Handle models list request"""
-    ollama = get_ollama_service(db)
-    models = await ollama.list_models()
+    from app.services.inference_factory import get_backend_type
+
+    service = get_inference_service(db)
+    models = await service.list_models()
+    backend = get_backend_type(db)
 
     # Convert to OpenAI format
     model_list = []
@@ -198,7 +202,7 @@ async def _handle_list_models(db: Session):
             id=model.get("name", "unknown"),
             object="model",
             created=0,
-            owned_by="ollama"
+            owned_by="native" if backend == "native" else "ollama"
         ))
 
     return ModelsResponse(object="list", data=model_list)

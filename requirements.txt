@@ -17,3 +17,5 @@ openpyxl>=3.1.0
 python-pptx>=1.0.0
 pytesseract>=0.3.10
 Pillow>=10.0.0
+# Native LLM inference (requires compilation with GPU flags - see README)
+# llama-cpp-python>=0.2.90

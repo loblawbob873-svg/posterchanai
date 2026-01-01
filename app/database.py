@@ -97,7 +97,12 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "openai_api_key": "",
             # Registration settings
             "allow_registration": "false",
-            # Ollama health check
+            # Native LLM settings
+            "llm_backend": "ollama",  # "native" or "ollama"
+            "llm_model_path": "/home/verita84/models/model.gguf",
+            "llm_gpu_layers": "-1",  # -1 = all layers on GPU
+            "llm_n_threads": "4",
+            # LLM health check
             "ollama_ping_enabled": "false",
             "ollama_restart_command": "sudo systemctl restart ollama",
             "ollama_ping_interval": "90",

@@ -1,6 +1,7 @@
 """
-Ollama Health Check Service
-Periodically pings Ollama and restarts it if unresponsive.
+LLM Health Check Service
+Periodically checks the LLM backend and handles recovery.
+Supports both native llama-cpp-python and Ollama backends.
 """
 import asyncio
 import logging
@@ -31,8 +32,10 @@ def _get_settings(db: Session) -> dict:
     settings = {s.key: s.value for s in db.query(Setting).all()}
     return {
         "enabled": settings.get("ollama_ping_enabled", "false").lower() == "true",
+        "backend": settings.get("llm_backend", "ollama"),
         "ollama_url": settings.get("ollama_url", "http://localhost:11434"),
         "ollama_model": settings.get("ollama_model", "llama3"),
+        "model_path": settings.get("llm_model_path", ""),
         "ping_interval": int(settings.get("ollama_ping_interval", "90")),
         "restart_after_failures": int(settings.get("ollama_restart_after_failures", "5")),
         "restart_command": settings.get("ollama_restart_command", "sudo docker restart ollama-intel-arc"),
@@ -105,6 +108,68 @@ def restart_ollama(restart_command: str):
         return False
 
 
+def reload_native_model(db: Session) -> bool:
+    """Reload the native LLM model"""
+    logger.info("Reloading native LLM model...")
+    try:
+        from app.services.llama_service import reload_llama_model
+        reload_llama_model(db)
+        logger.info("Native LLM model reloaded successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to reload native model: {e}")
+        return False
+
+
+async def ping_native(db: Session) -> bool:
+    """Check if native LLM is loaded and responsive"""
+    try:
+        from app.services.llama_service import get_llama_service
+
+        service = get_llama_service(db)
+        info = service.get_model_info()
+
+        if not info["loaded"]:
+            logger.warning("Native model not loaded, attempting to load...")
+            try:
+                service._ensure_model_loaded()
+                logger.info("Native model loaded successfully")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to load native model: {e}")
+                return False
+
+        # Model is loaded, do a quick inference test
+        try:
+            # Simple test - just check if we can call the model
+            loop = asyncio.get_event_loop()
+            result = await asyncio.wait_for(
+                service.chat_completion(
+                    messages=[{"role": "user", "content": "Hi"}],
+                    max_tokens=5
+                ),
+                timeout=30
+            )
+
+            if "error" in result:
+                logger.error(f"Native model test failed: {result['error']}")
+                return False
+
+            logger.info("Native model ping OK")
+            return True
+
+        except asyncio.TimeoutError:
+            logger.error("Native model test timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Native model test error: {e}")
+            return False
+
+    except Exception as e:
+        logger.error(f"Native ping failed: {e}")
+        return False
+
+
 async def ping_ollama(ollama_url: str, model: str = "llama3") -> bool:
     """Ping Ollama - just check if it's alive, don't force model loads"""
     import httpx
@@ -140,15 +205,16 @@ async def ping_ollama(ollama_url: str, model: str = "llama3") -> bool:
                         break
 
             # Ollama is alive, that's what matters
+            logger.info("Ollama ping OK")
             return True
 
     except Exception as e:
-        logger.error(f"Ping failed: {e}")
+        logger.error(f"Ollama ping failed: {e}")
         return False
 
 
 async def health_check_loop():
-    """Main health check loop"""
+    """Main health check loop - supports both native and Ollama backends"""
     global _consecutive_failures
 
     logger.info("Health check loop started")
@@ -159,30 +225,43 @@ async def health_check_loop():
             db = SessionLocal()
             try:
                 settings = _get_settings(db)
+
+                if not settings["enabled"]:
+                    logger.info("Health check disabled, stopping loop")
+                    break
+
+                backend = settings["backend"]
+
+                # Ping based on backend type
+                if backend == "native":
+                    logger.debug("Pinging native LLM...")
+                    success = await ping_native(db)
+                else:
+                    logger.debug(f"Pinging Ollama at {settings['ollama_url']}...")
+                    success = await ping_ollama(settings["ollama_url"], settings["ollama_model"])
+
+                if success:
+                    _consecutive_failures = 0
+                else:
+                    _consecutive_failures += 1
+                    logger.warning(f"Ping FAILED ({_consecutive_failures}/{settings['restart_after_failures']})")
+
+                    if _consecutive_failures >= settings["restart_after_failures"]:
+                        logger.error("Too many failures, attempting recovery...")
+
+                        if backend == "native":
+                            # For native, try to reload the model
+                            reload_native_model(db)
+                        else:
+                            # For Ollama, restart the service
+                            restart_ollama(settings["restart_command"])
+
+                        _consecutive_failures = 0
+                        # Wait a bit for recovery
+                        await asyncio.sleep(10)
+
             finally:
                 db.close()
-
-            if not settings["enabled"]:
-                logger.info("Health check disabled, stopping loop")
-                break
-
-            # Ping Ollama
-            logger.debug(f"Pinging Ollama at {settings['ollama_url']}...")
-            success = await ping_ollama(settings["ollama_url"], settings["ollama_model"])
-
-            if success:
-                logger.info("Ping OK")
-                _consecutive_failures = 0
-            else:
-                _consecutive_failures += 1
-                logger.warning(f"Ping FAILED ({_consecutive_failures}/{settings['restart_after_failures']})")
-
-                if _consecutive_failures >= settings["restart_after_failures"]:
-                    logger.error("Too many failures, restarting Ollama...")
-                    restart_ollama(settings["restart_command"])
-                    _consecutive_failures = 0
-                    # Wait a bit for Ollama to restart
-                    await asyncio.sleep(10)
 
             # Wait for next ping
             await asyncio.sleep(settings["ping_interval"])
