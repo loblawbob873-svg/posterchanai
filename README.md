@@ -1,4 +1,4 @@
-# Posterchanai
+# Poster-chan AI
 
 AI Chat Application with OpenAI-compatible API, image generation, web search, and text-to-speech capabilities.
 
@@ -14,6 +14,7 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 - Image Search
 - Text-to-Speech
 - User registration (admin configurable)
+- Email verification for new registrations (when SMTP enabled)
 - Email notifications (SMTP/IMAP support)
 - Ollama health check with auto-restart
 - File uploads:
@@ -289,6 +290,47 @@ Posterchanai includes an automatic health check that monitors Ollama and restart
 2. If Ollama fails to respond, increments failure counter
 3. After 5 consecutive failures, executes restart command
 4. Logs all activity: `[HEALTH] Ping OK` or `[HEALTH] Ping FAILED (1/5)`
+
+## Intel Arc GPU Setup
+
+For running Ollama on Intel Arc GPUs (A770, A750, etc.), use the BigDL/IPEX-LLM container:
+
+```yaml
+# docker-compose.yml
+services:
+  ollama-intel-arc:
+    image: intelanalytics/ipex-llm-inference-cpp-xpu:latest
+    container_name: ollama-intel-arc
+    restart: unless-stopped
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      - ollama-volume:/root/.ollama
+    ports:
+      - 11434:11434
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - DEVICE=Arc
+      - OLLAMA_INTEL_GPU=true
+      - OLLAMA_NUM_GPU=999
+      - OLLAMA_NUM_CTX=28024      # Context size - adjust based on VRAM
+      - OLLAMA_KEEP_ALIVE=-1      # Keep model loaded forever
+      - ZES_ENABLE_SYSMAN=1
+    command: sh -c 'mkdir -p /llm/ollama && cd /llm/ollama && init-ollama && exec ./ollama serve'
+
+volumes:
+  ollama-volume: {}
+```
+
+### VRAM Usage Guidelines (16GB Arc A770)
+
+| Model Size | Quantization | Context Size | VRAM Usage |
+|------------|--------------|--------------|------------|
+| 14B | Q5_K_M | 28024 | ~15GB |
+| 14B | Q4_K_M | 28024 | ~12GB |
+| 8B | Q5_K_M | 40960 | ~10GB |
+
+**Important**: Set `ollama_num_ctx` in the Admin Panel to match `OLLAMA_NUM_CTX` in docker-compose to prevent model reloads when switching between applications.
 
 ## Requirements
 
