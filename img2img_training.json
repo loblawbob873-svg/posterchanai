@@ -186,6 +186,41 @@
       "denoise": 0.65,
       "output_tags": "(dark skin:2.0), (brown skin:2.0), (black hair:2.0), (large breasts:2.0), dark skin, black hair, large breasts, 1girl, elf, china dress, green eyes, ponytail, vibrant colors, sharp, high quality",
       "negative": "pale skin, white skin, small breasts, flat chest, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "3girls, brown hair, black hair, pink hair, orange hair, horse ears, horse tail, gym uniform, buruma, sweat",
+      "change": "nude",
+      "denoise": 0.8,
+      "output_tags": "(nude:2.0), (naked:2.0), nude, 3girls, brown hair, black hair, pink hair, orange hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
+      "negative": "gym uniform, buruma, shirt, clothing, clothed, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse girl, gym uniform, buruma",
+      "change": "dark skin",
+      "denoise": 0.8,
+      "output_tags": "(dark skin:2.0), (brown skin:2.0), dark skin, 3girls, brown hair, black hair, pink hair, horse ears, horse girl, gym uniform, buruma, vibrant colors, sharp, high quality",
+      "negative": "pale skin, white skin, light skin, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "3girls, brown hair, black hair, pink hair, horse ears, gym uniform, anime",
+      "change": "realistic",
+      "denoise": 0.65,
+      "output_tags": "(realistic:2.0), (photorealistic:2.0), (real photo:1.5), realistic, photorealistic, 3girls, brown hair, black hair, pink hair, horse ears, gym uniform, vibrant colors, sharp, high quality",
+      "negative": "anime, cartoon, drawing, illustration, 2d, cel shaded, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "3girls, brown hair, black hair, pink hair, gym uniform, realistic, photo",
+      "change": "anime",
+      "denoise": 0.65,
+      "output_tags": "(anime:2.0), (anime style:2.0), (illustration:1.5), anime, 2d, cel shaded, 3girls, brown hair, black hair, pink hair, gym uniform, vibrant colors, sharp, high quality",
+      "negative": "realistic, photorealistic, real photo, 3d, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "3girls, horse ears, horse tail, gym uniform, buruma, sweat",
+      "change": "bikini beach",
+      "denoise": 0.75,
+      "output_tags": "(bikini:2.0), (beach:1.5), (ocean:1.5), bikini, swimsuit, beach, sand, sunny, 3girls, horse ears, horse tail, vibrant colors, sharp, high quality",
+      "negative": "gym uniform, buruma, indoors, deformed, extra limbs, bad anatomy, blurry"
     }
   ],
   "txt2img_example": {
