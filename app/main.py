@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
@@ -51,15 +51,21 @@ async def shutdown():
 @app.get("/")
 async def index(
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_optional)
 ):
     if not current_user:
         return RedirectResponse(url="/login", status_code=302)
-    return templates.TemplateResponse("index.html", {
+    resp = templates.TemplateResponse("index.html", {
         "request": request,
         "user": current_user
     })
+    # Prevent caching so back button after logout doesn't show cached page
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 @app.get("/login")
@@ -69,7 +75,9 @@ async def login_page(
 ):
     if current_user:
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request})
+    resp = templates.TemplateResponse("login.html", {"request": request})
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
 
 
 @app.get("/admin")
@@ -82,7 +90,9 @@ async def admin_page(
         return RedirectResponse(url="/login", status_code=302)
     if not current_user.is_admin:
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("admin.html", {
+    resp = templates.TemplateResponse("admin.html", {
         "request": request,
         "user": current_user
     })
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp

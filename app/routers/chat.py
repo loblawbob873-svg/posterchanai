@@ -248,8 +248,12 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     else:
                         # Regular chat - stream response
                         # Build message history (exclude the just-added user message)
+                        # Replace date placeholder in system prompt
+                        system_prompt = chat_service.system_prompt.replace(
+                            "{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d")
+                        )
                         messages = [
-                            {"role": "system", "content": "You are a helpful, friendly AI assistant. Be concise but thorough."}
+                            {"role": "system", "content": system_prompt}
                         ]
                         # Get last 19 messages (excluding the one we just added)
                         for msg in conversation.messages[-21:-1]:

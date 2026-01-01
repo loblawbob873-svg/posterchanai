@@ -12,6 +12,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=True, index=True)
     password_hash = Column(String(255), nullable=False)
     is_admin = Column(Boolean, default=False)
+    email_verified = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
@@ -61,3 +62,15 @@ class APIKey(Base):
     is_active = Column(Boolean, default=True)
 
     user = relationship("User", backref="api_keys")
+
+
+class VerificationToken(Base):
+    __tablename__ = "verification_tokens"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token = Column(String(64), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+
+    user = relationship("User", backref="verification_tokens")

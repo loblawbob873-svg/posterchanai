@@ -10,6 +10,11 @@ class ChatHandler {
         this.sendBtn = document.getElementById('sendBtn');
         this.streamingMessage = null;
 
+        // Streaming optimization - batch chunks and use RAF
+        this.streamBuffer = '';
+        this.streamRafPending = false;
+        this.fullStreamContent = '';
+
         // File upload elements
         this.fileInput = document.getElementById('fileInput');
         this.uploadPreview = document.getElementById('uploadPreview');
@@ -375,17 +380,41 @@ class ChatHandler {
 
         if (!this.streamingMessage) {
             this.streamingMessage = this.addMessage('assistant', '');
+            this.fullStreamContent = '';
+            // Show first chunk immediately for instant feedback
+            const contentEl = this.streamingMessage.querySelector('.message-content');
+            this.fullStreamContent = content;
+            contentEl.innerHTML = this.formatMessage(content);
+            this.scrollToBottom();
+            return;
         }
 
-        const contentEl = this.streamingMessage.querySelector('.message-content');
-        contentEl.innerHTML = this.formatMessage(contentEl.textContent + content);
-        this.scrollToBottom();
+        // Buffer subsequent chunks and batch DOM updates with requestAnimationFrame
+        this.streamBuffer += content;
+        this.fullStreamContent += content;
+
+        if (!this.streamRafPending) {
+            this.streamRafPending = true;
+            requestAnimationFrame(() => {
+                if (this.streamingMessage && this.streamBuffer) {
+                    const contentEl = this.streamingMessage.querySelector('.message-content');
+                    contentEl.innerHTML = this.formatMessage(this.fullStreamContent);
+                    this.scrollToBottom();
+                }
+                this.streamBuffer = '';
+                this.streamRafPending = false;
+            });
+        }
     }
 
     handleStreamEnd() {
         if (this.streamingMessage) {
             const contentEl = this.streamingMessage.querySelector('.message-content');
-            const content = contentEl.textContent;
+            // Use buffered content instead of reading from DOM
+            const content = this.fullStreamContent;
+
+            // Final render with complete content
+            contentEl.innerHTML = this.formatMessage(content);
 
             // Add copy button
             const copyBtn = document.createElement('button');
@@ -420,7 +449,11 @@ class ChatHandler {
                 window.ttsController.speak(content);
             }
 
+            // Reset streaming state
             this.streamingMessage = null;
+            this.streamBuffer = '';
+            this.fullStreamContent = '';
+            this.streamRafPending = false;
         }
     }
 

@@ -208,6 +208,88 @@ Uploads and generated images are stored at the configured `upload_path`:
 - `DELETE /api/admin/users/{id}` - Delete user
 - `POST /api/admin/test-email` - Send test email
 
+## Nginx Reverse Proxy
+
+Example nginx configuration for running behind a reverse proxy with SSL:
+
+```nginx
+upstream posterchanai {
+    server 127.0.0.1:3051;
+}
+
+server {
+    listen 80;
+    server_name ai.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name ai.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/ai.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ai.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    client_max_body_size 100M;
+
+    location / {
+        proxy_pass http://posterchanai;
+        proxy_http_version 1.1;
+        proxy_redirect off;
+
+        # WebSocket support (required for chat)
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # Standard proxy headers
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Port 443;
+
+        # Disable buffering for streaming responses
+        proxy_buffering off;
+        chunked_transfer_encoding off;
+
+        # Long timeouts for AI generation
+        proxy_connect_timeout 3600s;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        send_timeout 3600s;
+    }
+}
+```
+
+Key settings for WebSocket and streaming:
+- `proxy_http_version 1.1` - Required for WebSocket
+- `proxy_set_header Upgrade $http_upgrade` - WebSocket upgrade header
+- `proxy_set_header Connection "upgrade"` - WebSocket connection header
+- `proxy_buffering off` - Disable buffering for SSE streaming
+- Long timeouts for AI generation requests
+
+## Ollama Health Check
+
+Posterchanai includes an automatic health check that monitors Ollama and restarts it if unresponsive.
+
+### Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `ollama_ping_enabled` | false | Enable/disable health check |
+| `ollama_ping_interval` | 90 | Seconds between pings |
+| `ollama_restart_after_failures` | 5 | Consecutive failures before restart |
+| `ollama_restart_command` | `sudo systemctl restart ollama` | Command to restart Ollama |
+
+### How it works
+
+1. Sends a test prompt to Ollama every 90 seconds
+2. If Ollama fails to respond, increments failure counter
+3. After 5 consecutive failures, executes restart command
+4. Logs all activity: `[HEALTH] Ping OK` or `[HEALTH] Ping FAILED (1/5)`
+
 ## Requirements
 
 - Python 3.11+

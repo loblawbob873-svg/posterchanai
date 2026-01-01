@@ -13,10 +13,20 @@ class ChatService:
 
     def _load_settings(self):
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
-        self.openwebui_url = settings.get("openwebui_url", "")
-        self.api_key = settings.get("openwebui_api_key", "")
-        self.model = settings.get("openwebui_model", "")
-        self.timeout = int(settings.get("openwebui_timeout", "60000")) / 1000  # Convert to seconds
+        # Use Ollama directly
+        self.ollama_url = settings.get("ollama_url", "http://localhost:11434")
+        self.model = settings.get("ollama_model", "llama3")
+        self.timeout = int(settings.get("ollama_timeout", "120000")) / 1000  # Convert to seconds
+        self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
+
+        # Advanced model settings
+        self.temperature = float(settings.get("ollama_temperature", "0.7"))
+        self.top_p = float(settings.get("ollama_top_p", "0.9"))
+        self.top_k = int(settings.get("ollama_top_k", "40"))
+        self.repeat_penalty = float(settings.get("ollama_repeat_penalty", "1.1"))
+        self.num_ctx = int(settings.get("ollama_num_ctx", "4096"))
+        self.num_predict = int(settings.get("ollama_num_predict", "2048"))
+        self.keep_alive = settings.get("ollama_keep_alive", "-1")
 
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
@@ -26,23 +36,32 @@ class ChatService:
             return response[last_match.end():].strip()
         return response
 
+    def _get_options(self) -> dict:
+        """Get Ollama model options"""
+        return {
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "repeat_penalty": self.repeat_penalty,
+            "num_ctx": self.num_ctx,
+            "num_predict": self.num_predict,
+        }
+
     async def chat(self, messages: list[dict]) -> str:
         """Non-streaming chat completion"""
-        if not self.openwebui_url or not self.api_key:
-            return "Error: OpenWebUI not configured. Please ask an admin to configure it."
+        if not self.ollama_url:
+            return "Error: Ollama not configured. Please ask an admin to configure it."
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 response = await client.post(
-                    f"{self.openwebui_url}/api/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
+                    f"{self.ollama_url}/v1/chat/completions",
                     json={
                         "model": self.model,
                         "messages": messages,
-                        "stream": False
+                        "stream": False,
+                        "options": self._get_options(),
+                        "keep_alive": self.keep_alive
                     }
                 )
                 response.raise_for_status()
@@ -56,23 +75,21 @@ class ChatService:
 
     async def chat_stream(self, messages: list[dict]) -> AsyncGenerator[str, None]:
         """Streaming chat completion"""
-        if not self.openwebui_url or not self.api_key:
-            yield "Error: OpenWebUI not configured. Please ask an admin to configure it."
+        if not self.ollama_url:
+            yield "Error: Ollama not configured. Please ask an admin to configure it."
             return
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 async with client.stream(
                     "POST",
-                    f"{self.openwebui_url}/api/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
+                    f"{self.ollama_url}/v1/chat/completions",
                     json={
                         "model": self.model,
                         "messages": messages,
-                        "stream": True
+                        "stream": True,
+                        "options": self._get_options(),
+                        "keep_alive": self.keep_alive
                     }
                 ) as response:
                     response.raise_for_status()
@@ -116,7 +133,7 @@ class ChatService:
         Use vision AI to analyze image and extract tags describing it.
         Returns comma-separated tags or empty string on failure.
         """
-        if not self.openwebui_url or not self.api_key:
+        if not self.ollama_url:
             return ""
 
         system_prompt = """Analyze this image and output ONLY comma-separated tags describing it.
@@ -134,17 +151,16 @@ Output ONLY tags, no sentences. Example: 1girl, orange hair, yellow eyes, black 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 response = await client.post(
-                    f"{self.openwebui_url}/api/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
+                    f"{self.ollama_url}/v1/chat/completions",
                     json={
                         "model": self.model,
                         "messages": messages,
-                        "temperature": 0.3,
-                        "max_tokens": 200,
-                        "stream": False
+                        "options": {
+                            "temperature": 0.3,
+                            "num_predict": 200
+                        },
+                        "stream": False,
+                        "keep_alive": self.keep_alive
                     }
                 )
                 response.raise_for_status()
@@ -163,7 +179,7 @@ Output ONLY tags, no sentences. Example: 1girl, orange hair, yellow eyes, black 
         original_tags: tags describing the source image (from vision analysis)
         Returns: (prompt, denoise, negative_prompt)
         """
-        if not self.openwebui_url or not self.api_key:
+        if not self.ollama_url:
             # Fallback: use user prompt directly with high denoise
             return user_prompt + ", vibrant colors, sharp, high quality", 1.0, "bad quality, blurry, distorted"
 
@@ -373,17 +389,16 @@ NEGATIVE: daytime, rural, deformed, blurry, distorted, extra people"""
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 response = await client.post(
-                    f"{self.openwebui_url}/api/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
+                    f"{self.ollama_url}/v1/chat/completions",
                     json={
                         "model": self.model,
                         "messages": messages,
-                        "temperature": 0.2,
-                        "max_tokens": 400,
-                        "stream": False
+                        "options": {
+                            "temperature": 0.2,
+                            "num_predict": 400
+                        },
+                        "stream": False,
+                        "keep_alive": self.keep_alive
                     }
                 )
                 response.raise_for_status()
