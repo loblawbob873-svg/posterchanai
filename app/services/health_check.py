@@ -36,7 +36,6 @@ def _get_settings(db: Session) -> dict:
         "ping_interval": int(settings.get("ollama_ping_interval", "90")),
         "restart_after_failures": int(settings.get("ollama_restart_after_failures", "5")),
         "restart_command": settings.get("ollama_restart_command", "sudo docker restart ollama-intel-arc"),
-        "num_ctx": int(settings.get("ollama_num_ctx", "40960")),
     }
 
 
@@ -106,7 +105,7 @@ def restart_ollama(restart_command: str):
         return False
 
 
-async def ping_ollama(ollama_url: str, model: str = "llama3", timeout: float = 120.0, num_ctx: int = 40960) -> bool:
+async def ping_ollama(ollama_url: str, model: str = "llama3") -> bool:
     """Ping Ollama - just check if it's alive, don't force model loads"""
     import httpx
 
@@ -136,7 +135,7 @@ async def ping_ollama(ollama_url: str, model: str = "llama3", timeout: float = 1
                                 },
                                 timeout=10
                             )
-                        except:
+                        except Exception:
                             pass  # Keep-alive refresh is best-effort
                         break
 
@@ -169,7 +168,7 @@ async def health_check_loop():
 
             # Ping Ollama
             logger.debug(f"Pinging Ollama at {settings['ollama_url']}...")
-            success = await ping_ollama(settings["ollama_url"], settings["ollama_model"], num_ctx=settings["num_ctx"])
+            success = await ping_ollama(settings["ollama_url"], settings["ollama_model"])
 
             if success:
                 logger.info("Ping OK")

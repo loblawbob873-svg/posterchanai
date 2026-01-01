@@ -2,14 +2,25 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
+import secrets
 from fastapi import Depends, HTTPException, status, Request, WebSocket
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 import os
+import warnings
 
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production-12345")
+# Generate a secure random key if SECRET_KEY is not set
+_secret_key = os.getenv("SECRET_KEY")
+if not _secret_key:
+    _secret_key = secrets.token_hex(32)
+    warnings.warn(
+        "SECRET_KEY environment variable not set. Using a random key. "
+        "Sessions will be invalidated on restart. Set SECRET_KEY in production.",
+        RuntimeWarning
+    )
+SECRET_KEY = _secret_key
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 

@@ -4,6 +4,7 @@ Email Service for SMTP sending and IMAP sent folder storage.
 import smtplib
 import imaplib
 import ssl
+import html
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import formatdate, make_msgid
@@ -30,7 +31,7 @@ class EmailService:
         self.smtp_username = settings.get("smtp_username", "")
         self.smtp_password = settings.get("smtp_password", "")
         self.smtp_from_email = settings.get("smtp_from_email", "")
-        self.smtp_from_name = settings.get("smtp_from_name", "Posterchanai")
+        self.smtp_from_name = settings.get("smtp_from_name", "Poster-chan AI")
         self.smtp_use_tls = settings.get("smtp_use_tls", "true").lower() == "true"
         self.smtp_use_ssl = settings.get("smtp_use_ssl", "false").lower() == "true"
 
@@ -171,8 +172,8 @@ class EmailService:
 
     def send_test_email(self, to_email: str) -> Tuple[bool, str]:
         """Send a test email to verify configuration"""
-        subject = "Posterchanai Test Email"
-        body = """This is a test email from Posterchanai.
+        subject = "Poster-chan AI Test Email"
+        body = """This is a test email from Poster-chan AI.
 
 If you received this email, your SMTP configuration is working correctly.
 
@@ -211,7 +212,7 @@ Sent at: {timestamp}
 </head>
 <body>
     <div class="container">
-        <h1>Posterchanai Test Email</h1>
+        <h1>Poster-chan AI Test Email</h1>
         <p class="success">Your SMTP configuration is working correctly!</p>
         <div class="details">
             <div class="detail-row">
@@ -253,10 +254,10 @@ Sent at: {timestamp}
 
     def send_verification_email(self, to_email: str, username: str, verify_url: str) -> Tuple[bool, str]:
         """Send email verification link"""
-        subject = "Verify your Posterchanai account"
+        subject = "Verify your Poster-chan AI account"
         body = f"""Hello {username},
 
-Thank you for registering with Posterchanai!
+Thank you for registering with Poster-chan AI!
 
 Please click the link below to verify your email address:
 {verify_url}
@@ -266,8 +267,12 @@ This link will expire in 24 hours.
 If you did not create an account, you can ignore this email.
 
 Best regards,
-Posterchanai
+Poster-chan AI
 """
+
+        # Escape HTML in user-provided content to prevent XSS
+        safe_username = html.escape(username)
+        safe_url = html.escape(verify_url)
 
         html_body = f"""
 <!DOCTYPE html>
@@ -287,14 +292,14 @@ Posterchanai
 </head>
 <body>
     <div class="container">
-        <h1>Welcome to Posterchanai!</h1>
-        <p class="message">Hello {username},</p>
+        <h1>Welcome to Poster-chan AI!</h1>
+        <p class="message">Hello {safe_username},</p>
         <p class="message">Thank you for registering! Please verify your email address by clicking the button below:</p>
         <p style="text-align: center;">
-            <a href="{verify_url}" class="button">Verify Email Address</a>
+            <a href="{safe_url}" class="button">Verify Email Address</a>
         </p>
         <p class="message">Or copy and paste this link into your browser:</p>
-        <p class="link">{verify_url}</p>
+        <p class="link">{safe_url}</p>
         <p class="expire">This link will expire in 24 hours.</p>
         <p class="footer">If you did not create an account, you can safely ignore this email.</p>
     </div>
