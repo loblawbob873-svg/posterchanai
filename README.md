@@ -4,27 +4,45 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 
 ## Features
 
+### AI & Chat
 - AI Chat with streaming responses
 - **Native GPU inference** with llama-cpp-python (Intel SYCL, NVIDIA CUDA, CPU fallback)
 - Ollama backend support (optional, for Docker-based setups)
 - OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`)
 - Per-user API keys for external app integration
+- Stop button to halt AI response generation mid-stream
+- Persistent chat history with file storage
+
+### Vision & Documents
 - Vision support (upload images and ask questions about them)
-- Image Generation (geni command)
-- Image-to-Image transformation (img2img command)
-- Web Search with AI summarization
-- Image Search
-- Text-to-Speech
-- User registration (admin configurable)
-- Email verification for new registrations (when SMTP enabled)
-- Email notifications (SMTP/IMAP support)
-- Ollama health check with auto-restart
+- **OCR text extraction** from images (via Tesseract)
+- Mobile camera capture button (opens device camera directly)
 - File uploads:
-  - Images (with vision AI support)
+  - Images: JPG, PNG, GIF, WebP, **HEIC/HEIF** (Apple format)
   - PDF documents (text extraction and summarization)
   - Office documents (Word, Excel, PowerPoint)
   - Text files
-- Persistent chat history with file storage
+- **Document translation** with language selection modal
+
+### Image Generation
+- Image Generation (geni command)
+- Image-to-Image transformation (img2img command)
+- Image Search
+
+### Search & Web
+- Web Search with AI summarization
+- **Browser search engine integration** - use as default search engine
+- Image Search
+
+### Communication
+- Text-to-Speech (with automatic language detection)
+- **Email AI responses** to configured notification email
+- Email verification for new registrations (when SMTP enabled)
+- Email notifications (SMTP/IMAP support)
+
+### System
+- User registration (admin configurable)
+- Ollama health check with auto-restart
 - PWA support (installable on mobile/desktop)
 
 ## Installation
@@ -155,7 +173,7 @@ Users can generate their own API keys from the user menu. Keys are shown once on
 
 ## Commands
 
-Type these commands in the chat:
+Type these commands in the chat (or use the mode buttons):
 
 | Command | Description |
 |---------|-------------|
@@ -165,16 +183,87 @@ Type these commands in the chat:
 | `img2img <prompt>` | Transform an uploaded image with your prompt |
 | `regen` | Regenerate the last image with a new seed |
 
+## Browser Search Engine Integration
+
+You can use Poster-chan AI as your browser's default search engine. This allows you to search directly from the address bar.
+
+### Setup
+
+Add a custom search engine in your browser with this URL:
+
+```
+https://your-domain.com/?q=%s
+```
+
+**Chrome/Brave:**
+1. Go to Settings > Search engine > Manage search engines
+2. Click "Add" under "Site search"
+3. Name: `Poster-chan AI`
+4. Shortcut: `ai` (or whatever you prefer)
+5. URL: `https://your-domain.com/?q=%s`
+
+**Firefox:**
+1. Install the "Add custom search engine" extension
+2. Add your search URL
+
+### How it works
+
+When you search using the custom search engine:
+1. Creates a new conversation automatically
+2. Activates Search mode
+3. Executes your query with AI-summarized web results
+4. URL parameter is cleared (refresh won't repeat the search)
+
+## Document Translation
+
+The Translate button allows you to translate entire documents to different languages.
+
+### Supported formats
+- Images (text extracted via OCR)
+- PDF documents
+- Text files (.txt, .md)
+- Word documents (.docx)
+
+### Usage
+1. Click the **Translate** button
+2. Select target language from dropdown
+3. Choose a file to translate
+4. AI will translate the full document
+
+## Email AI Responses
+
+You can email any AI response to your configured email address.
+
+### Setup
+1. Click your username in the sidebar
+2. Click **Settings**
+3. Enter your notification email
+4. Click **Save Settings**
+
+### Usage
+- Click the email button (envelope icon) on any AI message
+- The response will be sent to your configured email
+
+**Note:** Requires SMTP to be configured in Admin settings.
+
 ## Supported File Types
 
 | Type | Extensions | Description |
 |------|------------|-------------|
-| Images | jpg, png, gif, webp | Sent to vision AI for analysis |
+| Images | jpg, png, gif, webp, **heic, heif** | OCR text extraction + vision AI |
 | PDF | pdf | Text extracted and sent to AI |
 | Word | docx, doc | Text and tables extracted |
 | Excel | xlsx, xls | Spreadsheet data extracted |
 | PowerPoint | pptx, ppt | Slide text extracted |
-| Text | txt, md, json, etc. | Sent directly to AI |
+| Text | txt, md, json, py, js, etc. | Sent directly to AI |
+
+### OCR (Optical Character Recognition)
+
+Images containing text are automatically processed with Tesseract OCR:
+- Extracts text from photos of documents, receipts, screenshots
+- Handles EXIF orientation (phone photos rotated correctly)
+- Large images automatically resized for processing
+- Works with all supported image formats including HEIC
 
 ## File Storage
 
@@ -422,5 +511,16 @@ volumes:
   - GGUF model file
 - **For Ollama mode:**
   - Ollama instance (local or Docker)
+- **For OCR (image text extraction):**
+  - Tesseract OCR (`apt install tesseract-ocr` or `emerge app-text/tesseract`)
 - ComfyUI instance (optional, for image generation)
 - SearXNG instance (optional, for web search)
+
+### Python Dependencies (auto-installed by setup.sh)
+
+Key packages:
+- `pytesseract` - OCR text extraction
+- `pillow-heif` - HEIC/HEIF image support
+- `edge-tts` - Text-to-speech
+- `python-docx`, `openpyxl`, `python-pptx` - Office document support
+- `PyMuPDF` - PDF text extraction

@@ -2,18 +2,74 @@ import base64
 import io
 from typing import Optional
 
+# Register HEIC/HEIF support for iPhone photos
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass  # pillow-heif not installed
+
 
 def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[str]:
     """Extract text from an image using OCR (pytesseract)"""
     try:
         import pytesseract
-        from PIL import Image
+        from PIL import Image, ExifTags
+
+        # Set tesseract path explicitly
+        pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 
         image_bytes = base64.b64decode(image_base64)
         image = Image.open(io.BytesIO(image_bytes))
 
-        # Run OCR
-        text = pytesseract.image_to_string(image)
+        # Handle EXIF orientation (phone photos are often rotated)
+        try:
+            for orientation in ExifTags.TAGS.keys():
+                if ExifTags.TAGS[orientation] == 'Orientation':
+                    break
+            exif = image._getexif()
+            if exif is not None:
+                orientation_value = exif.get(orientation)
+                if orientation_value == 3:
+                    image = image.rotate(180, expand=True)
+                elif orientation_value == 6:
+                    image = image.rotate(270, expand=True)
+                elif orientation_value == 8:
+                    image = image.rotate(90, expand=True)
+        except (AttributeError, KeyError, TypeError):
+            pass  # No EXIF data
+
+        # Resize very large images to avoid memory issues (max 4000px on longest side)
+        max_dimension = 4000
+        if max(image.size) > max_dimension:
+            ratio = max_dimension / max(image.size)
+            new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
+            image = image.resize(new_size, Image.Resampling.LANCZOS)
+
+        # Convert to RGB (handles RGBA, P, L, CMYK, etc.)
+        if image.mode in ('RGBA', 'LA', 'P'):
+            # Handle transparency by compositing on white background
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            if image.mode == 'P':
+                image = image.convert('RGBA')
+            background.paste(image, mask=image.split()[-1] if image.mode in ('RGBA', 'LA') else None)
+            image = background
+        elif image.mode != 'RGB':
+            image = image.convert('RGB')
+
+        # Save to BMP format (uncompressed, always supported by leptonica)
+        import tempfile
+        import os
+        with tempfile.NamedTemporaryFile(suffix='.bmp', delete=False) as tmp:
+            tmp_path = tmp.name
+            image.save(tmp_path, format='BMP')
+
+        try:
+            # Run OCR on the temp file
+            text = pytesseract.image_to_string(tmp_path)
+        finally:
+            # Clean up temp file
+            os.unlink(tmp_path)
 
         if text and text.strip():
             result = text.strip()
@@ -22,6 +78,7 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
             print(f"[OCR] Extracted {len(result)} characters from image")
             return result
 
+        print("[OCR] No text found in image")
         return None
     except Exception as e:
         print(f"[OCR] Extraction error: {e}")

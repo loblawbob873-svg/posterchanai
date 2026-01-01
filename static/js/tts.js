@@ -37,6 +37,12 @@ class TTSController {
     async speak(text) {
         if (!this.enabled || !text) return;
 
+        // Skip very long text (likely document translations)
+        if (text.length > 5000) {
+            console.log('TTS: Skipping very long text');
+            return;
+        }
+
         // Stop any currently playing audio
         this.stop();
 
@@ -44,11 +50,12 @@ class TTSController {
             const response = await fetch('/api/tts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
                 body: JSON.stringify({ text })
             });
 
             if (!response.ok) {
-                console.error('TTS request failed');
+                // Silently fail for TTS - not critical functionality
                 return;
             }
 
@@ -58,7 +65,7 @@ class TTSController {
                 await this.currentAudio.play();
             }
         } catch (err) {
-            console.error('TTS error:', err);
+            // Silently fail - TTS is optional
         }
     }
 

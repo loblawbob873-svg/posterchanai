@@ -1,22 +1,62 @@
-// Service Worker for Posterchanai PWA
-const CACHE_NAME = 'posterchanai-v1';
-const urlsToCache = [
-  '/',
+// Service Worker for Poster-chan AI PWA
+const CACHE_NAME = 'posterchanai-v6';
+const STATIC_ASSETS = [
   '/static/css/style.css',
-  '/static/favicon.png',
-  '/static/manifest.json'
+  '/static/icon-192.png',
+  '/static/icon-512.png',
+  '/static/apple-touch-icon.png',
+  '/manifest.json'
 ];
 
 self.addEventListener('install', event => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(urlsToCache))
+      .then(cache => cache.addAll(STATIC_ASSETS))
+      .catch(err => console.error('SW install failed:', err))
   );
 });
 
-self.addEventListener('fetch', event => {
-  event.respondWith(
-    caches.match(event.request)
-      .then(response => response || fetch(event.request))
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(cacheNames => {
+      return Promise.all(
+        cacheNames
+          .filter(name => name !== CACHE_NAME)
+          .map(name => caches.delete(name))
+      );
+    })
   );
+  return self.clients.claim();
+});
+
+self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+
+  // Skip non-GET requests
+  if (event.request.method !== 'GET') return;
+
+  // Skip API calls, WebSocket, and navigation - let browser handle normally
+  if (url.pathname.startsWith('/api/') ||
+      url.pathname.startsWith('/ws') ||
+      event.request.mode === 'navigate') {
+    return;
+  }
+
+  // For static assets only - cache first, then network
+  if (url.pathname.startsWith('/static/') || url.pathname === '/manifest.json') {
+    event.respondWith(
+      caches.match(event.request).then(cached => {
+        if (cached) return cached;
+        return fetch(event.request).then(response => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          }
+          return response;
+        }).catch(() => cached);
+      })
+    );
+    return;
+  }
 });

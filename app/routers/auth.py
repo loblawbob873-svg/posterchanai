@@ -360,3 +360,35 @@ def toggle_api_key(
     api_key.is_active = not api_key.is_active
     db.commit()
     return {"message": "API key toggled", "is_active": api_key.is_active}
+
+
+# ============== User Settings ==============
+
+@router.get("/settings")
+def get_user_settings(current_user: User = Depends(get_current_user)):
+    """Get current user's settings"""
+    return {
+        "notification_email": current_user.notification_email
+    }
+
+
+@router.put("/settings")
+def update_user_settings(
+    settings: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update current user's settings"""
+    notification_email = settings.get("notification_email", "").strip()
+
+    # Basic email validation if provided
+    if notification_email and "@" not in notification_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid email address"
+        )
+
+    current_user.notification_email = notification_email if notification_email else None
+    db.commit()
+
+    return {"message": "Settings updated", "notification_email": current_user.notification_email}

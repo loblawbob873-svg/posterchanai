@@ -12,6 +12,7 @@ from app.services.chat_service import ChatService
 from app.services.command_service import CommandService
 from app.services.storage_service import StorageService
 from app.services.document_service import extract_pdf_text, extract_document_text, extract_image_text
+from app.services.email_service import EmailService
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -113,24 +114,83 @@ def get_messages(
     return conversation.messages
 
 
+@router.post("/chat/email-response")
+def email_response(
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Email an AI response to the user's notification email"""
+    content = data.get("content", "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="No content to email")
+
+    if not current_user.notification_email:
+        raise HTTPException(status_code=400, detail="No notification email configured. Please set one in Settings.")
+
+    email_service = EmailService(db)
+    if not email_service.smtp_enabled:
+        raise HTTPException(status_code=400, detail="Email is not configured on this server")
+
+    success, message = email_service.send_chat_response(
+        to_email=current_user.notification_email,
+        username=current_user.username,
+        content=content
+    )
+
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {message}")
+
+    return {"message": "Email sent successfully"}
+
+
 # WebSocket for real-time chat
 
 class ConnectionManager:
     def __init__(self):
         self.active_connections: dict[int, WebSocket] = {}
+        self.connection_ids: dict[int, int] = {}  # Track connection ID per user to detect stale connections
         self.last_image_prompts: dict[int, str] = {}  # Track last image prompt per user
+        self.stop_flags: dict[int, bool] = {}  # Stop streaming flags per user
+        self._next_conn_id = 0
 
-    async def connect(self, user_id: int, websocket: WebSocket):
+    async def connect(self, user_id: int, websocket: WebSocket) -> int:
         await websocket.accept()
+        # Stop any previous streaming for this user (prevents messages going to wrong chat)
+        self.stop_flags[user_id] = True
         self.active_connections[user_id] = websocket
+        # Increment connection ID so old streams know they're stale
+        self._next_conn_id += 1
+        self.connection_ids[user_id] = self._next_conn_id
+        # Reset stop flag for new connection
+        self.stop_flags[user_id] = False
+        return self._next_conn_id
 
     def disconnect(self, user_id: int):
         self.active_connections.pop(user_id, None)
+        self.stop_flags.pop(user_id, None)
 
-    async def send_json(self, user_id: int, data: dict):
+    def should_stop(self, user_id: int, conn_id: int = None) -> bool:
+        # Stop if flag is set OR if connection ID doesn't match (user switched chats)
+        if self.stop_flags.get(user_id, False):
+            return True
+        if conn_id is not None and self.connection_ids.get(user_id) != conn_id:
+            return True
+        return False
+
+    def set_stop(self, user_id: int, value: bool):
+        self.stop_flags[user_id] = value
+
+    async def send_json(self, user_id: int, data: dict, conn_id: int = None):
+        # Only send if connection ID matches (prevents sending to wrong chat)
+        if conn_id is not None and self.connection_ids.get(user_id) != conn_id:
+            return
         ws = self.active_connections.get(user_id)
         if ws:
-            await ws.send_json(data)
+            try:
+                await ws.send_json(data)
+            except Exception:
+                pass  # Connection may be closed
 
 
 manager = ConnectionManager()
@@ -138,12 +198,13 @@ manager = ConnectionManager()
 
 @router.websocket("/ws/chat/{conversation_id}")
 async def websocket_chat(websocket: WebSocket, conversation_id: int):
-    await websocket.accept()
-
     db = SessionLocal()
+    conn_id = None
+    user = None
     try:
         user = await get_user_from_websocket(websocket, db)
         if not user:
+            await websocket.accept()
             await websocket.send_json({"type": "error", "message": "Please log in again"})
             await websocket.close(code=4001)
             return
@@ -154,11 +215,13 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             Conversation.user_id == user.id
         ).first()
         if not conversation:
+            await websocket.accept()
             await websocket.send_json({"type": "error", "message": "Conversation not found"})
             await websocket.close(code=4004)
             return
 
-        manager.active_connections[user.id] = websocket
+        # Use manager.connect() which handles stopping old streams and returns connection ID
+        conn_id = await manager.connect(user.id, websocket)
 
         chat_service = ChatService(db)
         command_service = CommandService(db)
@@ -168,7 +231,12 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             while True:
                 data = await websocket.receive_json()
 
+                if data.get("type") == "stop":
+                    manager.set_stop(user.id, True)
+                    continue
+
                 if data.get("type") == "message":
+                    manager.set_stop(user.id, False)  # Reset for new message
                     content = data.get("content", "").strip()
                     image_data = data.get("image_data")  # base64 image
                     file_content = data.get("file_content")  # text file content
@@ -240,11 +308,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         db.add(assistant_msg)
                         db.commit()
 
-                        # Send response
+                        # Send response (with conn_id to ensure it goes to correct chat)
                         await manager.send_json(user.id, {
                             "type": "response",
                             "data": result
-                        })
+                        }, conn_id)
                     else:
                         # Regular chat - stream response
                         # Build message history (exclude the just-added user message)
@@ -260,17 +328,28 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             messages.append({"role": msg.role, "content": msg.content})
 
                         # Add current message with file/image content if provided
-                        has_vision_message = False
                         if image_data:
-                            # Try vision API format for image
-                            messages.append({
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": content or "What is this image?"},
-                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}}
-                                ]
-                            })
-                            has_vision_message = True
+                            # Use OCR to extract text from image
+                            ocr_text = extract_image_text(image_data)
+                            if ocr_text:
+                                user_request = content if content else "Please provide a detailed, objective summary and analysis of this document."
+                                messages.append({
+                                    "role": "user",
+                                    "content": f"""The user uploaded an image containing the following text (extracted via OCR):
+
+---BEGIN EXTRACTED TEXT---
+{ocr_text}
+---END EXTRACTED TEXT---
+
+User's request: {user_request}
+
+Please analyze the above text objectively and thoroughly. Provide a comprehensive summary covering the main points, key details, and any important information found in the document."""
+                                })
+                            else:
+                                messages.append({
+                                    "role": "user",
+                                    "content": f"{content or 'The user uploaded an image.'} [Note: An image was uploaded but no text could be extracted from it. Please ask the user to describe what they see.]"
+                                })
                         elif file_content:
                             messages.append({
                                 "role": "user",
@@ -281,38 +360,15 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                         # Stream response
                         full_response = ""
-                        vision_failed = False
                         async for chunk in chat_service.chat_stream(messages):
-                            # Check for vision API errors
-                            if has_vision_message and "Error:" in chunk and full_response == "":
-                                vision_failed = True
+                            # Check if user requested stop OR switched to another chat
+                            if manager.should_stop(user.id, conn_id):
                                 break
                             full_response += chunk
                             await manager.send_json(user.id, {
                                 "type": "stream",
                                 "content": chunk
-                            })
-
-                        # Fallback if vision failed - try OCR then retry
-                        if vision_failed and has_vision_message:
-                            # Try OCR to extract any text from the image
-                            ocr_text = extract_image_text(image_data) if image_data else None
-                            if ocr_text:
-                                messages[-1] = {
-                                    "role": "user",
-                                    "content": f"{content or 'The user uploaded an image.'}\n\n[OCR extracted text from image:]\n{ocr_text}"
-                                }
-                            else:
-                                messages[-1] = {
-                                    "role": "user",
-                                    "content": f"{content or 'The user uploaded an image.'} [Note: Image was uploaded but vision is not available and no text was detected]"
-                                }
-                            async for chunk in chat_service.chat_stream(messages):
-                                full_response += chunk
-                                await manager.send_json(user.id, {
-                                    "type": "stream",
-                                    "content": chunk
-                                })
+                            }, conn_id)
 
                         # Save assistant response
                         if full_response:
@@ -325,7 +381,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             db.add(assistant_msg)
                             db.commit()
 
-                        await manager.send_json(user.id, {"type": "stream_end"})
+                        await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
 
         except WebSocketDisconnect:
             manager.disconnect(user.id)

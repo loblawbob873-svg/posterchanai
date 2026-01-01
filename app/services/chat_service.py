@@ -29,6 +29,15 @@ class ChatService:
         # keep_alive: -1 = forever, 0 = unload immediately, positive = seconds
         keep_alive_str = settings.get("ollama_keep_alive", "-1")
         self.keep_alive = int(keep_alive_str) if keep_alive_str.lstrip('-').isdigit() else -1
+        self.stop_sequences = [s.strip() for s in settings.get("ollama_stop", "").split(",") if s.strip()]
+
+        # Additional advanced settings (consistent with OllamaService)
+        seed_str = settings.get("ollama_seed", "")
+        self.seed = int(seed_str) if seed_str.strip() else None
+        self.mirostat = int(settings.get("ollama_mirostat", "0"))
+        self.mirostat_eta = float(settings.get("ollama_mirostat_eta", "0.1"))
+        self.mirostat_tau = float(settings.get("ollama_mirostat_tau", "5.0"))
+        self.tfs_z = float(settings.get("ollama_tfs_z", "1.0"))
 
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
@@ -39,15 +48,29 @@ class ChatService:
         return response
 
     def _get_options(self) -> dict:
-        """Get Ollama model options"""
-        return {
+        """Get Ollama model options (consistent with OllamaService)"""
+        options = {
             "temperature": self.temperature,
             "top_p": self.top_p,
             "top_k": self.top_k,
             "repeat_penalty": self.repeat_penalty,
             "num_ctx": self.num_ctx,
             "num_predict": self.num_predict,
+            "mirostat": self.mirostat,
+            "mirostat_eta": self.mirostat_eta,
+            "mirostat_tau": self.mirostat_tau,
+            "tfs_z": self.tfs_z,
         }
+
+        # Add seed if set
+        if self.seed is not None:
+            options["seed"] = self.seed
+
+        # Add stop sequences if set
+        if self.stop_sequences:
+            options["stop"] = self.stop_sequences
+
+        return options
 
     async def chat(self, messages: list[dict]) -> str:
         """Non-streaming chat completion using native Ollama API"""

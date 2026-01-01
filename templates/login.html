@@ -58,6 +58,7 @@
 <script>
 let isLoginMode = true;
 let registrationEnabled = false;
+const nextUrl = '{{ next }}';  // Redirect URL after login (preserves ?q= search)
 
 // Check if registration is enabled
 async function checkRegistration() {
@@ -113,7 +114,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         });
 
         if (response.ok) {
-            window.location.href = '/';
+            window.location.href = nextUrl;
         } else {
             const data = await response.json();
             errorEl.textContent = data.detail || 'Login failed';
@@ -155,8 +156,8 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
                 errorEl.textContent = data.message || 'Please check your email to verify your account.';
                 document.querySelector('#registerForm button[type="submit"]').disabled = true;
             } else {
-                // No verification needed, redirect to home
-                window.location.href = '/';
+                // No verification needed, redirect to intended destination
+                window.location.href = nextUrl;
             }
         } else {
             errorEl.style.color = '';

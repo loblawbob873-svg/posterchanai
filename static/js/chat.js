@@ -17,10 +17,14 @@ class ChatHandler {
 
         // File upload elements
         this.fileInput = document.getElementById('fileInput');
+        this.cameraInput = document.getElementById('cameraInput');
         this.uploadPreview = document.getElementById('uploadPreview');
         this.imagePreview = document.getElementById('imagePreview');
         this.filePreview = document.getElementById('filePreview');
         this.removeUpload = document.getElementById('removeUpload');
+
+        // User settings
+        this.notificationEmail = null;
 
         // Stored upload data
         this.uploadedImage = null;  // base64 image data
@@ -32,12 +36,21 @@ class ChatHandler {
         this.lastPayload = null;
         this.lastUserMessage = null;  // Reference to last user message element
 
+        // Streaming state
+        this.isStreaming = false;
+
         this.init();
     }
 
     init() {
-        // Send button click
-        this.sendBtn.addEventListener('click', () => this.sendMessage());
+        // Send button click (also handles stop when streaming)
+        this.sendBtn.addEventListener('click', () => {
+            if (this.isStreaming) {
+                this.stopStreaming();
+            } else {
+                this.sendMessage();
+            }
+        });
 
         // Enter to send (Shift+Enter for new line)
         this.messageInput.addEventListener('keydown', (e) => {
@@ -58,9 +71,83 @@ class ChatHandler {
             this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
         }
 
+        // Camera input change
+        if (this.cameraInput) {
+            this.cameraInput.addEventListener('change', (e) => this.handleFileSelect(e));
+        }
+
         // Remove upload button
         if (this.removeUpload) {
             this.removeUpload.addEventListener('click', () => this.clearUpload());
+        }
+
+        // User settings modal
+        this.initUserSettings();
+    }
+
+    initUserSettings() {
+        const settingsBtn = document.getElementById('userSettingsBtn');
+        const settingsModal = document.getElementById('userSettingsModal');
+        const closeBtn = document.getElementById('closeUserSettingsModal');
+        const saveBtn = document.getElementById('saveUserSettings');
+        const emailInput = document.getElementById('notificationEmail');
+        const statusEl = document.getElementById('settingsStatus');
+
+        if (settingsBtn && settingsModal) {
+            settingsBtn.addEventListener('click', async () => {
+                // Load current settings
+                try {
+                    const response = await fetch('/api/auth/settings');
+                    if (response.ok) {
+                        const data = await response.json();
+                        emailInput.value = data.notification_email || '';
+                        this.notificationEmail = data.notification_email;
+                    }
+                } catch (e) {
+                    console.error('Failed to load settings:', e);
+                }
+                settingsModal.style.display = 'flex';
+                // Close the user menu
+                document.getElementById('userMenu').classList.remove('active');
+            });
+
+            closeBtn.addEventListener('click', () => {
+                settingsModal.style.display = 'none';
+            });
+
+            settingsModal.addEventListener('click', (e) => {
+                if (e.target === settingsModal) {
+                    settingsModal.style.display = 'none';
+                }
+            });
+
+            saveBtn.addEventListener('click', async () => {
+                const email = emailInput.value.trim();
+                statusEl.textContent = 'Saving...';
+                statusEl.className = 'settings-status';
+
+                try {
+                    const response = await fetch('/api/auth/settings', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ notification_email: email })
+                    });
+
+                    if (response.ok) {
+                        this.notificationEmail = email;
+                        statusEl.textContent = 'Settings saved!';
+                        statusEl.className = 'settings-status success';
+                        setTimeout(() => { statusEl.textContent = ''; }, 2000);
+                    } else {
+                        const data = await response.json();
+                        statusEl.textContent = data.detail || 'Failed to save';
+                        statusEl.className = 'settings-status error';
+                    }
+                } catch (e) {
+                    statusEl.textContent = 'Failed to save settings';
+                    statusEl.className = 'settings-status error';
+                }
+            });
         }
     }
 
@@ -274,12 +361,20 @@ class ChatHandler {
         // Add user message to UI (show what user typed, not the command)
         this.lastUserMessage = this.addMessage('user', displayMsg || '[File uploaded]');
 
-        // Add regenerate button to user message (for retrying)
+        // Add action buttons to user message
         const userContentEl = this.lastUserMessage.querySelector('.message-content');
 
-        // Remove regenerate button from previous user messages
-        const prevUserRegenBtns = this.messagesContainer.querySelectorAll('.message.user .btn-regenerate');
-        prevUserRegenBtns.forEach(btn => btn.remove());
+        // Remove action buttons from previous user messages
+        const prevUserActionBtns = this.messagesContainer.querySelectorAll('.message.user .btn-regenerate, .message.user .btn-edit');
+        prevUserActionBtns.forEach(btn => btn.remove());
+
+        // Add edit button
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn-edit';
+        editBtn.innerHTML = '✏️';
+        editBtn.title = 'Edit and resubmit';
+        editBtn.onclick = () => this.editMessage(this.lastUserMessage, displayMsg);
+        userContentEl.appendChild(editBtn);
 
         const userRegenBtn = document.createElement('button');
         userRegenBtn.className = 'btn-regenerate';
@@ -424,6 +519,14 @@ class ChatHandler {
             copyBtn.onclick = () => this.copyText(content);
             contentEl.appendChild(copyBtn);
 
+            // Add email button
+            const emailBtn = document.createElement('button');
+            emailBtn.className = 'btn-email';
+            emailBtn.innerHTML = '📧';
+            emailBtn.title = 'Email this response';
+            emailBtn.onclick = () => this.emailResponse(content);
+            contentEl.appendChild(emailBtn);
+
             // Add regenerate button (only on latest message)
             if (this.lastPayload) {
                 // Remove regenerate button from previous assistant messages
@@ -455,6 +558,7 @@ class ChatHandler {
             this.fullStreamContent = '';
             this.streamRafPending = false;
         }
+        this.resetSendButton();
     }
 
     escapeHtml(text) {
@@ -618,6 +722,158 @@ class ChatHandler {
         this.ws.send(JSON.stringify(this.lastPayload));
     }
 
+    editMessage(messageEl, originalContent) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            this.showToast('Not connected');
+            return;
+        }
+
+        const contentEl = messageEl.querySelector('.message-content');
+        if (!contentEl || contentEl.classList.contains('editing')) return;
+
+        contentEl.classList.add('editing');
+
+        // Store original HTML for cancel
+        const originalHtml = contentEl.innerHTML;
+
+        // Clean the content - remove button text and [with file/image] suffixes
+        let cleanContent = originalContent
+            .replace(/ \[with image\]$/, '')
+            .replace(/ \[with file\]$/, '')
+            .replace(/🔄$/, '')
+            .replace(/📋$/, '')
+            .replace(/✏️$/, '')
+            .trim();
+
+        // Create edit form
+        const editForm = document.createElement('div');
+        editForm.className = 'edit-form';
+        editForm.innerHTML = `
+            <textarea class="edit-textarea">${this.escapeHtml(cleanContent)}</textarea>
+            <div class="edit-actions">
+                <button class="btn-save" title="Save and resubmit">Save & Resubmit</button>
+                <button class="btn-cancel" title="Cancel">Cancel</button>
+            </div>
+        `;
+
+        contentEl.innerHTML = '';
+        contentEl.appendChild(editForm);
+
+        const textarea = editForm.querySelector('.edit-textarea');
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+        // Auto-resize textarea
+        textarea.style.height = 'auto';
+        textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+        textarea.addEventListener('input', () => {
+            textarea.style.height = 'auto';
+            textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+        });
+
+        // Handle save
+        editForm.querySelector('.btn-save').onclick = () => {
+            const newContent = textarea.value.trim();
+            if (!newContent) {
+                this.showToast('Message cannot be empty');
+                return;
+            }
+            this.submitEditedMessage(messageEl, newContent);
+        };
+
+        // Handle cancel
+        editForm.querySelector('.btn-cancel').onclick = () => {
+            contentEl.innerHTML = originalHtml;
+            contentEl.classList.remove('editing');
+        };
+
+        // Handle Escape to cancel, Ctrl+Enter to save
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                contentEl.innerHTML = originalHtml;
+                contentEl.classList.remove('editing');
+            } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                const newContent = textarea.value.trim();
+                if (newContent) {
+                    this.submitEditedMessage(messageEl, newContent);
+                }
+            }
+        });
+    }
+
+    submitEditedMessage(messageEl, newContent) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            this.showToast('Not connected');
+            return;
+        }
+
+        // Find and remove all messages after this one (including the AI response)
+        let nextSibling = messageEl.nextElementSibling;
+        while (nextSibling) {
+            const toRemove = nextSibling;
+            nextSibling = nextSibling.nextElementSibling;
+            // Don't remove typing indicator
+            if (!toRemove.classList.contains('typing')) {
+                toRemove.remove();
+            }
+        }
+
+        // Update the message content in the UI
+        const contentEl = messageEl.querySelector('.message-content');
+        contentEl.classList.remove('editing');
+        contentEl.innerHTML = this.formatMessage(newContent);
+
+        // Add action buttons back
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn-edit';
+        editBtn.innerHTML = '✏️';
+        editBtn.title = 'Edit and resubmit';
+        editBtn.onclick = () => this.editMessage(messageEl, newContent);
+        contentEl.appendChild(editBtn);
+
+        const regenBtn = document.createElement('button');
+        regenBtn.className = 'btn-regenerate';
+        regenBtn.innerHTML = '🔄';
+        regenBtn.title = 'Retry this message';
+        regenBtn.onclick = () => this.retryLastMessage();
+        contentEl.appendChild(regenBtn);
+
+        // Update lastUserMessage reference
+        this.lastUserMessage = messageEl;
+
+        // Get current mode and prepend command if needed
+        const mode = window.app ? window.app.getMode() : '';
+        let content = newContent;
+        if (mode) {
+            content = `${mode} ${content}`;
+        }
+
+        // Build and send new payload
+        const payload = {
+            type: 'message',
+            content: content
+        };
+
+        // Store payload for potential retry
+        this.lastPayload = payload;
+
+        // Show typing indicator
+        this.showTypingIndicator();
+
+        // Notify mascot
+        if (window.mascotController) {
+            if (mode === 'geni' || mode === 'img2img') {
+                window.mascotController.onGeneratingImage();
+            } else {
+                window.mascotController.onUserMessage();
+            }
+        }
+
+        // Send to server
+        this.ws.send(JSON.stringify(payload));
+    }
+
     addMessage(role, content, isHtml = false) {
         const messageEl = document.createElement('div');
         messageEl.className = `message ${role}`;
@@ -644,18 +900,38 @@ class ChatHandler {
             copyBtn.onclick = () => this.copyText(contentEl.textContent);
             contentEl.appendChild(copyBtn);
 
-            // Add regenerate button for assistant messages
-            if (role === 'assistant' && this.lastPayload) {
-                // Remove regenerate button from previous assistant messages
-                const prevRegenBtns = this.messagesContainer.querySelectorAll('.btn-regenerate');
-                prevRegenBtns.forEach(btn => btn.remove());
+            // Add edit button for user messages (for editing and resubmitting)
+            if (role === 'user') {
+                const editBtn = document.createElement('button');
+                editBtn.className = 'btn-edit';
+                editBtn.innerHTML = '✏️';
+                editBtn.title = 'Edit and resubmit';
+                editBtn.onclick = () => this.editMessage(messageEl, content);
+                contentEl.appendChild(editBtn);
+            }
 
-                const regenBtn = document.createElement('button');
-                regenBtn.className = 'btn-regenerate';
-                regenBtn.innerHTML = '🔄';
-                regenBtn.title = 'Regenerate response';
-                regenBtn.onclick = () => this.regenerateResponse(messageEl);
-                contentEl.appendChild(regenBtn);
+            // Add email and regenerate buttons for assistant messages
+            if (role === 'assistant') {
+                // Add email button
+                const emailBtn = document.createElement('button');
+                emailBtn.className = 'btn-email';
+                emailBtn.innerHTML = '📧';
+                emailBtn.title = 'Email this response';
+                emailBtn.onclick = () => this.emailResponse(content);
+                contentEl.appendChild(emailBtn);
+
+                if (this.lastPayload) {
+                    // Remove regenerate button from previous assistant messages
+                    const prevRegenBtns = this.messagesContainer.querySelectorAll('.btn-regenerate');
+                    prevRegenBtns.forEach(btn => btn.remove());
+
+                    const regenBtn = document.createElement('button');
+                    regenBtn.className = 'btn-regenerate';
+                    regenBtn.innerHTML = '🔄';
+                    regenBtn.title = 'Regenerate response';
+                    regenBtn.onclick = () => this.regenerateResponse(messageEl);
+                    contentEl.appendChild(regenBtn);
+                }
             }
         }
 
@@ -694,9 +970,50 @@ class ChatHandler {
         }
     }
 
+    async emailResponse(content) {
+        if (!this.notificationEmail) {
+            // Try to load settings first
+            try {
+                const response = await fetch('/api/auth/settings');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.notificationEmail = data.notification_email;
+                }
+            } catch (e) {
+                console.error('Failed to load settings:', e);
+            }
+        }
+
+        if (!this.notificationEmail) {
+            this.showToast('Please set your email in Settings first');
+            // Open settings modal
+            const settingsModal = document.getElementById('userSettingsModal');
+            if (settingsModal) settingsModal.style.display = 'flex';
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/chat/email-response', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: content })
+            });
+
+            if (response.ok) {
+                this.showToast('Response sent to your email!');
+            } else {
+                const data = await response.json();
+                this.showToast(data.detail || 'Failed to send email');
+            }
+        } catch (e) {
+            console.error('Failed to email response:', e);
+            this.showToast('Failed to send email');
+        }
+    }
+
     copyText(text) {
         // Clean up text - remove button text that might be included
-        const cleanText = text.replace(/🔄$/, '').replace(/📋$/, '').replace(/🔄 Retry$/, '').trim();
+        const cleanText = text.replace(/🔄$/, '').replace(/📋$/, '').replace(/📧$/, '').replace(/🔄 Retry$/, '').trim();
 
         // Use fallback method that works in all contexts
         try {
@@ -758,6 +1075,9 @@ class ChatHandler {
 
     showTypingIndicator() {
         this.hideTypingIndicator();
+        this.isStreaming = true;
+        this.sendBtn.textContent = 'Stop';
+        this.sendBtn.classList.add('stop-btn');
         const indicator = document.createElement('div');
         indicator.className = 'message assistant typing';
         indicator.id = 'typingIndicator';
@@ -775,6 +1095,24 @@ class ChatHandler {
     hideTypingIndicator() {
         const indicator = document.getElementById('typingIndicator');
         if (indicator) indicator.remove();
+    }
+
+    resetSendButton() {
+        this.isStreaming = false;
+        this.sendBtn.textContent = 'Send';
+        this.sendBtn.classList.remove('stop-btn');
+    }
+
+    stopStreaming() {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ type: 'stop' }));
+        }
+        this.hideTypingIndicator();
+        this.resetSendButton();
+        // Finalize the current streaming message if exists
+        if (this.streamingMessage && this.fullStreamContent) {
+            this.handleStreamEnd();
+        }
     }
 
     scrollToBottom() {

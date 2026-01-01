@@ -21,8 +21,39 @@ class App {
         // Set up event listeners
         this.setupEventListeners();
 
-        // Select first conversation or show welcome
-        if (this.conversations.length > 0) {
+        // Check for search engine query parameter (?q=...)
+        const urlParams = new URLSearchParams(window.location.search);
+        const searchQuery = urlParams.get('q');
+
+        if (searchQuery) {
+            // Clear the URL parameter (prevents re-search on refresh)
+            window.history.replaceState({}, document.title, window.location.pathname);
+
+            // Create a new conversation for this search
+            await this.createConversation();
+
+            // Wait for WebSocket to actually be connected (not just timeout)
+            const waitForConnection = () => new Promise((resolve) => {
+                const checkConnection = () => {
+                    if (window.chatHandler && window.chatHandler.ws &&
+                        window.chatHandler.ws.readyState === WebSocket.OPEN) {
+                        resolve();
+                    } else {
+                        setTimeout(checkConnection, 100);
+                    }
+                };
+                checkConnection();
+            });
+            await waitForConnection();
+
+            // Activate search mode and execute query
+            this.setMode('search');
+            this.messageInput.value = searchQuery;
+            if (window.chatHandler) {
+                window.chatHandler.sendMessage();
+            }
+        } else if (this.conversations.length > 0) {
+            // Select first conversation or show welcome
             this.selectConversation(this.conversations[0].id);
         }
     }
@@ -118,6 +149,10 @@ class App {
         const conv = this.conversations.find(c => c.id === id);
         if (!conv) return;
 
+        // Disconnect old WebSocket FIRST to prevent race conditions
+        // (old messages arriving while loading new conversation)
+        window.chatHandler.disconnect();
+
         this.currentConversation = conv;
         this.chatTitle.textContent = conv.title;
 
@@ -136,7 +171,7 @@ class App {
             console.error('Failed to load messages:', err);
         }
 
-        // Connect WebSocket
+        // Connect WebSocket for new conversation
         window.chatHandler.connect(id);
     }
 
@@ -280,7 +315,97 @@ class App {
     }
 }
 
+// Initialize translate modal
+function initTranslateModal() {
+    const translateBtn = document.getElementById('translateBtn');
+    const translateModal = document.getElementById('translateModal');
+    const closeBtn = document.getElementById('closeTranslateModal');
+    const fileInput = document.getElementById('translateFileInput');
+    const fileNameEl = document.getElementById('translateFileName');
+    const languageSelect = document.getElementById('targetLanguage');
+
+    if (!translateBtn || !translateModal) {
+        console.log('Translate elements not found');
+        return;
+    }
+
+    translateBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        translateModal.style.display = 'flex';
+    });
+
+    closeBtn.addEventListener('click', () => {
+        translateModal.style.display = 'none';
+        fileNameEl.textContent = '';
+        fileInput.value = '';
+    });
+
+    translateModal.addEventListener('click', (e) => {
+        if (e.target === translateModal) {
+            translateModal.style.display = 'none';
+            fileNameEl.textContent = '';
+            fileInput.value = '';
+        }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        fileNameEl.textContent = `Processing: ${file.name}...`;
+        const targetLang = languageSelect.value;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const base64 = event.target.result.split(',')[1];
+            const isImage = file.type.startsWith('image/');
+            const isPDF = file.type === 'application/pdf';
+
+            // Close modal
+            translateModal.style.display = 'none';
+            fileNameEl.textContent = '';
+            fileInput.value = '';
+
+            // Build translation request
+            const payload = {
+                type: 'message',
+                content: `IMPORTANT: Translate the ENTIRE document below to ${targetLang}. You MUST translate every single word, sentence, and paragraph completely. Do not summarize, do not skip any sections, do not add commentary. Preserve all original formatting. Output ONLY the full translated text, nothing else.`
+            };
+
+            if (isImage) {
+                payload.image_data = base64;
+            } else if (isPDF) {
+                payload.pdf_data = base64;
+            } else {
+                // Try as text
+                const textReader = new FileReader();
+                textReader.onload = (te) => {
+                    payload.file_content = te.target.result;
+                    sendTranslation(payload, file.name, targetLang);
+                };
+                textReader.readAsText(file);
+                return;
+            }
+
+            sendTranslation(payload, file.name, targetLang);
+        };
+        reader.readAsDataURL(file);
+    });
+
+    function sendTranslation(payload, fileName, targetLang) {
+        if (window.chatHandler) {
+            window.chatHandler.addMessage('user', `Translate "${fileName}" to ${targetLang}`);
+            window.chatHandler.showTypingIndicator();
+            if (window.chatHandler.ws && window.chatHandler.ws.readyState === WebSocket.OPEN) {
+                window.chatHandler.ws.send(JSON.stringify(payload));
+            }
+        }
+    }
+}
+
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new App();
+    initTranslateModal();
 });

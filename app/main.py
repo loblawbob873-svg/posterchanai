@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, Depends, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
 import os
@@ -57,6 +57,10 @@ async def index(
     current_user: User = Depends(get_current_user_optional)
 ):
     if not current_user:
+        # Preserve ?q= search parameter through login
+        query_string = str(request.query_params)
+        if query_string:
+            return RedirectResponse(url=f"/login?next=/?{query_string}", status_code=302)
         return RedirectResponse(url="/login", status_code=302)
     resp = templates.TemplateResponse("index.html", {
         "request": request,
@@ -72,11 +76,16 @@ async def index(
 @app.get("/login")
 async def login_page(
     request: Request,
+    next: str = None,
     current_user: User = Depends(get_current_user_optional)
 ):
     if current_user:
-        return RedirectResponse(url="/", status_code=302)
-    resp = templates.TemplateResponse("login.html", {"request": request})
+        # Redirect to next URL if provided, otherwise home
+        return RedirectResponse(url=next or "/", status_code=302)
+    resp = templates.TemplateResponse("login.html", {
+        "request": request,
+        "next": next or "/"
+    })
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp
 
@@ -97,6 +106,24 @@ async def admin_page(
     })
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp
+
+
+@app.get("/sw.js")
+async def service_worker():
+    """Serve service worker from root for proper PWA scope"""
+    sw_path = os.path.join(os.path.dirname(__file__), "..", "static", "sw.js")
+    return FileResponse(
+        sw_path,
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/"}
+    )
+
+
+@app.get("/manifest.json")
+async def manifest():
+    """Serve manifest from root for PWA"""
+    manifest_path = os.path.join(os.path.dirname(__file__), "..", "static", "manifest.json")
+    return FileResponse(manifest_path, media_type="application/manifest+json")
 
 
 @app.get("/verify/{token}")

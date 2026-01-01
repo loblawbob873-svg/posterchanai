@@ -310,5 +310,60 @@ Poster-chan AI
         return self.send_email(to_email, subject, body, html_body, save_to_sent=True)
 
 
+    def send_chat_response(self, to_email: str, username: str, content: str) -> Tuple[bool, str]:
+        """Send an AI chat response to the user's email"""
+        subject = "AI Response from Poster-chan AI"
+
+        # Plain text version
+        body = f"""Hello {username},
+
+Here is the AI response you requested:
+
+---
+{content}
+---
+
+Best regards,
+Poster-chan AI
+"""
+
+        # Escape HTML in user-provided content
+        safe_username = html.escape(username)
+        # Convert markdown-style formatting to HTML and escape
+        safe_content = html.escape(content)
+        # Convert newlines to <br> for HTML
+        safe_content_html = safe_content.replace('\n', '<br>')
+
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; background: #1a1a2e; color: #fff; padding: 20px; }}
+        .container {{ max-width: 600px; margin: 0 auto; background: #16213e; border-radius: 12px; padding: 30px; }}
+        h1 {{ color: #4a9eff; margin-bottom: 20px; font-size: 24px; }}
+        .greeting {{ color: #ccc; margin-bottom: 20px; }}
+        .response-box {{ background: #0f1729; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #4a9eff; }}
+        .response-content {{ color: #e0e0e0; line-height: 1.8; white-space: pre-wrap; }}
+        .footer {{ color: #666; font-size: 12px; margin-top: 30px; text-align: center; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Response</h1>
+        <p class="greeting">Hello {safe_username},</p>
+        <p class="greeting">Here is the AI response you requested:</p>
+        <div class="response-box">
+            <div class="response-content">{safe_content_html}</div>
+        </div>
+        <p class="footer">Sent from Poster-chan AI</p>
+    </div>
+</body>
+</html>
+"""
+
+        return self.send_email(to_email, subject, body, html_body, save_to_sent=True)
+
+
 def get_email_service(db: Session) -> EmailService:
     return EmailService(db)
