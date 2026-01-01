@@ -176,21 +176,35 @@ class IPEXService:
         return response
 
     def _generate_response(self, messages: List[Dict[str, Any]], **kwargs) -> str:
-        """Generate a response synchronously"""
+        """Generate a response synchronously with retry for transient errors"""
         self._ensure_model_loaded()
 
         if self._is_gguf:
-            # Use llama.cpp API for GGUF models
-            response = self._model.create_chat_completion(
-                messages=messages,
-                max_tokens=kwargs.get("max_tokens", self.num_predict),
-                temperature=kwargs.get("temperature", self.temperature),
-                top_p=kwargs.get("top_p", self.top_p),
-                top_k=kwargs.get("top_k", self.top_k),
-                repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-            )
-            content = response["choices"][0]["message"]["content"]
-            return self.strip_thinking_tags(content)
+            # Use llama.cpp API for GGUF models with retry for transient errors
+            max_retries = 2
+            last_error = None
+
+            for attempt in range(max_retries + 1):
+                try:
+                    response = self._model.create_chat_completion(
+                        messages=messages,
+                        max_tokens=kwargs.get("max_tokens", self.num_predict),
+                        temperature=kwargs.get("temperature", self.temperature),
+                        top_p=kwargs.get("top_p", self.top_p),
+                        top_k=kwargs.get("top_k", self.top_k),
+                        repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                    )
+                    content = response["choices"][0]["message"]["content"]
+                    return self.strip_thinking_tags(content)
+                except IndexError as e:
+                    # Handle transient "index out of bounds" errors in llama-cpp-python
+                    last_error = e
+                    if attempt < max_retries:
+                        logger.warning(f"Inference IndexError (attempt {attempt + 1}/{max_retries + 1}): {e}, retrying...")
+                        continue
+                    raise
+
+            raise last_error
         else:
             # Use HuggingFace API
             import torch
