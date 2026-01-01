@@ -17,7 +17,7 @@
     "4. Skin color changes: weight 2.0, add synonyms (dark skin, brown skin for dark; pale skin, white skin for light)",
     "5. Small breasts: weight 2.0, DENOISE 0.5, add to NEGATIVE: large breasts, huge breasts, cleavage",
     "6. Big breasts: weight 2.0, DENOISE 0.5, add cleavage, NEGATIVE: small breasts, flat chest",
-    "7. CRITICAL - Naked/nude: DENOISE 0.8, you MUST DELETE every clothing tag (shirt, skirt, uniform, dress, jacket, blazer, pants, etc) from TAGS. Do NOT include any clothing in TAGS. Put ALL removed clothing in NEGATIVE",
+    "7. CRITICAL - Naked/nude: DENOISE 0.9, DELETE all clothing from TAGS, ADD body tags (nipples, navel, bare skin), put clothing + sheet + blanket + towel + covered in NEGATIVE",
     "8. Keep original tags for people count (2girls, 3girls, etc)",
     "9. Always end TAGS with: vibrant colors, sharp, high quality",
     "10. NEVER put same tag in TAGS and NEGATIVE",
@@ -256,10 +256,10 @@
     {
       "tags": "1girl, solo, long hair, blonde hair, yellow eyes, fox ears, fox tail, school uniform, blazer, blue jacket, white shirt, pleated skirt, blue skirt, bowtie, red bow, pantyhose, standing, indoors",
       "change": "nude anime",
-      "denoise": 0.8,
-      "output_tags": "(nude:2.0), (naked:2.0), (anime:1.5), nude, anime style, 1girl, solo, long hair, blonde hair, yellow eyes, fox ears, fox tail, standing, indoors, vibrant colors, sharp, high quality",
-      "negative": "school uniform, blazer, blue jacket, white shirt, pleated skirt, blue skirt, bowtie, red bow, pantyhose, clothing, clothed, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry",
-      "note": "Denoise 0.8 needed to fully remove school uniform"
+      "denoise": 0.9,
+      "output_tags": "(nude:2.0), (naked:2.0), (nipples:1.5), (navel:1.5), (bare skin:1.5), nude, anime style, 1girl, solo, long hair, blonde hair, (yellow eyes:1.5), fox ears, fox tail, standing, indoors, vibrant colors, sharp, high quality",
+      "negative": "school uniform, blazer, blue jacket, white shirt, pleated skirt, blue skirt, bowtie, red bow, pantyhose, clothing, clothed, covered, sheet, blanket, towel, censored, deformed, extra limbs, bad anatomy, blurry",
+      "note": "Denoise 0.9 + explicit body tags (nipples, navel) for actual nudity"
     },
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, shirt",
