@@ -135,6 +135,8 @@ class IPEXService:
                         n_ctx=self.num_ctx,
                         n_gpu_layers=self.n_gpu_layers,  # Configurable via admin (-1 = all)
                         n_batch=self.n_batch,  # Configurable via admin
+                        n_threads=1,  # Single thread for GPU inference (GPU handles parallelism)
+                        n_threads_batch=1,  # Single thread for batch processing
                         verbose=False,
                     )
                     self._tokenizer = None  # llama.cpp handles tokenization
