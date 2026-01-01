@@ -587,7 +587,11 @@ class ChatHandler {
                 const safeSrc = this.escapeUrl(img.img_src);
                 const safeUrl = this.escapeUrl(img.url);
                 const safeTitle = this.escapeHtml(img.title || '');
-                html += `<img src="${safeSrc}" alt="${safeTitle}" onclick="window.open('${safeUrl}', '_blank')">`;
+                html += `<a href="${safeUrl}" target="_blank" class="image-link">
+                    <img src="${safeSrc}" alt="${safeTitle}"
+                         onerror="this.parentElement.style.display='none';"
+                         loading="lazy">
+                </a>`;
             }
             html += '</div>';
         } else if (data.type === 'generated_image' && data.image) {

@@ -65,10 +65,10 @@ class SearchService:
                     {
                         "title": r.get("title", ""),
                         "url": r.get("url", ""),
-                        "img_src": r.get("img_src", r.get("thumbnail", ""))
+                        "img_src": r.get("img_src", r.get("thumbnail_src", r.get("thumbnail", "")))
                     }
                     for r in results
-                    if r.get("img_src") or r.get("thumbnail")
+                    if r.get("img_src") or r.get("thumbnail_src") or r.get("thumbnail")
                 ]
             except Exception as e:
                 print(f"Image search error: {e}")
