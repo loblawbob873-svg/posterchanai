@@ -26,3 +26,4 @@ pillow-heif>=0.16.0
 # intel-extension-for-pytorch==2.1.30+xpu
 # ipex-llm[xpu]==2.2.0
 # transformers>=4.37.0
+# numpy<2  # Required for torch/IPEX compatibility
