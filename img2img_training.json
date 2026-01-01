@@ -17,7 +17,7 @@
     "4. Skin color changes: weight 2.0, add synonyms (dark skin, brown skin for dark; pale skin, white skin for light)",
     "5. Small breasts: weight 2.0, DENOISE 0.5, add to NEGATIVE: large breasts, huge breasts, cleavage",
     "6. Big breasts: weight 2.0, DENOISE 0.5, add cleavage, NEGATIVE: small breasts, flat chest",
-    "7. CRITICAL - Naked/nude: DENOISE 0.9, DELETE all clothing from TAGS, ADD body tags (nipples, navel, bare skin), put clothing + sheet + blanket + towel + covered in NEGATIVE",
+    "7. CRITICAL - Naked/nude: DENOISE 0.9, DELETE all clothing from TAGS, ADD (completely nude:2.5), (nipples:2.0), (navel:2.0), NEGATIVE must have: clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent",
     "8. Keep original tags for people count (2girls, 3girls, etc)",
     "9. Always end TAGS with: vibrant colors, sharp, high quality",
     "10. NEVER put same tag in TAGS and NEGATIVE",
@@ -248,26 +248,23 @@
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, shirt, anime",
       "change": "nude anime",
-      "denoise": 0.8,
-      "output_tags": "(nude:2.0), (naked:2.0), (anime:1.5), nude, anime style, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
-      "negative": "gym uniform, buruma, shirt, clothing, clothed, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry",
-      "note": "Denoise 0.8 for clothing removal"
+      "denoise": 0.9,
+      "output_tags": "(completely nude:2.5), (fully naked:2.5), (nipples:2.0), (navel:2.0), nude, anime style, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
+      "negative": "gym uniform, buruma, shirt, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "1girl, solo, long hair, blonde hair, yellow eyes, fox ears, fox tail, school uniform, blazer, blue jacket, white shirt, pleated skirt, blue skirt, bowtie, red bow, pantyhose, standing, indoors",
       "change": "nude anime",
       "denoise": 0.9,
-      "output_tags": "(nude:2.0), (naked:2.0), (nipples:1.5), (navel:1.5), (bare skin:1.5), nude, anime style, 1girl, solo, long hair, blonde hair, (yellow eyes:1.5), fox ears, fox tail, standing, indoors, vibrant colors, sharp, high quality",
-      "negative": "school uniform, blazer, blue jacket, white shirt, pleated skirt, blue skirt, bowtie, red bow, pantyhose, clothing, clothed, covered, sheet, blanket, towel, censored, deformed, extra limbs, bad anatomy, blurry",
-      "note": "Denoise 0.9 + explicit body tags (nipples, navel) for actual nudity"
+      "output_tags": "(completely nude:2.5), (fully naked:2.5), (nipples:2.0), (navel:2.0), (bare skin:2.0), nude, anime style, 1girl, solo, long hair, blonde hair, (yellow eyes:1.5), fox ears, fox tail, standing, indoors, vibrant colors, sharp, high quality",
+      "negative": "school uniform, blazer, jacket, shirt, skirt, bowtie, pantyhose, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, censored, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, shirt",
       "change": "nude realistic",
-      "denoise": 0.8,
-      "output_tags": "(nude:2.0), (naked:2.0), (realistic:1.5), (photorealistic:1.5), nude, realistic, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
-      "negative": "gym uniform, buruma, shirt, clothing, clothed, anime, cartoon, drawing, deformed, extra limbs, bad anatomy, blurry",
-      "note": "Denoise 0.8 for clothing removal"
+      "denoise": 0.9,
+      "output_tags": "(completely nude:2.5), (fully naked:2.5), (nipples:2.0), (navel:2.0), (realistic:1.5), nude, realistic, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
+      "negative": "gym uniform, buruma, shirt, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, anime, cartoon, drawing, deformed, extra limbs, bad anatomy, blurry"
     }
   ],
   "txt2img_example": {
