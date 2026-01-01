@@ -16,7 +16,10 @@
         <div class="sidebar-footer">
             <div class="user-menu-container">
                 <button class="user-menu-btn" id="userMenuBtn">
-                    <span class="user-icon">{{ user.username[0].upper() }}</span>
+                    <span class="user-icon" id="sidebarUserIcon">
+                        <img id="sidebarAvatar" src="/api/auth/avatar/{{ user.username }}" alt="" style="display: none;" onerror="this.style.display='none'; document.getElementById('sidebarInitial').style.display='block';" onload="this.style.display='block'; document.getElementById('sidebarInitial').style.display='none';">
+                        <span id="sidebarInitial">{{ user.username[0].upper() }}</span>
+                    </span>
                     <span class="user-name">{{ user.username }}</span>
                     <span class="menu-arrow">&#9662;</span>
                 </button>
@@ -134,6 +137,21 @@
         </div>
         <div class="modal-body">
             <div class="settings-section">
+                <h3>Profile Picture</h3>
+                <div class="avatar-upload-section">
+                    <div class="avatar-preview" id="avatarPreview">
+                        <img id="avatarImage" src="" alt="Avatar" style="display: none;">
+                        <span id="avatarPlaceholder">No avatar</span>
+                    </div>
+                    <div class="avatar-controls">
+                        <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none;">
+                        <button class="btn-secondary" id="uploadAvatarBtn">Upload</button>
+                        <button class="btn-danger" id="deleteAvatarBtn" style="display: none;">Remove</button>
+                    </div>
+                </div>
+                <div id="avatarStatus" class="settings-status"></div>
+            </div>
+            <div class="settings-section">
                 <h3>Email Notifications</h3>
                 <p class="modal-info">Set an email address to receive AI responses via email.</p>
                 <div class="settings-form">
@@ -192,7 +210,7 @@
 
 <script src="/static/js/mascot.js"></script>
 <script src="/static/js/tts.js"></script>
-<script src="/static/js/chat.js?v=3"></script>
+<script src="/static/js/chat.js?v=5"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/apikeys.js"></script>
 {% endblock %}

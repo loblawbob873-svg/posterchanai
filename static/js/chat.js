@@ -138,6 +138,8 @@ class ChatHandler {
                         const data = await response.json();
                         emailInput.value = data.notification_email || '';
                         this.notificationEmail = data.notification_email;
+                        // Update avatar preview
+                        this.updateAvatarPreview(data.avatar);
                     }
                 } catch (e) {
                     console.error('Failed to load settings:', e);
@@ -184,6 +186,101 @@ class ChatHandler {
                     statusEl.className = 'settings-status error';
                 }
             });
+
+            // Avatar upload handlers
+            const avatarInput = document.getElementById('avatarInput');
+            const uploadAvatarBtn = document.getElementById('uploadAvatarBtn');
+            const deleteAvatarBtn = document.getElementById('deleteAvatarBtn');
+            const avatarStatus = document.getElementById('avatarStatus');
+
+            if (uploadAvatarBtn && avatarInput) {
+                uploadAvatarBtn.addEventListener('click', () => {
+                    avatarInput.click();
+                });
+
+                avatarInput.addEventListener('change', async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+
+                    avatarStatus.textContent = 'Uploading...';
+                    avatarStatus.className = 'settings-status';
+
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    try {
+                        const response = await fetch('/api/auth/avatar', {
+                            method: 'POST',
+                            body: formData
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.updateAvatarPreview(data.avatar);
+                            avatarStatus.textContent = 'Avatar uploaded!';
+                            avatarStatus.className = 'settings-status success';
+                            setTimeout(() => { avatarStatus.textContent = ''; }, 2000);
+                        } else {
+                            const data = await response.json();
+                            avatarStatus.textContent = data.detail || 'Upload failed';
+                            avatarStatus.className = 'settings-status error';
+                        }
+                    } catch (e) {
+                        avatarStatus.textContent = 'Upload failed';
+                        avatarStatus.className = 'settings-status error';
+                    }
+                    avatarInput.value = '';
+                });
+
+                if (deleteAvatarBtn) {
+                    deleteAvatarBtn.addEventListener('click', async () => {
+                        avatarStatus.textContent = 'Removing...';
+                        try {
+                            const response = await fetch('/api/auth/avatar', { method: 'DELETE' });
+                            if (response.ok) {
+                                this.updateAvatarPreview(null);
+                                avatarStatus.textContent = 'Avatar removed';
+                                avatarStatus.className = 'settings-status success';
+                                setTimeout(() => { avatarStatus.textContent = ''; }, 2000);
+                            }
+                        } catch (e) {
+                            avatarStatus.textContent = 'Failed to remove';
+                            avatarStatus.className = 'settings-status error';
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    updateAvatarPreview(avatarUrl) {
+        const avatarImage = document.getElementById('avatarImage');
+        const avatarPlaceholder = document.getElementById('avatarPlaceholder');
+        const deleteAvatarBtn = document.getElementById('deleteAvatarBtn');
+        const sidebarAvatar = document.getElementById('sidebarAvatar');
+        const sidebarInitial = document.getElementById('sidebarInitial');
+
+        if (avatarUrl) {
+            const cacheBust = '?t=' + Date.now();
+            avatarImage.src = avatarUrl + cacheBust;
+            avatarImage.style.display = 'block';
+            avatarPlaceholder.style.display = 'none';
+            deleteAvatarBtn.style.display = 'inline-block';
+            // Update sidebar
+            if (sidebarAvatar) {
+                sidebarAvatar.src = avatarUrl + cacheBust;
+                sidebarAvatar.style.display = 'block';
+                if (sidebarInitial) sidebarInitial.style.display = 'none';
+            }
+        } else {
+            avatarImage.style.display = 'none';
+            avatarPlaceholder.style.display = 'block';
+            deleteAvatarBtn.style.display = 'none';
+            // Update sidebar
+            if (sidebarAvatar) {
+                sidebarAvatar.style.display = 'none';
+                if (sidebarInitial) sidebarInitial.style.display = 'block';
+            }
         }
     }
 

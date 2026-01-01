@@ -14,6 +14,7 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     email_verified = Column(Boolean, default=False)
     notification_email = Column(String(255), nullable=True)
+    avatar = Column(String(255), nullable=True)  # Path to avatar image
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")

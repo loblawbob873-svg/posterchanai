@@ -41,6 +41,28 @@ class StorageService:
 
         return str(filepath)
 
+    def save_avatar(self, username: str, image_data: bytes, ext: str = ".png") -> str:
+        """Save user avatar image and return the filename"""
+        user_path = self.get_user_path(username)
+        filename = f"avatar{ext}"
+        filepath = user_path / filename
+
+        # Delete old avatar if exists (any extension)
+        for old_file in user_path.glob("avatar.*"):
+            old_file.unlink()
+
+        with open(filepath, "wb") as f:
+            f.write(image_data)
+
+        return filename
+
+    def get_avatar_path(self, username: str) -> Path | None:
+        """Get path to user's avatar if it exists"""
+        user_path = Path(self.upload_path) / username
+        for avatar_file in user_path.glob("avatar.*"):
+            return avatar_file
+        return None
+
     def save_file(self, username: str, conversation_id: int, content: str, original_name: str = "file.txt") -> str:
         """Save a text file to disk and return the file path"""
         conv_path = self.get_conversation_path(username, conversation_id)

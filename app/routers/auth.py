@@ -1,13 +1,16 @@
 import secrets
+from pathlib import Path
 from typing import List
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, Setting, APIKey, VerificationToken
 from app.schemas import UserLogin, UserResponse, Token, UserRegister, APIKeyCreate, APIKeyResponse, APIKeyListItem
 from app.auth import verify_password, create_access_token, get_current_user, get_password_hash
 from app.services.email_service import EmailService
+from app.services.storage_service import StorageService
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -367,8 +370,10 @@ def toggle_api_key(
 @router.get("/settings")
 def get_user_settings(current_user: User = Depends(get_current_user)):
     """Get current user's settings"""
+    avatar_url = f"/api/auth/avatar/{current_user.username}" if current_user.avatar else None
     return {
-        "notification_email": current_user.notification_email
+        "notification_email": current_user.notification_email,
+        "avatar": avatar_url
     }
 
 
@@ -392,3 +397,79 @@ def update_user_settings(
     db.commit()
 
     return {"message": "Settings updated", "notification_email": current_user.notification_email}
+
+
+@router.post("/avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload user avatar image"""
+    # Validate file type
+    allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file type. Allowed: JPEG, PNG, GIF, WebP"
+        )
+
+    # Read file content
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:  # 5MB limit
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File too large. Maximum size is 5MB"
+        )
+
+    # Get file extension
+    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}
+    ext = ext_map.get(file.content_type, ".png")
+
+    # Save avatar
+    storage = StorageService(db)
+    filename = storage.save_avatar(current_user.username, content, ext)
+
+    # Update user record
+    current_user.avatar = filename
+    db.commit()
+
+    return {
+        "message": "Avatar uploaded",
+        "avatar": f"/api/auth/avatar/{current_user.username}"
+    }
+
+
+@router.delete("/avatar")
+def delete_avatar(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete user avatar"""
+    if current_user.avatar:
+        storage = StorageService(db)
+        avatar_path = storage.get_avatar_path(current_user.username)
+        if avatar_path and avatar_path.exists():
+            avatar_path.unlink()
+
+        current_user.avatar = None
+        db.commit()
+
+    return {"message": "Avatar deleted"}
+
+
+@router.get("/avatar/{username}")
+def get_avatar(username: str, db: Session = Depends(get_db)):
+    """Get user avatar image"""
+    storage = StorageService(db)
+    avatar_path = storage.get_avatar_path(username)
+
+    if not avatar_path or not avatar_path.exists():
+        raise HTTPException(status_code=404, detail="Avatar not found")
+
+    # Determine content type
+    ext = avatar_path.suffix.lower()
+    content_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}
+    content_type = content_types.get(ext, "image/png")
+
+    return FileResponse(avatar_path, media_type=content_type)

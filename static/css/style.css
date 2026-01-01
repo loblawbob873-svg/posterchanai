@@ -1072,6 +1072,59 @@ fieldset legend {
 .settings-status.success {
     color: var(--success);
 }
+
+/* Avatar upload */
+.avatar-upload-section {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 12px;
+}
+.avatar-preview {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: var(--bg-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border: 2px solid var(--border-color);
+}
+.avatar-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.avatar-preview span {
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-align: center;
+}
+.avatar-controls {
+    display: flex;
+    gap: 8px;
+}
+.btn-danger {
+    background: #dc3545;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+}
+.btn-danger:hover {
+    background: #c82333;
+}
+
+/* Sidebar avatar */
+.user-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+}
 .settings-status.error {
     color: var(--danger);
 }
