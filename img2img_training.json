@@ -17,7 +17,7 @@
     "4. Skin color changes: weight 2.0, add synonyms (dark skin, brown skin for dark; pale skin, white skin for light)",
     "5. Small breasts: weight 2.0, DENOISE 0.5, add to NEGATIVE: large breasts, huge breasts, cleavage",
     "6. Big breasts: weight 2.0, DENOISE 0.5, add cleavage, NEGATIVE: small breasts, flat chest",
-    "7. Naked/nude: weight 2.0, DENOISE 0.8, REMOVE clothing tags, put clothing in NEGATIVE",
+    "7. Naked/nude: weight 2.0, DENOISE 0.8, REMOVE ALL clothing tags from TAGS (gym uniform, buruma, shirt, dress, etc), put removed clothing in NEGATIVE",
     "8. Keep original tags for people count (2girls, 3girls, etc)",
     "9. Always end TAGS with: vibrant colors, sharp, high quality",
     "10. NEVER put same tag in TAGS and NEGATIVE",
@@ -246,18 +246,20 @@
       "negative": "gym uniform, buruma, indoors, forest, trees, deformed, extra limbs, bad anatomy, blurry"
     },
     {
-      "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, anime",
+      "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, shirt, anime",
       "change": "nude anime",
       "denoise": 0.7,
-      "output_tags": "(nude:2.0), (naked:2.0), (anime:1.5), nude, anime style, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, vibrant colors, sharp, high quality",
-      "negative": "gym uniform, buruma, clothing, clothed, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry"
+      "output_tags": "(nude:2.0), (naked:2.0), (anime:1.5), nude, anime style, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
+      "negative": "gym uniform, buruma, shirt, clothing, clothed, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry",
+      "note": "REMOVED gym uniform, buruma, shirt from output_tags - nude means no clothing in TAGS"
     },
     {
-      "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma",
+      "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, shirt",
       "change": "nude realistic",
       "denoise": 0.7,
-      "output_tags": "(nude:2.0), (naked:2.0), (realistic:1.5), (photorealistic:1.5), nude, realistic, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, vibrant colors, sharp, high quality",
-      "negative": "gym uniform, buruma, clothing, clothed, anime, cartoon, drawing, deformed, extra limbs, bad anatomy, blurry"
+      "output_tags": "(nude:2.0), (naked:2.0), (realistic:1.5), (photorealistic:1.5), nude, realistic, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
+      "negative": "gym uniform, buruma, shirt, clothing, clothed, anime, cartoon, drawing, deformed, extra limbs, bad anatomy, blurry",
+      "note": "REMOVED clothing from output_tags"
     }
   ],
   "txt2img_example": {
