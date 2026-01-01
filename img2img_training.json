@@ -248,26 +248,26 @@
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, shirt, anime",
       "change": "nude anime",
-      "denoise": 0.7,
+      "denoise": 0.8,
       "output_tags": "(nude:2.0), (naked:2.0), (anime:1.5), nude, anime style, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
       "negative": "gym uniform, buruma, shirt, clothing, clothed, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry",
-      "note": "REMOVED gym uniform, buruma, shirt from output_tags - nude means no clothing in TAGS"
+      "note": "Denoise 0.8 for clothing removal"
     },
     {
       "tags": "1girl, solo, long hair, blonde hair, yellow eyes, fox ears, fox tail, school uniform, blazer, blue jacket, white shirt, pleated skirt, blue skirt, bowtie, red bow, pantyhose, standing, indoors",
       "change": "nude anime",
-      "denoise": 0.7,
+      "denoise": 0.8,
       "output_tags": "(nude:2.0), (naked:2.0), (anime:1.5), nude, anime style, 1girl, solo, long hair, blonde hair, yellow eyes, fox ears, fox tail, standing, indoors, vibrant colors, sharp, high quality",
       "negative": "school uniform, blazer, blue jacket, white shirt, pleated skirt, blue skirt, bowtie, red bow, pantyhose, clothing, clothed, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry",
-      "note": "ALL clothing removed from TAGS: school uniform, blazer, shirt, skirt, bowtie, pantyhose"
+      "note": "Denoise 0.8 needed to fully remove school uniform"
     },
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, shirt",
       "change": "nude realistic",
-      "denoise": 0.7,
+      "denoise": 0.8,
       "output_tags": "(nude:2.0), (naked:2.0), (realistic:1.5), (photorealistic:1.5), nude, realistic, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
       "negative": "gym uniform, buruma, shirt, clothing, clothed, anime, cartoon, drawing, deformed, extra limbs, bad anatomy, blurry",
-      "note": "REMOVED clothing from output_tags"
+      "note": "Denoise 0.8 for clothing removal"
     }
   ],
   "txt2img_example": {
