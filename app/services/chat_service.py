@@ -214,7 +214,6 @@ TAGS: <tags>
 NEGATIVE: <tags>
 
 DENOISE values:
-- 1.0 = completely new image from prompt (ignore source image structure)
 - 0.85 = hair STYLE changes (afro, ponytail, straight, curly, short, long), ANIMAL changes (pig to cat, dog to wolf)
 - 0.80 = color changes (hair, eyes, skin), clothing removal (naked/nude)
 - 0.75 = background/scene changes
@@ -225,6 +224,7 @@ DENOISE values:
 
 RULES:
 1. Output ONLY the 3 lines above, nothing else
+1b. CRITICAL TAG ORDER: Put ALL weighted modification tags (the changes) at the VERY START of TAGS, BEFORE any original tags. This is essential for the model to apply the changes correctly.
 2. Hair/eye color changes: weight 2.0, add TWICE
 2b. Hair STYLE changes (afro, ponytail, etc.): weight 2.5, DENOISE 0.85, put original style in NEGATIVE
 2c. ANIMAL changes (pig to cat, etc.): weight 2.5, DENOISE 0.85, put original animal in NEGATIVE, keep background
@@ -242,7 +242,8 @@ RULES:
 14. CRITICAL: Keep ALL original character features (hair color, eye color, accessories) IN TAGS - only remove what user specifically asks to change
 15. For anime: use weight 2.0 (NOT 3.0) for nude/body changes - anime models are sensitive to high weights
 16. For multiple people (2girls, 3girls): keep exact count, avoid generating extra people
-17. Always add to NEGATIVE: "deformed, extra limbs, bad anatomy, blurry, distorted, extra people"
+17. Always add to NEGATIVE: "deformed, extra limbs, bad anatomy, blurry, distorted, extra people, 1other"
+23. CRITICAL: REMOVE any stray person tags like "1other", "other", "ambiguous gender" from TAGS - these cause extra people to be generated. Only keep explicit person counts (1girl, 2girls, 1boy, etc.)
 18. PRESERVE original clothing tags (shirt, dress, uniform, skirt, etc.) IN TAGS unless user asks to change/remove clothing (nude, naked, different outfit)
 19. Multi-attribute changes (skin + hair + style): use DENOISE 0.80, weight 2.0 for each change, KEEP ALL original tags not being changed in TAGS
 20. Style change with color changes: apply style tag with weight 1.5, color tags with weight 2.0, use higher DENOISE (0.80) to allow more change
@@ -250,25 +251,33 @@ RULES:
 22. CRITICAL: COPY most original tags to TAGS - only modify/remove the specific attributes user asked to change
 
 Examples:
-Tags: "1girl, blonde hair, blue eyes, red dress" Change: "red hair"
+Tags: "1girl, blonde hair" Change: "red hair"
 DENOISE: 0.80
-TAGS: 1girl, (red hair:2.0), red hair, blue eyes, red dress, vibrant colors, sharp, high quality
-NEGATIVE: blonde hair, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+TAGS: 1girl, (red hair:2.0), red hair, vibrant colors, sharp, high quality
+NEGATIVE: blonde hair, deformed, extra limbs, bad anatomy, blurry
 
 Tags: "1girl, straight hair, twintails, silver hair" Change: "afro"
 DENOISE: 0.85
 TAGS: 1girl, (afro:2.5), (afro hair:2.5), curly hair, silver hair, vibrant colors, sharp, high quality
 NEGATIVE: straight hair, twintails, deformed, extra limbs, bad anatomy, blurry
 
-Tags: "1girl, orange hair, yellow eyes, black hoodie, stars, white background, anime" Change: "brown skin"
+Tags: "1girl, brown hair" Change: "beach"
+DENOISE: 0.75
+TAGS: 1girl, brown hair, (beach:1.5), vibrant colors, sharp, high quality
+
+Tags: "1girl, brown hair" Change: "anime style"
+DENOISE: 0.65
+TAGS: 1girl, brown hair, (anime:1.5), vibrant colors, sharp, high quality
+
+Tags: "1girl, white skin, blonde hair" Change: "black skin"
 DENOISE: 0.80
-TAGS: 1girl, (brown skin:2.0), (dark skin:2.0), brown skin, orange hair, yellow eyes, black hoodie, stars, anime, vibrant colors, sharp, high quality
-NEGATIVE: light skin, pale skin, fair skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+TAGS: 1girl, (dark skin:2.0), (black skin:2.0), dark skin, black skin, blonde hair, vibrant colors, sharp, high quality
+NEGATIVE: white skin, pale skin, light skin, fair skin
 
 Tags: "1girl, dark skin, black hair" Change: "white skin"
 DENOISE: 0.80
 TAGS: 1girl, (pale skin:2.0), (white skin:2.0), (fair skin:2.0), pale skin, white skin, black hair, vibrant colors, sharp, high quality
-NEGATIVE: dark skin, black skin, tan skin, brown skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+NEGATIVE: dark skin, black skin, tan skin, brown skin
 
 Tags: "1girl, dark skin, black hair, realistic, dress, smile" Change: "white skin blonde hair anime"
 DENOISE: 0.80
@@ -283,11 +292,36 @@ NEGATIVE: dark skin, tan skin, brown skin, blue hair, deformed, extra limbs, bad
 Tags: "1girl, brown skin, brown hair, brown eyes" Change: "pale skin red hair green eyes"
 DENOISE: 0.80
 TAGS: 1girl, (pale skin:2.0), (white skin:2.0), (red hair:2.0), red hair, (green eyes:2.0), green eyes, vibrant colors, sharp, high quality
-NEGATIVE: brown skin, tan skin, dark skin, brown hair, brown eyes, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+NEGATIVE: brown skin, tan skin, dark skin, brown hair, brown eyes
+
+Tags: "1girl, solo, large breasts, cleavage, lingerie, brown hair" Change: "small breasts"
+DENOISE: 0.50
+TAGS: 1girl, solo, (small breasts:3.0), (flat chest:2.5), (petite:2.0), small breasts, flat chest, brown hair, vibrant colors, sharp, high quality
+NEGATIVE: large breasts, huge breasts, big breasts, cleavage, busty, curvy, lingerie, corset, breasts, bra, underwear
+
+Tags: "1girl, small breasts" Change: "bigger chest"
+DENOISE: 0.50
+TAGS: 1girl, (large breasts:3.0), (huge breasts:2.5), (cleavage:2.0), large breasts, cleavage, vibrant colors, sharp, high quality
+NEGATIVE: small breasts, flat chest, petite
+
+Tags: "1girl, blue eyes, horns, choker" Change: "big breasts"
+DENOISE: 0.50
+TAGS: 1girl, blue eyes, horns, choker, (large breasts:3.0), (huge breasts:2.5), (cleavage:2.0), large breasts, cleavage, vibrant colors, sharp, high quality
+NEGATIVE: small breasts, flat chest, petite
+
+Tags: "1girl, blonde hair, shirt, skirt, sportswear, tennis uniform" Change: "naked"
+DENOISE: 0.80
+TAGS: 1girl, blonde hair, (naked:3.0), (nude:2.5), (bare skin:2.0), naked, nude, vibrant colors, sharp, high quality
+NEGATIVE: shirt, skirt, dress, clothing, sportswear, uniform, bra, underwear, clothed
+
+Tags: "1girl, blonde hair, blue eyes, grey top, large breasts" Change: "nude small breasts"
+DENOISE: 0.65
+TAGS: 1girl, blonde hair, blue eyes, (naked:2.0), (nude:2.0), (small breasts:2.0), natural skin, realistic skin tone, vibrant colors, sharp, high quality
+NEGATIVE: grey top, clothing, clothed, large breasts, big breasts, pale skin, washed out, desaturated
 
 Tags: "3girls, anime, purple hair, green hair, black hair, red shirt, uniform, mcdonalds, indoors" Change: "nude"
 DENOISE: 0.80
-TAGS: 3girls, anime, purple hair, green hair, black hair, (naked:2.0), (nude:2.0), mcdonalds, indoors, multiple girls, vibrant colors, sharp, high quality
+TAGS: (naked:2.0), (nude:2.0), 3girls, anime, purple hair, green hair, black hair, mcdonalds, indoors, multiple girls, vibrant colors, sharp, high quality
 NEGATIVE: red shirt, uniform, clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
 Tags: "1girl, dark skin, pink hair, orange eyes, school uniform, skirt, thigh highs, anime" Change: "nude"
@@ -300,20 +334,40 @@ DENOISE: 0.65
 TAGS: 1girl, (pale skin:2.0), (white skin:2.0), (blonde hair:2.0), blonde hair, orange eyes, (naked:2.0), (nude:2.0), anime, vibrant colors, sharp, high quality
 NEGATIVE: dark skin, tan skin, pink hair, school uniform, skirt, clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted
 
-Tags: "1girl, blonde hair, blue eyes, grey top, large breasts" Change: "nude small breasts"
-DENOISE: 0.65
-TAGS: 1girl, blonde hair, blue eyes, (naked:2.0), (nude:2.0), (small breasts:2.0), natural skin, realistic skin tone, vibrant colors, sharp, high quality
-NEGATIVE: grey top, clothing, clothed, large breasts, big breasts, pale skin, washed out, desaturated, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+Tags: "1girl, long hair, blonde hair, orange eyes, school uniform, serafuku, skirt, pleated skirt, shirt, cardigan, pantyhose, shoes, loafers, wet clothes" Change: "nude"
+DENOISE: 0.80
+TAGS: 1girl, long hair, blonde hair, orange eyes, (naked:2.0), (nude:2.0), wet, vibrant colors, sharp, high quality
+NEGATIVE: school uniform, serafuku, skirt, pleated skirt, shirt, cardigan, pantyhose, shoes, loafers, wet clothes, clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted
 
-Tags: "1girl, holding tennis racket, sportswear" Change: "holding gun"
+Tags: "1girl, holding, tennis racket, racket" Change: "holding gun"
 DENOISE: 0.70
-TAGS: 1girl, sportswear, (holding gun:2.5), (pistol:2.0), holding weapon, vibrant colors, sharp, high quality
-NEGATIVE: tennis racket, racket, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+TAGS: 1girl, (holding gun:2.5), (pistol:2.0), (handgun:2.0), holding weapon, vibrant colors, sharp, high quality
+NEGATIVE: tennis racket, racket, sports equipment, ball
+
+Tags: "1girl, holding, phone" Change: "holding coffee"
+DENOISE: 0.70
+TAGS: 1girl, (holding cup:2.5), (coffee cup:2.0), (coffee:2.0), holding, vibrant colors, sharp, high quality
+NEGATIVE: phone, smartphone, mobile phone, cellphone
+
+Tags: "1girl, holding, sword" Change: "holding food"
+DENOISE: 0.70
+TAGS: 1girl, (holding food:2.5), (eating:2.0), food, vibrant colors, sharp, high quality
+NEGATIVE: sword, weapon, blade
 
 Tags: "pig, barn, fireworks, night sky" Change: "cat"
 DENOISE: 0.85
 TAGS: (cat:2.5), (feline:2.0), barn, fireworks, night sky, vibrant colors, sharp, high quality
 NEGATIVE: pig, swine, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "dog, park, grass" Change: "wolf"
+DENOISE: 0.85
+TAGS: (wolf:2.5), (grey wolf:2.0), park, grass, vibrant colors, sharp, high quality
+NEGATIVE: dog, domestic dog, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1boy 1girl, silver hair, elf ears, bikini, hat, military uniform" Change: "blonde hair"
+DENOISE: 0.80
+TAGS: 1boy 1girl, (blonde hair:2.0), blonde hair, elf ears, bikini, hat, military uniform, vibrant colors, sharp, high quality
+NEGATIVE: silver hair, deformed, extra limbs, bad anatomy, blurry
 
 Tags: "1girl, blonde hair, green eyes, red dress, cosplay, realistic" Change: "black hair"
 DENOISE: 0.80
@@ -382,7 +436,7 @@ NEGATIVE: tan skin, dark skin, brown skin, deformed, extra limbs, bad anatomy, b
 
 Tags: "1girl, brown hair, blue eyes, light skin, casual outfit, anime, sitting pose" Change: "dark skin"
 DENOISE: 0.80
-TAGS: 1girl, brown hair, blue eyes, (dark skin:2.0), (brown skin:2.0), casual outfit, anime, sitting pose, vibrant colors, sharp, high quality
+TAGS: (dark skin:2.0), (brown skin:2.0), 1girl, brown hair, blue eyes, casual outfit, anime, sitting pose, vibrant colors, sharp, high quality
 NEGATIVE: light skin, pale skin, white skin, deformed, extra limbs, bad anatomy, blurry
 
 Tags: "1girl, long black hair, brown eyes, light skin, white dress, flower accessory, garden, anime" Change: "nude"
@@ -394,6 +448,56 @@ Tags: "1girl, brown hair, green eyes, tan skin, casual outfit, anime" Change: "b
 DENOISE: 0.80
 TAGS: 1girl, (blonde hair:2.0), blonde hair, green eyes, tan skin, casual outfit, anime, vibrant colors, sharp, high quality
 NEGATIVE: brown hair, deformed, extra limbs, bad anatomy, blurry
+
+Tags: "1girl, solo, long hair, breasts, looking at viewer, blush, blue eyes, bow, animal ears, cleavage, jewelry, tail, ponytail, purple hair, earrings, parted lips, dark skin, bowtie, armpits, rabbit ears, arm up, leotard, dark-skinned female, wrist cuffs, black bow, covered navel, detached collar, fake animal ears, highleg, playboy bunny, rabbit tail, black leotard, strapless leotard, black bowtie" Change: "nude"
+DENOISE: 0.80
+TAGS: (naked:2.0), (nude:2.0), 1girl, solo, long hair, breasts, looking at viewer, blush, blue eyes, bow, animal ears, cleavage, jewelry, tail, ponytail, purple hair, earrings, parted lips, dark skin, bowtie, armpits, rabbit ears, arm up, dark-skinned female, wrist cuffs, black bow, detached collar, fake animal ears, playboy bunny, rabbit tail, vibrant colors, sharp, high quality
+NEGATIVE: leotard, black leotard, strapless leotard, covered navel, highleg, clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, solo, long hair, breasts, looking at viewer, blush, blue eyes, bow, animal ears, cleavage, jewelry, tail, ponytail, purple hair, earrings, parted lips, dark skin, bowtie, armpits, rabbit ears, arm up, leotard, dark-skinned female, wrist cuffs, black bow, covered navel, detached collar, fake animal ears, highleg, playboy bunny, rabbit tail, black leotard, strapless leotard, black bowtie" Change: "white skin"
+DENOISE: 0.80
+TAGS: (pale skin:2.0), (white skin:2.0), (fair skin:2.0), 1girl, solo, long hair, breasts, looking at viewer, blush, blue eyes, bow, animal ears, cleavage, jewelry, tail, ponytail, purple hair, earrings, parted lips, bowtie, armpits, rabbit ears, arm up, leotard, wrist cuffs, black bow, covered navel, detached collar, fake animal ears, highleg, playboy bunny, rabbit tail, black leotard, strapless leotard, black bowtie, vibrant colors, sharp, high quality
+NEGATIVE: dark skin, dark-skinned female, tan skin, brown skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, long hair, breasts, looking at viewer, blush, large breasts, red eyes, animal ears, bare shoulders, jewelry, tail, purple hair, ass, pantyhose, earrings, solo focus, looking back, from behind, rabbit ears, leotard, wrist cuffs, strapless, detached collar, fake animal ears, colored skin, playboy bunny, rabbit tail, fishnets, black leotard, strapless leotard, hands on hips, hoop earrings, blue skin, fishnet pantyhose, purple skin, purple leotard" Change: "nude"
+DENOISE: 0.80
+TAGS: (naked:2.0), (nude:2.0), 1girl, long hair, breasts, looking at viewer, blush, large breasts, red eyes, animal ears, bare shoulders, jewelry, tail, purple hair, ass, earrings, solo focus, looking back, from behind, rabbit ears, wrist cuffs, detached collar, fake animal ears, colored skin, playboy bunny, rabbit tail, hands on hips, hoop earrings, blue skin, purple skin, vibrant colors, sharp, high quality
+NEGATIVE: pantyhose, leotard, black leotard, strapless leotard, purple leotard, fishnets, fishnet pantyhose, strapless, clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, long hair, breasts, looking at viewer, blush, large breasts, red eyes, animal ears, bare shoulders, jewelry, tail, purple hair, ass, pantyhose, earrings, solo focus, looking back, from behind, rabbit ears, leotard, wrist cuffs, strapless, detached collar, fake animal ears, colored skin, playboy bunny, rabbit tail, fishnets, black leotard, strapless leotard, hands on hips, hoop earrings, blue skin, fishnet pantyhose, purple skin, purple leotard" Change: "dark skin"
+DENOISE: 0.80
+TAGS: (dark skin:2.0), (brown skin:2.0), (dark-skinned female:2.0), 1girl, long hair, breasts, looking at viewer, blush, large breasts, red eyes, animal ears, bare shoulders, jewelry, tail, purple hair, ass, pantyhose, earrings, solo focus, looking back, from behind, rabbit ears, leotard, wrist cuffs, strapless, detached collar, fake animal ears, playboy bunny, rabbit tail, fishnets, black leotard, strapless leotard, hands on hips, hoop earrings, fishnet pantyhose, purple leotard, vibrant colors, sharp, high quality
+NEGATIVE: colored skin, blue skin, purple skin, pale skin, white skin, light skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, solo, breasts, looking at viewer, blush, smile, open mouth, bangs, large breasts, black hair, hair ornament, cleavage, bare shoulders, sitting, collarbone, yellow eyes, white hair, thighs, multicolored hair, japanese clothes, sky, kimono, off shoulder, nail polish, sash, black nails, new year, happy new year, black kimono, fireworks, sparkler" Change: "nude"
+DENOISE: 0.80
+TAGS: (naked:2.0), (nude:2.0), 1girl, solo, breasts, looking at viewer, blush, smile, open mouth, bangs, large breasts, black hair, hair ornament, cleavage, bare shoulders, sitting, collarbone, yellow eyes, white hair, thighs, multicolored hair, sky, off shoulder, nail polish, black nails, new year, happy new year, fireworks, sparkler, vibrant colors, sharp, high quality
+NEGATIVE: japanese clothes, kimono, black kimono, sash, clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, solo, breasts, looking at viewer, blush, smile, open mouth, bangs, large breasts, black hair, hair ornament, cleavage, bare shoulders, sitting, collarbone, yellow eyes, white hair, thighs, multicolored hair, japanese clothes, sky, kimono, off shoulder, nail polish, sash, black nails, new year, happy new year, black kimono, fireworks, sparkler" Change: "dark skin"
+DENOISE: 0.80
+TAGS: (dark skin:2.0), (brown skin:2.0), (dark-skinned female:2.0), 1girl, solo, breasts, looking at viewer, blush, smile, open mouth, bangs, large breasts, black hair, hair ornament, cleavage, bare shoulders, sitting, collarbone, yellow eyes, white hair, thighs, multicolored hair, japanese clothes, sky, kimono, off shoulder, nail polish, sash, black nails, new year, happy new year, black kimono, fireworks, sparkler, vibrant colors, sharp, high quality
+NEGATIVE: pale skin, white skin, light skin, fair skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, solo, breasts, looking at viewer, blush, smile, open mouth, bangs, large breasts, black hair, hair ornament, cleavage, bare shoulders, sitting, collarbone, yellow eyes, white hair, thighs, multicolored hair, japanese clothes, sky, kimono, off shoulder, nail polish, sash, black nails, new year, happy new year, black kimono, fireworks, sparkler" Change: "dark brown skin afro hair, anime"
+DENOISE: 0.85
+TAGS: (afro:2.5), (afro hair:2.5), (dark brown skin:2.0), (brown skin:2.0), (dark-skinned female:2.0), 1girl, solo, breasts, looking at viewer, blush, smile, open mouth, large breasts, hair ornament, cleavage, bare shoulders, sitting, collarbone, yellow eyes, thighs, japanese clothes, sky, kimono, off shoulder, nail polish, sash, black nails, new year, happy new year, black kimono, fireworks, sparkler, (anime:1.5), vibrant colors, sharp, high quality
+NEGATIVE: white hair, multicolored hair, black hair, bangs, straight hair, pale skin, white skin, light skin, fair skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, breasts, looking at viewer, bangs, simple background, hair ornament, hat, animal ears, cleavage, purple eyes, swimsuit, braid, open clothes, shorts, huge breasts, twin braids, open jacket, black jacket, denim shorts, striped bikini, straw hat, grey bikini, 1other" Change: "dark brown skin afro hair, anime"
+DENOISE: 0.85
+TAGS: (afro:2.5), (afro hair:2.5), (dark brown skin:2.0), (brown skin:2.0), (dark-skinned female:2.0), 1girl, breasts, looking at viewer, simple background, animal ears, cleavage, purple eyes, swimsuit, braid, open clothes, shorts, huge breasts, twin braids, open jacket, black jacket, denim shorts, striped bikini, straw hat, grey bikini, (anime:1.5), vibrant colors, sharp, high quality
+NEGATIVE: bangs, straight hair, hat, hair ornament, pale skin, white skin, light skin, fair skin, 1other, extra people, deformed, extra limbs, bad anatomy, blurry, distorted
+
+Tags: "1girl, orange hair, red eyes, anime, portrait, looking at viewer" Change: "black skin afro hair, anime"
+DENOISE: 0.85
+TAGS: (afro:2.5), (afro hair:2.5), (black afro:2.0), (dark skin:2.0), (black skin:2.0), (dark-skinned female:2.0), 1girl, red eyes, anime, portrait, looking at viewer, (anime:1.5), vibrant colors, sharp, high quality
+NEGATIVE: orange hair, red hair, straight hair, pale skin, white skin, light skin, fair skin, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "1girl, brown hair, brown eyes, anime, portrait" Change: "gawr gura face, anime"
+DENOISE: 0.85
+TAGS: (gawr gura:2.5), (gawr gura \(hololive\):2.0), 1girl, blue hair, blue eyes, shark hair ornament, shark hoodie, anime, portrait, vibrant colors, sharp, high quality
+NEGATIVE: brown hair, brown eyes, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
 
 User wants: "cyberpunk city at night"
 DENOISE: 1.0
