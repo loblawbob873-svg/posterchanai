@@ -101,6 +101,7 @@ async def ping_ollama(ollama_url: str, model: str = "llama3", timeout: float = 3
                     "model": model,
                     "prompt": "What color is the sky?",
                     "stream": False,
+                    "keep_alive": -1,
                     "options": {
                         "num_predict": 10  # Very short response
                     }

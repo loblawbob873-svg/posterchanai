@@ -280,7 +280,7 @@ Posterchanai includes an automatic health check that monitors Ollama and restart
 |---------|---------|-------------|
 | `ollama_ping_enabled` | false | Enable/disable health check |
 | `ollama_ping_interval` | 90 | Seconds between pings |
-| `ollama_restart_after_failures` | 5 | Consecutive failures before restart |
+| `ollama_restart_after_failures` | 2 | Consecutive failures before restart |
 | `ollama_restart_command` | `sudo systemctl restart ollama` | Command to restart Ollama |
 
 ### How it works

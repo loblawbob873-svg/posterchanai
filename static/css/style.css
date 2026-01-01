@@ -366,6 +366,8 @@ body {
     border-radius: 16px;
     line-height: 1.5;
     position: relative;
+    word-break: break-word;
+    overflow-wrap: break-word;
 }
 .message.user .message-content {
     background: var(--message-user);

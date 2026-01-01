@@ -26,7 +26,9 @@ class ChatService:
         self.repeat_penalty = float(settings.get("ollama_repeat_penalty", "1.1"))
         self.num_ctx = int(settings.get("ollama_num_ctx", "4096"))
         self.num_predict = int(settings.get("ollama_num_predict", "2048"))
-        self.keep_alive = settings.get("ollama_keep_alive", "-1")
+        # keep_alive: -1 = forever, 0 = unload immediately, positive = seconds
+        keep_alive_str = settings.get("ollama_keep_alive", "-1")
+        self.keep_alive = int(keep_alive_str) if keep_alive_str.lstrip('-').isdigit() else -1
 
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
@@ -48,14 +50,14 @@ class ChatService:
         }
 
     async def chat(self, messages: list[dict]) -> str:
-        """Non-streaming chat completion"""
+        """Non-streaming chat completion using native Ollama API"""
         if not self.ollama_url:
             return "Error: Ollama not configured. Please ask an admin to configure it."
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 response = await client.post(
-                    f"{self.ollama_url}/v1/chat/completions",
+                    f"{self.ollama_url}/api/chat",
                     json={
                         "model": self.model,
                         "messages": messages,
@@ -66,7 +68,7 @@ class ChatService:
                 )
                 response.raise_for_status()
                 data = response.json()
-                content = data["choices"][0]["message"]["content"]
+                content = data["message"]["content"]
                 return self.strip_thinking_tags(content)
             except httpx.HTTPStatusError as e:
                 return f"Error: API returned status {e.response.status_code}"
@@ -74,7 +76,7 @@ class ChatService:
                 return f"Error: {str(e)}"
 
     async def chat_stream(self, messages: list[dict]) -> AsyncGenerator[str, None]:
-        """Streaming chat completion"""
+        """Streaming chat completion using native Ollama API"""
         if not self.ollama_url:
             yield "Error: Ollama not configured. Please ask an admin to configure it."
             return
@@ -83,7 +85,7 @@ class ChatService:
             try:
                 async with client.stream(
                     "POST",
-                    f"{self.ollama_url}/v1/chat/completions",
+                    f"{self.ollama_url}/api/chat",
                     json={
                         "model": self.model,
                         "messages": messages,
@@ -96,32 +98,31 @@ class ChatService:
                     buffer = ""
                     thinking_done = False
                     async for line in response.aiter_lines():
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            if data_str.strip() == "[DONE]":
+                        if not line.strip():
+                            continue
+                        try:
+                            data = json.loads(line)
+                            content = data.get("message", {}).get("content", "")
+                            if content:
+                                buffer += content
+                                # Check if we're past thinking tags
+                                if not thinking_done:
+                                    match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
+                                    if match:
+                                        thinking_done = True
+                                        # Yield everything after the closing tag
+                                        after_think = buffer[match.end():]
+                                        if after_think:
+                                            yield after_think
+                                        buffer = after_think
+                                    # Don't yield if we're still in thinking mode
+                                else:
+                                    yield content
+                            # Check if done
+                            if data.get("done", False):
                                 break
-                            try:
-                                data = json.loads(data_str)
-                                if "choices" in data and len(data["choices"]) > 0:
-                                    delta = data["choices"][0].get("delta", {})
-                                    content = delta.get("content", "")
-                                    if content:
-                                        buffer += content
-                                        # Check if we're past thinking tags
-                                        if not thinking_done:
-                                            match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
-                                            if match:
-                                                thinking_done = True
-                                                # Yield everything after the closing tag
-                                                after_think = buffer[match.end():]
-                                                if after_think:
-                                                    yield after_think
-                                                buffer = after_think
-                                            # Don't yield if we're still in thinking mode
-                                        else:
-                                            yield content
-                            except json.JSONDecodeError:
-                                continue
+                        except json.JSONDecodeError:
+                            continue
             except httpx.HTTPStatusError as e:
                 yield f"Error: API returned status {e.response.status_code}"
             except Exception as e:
@@ -151,13 +152,14 @@ Output ONLY tags, no sentences. Example: 1girl, orange hair, yellow eyes, black 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 response = await client.post(
-                    f"{self.ollama_url}/v1/chat/completions",
+                    f"{self.ollama_url}/api/chat",
                     json={
                         "model": self.model,
                         "messages": messages,
                         "options": {
                             "temperature": 0.3,
-                            "num_predict": 200
+                            "num_predict": 200,
+                            "num_ctx": self.num_ctx
                         },
                         "stream": False,
                         "keep_alive": self.keep_alive
@@ -165,7 +167,7 @@ Output ONLY tags, no sentences. Example: 1girl, orange hair, yellow eyes, black 
                 )
                 response.raise_for_status()
                 data = response.json()
-                content = data["choices"][0]["message"]["content"]
+                content = data["message"]["content"]
                 tags = self.strip_thinking_tags(content).strip()
                 print(f"[VISION] Analyzed image tags: {tags[:100]}...")
                 return tags
@@ -389,13 +391,14 @@ NEGATIVE: daytime, rural, deformed, blurry, distorted, extra people"""
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 response = await client.post(
-                    f"{self.ollama_url}/v1/chat/completions",
+                    f"{self.ollama_url}/api/chat",
                     json={
                         "model": self.model,
                         "messages": messages,
                         "options": {
                             "temperature": 0.2,
-                            "num_predict": 400
+                            "num_predict": 400,
+                            "num_ctx": self.num_ctx
                         },
                         "stream": False,
                         "keep_alive": self.keep_alive
@@ -403,7 +406,7 @@ NEGATIVE: daytime, rural, deformed, blurry, distorted, extra people"""
                 )
                 response.raise_for_status()
                 data = response.json()
-                content = data["choices"][0]["message"]["content"]
+                content = data["message"]["content"]
 
                 # Strip thinking tags
                 content = self.strip_thinking_tags(content)

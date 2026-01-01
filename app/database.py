@@ -101,7 +101,7 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "ollama_ping_enabled": "false",
             "ollama_restart_command": "sudo systemctl restart ollama",
             "ollama_ping_interval": "90",
-            "ollama_restart_after_failures": "5",
+            "ollama_restart_after_failures": "2",
             # Email settings (SMTP)
             "smtp_enabled": "false",
             "smtp_host": "",
