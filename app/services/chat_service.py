@@ -1,9 +1,16 @@
 import httpx
 import json
 import re
+import asyncio
+import base64
 from typing import AsyncGenerator, Optional
 from sqlalchemy.orm import Session
 from app.models import Setting
+
+# Import WD14 tagger from posterchan's comfyui module
+import sys
+sys.path.insert(0, '/home/verita84/posterchan')
+from comfyui import describe_image_with_wd14
 
 
 class ChatService:
@@ -154,47 +161,28 @@ class ChatService:
 
     async def analyze_image_tags(self, image_base64: str) -> str:
         """
-        Use vision AI to analyze image and extract tags describing it.
+        Use WD14 Tagger in ComfyUI to analyze image and extract tags.
         Returns comma-separated tags or empty string on failure.
         """
-        if not self.ollama_url:
-            return ""
+        try:
+            # Decode base64 to bytes
+            image_bytes = base64.b64decode(image_base64)
 
-        system_prompt = """Analyze this image and output ONLY comma-separated tags describing it.
-Include: character count (1girl, 2girls, 1boy, etc.), hair color, eye color, clothing, accessories, background/setting, art style (anime, realistic, etc.), pose, expression.
-Output ONLY tags, no sentences. Example: 1girl, orange hair, yellow eyes, black hoodie, stars pattern, white background, anime style, upper body"""
+            # Run WD14 tagger in thread pool (it's synchronous)
+            loop = asyncio.get_event_loop()
+            tags = await loop.run_in_executor(None, describe_image_with_wd14, image_bytes)
 
-        # Ollama uses a different format for vision - images array separate from content
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": "Describe this image with tags:", "images": [image_base64]}
-        ]
-
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                response = await client.post(
-                    f"{self.ollama_url}/api/chat",
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "options": {
-                            "temperature": 0.3,
-                            "num_predict": 200,
-                            "num_ctx": self.num_ctx
-                        },
-                        "stream": False,
-                        "keep_alive": self.keep_alive
-                    }
-                )
-                response.raise_for_status()
-                data = response.json()
-                content = data["message"]["content"]
-                tags = self.strip_thinking_tags(content).strip()
-                print(f"[VISION] Analyzed image tags: {tags[:100]}...")
+            if tags:
+                print(f"[WD14] Analyzed image tags: {tags[:100]}...")
                 return tags
-            except Exception as e:
-                print(f"[VISION] Image analysis failed: {e}")
+            else:
+                print("[WD14] No tags returned")
                 return ""
+        except Exception as e:
+            print(f"[WD14] Image analysis failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return ""
 
     async def modify_prompt_for_img2img(self, user_prompt: str, original_tags: str = "") -> tuple[str, float, str]:
         """
@@ -530,6 +518,11 @@ Tags: "2girls, green hair, black hair, black dress, champagne glass, holding, cl
 DENOISE: 0.70
 TAGS: 2girls, (red hair:2.0), red hair, (nude:2.0), (naked:2.0), champagne glass, holding, cleavage, indoor, chandelier, party, anime, vibrant colors, sharp, high quality
 NEGATIVE: green hair, black hair, black dress, dress, clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted, extra people, 1other
+
+Tags: "2girls, green hair, black hair, black dress, champagne glass, holding, cleavage, indoor, chandelier, party, anime" Change: "red hair coke cans, anime"
+DENOISE: 0.65
+TAGS: 2girls, (red hair:2.0), red hair, (coke can:2.0), (coca cola:1.5), holding, black dress, cleavage, indoor, chandelier, party, anime, vibrant colors, sharp, high quality
+NEGATIVE: green hair, black hair, champagne glass, champagne, wine glass, deformed, extra limbs, bad anatomy, blurry, distorted, extra people, 1other
 
 Tags: "1girl, solo, long hair, breasts, looking at viewer, blush, smile, open mouth, large breasts, black hair, dress, holding, cleavage, bare shoulders, jewelry, standing, collarbone, earrings, choker, fang, nail polish, black eyes, black dress, hands up, strapless, covered navel, black choker, strapless dress, red nails" Change: "dark brown skin afro hair, anime"
 DENOISE: 0.85
