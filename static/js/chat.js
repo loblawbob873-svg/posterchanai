@@ -81,8 +81,44 @@ class ChatHandler {
             this.removeUpload.addEventListener('click', () => this.clearUpload());
         }
 
+        // Paste image from clipboard
+        document.addEventListener('paste', (e) => this.handlePaste(e));
+
         // User settings modal
         this.initUserSettings();
+    }
+
+    handlePaste(e) {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                const file = item.getAsFile();
+                if (!file) continue;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const base64 = event.target.result.split(',')[1];
+                    this.uploadedImage = base64;
+                    this.uploadedFile = null;
+                    this.uploadedPDF = null;
+                    this.uploadedDocument = null;
+
+                    // Show preview
+                    this.imagePreview.src = event.target.result;
+                    this.imagePreview.style.display = 'block';
+                    this.filePreview.textContent = '';
+                    this.filePreview.style.display = 'none';
+                    this.uploadPreview.style.display = 'flex';
+
+                    console.log('[PASTE] Image pasted from clipboard');
+                };
+                reader.readAsDataURL(file);
+                break;  // Only handle first image
+            }
+        }
     }
 
     initUserSettings() {
@@ -296,6 +332,11 @@ class ChatHandler {
 
         this.ws.onclose = (event) => {
             console.log('WebSocket closed:', event.code, event.reason);
+            // 4001 = auth error - redirect to login
+            if (event.code === 4001) {
+                window.location.href = '/login';
+                return;
+            }
             if (event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
                 this.reconnectAttempts++;
                 setTimeout(() => this.connect(conversationId), 2000 * this.reconnectAttempts);
@@ -321,7 +362,9 @@ class ChatHandler {
     }
 
     async sendMessage() {
+        console.log('[DEBUG] sendMessage called');
         let content = this.messageInput.value.trim();
+        console.log('[DEBUG] content:', content, 'ws:', !!this.ws, 'wsState:', this.ws?.readyState);
 
         // Auto-create conversation if none exists
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -336,6 +379,7 @@ class ChatHandler {
         // Get current mode and prepend command if needed
         const mode = window.app ? window.app.getMode() : '';
         const displayContent = content;
+        console.log('[DEBUG] sendMessage - mode:', mode, 'content:', content, 'hasImage:', !!this.uploadedImage);
 
         // Check if we have an upload without text for img2img mode
         if (mode === 'img2img' && this.uploadedImage && !content) {
@@ -348,6 +392,7 @@ class ChatHandler {
 
         if (mode) {
             content = `${mode} ${content}`;
+            console.log('[DEBUG] After mode prepend:', content);
         }
 
         // Build display message
@@ -419,6 +464,7 @@ class ChatHandler {
         // Store payload for potential retry
         this.lastPayload = payload;
 
+        console.log('[DEBUG] Sending payload:', { type: payload.type, content: payload.content, hasImageData: !!payload.image_data });
         // Send to server (with command prepended)
         this.ws.send(JSON.stringify(payload));
 
