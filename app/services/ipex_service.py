@@ -261,7 +261,7 @@ class IPEXService:
     ) -> Dict[str, Any]:
         """Non-streaming chat completion with timeout."""
         global _request_counter, _pending_requests, _current_request
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         # Generate request ID and track
         with _request_counter_lock:
@@ -339,7 +339,7 @@ class IPEXService:
         model_name = model or self.default_model
 
         queue = asyncio.Queue()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def run_streaming():
             """Run generation in thread, put tokens in queue"""
