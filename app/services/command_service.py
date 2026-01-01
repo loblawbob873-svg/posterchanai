@@ -128,6 +128,16 @@ class CommandService:
         # Use AI to optimize the prompt with original tags context
         optimized_prompt, denoise, negative_prompt = await self.chat_service.modify_prompt_for_img2img(prompt, original_tags)
 
+        # Ensure style keywords from original prompt are preserved for model selection
+        prompt_lower = prompt.lower()
+        optimized_lower = optimized_prompt.lower()
+        if 'anime' in prompt_lower and 'anime' not in optimized_lower:
+            optimized_prompt = f"{optimized_prompt}, anime"
+            print(f"[IMG2IMG] Added 'anime' to prompt for model selection")
+        elif 'realistic' in prompt_lower and 'realistic' not in optimized_lower:
+            optimized_prompt = f"{optimized_prompt}, realistic"
+            print(f"[IMG2IMG] Added 'realistic' to prompt for model selection")
+
         # Generate with AI-determined parameters
         result_image = await self.image_service.generate_img2img(
             optimized_prompt, image_bytes,
