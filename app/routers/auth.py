@@ -1,11 +1,13 @@
 import secrets
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from datetime import datetime, timedelta
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User, Setting, APIKey
+from app.models import User, Setting, APIKey, VerificationToken
 from app.schemas import UserLogin, UserResponse, Token, UserRegister, APIKeyCreate, APIKeyResponse, APIKeyListItem
 from app.auth import verify_password, create_access_token, get_current_user, get_password_hash
+from app.services.email_service import EmailService
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -53,8 +55,8 @@ def check_registration_enabled(db: Session = Depends(get_db)):
     return {"enabled": enabled}
 
 
-@router.post("/register", response_model=Token)
-def register(user_data: UserRegister, response: Response, db: Session = Depends(get_db)):
+@router.post("/register")
+def register(user_data: UserRegister, request: Request, response: Response, db: Session = Depends(get_db)):
     """Register a new user (if registration is enabled)"""
     # Check if registration is enabled
     setting = db.query(Setting).filter(Setting.key == "allow_registration").first()
@@ -79,18 +81,57 @@ def register(user_data: UserRegister, response: Response, db: Session = Depends(
                 detail="Email already registered"
             )
 
+    # Check if email verification is required
+    email_service = EmailService(db)
+    require_verification = email_service.smtp_enabled and user_data.email
+
     # Create new user
     user = User(
         username=user_data.username,
         email=user_data.email if user_data.email else None,
         password_hash=get_password_hash(user_data.password),
-        is_admin=False
+        is_admin=False,
+        email_verified=not require_verification  # True if no verification needed
     )
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    # Create token and set cookie
+    # If email verification required, send verification email
+    if require_verification:
+        # Generate verification token
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.utcnow() + timedelta(hours=24)
+
+        verification = VerificationToken(
+            user_id=user.id,
+            token=token,
+            expires_at=expires_at
+        )
+        db.add(verification)
+        db.commit()
+
+        # Build verification URL
+        base_url = str(request.base_url).rstrip('/')
+        verify_url = f"{base_url}/verify/{token}"
+
+        # Send email
+        success, msg = email_service.send_verification_email(
+            to_email=user.email,
+            username=user.username,
+            verify_url=verify_url
+        )
+
+        if not success:
+            # Log but don't fail registration
+            print(f"Failed to send verification email: {msg}")
+
+        return {
+            "message": "Registration successful! Please check your email to verify your account.",
+            "requires_verification": True
+        }
+
+    # No verification needed - create token and set cookie
     token = create_access_token({"sub": str(user.id)})
     response.set_cookie(
         key="access_token",
@@ -102,6 +143,113 @@ def register(user_data: UserRegister, response: Response, db: Session = Depends(
     )
 
     return {"access_token": token, "token_type": "bearer"}
+
+
+@router.get("/verify/{token}")
+def verify_email(token: str, response: Response, db: Session = Depends(get_db)):
+    """Verify email address using token from email link"""
+    # Find the verification token
+    verification = db.query(VerificationToken).filter(
+        VerificationToken.token == token
+    ).first()
+
+    if not verification:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid verification token"
+        )
+
+    # Check if expired
+    if verification.expires_at < datetime.utcnow():
+        # Delete expired token
+        db.delete(verification)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification token has expired. Please register again."
+        )
+
+    # Get the user
+    user = db.query(User).filter(User.id == verification.user_id).first()
+    if not user:
+        db.delete(verification)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User not found"
+        )
+
+    # Mark email as verified
+    user.email_verified = True
+    db.delete(verification)  # Token is single-use
+    db.commit()
+
+    # Create token and set cookie - log them in
+    access_token = create_access_token({"sub": str(user.id)})
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=False,
+        max_age=30 * 24 * 60 * 60,
+        samesite="lax",
+        path="/"
+    )
+
+    return {
+        "message": "Email verified successfully! You are now logged in.",
+        "access_token": access_token,
+        "token_type": "bearer"
+    }
+
+
+@router.post("/resend-verification")
+def resend_verification(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Resend verification email to current user"""
+    if current_user.email_verified:
+        return {"message": "Email already verified"}
+
+    if not current_user.email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No email address on file"
+        )
+
+    # Delete any existing tokens
+    db.query(VerificationToken).filter(
+        VerificationToken.user_id == current_user.id
+    ).delete()
+
+    # Generate new token
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(hours=24)
+
+    verification = VerificationToken(
+        user_id=current_user.id,
+        token=token,
+        expires_at=expires_at
+    )
+    db.add(verification)
+    db.commit()
+
+    # Build verification URL
+    base_url = str(request.base_url).rstrip('/')
+    verify_url = f"{base_url}/verify/{token}"
+
+    # Send email
+    email_service = EmailService(db)
+    success, msg = email_service.send_verification_email(
+        to_email=current_user.email,
+        username=current_user.username,
+        verify_url=verify_url
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send verification email: {msg}"
+        )
+
+    return {"message": "Verification email sent"}
 
 
 # ============== API Key Management ==============

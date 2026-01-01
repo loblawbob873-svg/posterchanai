@@ -45,7 +45,9 @@ class OllamaService:
         self.repeat_penalty = float(settings.get("ollama_repeat_penalty", "1.1"))
         self.num_ctx = int(settings.get("ollama_num_ctx", "4096"))
         self.num_predict = int(settings.get("ollama_num_predict", "2048"))
-        self.keep_alive = settings.get("ollama_keep_alive", "500")
+        # keep_alive: -1 = forever, 0 = unload immediately, positive = seconds
+        keep_alive_str = settings.get("ollama_keep_alive", "-1")
+        self.keep_alive = int(keep_alive_str) if keep_alive_str.lstrip('-').isdigit() else -1
         self.stop_sequences = [s.strip() for s in settings.get("ollama_stop", "").split(",") if s.strip()]
 
         # Additional advanced settings

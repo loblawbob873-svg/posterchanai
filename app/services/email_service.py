@@ -251,5 +251,59 @@ Sent at: {timestamp}
         return self.send_email(to_email, subject, body, html_body)
 
 
+    def send_verification_email(self, to_email: str, username: str, verify_url: str) -> Tuple[bool, str]:
+        """Send email verification link"""
+        subject = "Verify your Posterchanai account"
+        body = f"""Hello {username},
+
+Thank you for registering with Posterchanai!
+
+Please click the link below to verify your email address:
+{verify_url}
+
+This link will expire in 24 hours.
+
+If you did not create an account, you can ignore this email.
+
+Best regards,
+Posterchanai
+"""
+
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; background: #1a1a2e; color: #fff; padding: 20px; }}
+        .container {{ max-width: 600px; margin: 0 auto; background: #16213e; border-radius: 12px; padding: 30px; }}
+        h1 {{ color: #4a9eff; margin-bottom: 20px; }}
+        .message {{ color: #ccc; line-height: 1.6; margin-bottom: 20px; }}
+        .button {{ display: inline-block; background: #4a9eff; color: #fff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0; }}
+        .button:hover {{ background: #3a8eef; }}
+        .link {{ color: #4a9eff; word-break: break-all; }}
+        .footer {{ color: #666; font-size: 12px; margin-top: 30px; text-align: center; }}
+        .expire {{ color: #e74c3c; font-size: 14px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Welcome to Posterchanai!</h1>
+        <p class="message">Hello {username},</p>
+        <p class="message">Thank you for registering! Please verify your email address by clicking the button below:</p>
+        <p style="text-align: center;">
+            <a href="{verify_url}" class="button">Verify Email Address</a>
+        </p>
+        <p class="message">Or copy and paste this link into your browser:</p>
+        <p class="link">{verify_url}</p>
+        <p class="expire">This link will expire in 24 hours.</p>
+        <p class="footer">If you did not create an account, you can safely ignore this email.</p>
+    </div>
+</body>
+</html>
+"""
+
+        return self.send_email(to_email, subject, body, html_body, save_to_sent=True)
+
+
 def get_email_service(db: Session) -> EmailService:
     return EmailService(db)

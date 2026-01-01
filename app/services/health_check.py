@@ -35,7 +35,8 @@ def _get_settings(db: Session) -> dict:
         "ollama_model": settings.get("ollama_model", "llama3"),
         "ping_interval": int(settings.get("ollama_ping_interval", "90")),
         "restart_after_failures": int(settings.get("ollama_restart_after_failures", "5")),
-        "restart_command": settings.get("ollama_restart_command", "sudo systemctl restart ollama"),
+        "restart_command": settings.get("ollama_restart_command", "sudo docker restart ollama-intel-arc"),
+        "num_ctx": int(settings.get("ollama_num_ctx", "40960")),
     }
 
 
@@ -49,6 +50,8 @@ def restart_ollama(restart_command: str):
         "sudo systemctl restart ollama",
         "systemctl restart ollama",
         "sudo /bin/systemctl restart ollama",
+        "sudo docker restart ollama-intel-arc",
+        "docker restart ollama-intel-arc",
     ]
 
     if restart_command not in allowed_commands:
@@ -58,9 +61,24 @@ def restart_ollama(restart_command: str):
 
     try:
         # Use fixed argument list instead of shell parsing for security
-        if restart_command.startswith("sudo "):
+        if "docker restart" in restart_command:
+            if restart_command.startswith("sudo "):
+                result = subprocess.run(
+                    ["/usr/bin/sudo", "/usr/bin/docker", "restart", "ollama-intel-arc"],
+                    check=False,
+                    capture_output=True,
+                    timeout=60
+                )
+            else:
+                result = subprocess.run(
+                    ["/usr/bin/docker", "restart", "ollama-intel-arc"],
+                    check=False,
+                    capture_output=True,
+                    timeout=60
+                )
+        elif restart_command.startswith("sudo "):
             result = subprocess.run(
-                ["sudo", "/usr/bin/systemctl", "restart", "ollama"],
+                ["/usr/bin/sudo", "/usr/bin/systemctl", "restart", "ollama"],
                 check=False,
                 capture_output=True,
                 timeout=30
@@ -88,7 +106,7 @@ def restart_ollama(restart_command: str):
         return False
 
 
-async def ping_ollama(ollama_url: str, model: str = "llama3", timeout: float = 30.0) -> bool:
+async def ping_ollama(ollama_url: str, model: str = "llama3", timeout: float = 30.0, num_ctx: int = 40960) -> bool:
     """Ping Ollama with a simple request"""
     import httpx
 
@@ -103,7 +121,8 @@ async def ping_ollama(ollama_url: str, model: str = "llama3", timeout: float = 3
                     "stream": False,
                     "keep_alive": -1,
                     "options": {
-                        "num_predict": 10  # Very short response
+                        "num_predict": 10,  # Very short response
+                        "num_ctx": num_ctx  # Use configured context size
                     }
                 }
             )
@@ -143,7 +162,7 @@ async def health_check_loop():
 
             # Ping Ollama
             logger.debug(f"Pinging Ollama at {settings['ollama_url']}...")
-            success = await ping_ollama(settings["ollama_url"], settings["ollama_model"])
+            success = await ping_ollama(settings["ollama_url"], settings["ollama_model"], num_ctx=settings["num_ctx"])
 
             if success:
                 logger.info("Ping OK")

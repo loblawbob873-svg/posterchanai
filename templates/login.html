@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Login - Posterchanai{% endblock %}
+{% block title %}Login - Poster-chan AI{% endblock %}
 
 {% block content %}
 <div class="login-container">
     <div class="login-box">
         <div class="login-header">
             <img src="/static/mascot/mascot-neutral-front-00.png" alt="Mascot" class="login-mascot">
-            <h1>Posterchanai</h1>
+            <h1>Poster-chan AI</h1>
             <p>AI Chat Assistant</p>
         </div>
 
@@ -145,13 +145,25 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
             body: JSON.stringify({ username, email: email || null, password })
         });
 
+        const data = await response.json();
+
         if (response.ok) {
-            window.location.href = '/';
+            // Check if verification is required
+            if (data.requires_verification) {
+                // Show success message instead of redirecting
+                errorEl.style.color = '#27ae60';
+                errorEl.textContent = data.message || 'Please check your email to verify your account.';
+                document.querySelector('#registerForm button[type="submit"]').disabled = true;
+            } else {
+                // No verification needed, redirect to home
+                window.location.href = '/';
+            }
         } else {
-            const data = await response.json();
+            errorEl.style.color = '';
             errorEl.textContent = data.detail || 'Registration failed';
         }
     } catch (err) {
+        errorEl.style.color = '';
         errorEl.textContent = 'Connection error';
     }
 });
