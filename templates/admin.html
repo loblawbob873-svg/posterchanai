@@ -58,6 +58,11 @@
                             <input type="number" id="llm_n_batch" name="llm_n_batch" value="128" min="1" max="2048">
                             <small>Lower = less VRAM</small>
                         </div>
+                        <div class="form-group">
+                            <label for="llm_max_concurrent">Max Concurrent</label>
+                            <input type="number" id="llm_max_concurrent" name="llm_max_concurrent" value="1" min="1" max="4">
+                            <small>Parallel requests</small>
+                        </div>
                     </div>
                     <div class="form-group">
                         <button type="button" class="btn-secondary" id="reloadModelBtn">Reload Model</button>

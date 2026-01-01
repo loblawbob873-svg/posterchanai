@@ -26,16 +26,29 @@ if not logger.handlers:
 
 # Global model instance (singleton)
 _ipex_instance: Optional["IPEXService"] = None
-# Use more workers - inference is serialized by lock, but other operations need to proceed
-_executor = ThreadPoolExecutor(max_workers=4)
-_inference_lock = threading.Lock()
+# Use more workers to match max concurrency
+_executor = ThreadPoolExecutor(max_workers=8)
 _model_load_lock = threading.Lock()  # Separate lock for model loading
+
+# Concurrency control - semaphore allows N concurrent inferences
+_inference_semaphore: Optional[threading.Semaphore] = None
+_current_max_concurrent = 1
 
 # Request tracking for debugging
 _request_counter = 0
 _request_counter_lock = threading.Lock()
 _pending_requests = 0
 _current_request: Optional[str] = None
+
+
+def _get_inference_semaphore(max_concurrent: int = 1) -> threading.Semaphore:
+    """Get or create inference semaphore with specified concurrency"""
+    global _inference_semaphore, _current_max_concurrent
+    if _inference_semaphore is None or _current_max_concurrent != max_concurrent:
+        _inference_semaphore = threading.Semaphore(max_concurrent)
+        _current_max_concurrent = max_concurrent
+        logger.info(f"Inference concurrency set to {max_concurrent}")
+    return _inference_semaphore
 
 
 class IPEXService:
@@ -65,6 +78,7 @@ class IPEXService:
         self.num_predict = int(settings.get("ollama_num_predict", "2048"))
         self.n_batch = int(settings.get("llm_n_batch", "128"))  # Batch size for prompt processing
         self.n_gpu_layers = int(settings.get("llm_gpu_layers", "-1"))  # -1 = all layers on GPU
+        self.max_concurrent = int(settings.get("llm_max_concurrent", "1"))  # Max concurrent inferences
 
         # Sampling settings
         self.temperature = float(settings.get("ollama_temperature", "0.7"))
@@ -248,7 +262,7 @@ class IPEXService:
             _current_request = f"REQ-{request_id}"
             logger.info(f"[REQ-{request_id}] Processing started")
             try:
-                with _inference_lock:
+                with _get_inference_semaphore(self.max_concurrent):
                     return self._generate_response(messages, **kwargs)
             finally:
                 _current_request = None
@@ -312,7 +326,7 @@ class IPEXService:
 
         def run_streaming():
             """Run generation in thread, put tokens in queue"""
-            with _inference_lock:
+            with _get_inference_semaphore(self.max_concurrent):
                 try:
                     if self._is_gguf:
                         # Use llama.cpp streaming for GGUF

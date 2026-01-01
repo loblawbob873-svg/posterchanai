@@ -103,6 +103,7 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "llm_gpu_layers": "-1",  # -1 = all layers on GPU
             "llm_n_threads": "4",
             "llm_n_batch": "128",  # Batch size (lower = less VRAM)
+            "llm_max_concurrent": "1",  # Max concurrent inferences
             # LLM health check
             "ollama_ping_enabled": "false",
             "ollama_restart_command": "sudo systemctl restart ollama",

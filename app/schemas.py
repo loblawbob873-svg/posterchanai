@@ -96,6 +96,7 @@ class SettingsResponse(BaseModel):
     llm_gpu_layers: str = "-1"
     llm_n_threads: str = "4"
     llm_n_batch: str = "128"  # Batch size for prompt processing (lower = less VRAM)
+    llm_max_concurrent: str = "1"  # Max concurrent inference requests
     # Ollama settings (also used for native backend sampling parameters)
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "richardyoung/qwen3-14b-abliterated:Q5_K_M"

@@ -26,8 +26,21 @@ if not logger.handlers:
 
 # Global model instance (singleton)
 _llama_instance: Optional["LlamaService"] = None
-_executor = ThreadPoolExecutor(max_workers=1)  # Single worker to prevent concurrent inference
-_inference_lock = threading.Lock()  # Ensure only one inference at a time
+_executor = ThreadPoolExecutor(max_workers=8)  # More workers to match concurrency
+
+# Concurrency control - semaphore allows N concurrent inferences
+_inference_semaphore: Optional[threading.Semaphore] = None
+_current_max_concurrent = 1
+
+
+def _get_inference_semaphore(max_concurrent: int = 1) -> threading.Semaphore:
+    """Get or create inference semaphore with specified concurrency"""
+    global _inference_semaphore, _current_max_concurrent
+    if _inference_semaphore is None or _current_max_concurrent != max_concurrent:
+        _inference_semaphore = threading.Semaphore(max_concurrent)
+        _current_max_concurrent = max_concurrent
+        logger.info(f"Inference concurrency set to {max_concurrent}")
+    return _inference_semaphore
 
 
 class LlamaService:
@@ -57,6 +70,7 @@ class LlamaService:
         # GPU settings
         self.n_gpu_layers = int(settings.get("llm_gpu_layers", "-1"))  # -1 = all layers on GPU
         self.n_threads = int(settings.get("llm_n_threads", "4"))
+        self.max_concurrent = int(settings.get("llm_max_concurrent", "1"))  # Max concurrent inferences
 
         # Sampling settings
         self.temperature = float(settings.get("ollama_temperature", "0.7"))
@@ -154,7 +168,7 @@ class LlamaService:
 
         params = self._get_sampling_params(**kwargs)
 
-        with _inference_lock:
+        with _get_inference_semaphore(self.max_concurrent):
             try:
                 result = self._model.create_chat_completion(
                     messages=messages,
@@ -221,7 +235,7 @@ class LlamaService:
 
         def run_streaming():
             """Run synchronous generation in thread, put SSE chunks in queue"""
-            with _inference_lock:
+            with _get_inference_semaphore(self.max_concurrent):
                 try:
                     for chunk in self._model.create_chat_completion(
                         messages=messages,
@@ -294,7 +308,7 @@ class LlamaService:
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
 
-        with _inference_lock:
+        with _get_inference_semaphore(self.max_concurrent):
             try:
                 for chunk in self._model.create_chat_completion(
                     messages=messages,
