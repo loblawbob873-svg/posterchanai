@@ -106,35 +106,57 @@ def restart_ollama(restart_command: str):
         return False
 
 
-async def ping_ollama(ollama_url: str, model: str = "llama3", timeout: float = 30.0, num_ctx: int = 40960) -> bool:
-    """Ping Ollama with a simple request"""
+async def ping_ollama(ollama_url: str, model: str = "llama3", timeout: float = 120.0, num_ctx: int = 40960) -> bool:
+    """Ping Ollama - check if alive and model is loaded"""
     import httpx
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            # Use the generate endpoint with a minimal request
-            response = await client.post(
-                f"{ollama_url}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": "What color is the sky?",
-                    "stream": False,
-                    "keep_alive": -1,
-                    "options": {
-                        "num_predict": 10,  # Very short response
-                        "num_ctx": num_ctx  # Use configured context size
-                    }
-                }
-            )
+        async with httpx.AsyncClient(timeout=30) as client:
+            # First just check if Ollama is alive with /api/tags (fast, no model load)
+            response = await client.get(f"{ollama_url}/api/tags")
+            if response.status_code != 200:
+                logger.error("Ollama not responding to /api/tags")
+                return False
 
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("response"):
+            # Check if any model is currently loaded
+            ps_response = await client.get(f"{ollama_url}/api/ps")
+            if ps_response.status_code == 200:
+                ps_data = ps_response.json()
+                models = ps_data.get("models", [])
+                if models:
+                    # Model is loaded, just refresh keep_alive without changing context
+                    for m in models:
+                        if m.get("name") == model:
+                            # Our model is loaded, send a minimal keep_alive refresh
+                            await client.post(
+                                f"{ollama_url}/api/generate",
+                                json={
+                                    "model": model,
+                                    "prompt": "",
+                                    "keep_alive": -1
+                                },
+                                timeout=10
+                            )
+                            return True
+                    # Different model loaded, that's ok
                     return True
 
-            # Also try the tags endpoint as a fallback
-            response = await client.get(f"{ollama_url}/api/tags")
-            return response.status_code == 200
+            # No model loaded, load it with correct context (will take time)
+            async with httpx.AsyncClient(timeout=timeout) as long_client:
+                response = await long_client.post(
+                    f"{ollama_url}/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": "hi",
+                        "stream": False,
+                        "keep_alive": -1,
+                        "options": {
+                            "num_predict": 1,
+                            "num_ctx": num_ctx
+                        }
+                    }
+                )
+                return response.status_code == 200
 
     except Exception as e:
         logger.error(f"Ping failed: {e}")
