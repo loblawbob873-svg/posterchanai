@@ -47,13 +47,48 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 
 ## Installation
 
+### Quick Start (Recommended)
+
 ```bash
 # Clone the repository
 git clone <repo-url>
 cd posterchanai
 
-# Run setup (creates virtual environment and installs dependencies)
+# Run the interactive installer
+./install.sh
+```
+
+The installer will:
+- Detect your GPU (Intel Arc, NVIDIA, or CPU)
+- Install the correct llama-cpp-python backend
+- Set up a Python virtual environment
+- Configure and start a systemd service
+- Optionally download a starter model
+
+To see required packages for your distro before installing:
+```bash
+./install.sh --packages
+```
+
+### Manual Setup
+
+If you prefer manual control:
+
+```bash
+# Create virtual environment and install base dependencies
 ./setup.sh
+
+# For GPU acceleration, manually install llama-cpp-python:
+# Intel Arc:
+source /opt/intel/oneapi/setvars.sh
+CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
+    pip install llama-cpp-python --force-reinstall --no-cache-dir
+
+# NVIDIA:
+CMAKE_ARGS="-DGGML_CUDA=ON" pip install llama-cpp-python --force-reinstall --no-cache-dir
+
+# CPU only:
+pip install llama-cpp-python
 ```
 
 ## Running
@@ -66,6 +101,8 @@ python run.py
 ```
 
 ### Production (systemd)
+
+If you used `install.sh`, the service is already configured. Otherwise:
 
 ```bash
 # Copy service file

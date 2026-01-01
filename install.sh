@@ -19,13 +19,13 @@ cd "$SCRIPT_DIR"
 
 print_banner() {
     echo -e "${CYAN}"
-    echo "╔═══════════════════════════════════════════════════════════════╗"
-    echo "║                                                               ║"
-    echo "║   ${BOLD}🤖 POSTERCHANAI INSTALLER${NC}${CYAN}                                  ║"
-    echo "║                                                               ║"
-    echo "║   AI Chat with Local LLM Support                              ║"
-    echo "║                                                               ║"
-    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo -e "╔═══════════════════════════════════════════════════════════════╗"
+    echo -e "║                                                               ║"
+    echo -e "║   ${BOLD}POSTERCHANAI INSTALLER${NC}${CYAN}                                      ║"
+    echo -e "║                                                               ║"
+    echo -e "║   AI Chat with Local LLM Support                              ║"
+    echo -e "║                                                               ║"
+    echo -e "╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
 
@@ -69,10 +69,11 @@ check_dependencies() {
         MISSING_DEPS="$MISSING_DEPS python3"
     else
         PY_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-        if [ "$(echo "$PY_VERSION < 3.10" | bc -l 2>/dev/null || echo 1)" = "1" ]; then
-            print_warning "Python $PY_VERSION detected. Python 3.10+ recommended."
-        else
+        PY_OK=$(python3 -c "import sys; print(1 if sys.version_info >= (3, 10) else 0)")
+        if [ "$PY_OK" = "1" ]; then
             print_success "Python $PY_VERSION"
+        else
+            print_warning "Python $PY_VERSION detected. Python 3.10+ recommended."
         fi
     fi
 
@@ -198,16 +199,16 @@ detect_gpu() {
 select_backend() {
     print_step "Select inference backend:"
     echo ""
-    echo "  1) ${BOLD}Intel Arc GPU${NC} (IPEX-LLM + llama.cpp SYCL)"
+    echo -e "  1) ${BOLD}Intel Arc GPU${NC} (IPEX-LLM + llama.cpp SYCL)"
     echo "     Best for Intel Arc A770, A750, A380, etc."
     echo ""
-    echo "  2) ${BOLD}NVIDIA GPU${NC} (llama.cpp CUDA)"
+    echo -e "  2) ${BOLD}NVIDIA GPU${NC} (llama.cpp CUDA)"
     echo "     Best for GeForce RTX, Tesla, etc."
     echo ""
-    echo "  3) ${BOLD}CPU Only${NC} (llama.cpp)"
+    echo -e "  3) ${BOLD}CPU Only${NC} (llama.cpp)"
     echo "     Works on any system, slower inference"
     echo ""
-    echo "  4) ${BOLD}Ollama${NC} (External service)"
+    echo -e "  4) ${BOLD}Ollama${NC} (External service)"
     echo "     Use existing Ollama installation"
     echo ""
 
@@ -237,7 +238,7 @@ setup_directories() {
     UPLOAD_PATH="/var/lib/posterchanai"
     if [ ! -d "$UPLOAD_PATH" ]; then
         sudo mkdir -p "$UPLOAD_PATH"
-        sudo chown $(whoami):$(whoami) "$UPLOAD_PATH"
+        sudo chown "$(whoami)":"$(whoami)" "$UPLOAD_PATH"
         print_success "Created $UPLOAD_PATH"
     else
         print_success "Upload directory exists"
@@ -247,7 +248,7 @@ setup_directories() {
     MODELS_PATH="$UPLOAD_PATH/models"
     if [ ! -d "$MODELS_PATH" ]; then
         sudo mkdir -p "$MODELS_PATH"
-        sudo chown $(whoami):$(whoami) "$MODELS_PATH"
+        sudo chown "$(whoami)":"$(whoami)" "$MODELS_PATH"
         print_success "Created $MODELS_PATH"
     fi
 }
@@ -357,6 +358,12 @@ STUBCODE
 }
 
 setup_systemd() {
+    # Set SERVICE_NAME early so print_summary can use it even if systemd is skipped
+    SERVICE_NAME="posterchanai"
+    if [ "$BACKEND" = "intel" ]; then
+        SERVICE_NAME="posterchanai-ipex"
+    fi
+
     print_step "Configure systemd service?"
     read -p "Install as systemd service? [Y/n]: " INSTALL_SERVICE
     INSTALL_SERVICE=${INSTALL_SERVICE:-Y}
@@ -364,11 +371,6 @@ setup_systemd() {
     if [[ ! "$INSTALL_SERVICE" =~ ^[Yy] ]]; then
         print_warning "Skipping systemd setup"
         return
-    fi
-
-    SERVICE_NAME="posterchanai"
-    if [ "$BACKEND" = "intel" ]; then
-        SERVICE_NAME="posterchanai-ipex"
     fi
 
     print_step "Creating systemd service: $SERVICE_NAME"
@@ -490,20 +492,25 @@ download_model() {
         MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q5_k_m.gguf"
         MODEL_FILE="$MODELS_PATH/qwen2.5-7b-instruct-q5_k_m.gguf"
 
+        DOWNLOAD_OK=0
         if command -v wget &>/dev/null; then
-            wget -q --show-progress -O "$MODEL_FILE" "$MODEL_URL"
+            wget -q --show-progress -O "$MODEL_FILE" "$MODEL_URL" && DOWNLOAD_OK=1
         elif command -v curl &>/dev/null; then
-            curl -L --progress-bar -o "$MODEL_FILE" "$MODEL_URL"
+            curl -L --progress-bar -o "$MODEL_FILE" "$MODEL_URL" && DOWNLOAD_OK=1
         else
             print_warning "Neither wget nor curl found. Please download manually."
             echo "  URL: $MODEL_URL"
             echo "  Save to: $MODEL_FILE"
         fi
 
-        if [ -f "$MODEL_FILE" ]; then
+        if [ "$DOWNLOAD_OK" = "1" ] && [ -f "$MODEL_FILE" ] && [ -s "$MODEL_FILE" ]; then
             print_success "Model downloaded to $MODEL_FILE"
             echo ""
             echo "  Configure this model in Admin Settings > LLM Model Path"
+        elif [ -f "$MODEL_FILE" ]; then
+            rm -f "$MODEL_FILE"
+            print_error "Download failed or incomplete. Please try again manually."
+            echo "  URL: $MODEL_URL"
         fi
     fi
 }
@@ -517,10 +524,10 @@ print_summary() {
     echo "  Backend: $BACKEND"
     echo "  Service: $SERVICE_NAME"
     echo ""
-    echo "  ${BOLD}Access:${NC} http://localhost:3051"
-    echo "  ${BOLD}Login:${NC}  admin / admin"
+    echo -e "  ${BOLD}Access:${NC} http://localhost:3051"
+    echo -e "  ${BOLD}Login:${NC}  admin / admin"
     echo ""
-    echo "  ${BOLD}Commands:${NC}"
+    echo -e "  ${BOLD}Commands:${NC}"
     echo "    Start:   sudo systemctl start $SERVICE_NAME"
     echo "    Stop:    sudo systemctl stop $SERVICE_NAME"
     echo "    Logs:    sudo journalctl -u $SERVICE_NAME -f"

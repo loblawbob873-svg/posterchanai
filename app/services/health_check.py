@@ -164,52 +164,34 @@ async def ping_native(db: Session) -> bool:
 
 
 async def ping_ipex(db: Session) -> bool:
-    """Check if IPEX-LLM is loaded and responsive by running a test query"""
+    """Check if IPEX-LLM is responsive by making a simple HTTP API request"""
+    import httpx
+
     try:
-        from app.services.ipex_service import get_ipex_service
-
-        service = get_ipex_service(db)
-        info = service.get_model_info()
-
-        if not info["loaded"]:
-            logger.warning("IPEX model not loaded, attempting to load...")
-            try:
-                service._ensure_model_loaded()
-                logger.info("IPEX model loaded successfully")
-            except Exception as e:
-                logger.error(f"Failed to load IPEX model: {e}")
-                return False
-
-        # Run a quick test query to verify GPU is responsive
-        logger.info("Running health check query...")
-        try:
-            test_messages = [
-                {"role": "user", "content": "What color is the ocean? Reply in one word."}
-            ]
-            result = await service.chat_completion(
-                messages=test_messages,
-                max_tokens=10,
-                temperature=0.1
+        async with httpx.AsyncClient(timeout=60) as client:
+            # Make a simple API request like any other client would
+            response = await client.post(
+                "http://localhost:3051/api/chat/completions",
+                json={
+                    "model": "ipex",
+                    "messages": [{"role": "user", "content": "What color is the ocean? Reply in one word."}],
+                    "max_tokens": 10,
+                    "temperature": 0.1
+                }
             )
 
-            if "error" in result:
-                logger.error(f"Health check query failed: {result['error']}")
-                return False
-
-            response = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            if response:
-                logger.info(f"Health check query OK: {response[:30]}")
-                return True
+            if response.status_code == 200:
+                data = response.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                if content:
+                    logger.info(f"IPEX health check OK: {content[:30]}")
+                    return True
+                else:
+                    logger.warning("IPEX health check returned empty response")
+                    return False
             else:
-                logger.warning("Health check query returned empty response")
+                logger.error(f"IPEX health check failed: {response.status_code}")
                 return False
-
-        except asyncio.TimeoutError:
-            logger.error("Health check query timed out")
-            return False
-        except Exception as e:
-            logger.error(f"Health check query error: {e}")
-            return False
 
     except Exception as e:
         logger.error(f"IPEX ping failed: {e}")
@@ -264,6 +246,10 @@ async def health_check_loop():
     global _consecutive_failures
 
     logger.info("Health check loop started")
+
+    # Wait for server to fully start before first health check
+    await asyncio.sleep(30)
+    logger.info("Starting health checks after initial delay")
 
     while True:
         try:
