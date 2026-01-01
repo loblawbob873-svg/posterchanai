@@ -94,6 +94,8 @@ class SettingsResponse(BaseModel):
     image_default_width: str = "1024"
     image_default_height: str = "1024"
     image_gpu_device: str = "auto"  # "auto", "cuda", "xpu", "cpu"
+    # VRAM management
+    vram_mode: str = "shared"  # "shared" (swap models) or "dedicated" (keep both)
     searxng_url: str = ""
     tts_voice: str = "zh-CN-XiaoxiaoNeural"
     tts_rate: str = "+5%"

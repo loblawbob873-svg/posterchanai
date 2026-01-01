@@ -217,3 +217,14 @@ def get_image_status(
     from app.services.image_factory import get_image_backend_info
 
     return get_image_backend_info(db)
+
+
+@router.get("/vram-status")
+def get_vram_status(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Get the current VRAM status (which models are loaded)"""
+    from app.services.vram_manager import get_vram_status
+
+    return get_vram_status(db)

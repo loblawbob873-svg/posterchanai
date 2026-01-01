@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, Optional
 from sqlalchemy.orm import Session
 from app.models import Setting
-from app.services.inference_factory import get_inference_service
+from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 
 # Thread pool for running synchronous generators
 _stream_executor = ThreadPoolExecutor(max_workers=4)
@@ -94,6 +94,8 @@ class ChatService:
     async def chat(self, messages: list[dict]) -> str:
         """Non-streaming chat completion using inference factory"""
         try:
+            # Prepare VRAM for LLM (swap models if needed)
+            prepare_vram_for_llm(self.db)
             service = get_inference_service(self.db)
             result = await service.chat_completion(
                 messages=messages,
@@ -111,6 +113,8 @@ class ChatService:
     async def chat_stream(self, messages: list[dict]) -> AsyncGenerator[str, None]:
         """Streaming chat completion - uses async queue to avoid blocking event loop"""
         try:
+            # Prepare VRAM for LLM (swap models if needed)
+            prepare_vram_for_llm(self.db)
             service = get_inference_service(self.db)
 
             # Use direct content streaming for native backend
@@ -256,6 +260,8 @@ class ChatService:
         ]
 
         try:
+            # Prepare VRAM for LLM (swap models if needed)
+            prepare_vram_for_llm(self.db)
             service = get_inference_service(self.db)
             result = await service.chat_completion(
                 messages=messages,

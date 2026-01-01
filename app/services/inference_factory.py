@@ -1,11 +1,18 @@
 """
 Inference Factory - Returns the appropriate inference service based on settings.
 Supports native llama-cpp-python, IPEX-LLM, and Ollama backends.
+Integrates with VRAM manager for model swapping on shared GPU.
 """
 from sqlalchemy.orm import Session
 from typing import Union
 
 from app.models import Setting
+
+
+def prepare_vram_for_llm(db: Session):
+    """Prepare VRAM for LLM inference (swap models if needed)"""
+    from app.services.vram_manager import prepare_for_llm
+    prepare_for_llm(db)
 
 
 def get_backend_type(db: Session) -> str:

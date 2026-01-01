@@ -254,6 +254,22 @@
                 </fieldset>
 
                 <fieldset>
+                    <legend>VRAM Management</legend>
+                    <div class="form-group">
+                        <label for="vram_mode">VRAM Mode</label>
+                        <select id="vram_mode" name="vram_mode">
+                            <option value="shared">Shared (Swap LLM/Image models)</option>
+                            <option value="dedicated">Dedicated (Keep both loaded)</option>
+                        </select>
+                        <small>Shared: Single GPU - unload one model to load the other. Dedicated: Multiple GPUs or high VRAM - keep both loaded.</small>
+                    </div>
+                    <div id="vramModeInfo" class="vram-info">
+                        <p><strong>Shared Mode:</strong> When you generate an image, the LLM is unloaded first. When you chat, the image model is unloaded first. Best for single GPU with limited VRAM.</p>
+                        <p><strong>Dedicated Mode:</strong> Both models stay loaded at all times. Use this if you have multiple GPUs or sufficient VRAM (24GB+) for both models.</p>
+                    </div>
+                </fieldset>
+
+                <fieldset>
                     <legend>Image Queue</legend>
                     <div class="form-group">
                         <div id="imageQueueStatus" class="queue-status">
@@ -272,6 +288,14 @@
                             <div class="queue-item">
                                 <span class="queue-label">Queue:</span>
                                 <span id="imageQueueCount">0 pending</span>
+                            </div>
+                            <div class="queue-item">
+                                <span class="queue-label">LLM Loaded:</span>
+                                <span id="llmLoadedStatus">-</span>
+                            </div>
+                            <div class="queue-item">
+                                <span class="queue-label">Image Loaded:</span>
+                                <span id="imageLoadedStatus">-</span>
                             </div>
                         </div>
                     </div>
@@ -631,6 +655,24 @@
     font-weight: 500;
     color: var(--text-secondary);
 }
+.vram-info {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+.vram-info p {
+    margin: 8px 0;
+}
+.vram-info p:first-child {
+    margin-top: 0;
+}
+.vram-info p:last-child {
+    margin-bottom: 0;
+}
 </style>
 
 <script>
@@ -920,19 +962,28 @@ document.getElementById('reloadImageModelBtn').addEventListener('click', async (
     }
 });
 
-// Refresh image queue status
+// Refresh image queue and VRAM status
 async function refreshImageQueue() {
     try {
-        const response = await fetch('/api/admin/image-status');
-        if (response.ok) {
-            const data = await response.json();
+        // Fetch image status
+        const imgResponse = await fetch('/api/admin/image-status');
+        if (imgResponse.ok) {
+            const data = await imgResponse.json();
             document.getElementById('imageBackendStatus').textContent = data.loaded ? 'Ready' : 'Not loaded';
             document.getElementById('imageModelName').textContent = data.model_path || data.comfyui_url || '-';
             document.getElementById('imageDeviceName').textContent = data.device || data.backend || '-';
             document.getElementById('imageQueueCount').textContent = (data.queue_size || 0) + ' pending';
         }
+
+        // Fetch VRAM status
+        const vramResponse = await fetch('/api/admin/vram-status');
+        if (vramResponse.ok) {
+            const vram = await vramResponse.json();
+            document.getElementById('llmLoadedStatus').textContent = vram.llm_loaded ? 'Yes' : 'No';
+            document.getElementById('imageLoadedStatus').textContent = vram.image_loaded ? 'Yes' : 'No';
+        }
     } catch (err) {
-        console.error('Failed to refresh image queue:', err);
+        console.error('Failed to refresh status:', err);
     }
 }
 

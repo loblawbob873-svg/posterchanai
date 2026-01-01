@@ -1,6 +1,7 @@
 """
 Image Generation Factory
 Selects between native diffusers and ComfyUI backends based on settings.
+Integrates with VRAM manager for model swapping on shared GPU.
 """
 import logging
 from typing import Optional, Protocol, runtime_checkable
@@ -28,6 +29,12 @@ class ImageBackend(Protocol):
     async def regenerate_image(self, prompt: str) -> Optional[str]:
         """Regenerate with new seed"""
         ...
+
+
+def prepare_vram_for_image(db: Session):
+    """Prepare VRAM for image generation (swap models if needed)"""
+    from app.services.vram_manager import prepare_for_image
+    prepare_for_image(db)
 
 
 def get_image_backend(db: Session) -> ImageBackend:

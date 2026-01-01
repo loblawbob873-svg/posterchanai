@@ -2,7 +2,7 @@ import base64
 from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from app.services.search_service import SearchService
-from app.services.image_factory import get_image_backend
+from app.services.image_factory import get_image_backend, prepare_vram_for_image
 from app.services.chat_service import ChatService
 
 
@@ -93,6 +93,9 @@ class CommandService:
         if not prompt:
             return {"type": "text", "content": "Please provide a prompt. Example: `geni a beautiful sunset over mountains`"}
 
+        # Prepare VRAM for image generation (swap models if needed)
+        prepare_vram_for_image(self.db)
+
         image_data = await self.image_service.generate_image(prompt)
         if not image_data:
             return {"type": "text", "content": "Failed to generate image. Please try again or check if ComfyUI is configured."}
@@ -111,6 +114,9 @@ class CommandService:
 
         if not image_data:
             return {"type": "text", "content": "Please upload an image to transform."}
+
+        # Prepare VRAM for image generation (swap models if needed)
+        prepare_vram_for_image(self.db)
 
         try:
             # Decode base64 image
@@ -164,6 +170,9 @@ class CommandService:
     async def _regen_command(self, last_prompt: Optional[str]) -> dict:
         if not last_prompt:
             return {"type": "text", "content": "No previous image prompt found. Use `geni <prompt>` first."}
+
+        # Prepare VRAM for image generation (swap models if needed)
+        prepare_vram_for_image(self.db)
 
         image_data = await self.image_service.regenerate_image(last_prompt)
         if not image_data:
