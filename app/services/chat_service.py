@@ -252,6 +252,25 @@ RULES:
 26. Bondage/rope to clothing: REMOVE rope, bondage, shibari, restraints from TAGS, add to NEGATIVE, add the new clothing type
 27. CRITICAL: For multiple people (2girls, 3girls, etc.) ALWAYS preserve the exact count in TAGS, use lower DENOISE (0.70) to preserve composition
 28. CRITICAL: ALWAYS preserve background/setting tags (indoor, outdoor, party, beach, chandelier, etc.) - do NOT change the scene unless explicitly asked
+29. EYE COLOR changes: weight 2.0, DENOISE 0.75, add (new_color eyes:2.0), put original eye color in NEGATIVE
+30. EXPRESSION changes (smile, angry, crying, blush): weight 1.5, DENOISE 0.65, add expression tag, put opposite expression in NEGATIVE if present
+31. CLOTHING COLOR changes (e.g., "blue dress" when wearing red dress): weight 2.0, DENOISE 0.70, KEEP the clothing type, change only the color, add (blue dress:2.0), put "red dress" in NEGATIVE
+32. GLASSES: to add glasses use (glasses:2.0), DENOISE 0.60; to remove use DENOISE 0.70 and put "glasses" in NEGATIVE
+33. ACCESSORIES (hat, earrings, necklace, choker): weight 1.5, DENOISE 0.60 to add, 0.70 to remove
+34. ANIMAL EARS (cat ears, fox ears, bunny ears): weight 2.0, DENOISE 0.70, add (cat ears:2.0), for removal put in NEGATIVE
+35. WET/RAIN effect: add (wet:1.5), (wet skin:1.5), (water droplets:1.5), DENOISE 0.65
+36. TAN/TAN LINES: weight 2.0, DENOISE 0.70, add (tan:2.0), (tan lines:2.0), (tanned skin:1.5)
+37. PREGNANT: weight 2.5, DENOISE 0.65, add (pregnant:2.5), (large belly:2.0), keep all other features
+38. BODY TYPE (muscular, thin, chubby): weight 2.0, DENOISE 0.70, add body type tags, put opposite in NEGATIVE
+39. FRECKLES: weight 1.5, DENOISE 0.60, add (freckles:1.5)
+40. TATTOO: weight 2.0, DENOISE 0.70, add (tattoo:2.0), specify location if given
+41. HORNS/WINGS: weight 2.0, DENOISE 0.75, add (horns:2.0) or (wings:2.0), (angel wings:2.0), (demon wings:2.0)
+42. BODY PARTS focus (ass, feet, hands, breasts): weight 1.5, DENOISE 0.60, add focus tag like (ass focus:1.5), (feet:1.5), (hand focus:1.5)
+43. BREAST SIZE: for "big breasts" add (large breasts:2.0), (huge breasts:1.5), DENOISE 0.50; for "small breasts" add (small breasts:2.0), (flat chest:1.5), put "large breasts" in NEGATIVE
+44. HOUSEHOLD ITEMS (chair, couch, bed, table): weight 1.5, DENOISE 0.70, add item tag, these are for adding props to scene
+45. SITTING/LYING poses: weight 1.5, DENOISE 0.70, add (sitting:1.5) or (lying down:1.5), (on bed:1.5), (on couch:1.5)
+46. SPREAD LEGS/POSES: weight 2.0, DENOISE 0.70, add (spread legs:2.0) or pose description
+47. CLOTHING STATE (open shirt, lifted skirt): weight 1.5, DENOISE 0.65, add state tag, keep original clothing in TAGS
 
 Examples:
 Tags: "1girl, blonde hair" Change: "red hair"
