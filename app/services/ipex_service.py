@@ -5,11 +5,12 @@ Uses Intel's optimized LLM inference for maximum performance on Arc GPUs.
 import asyncio
 import json
 import logging
+import os
 import re
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
@@ -33,6 +34,7 @@ _model_load_lock = threading.Lock()  # Separate lock for model loading
 # Concurrency control - semaphore allows N concurrent inferences
 _inference_semaphore: Optional[threading.Semaphore] = None
 _current_max_concurrent = 1
+_semaphore_lock = threading.Lock()
 
 # Request tracking for debugging
 _request_counter = 0
@@ -44,11 +46,12 @@ _current_request: Optional[str] = None
 def _get_inference_semaphore(max_concurrent: int = 1) -> threading.Semaphore:
     """Get or create inference semaphore with specified concurrency"""
     global _inference_semaphore, _current_max_concurrent
-    if _inference_semaphore is None or _current_max_concurrent != max_concurrent:
-        _inference_semaphore = threading.Semaphore(max_concurrent)
-        _current_max_concurrent = max_concurrent
-        logger.info(f"Inference concurrency set to {max_concurrent}")
-    return _inference_semaphore
+    with _semaphore_lock:
+        if _inference_semaphore is None or _current_max_concurrent != max_concurrent:
+            _inference_semaphore = threading.Semaphore(max_concurrent)
+            _current_max_concurrent = max_concurrent
+            logger.info(f"Inference concurrency set to {max_concurrent}")
+        return _inference_semaphore
 
 
 class IPEXService:
@@ -69,8 +72,8 @@ class IPEXService:
         """Load settings from database"""
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
 
-        # Model settings
-        self.model_path = settings.get("llm_model_path", "/home/verita84/models/model.gguf")
+        # Model settings - normalize path to prevent spurious reloads
+        self.model_path = os.path.normpath(settings.get("llm_model_path", "/home/verita84/models/model.gguf").strip())
         self.default_model = settings.get("ollama_model", "ipex")
 
         # Context and generation settings
@@ -253,19 +256,19 @@ class IPEXService:
             _pending_requests += 1
 
         # Get preview of user message for logging
-        user_msg = next((m.get("content", "")[:50] for m in reversed(messages) if m.get("role") == "user"), "?")
+        user_msg = next(((m.get("content") or "")[:50] for m in reversed(messages) if m.get("role") == "user"), "?")
         logger.info(f"[REQ-{request_id}] Queued: \"{user_msg}...\" (pending: {_pending_requests})")
         start_time = time.time()
 
         def run_with_lock():
             global _current_request
-            _current_request = f"REQ-{request_id}"
-            logger.info(f"[REQ-{request_id}] Processing started")
-            try:
-                with _get_inference_semaphore(self.max_concurrent):
+            with _get_inference_semaphore(self.max_concurrent):
+                _current_request = f"REQ-{request_id}"
+                logger.info(f"[REQ-{request_id}] Processing started")
+                try:
                     return self._generate_response(messages, **kwargs)
-            finally:
-                _current_request = None
+                finally:
+                    _current_request = None
 
         try:
             # Use wait_for to add timeout
@@ -383,7 +386,6 @@ class IPEXService:
                             "streamer": streamer,
                         }
 
-                        import threading
                         gen_thread = threading.Thread(
                             target=lambda: self._model.generate(**generation_kwargs)
                         )
@@ -434,7 +436,7 @@ class IPEXService:
         **kwargs
     ):
         """Direct content streaming generator for web UI with timeout protection."""
-        global _request_counter, _pending_requests, _current_request
+        global _request_counter, _pending_requests, _current_request, _request_counter_lock
 
         # Generate request ID and track
         with _request_counter_lock:
@@ -443,7 +445,7 @@ class IPEXService:
             _pending_requests += 1
 
         # Get preview of user message for logging
-        user_msg = next((m.get("content", "")[:50] for m in reversed(messages) if m.get("role") == "user"), "?")
+        user_msg = next(((m.get("content") or "")[:50] for m in reversed(messages) if m.get("role") == "user"), "?")
         logger.info(f"[STREAM-{request_id}] Queued: \"{user_msg}...\" (pending: {_pending_requests})")
         start_time = time.time()
 
@@ -452,10 +454,9 @@ class IPEXService:
         # Per-token timeout (seconds) - if no token in this time, abort
         token_timeout = 60  # 60 seconds max between tokens
 
-        _current_request = f"STREAM-{request_id}"
-        logger.info(f"[STREAM-{request_id}] Processing started")
-
-        with _inference_lock:
+        with _get_inference_semaphore(self.max_concurrent):
+            _current_request = f"STREAM-{request_id}"
+            logger.info(f"[STREAM-{request_id}] Processing started")
             try:
                 if self._is_gguf:
                     # Use llama.cpp streaming for GGUF
@@ -508,7 +509,6 @@ class IPEXService:
                         "streamer": streamer,
                     }
 
-                    import threading
                     gen_thread = threading.Thread(
                         target=lambda: self._model.generate(**generation_kwargs)
                     )
@@ -524,6 +524,8 @@ class IPEXService:
                             yield "Error: Generation timed out"
                             break
 
+                    if gen_thread.is_alive():
+                        logger.warning(f"[STREAM-{request_id}] Generation thread still running after timeout")
                     gen_thread.join(timeout=5)  # Don't wait forever for thread
 
                 # Log completion
@@ -541,8 +543,6 @@ class IPEXService:
 
     async def list_models(self) -> List[Dict[str, Any]]:
         """List available models"""
-        import os
-
         models = []
         model_dir = os.path.dirname(self.model_path)
 
