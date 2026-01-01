@@ -4,7 +4,7 @@
     "hair_style": 0.85,
     "color_change": 0.8,
     "clothing_removal": 0.8,
-    "background_scene": 0.75,
+    "background_scene": 0.55,
     "object_change": 0.7,
     "art_style": 0.65,
     "body_modification": 0.5,
@@ -23,7 +23,9 @@
     "10. NEVER put same tag in TAGS and NEGATIVE",
     "11. Always add to NEGATIVE: deformed, extra limbs, bad anatomy, blurry",
     "12. PRESERVE background/setting tags unless user asks to change them",
-    "13. SKIN ON COVERED BODY: If character wears bodysuit/plugsuit, skin color changes need higher denoise (0.85) or change to revealing clothing first"
+    "13. SKIN ON COVERED BODY: If character wears bodysuit/plugsuit, skin color changes need higher denoise (0.85) or change to revealing clothing first",
+    "14. PRESERVE AGE: Always keep age tags (child, boy, girl, young, kid, teen). Scene changes use LOW denoise (0.55) to preserve person",
+    "15. SCENE CHANGES: Use denoise 0.55, weight scene tags high (2.0), put original location in NEGATIVE"
   ],
   "examples": [
     {
@@ -92,9 +94,30 @@
     {
       "tags": "1girl, brown hair, indoors",
       "change": "beach",
-      "denoise": 0.75,
-      "output_tags": "(beach:1.5), (ocean:1.5), sand, sunny, 1girl, brown hair, vibrant colors, sharp, high quality",
-      "negative": "indoors, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.55,
+      "output_tags": "(beach:2.0), (ocean:2.0), (sandy beach:1.5), beach, ocean, sand, waves, sunny, blue sky, 1girl, brown hair, vibrant colors, sharp, high quality",
+      "negative": "indoors, room, interior, forest, trees, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1boy, child, young, brown hair, standing, bedroom, indoors",
+      "change": "beach",
+      "denoise": 0.55,
+      "output_tags": "(beach:2.0), (ocean:2.0), (sandy beach:1.5), beach, ocean, sand, waves, sunny, blue sky, 1boy, child, young, brown hair, standing, vibrant colors, sharp, high quality",
+      "negative": "bedroom, indoors, room, interior, forest, trees, adult, man, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1boy, child, standing, room, indoors",
+      "change": "park",
+      "denoise": 0.55,
+      "output_tags": "(park:2.0), (grass:2.0), (outdoors:1.5), park, grass, trees, sunny, nature, 1boy, child, standing, vibrant colors, sharp, high quality",
+      "negative": "room, indoors, interior, adult, man, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1boy, young, casual clothes, living room",
+      "change": "forest",
+      "denoise": 0.55,
+      "output_tags": "(forest:2.0), (trees:2.0), (nature:1.5), forest, trees, nature, outdoors, sunlight, 1boy, young, casual clothes, vibrant colors, sharp, high quality",
+      "negative": "living room, indoors, interior, room, adult, man, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "2girls, black hair, green hair, dress, champagne, party, indoor",
@@ -218,9 +241,9 @@
     {
       "tags": "3girls, horse ears, horse tail, gym uniform, buruma, sweat",
       "change": "bikini beach",
-      "denoise": 0.75,
-      "output_tags": "(bikini:2.0), (beach:1.5), (ocean:1.5), bikini, swimsuit, beach, sand, sunny, 3girls, horse ears, horse tail, vibrant colors, sharp, high quality",
-      "negative": "gym uniform, buruma, indoors, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.6,
+      "output_tags": "(bikini:2.0), (beach:2.0), (ocean:2.0), bikini, swimsuit, beach, sand, waves, sunny, blue sky, 3girls, horse ears, horse tail, vibrant colors, sharp, high quality",
+      "negative": "gym uniform, buruma, indoors, forest, trees, deformed, extra limbs, bad anatomy, blurry"
     }
   ],
   "txt2img_example": {
