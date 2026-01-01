@@ -81,6 +81,7 @@ class IPEXService:
         self.num_predict = int(settings.get("ollama_num_predict", "2048"))
         self.n_batch = int(settings.get("llm_n_batch", "128"))  # Batch size for prompt processing
         self.n_gpu_layers = int(settings.get("llm_gpu_layers", "-1"))  # -1 = all layers on GPU
+        self.n_threads = int(settings.get("llm_n_threads", "4"))  # CPU threads for inference
         self.max_concurrent = int(settings.get("llm_max_concurrent", "1"))  # Max concurrent inferences
 
         # Sampling settings
@@ -116,8 +117,7 @@ class IPEXService:
                 self._tokenizer = None
 
             logger.info(f"Loading model with IPEX-LLM: {self.model_path}")
-            # Working config for ~15GB VRAM: n_ctx=20480, n_batch=128, n_gpu_layers=-1
-            logger.info(f"  ctx: {self.num_ctx}, batch: {self.n_batch}, gpu_layers: {self.n_gpu_layers}")
+            logger.info(f"  ctx: {self.num_ctx}, batch: {self.n_batch}, gpu_layers: {self.n_gpu_layers}, threads: {self.n_threads}")
 
             try:
                 # Check if GGUF model - use llama.cpp backend
@@ -135,8 +135,8 @@ class IPEXService:
                         n_ctx=self.num_ctx,
                         n_gpu_layers=self.n_gpu_layers,  # Configurable via admin (-1 = all)
                         n_batch=self.n_batch,  # Configurable via admin
-                        n_threads=1,  # Single thread for GPU inference (GPU handles parallelism)
-                        n_threads_batch=1,  # Single thread for batch processing
+                        n_threads=self.n_threads,  # Configurable via admin
+                        n_threads_batch=self.n_threads,  # Match n_threads for batch processing
                         verbose=False,
                     )
                     self._tokenizer = None  # llama.cpp handles tokenization
