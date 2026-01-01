@@ -17,10 +17,13 @@
     "4. Skin color changes: weight 2.0, add synonyms (dark skin, brown skin for dark; pale skin, white skin for light)",
     "5. Small breasts: weight 2.0, DENOISE 0.5, add to NEGATIVE: large breasts, huge breasts, cleavage",
     "6. Big breasts: weight 2.0, DENOISE 0.5, add cleavage, NEGATIVE: small breasts, flat chest",
-    "7. CRITICAL - Naked/nude: DENOISE 0.9, DELETE all clothing from TAGS, ADD (completely nude:2.5), (nipples:2.0), (navel:2.0), NEGATIVE must have: clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent",
+    "7. CRITICAL - Naked/nude: DENOISE 0.65, DELETE all clothing from TAGS, ADD (completely nude:2.0), (nude:2.0), (nipples:1.5), (navel:1.5), weight animal features HIGH like (fox ears:2.0), NEGATIVE must have: clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, holes, torn, upside down",
     "8. Keep original tags for people count (2girls, 3girls, etc)",
+    "8b. PRESERVE animal features: fox ears, fox tail, cat ears, cat tail, bunny ears, horse ears, wolf ears, animal ear fluff, etc. NEVER remove these",
     "9. Always end TAGS with: vibrant colors, sharp, high quality",
     "10. NEVER put same tag in TAGS and NEGATIVE",
+    "10b. NEVER put user-requested styles in NEGATIVE (if user asks for anime, put anime in TAGS not NEGATIVE)",
+    "10c. STYLE CHANGES: If user asks for anime, DELETE realistic/photorealistic from TAGS and put them in NEGATIVE. If user asks for realistic, DELETE anime/cartoon from TAGS and put them in NEGATIVE",
     "11. Always add to NEGATIVE: deformed, extra limbs, bad anatomy, blurry",
     "12. PRESERVE background/setting tags unless user asks to change them",
     "13. SKIN ON COVERED BODY: If character wears bodysuit/plugsuit, skin color changes need higher denoise (0.85) or change to revealing clothing first",
@@ -136,7 +139,7 @@
     {
       "tags": "1girl, blue hair, rope, bondage, shibari, nude",
       "change": "swimsuit",
-      "denoise": 0.75,
+      "denoise": 0.7,
       "output_tags": "(swimsuit:2.0), (bikini:1.5), swimsuit, 1girl, blue hair, vibrant colors, sharp, high quality",
       "negative": "rope, bondage, shibari, nude, naked, deformed, extra limbs, bad anatomy, blurry"
     },
@@ -206,7 +209,7 @@
     {
       "tags": "1girl, elf, china dress, green eyes, ponytail",
       "change": "brown skin black hair big breasts",
-      "denoise": 0.65,
+      "denoise": 0.75,
       "output_tags": "(dark skin:2.0), (brown skin:2.0), (black hair:2.0), (large breasts:2.0), dark skin, black hair, large breasts, 1girl, elf, china dress, green eyes, ponytail, vibrant colors, sharp, high quality",
       "negative": "pale skin, white skin, small breasts, flat chest, deformed, extra limbs, bad anatomy, blurry"
     },
@@ -227,42 +230,56 @@
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, gym uniform, anime",
       "change": "realistic",
-      "denoise": 0.65,
+      "denoise": 0.75,
       "output_tags": "(realistic:2.0), (photorealistic:2.0), (real photo:1.5), realistic, photorealistic, 3girls, brown hair, black hair, pink hair, horse ears, gym uniform, vibrant colors, sharp, high quality",
       "negative": "anime, cartoon, drawing, illustration, 2d, cel shaded, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "3girls, brown hair, black hair, pink hair, gym uniform, realistic, photo",
       "change": "anime",
-      "denoise": 0.65,
+      "denoise": 0.75,
       "output_tags": "(anime:2.0), (anime style:2.0), (illustration:1.5), anime, 2d, cel shaded, 3girls, brown hair, black hair, pink hair, gym uniform, vibrant colors, sharp, high quality",
       "negative": "realistic, photorealistic, real photo, 3d, deformed, extra limbs, bad anatomy, blurry"
     },
     {
+      "tags": "1girl, solo, long hair, brown hair, brown eyes, smile, kitchen, indoors, realistic",
+      "change": "anime",
+      "denoise": 0.75,
+      "output_tags": "(anime:2.0), (anime style:2.0), (illustration:1.5), anime, 2d, cel shaded, 1girl, solo, long hair, brown hair, brown eyes, smile, kitchen, indoors, vibrant colors, sharp, high quality",
+      "negative": "realistic, photorealistic, real photo, 3d, photograph, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1girl, solo, long hair, brown hair, large breasts, smile, kitchen, indoors, realistic",
+      "change": "small breasts anime",
+      "denoise": 0.75,
+      "output_tags": "(small breasts:2.0), (flat chest:1.5), (anime:2.0), (anime style:2.0), small breasts, anime, 2d, 1girl, solo, long hair, brown hair, smile, kitchen, indoors, vibrant colors, sharp, high quality",
+      "negative": "large breasts, huge breasts, cleavage, realistic, photorealistic, real photo, 3d, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
       "tags": "3girls, horse ears, horse tail, gym uniform, buruma, sweat",
       "change": "bikini beach",
-      "denoise": 0.6,
+      "denoise": 0.7,
       "output_tags": "(bikini:2.0), (beach:2.0), (ocean:2.0), bikini, swimsuit, beach, sand, waves, sunny, blue sky, 3girls, horse ears, horse tail, vibrant colors, sharp, high quality",
       "negative": "gym uniform, buruma, indoors, forest, trees, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, shirt, anime",
       "change": "nude anime",
-      "denoise": 0.9,
+      "denoise": 0.7,
       "output_tags": "(completely nude:2.5), (fully naked:2.5), (nipples:2.0), (navel:2.0), nude, anime style, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
       "negative": "gym uniform, buruma, shirt, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "1girl, solo, long hair, blonde hair, yellow eyes, fox ears, fox tail, school uniform, blazer, blue jacket, white shirt, pleated skirt, blue skirt, bowtie, red bow, pantyhose, standing, indoors",
       "change": "nude anime",
-      "denoise": 0.9,
-      "output_tags": "(completely nude:2.5), (fully naked:2.5), (nipples:2.0), (navel:2.0), (bare skin:2.0), nude, anime style, 1girl, solo, long hair, blonde hair, (yellow eyes:1.5), fox ears, fox tail, standing, indoors, vibrant colors, sharp, high quality",
+      "denoise": 0.65,
+      "output_tags": "(completely nude:2.0), (nude:2.0), (nipples:1.5), (navel:1.5), nude, anime style, 1girl, solo, long hair, blonde hair, (yellow eyes:1.5), (fox ears:2.0), (fox tail:2.0), standing, indoors, vibrant colors, sharp, high quality",
       "negative": "school uniform, blazer, jacket, shirt, skirt, bowtie, pantyhose, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, censored, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, shirt",
       "change": "nude realistic",
-      "denoise": 0.9,
+      "denoise": 0.7,
       "output_tags": "(completely nude:2.5), (fully naked:2.5), (nipples:2.0), (navel:2.0), (realistic:1.5), nude, realistic, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
       "negative": "gym uniform, buruma, shirt, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, anime, cartoon, drawing, deformed, extra limbs, bad anatomy, blurry"
     }
