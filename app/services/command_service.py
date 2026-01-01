@@ -79,7 +79,7 @@ class CommandService:
         if not query:
             return {"type": "text", "content": "Please provide a search query. Example: `images cute cats`"}
 
-        results = await self.search_service.image_search(query, limit=8)
+        results = await self.search_service.image_search(query, limit=10)
         if not results:
             return {"type": "text", "content": f"No images found for: {query}"}
 
