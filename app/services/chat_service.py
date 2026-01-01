@@ -250,6 +250,8 @@ RULES:
 24. CLOTHING CHANGES (swimsuit, bikini, dress, etc.): weight 2.0, DENOISE 0.75, REMOVE original clothing/bondage tags from TAGS, add new clothing, put original clothing in NEGATIVE
 25. For swimsuit/bikini: add (swimsuit:2.0), (bikini:1.5), optionally add wet, water droplets for beach/pool vibes
 26. Bondage/rope to clothing: REMOVE rope, bondage, shibari, restraints from TAGS, add to NEGATIVE, add the new clothing type
+27. CRITICAL: For multiple people (2girls, 3girls, etc.) ALWAYS preserve the exact count in TAGS, use lower DENOISE (0.70) to preserve composition
+28. CRITICAL: ALWAYS preserve background/setting tags (indoor, outdoor, party, beach, chandelier, etc.) - do NOT change the scene unless explicitly asked
 
 Examples:
 Tags: "1girl, blonde hair" Change: "red hair"
@@ -504,6 +506,11 @@ Tags: "1girl, blue hair, purple hair, blue eyes, bamboo forest, red rope, bondag
 DENOISE: 0.75
 TAGS: 1girl, blue hair, purple hair, blue eyes, bamboo forest, (swimsuit:2.0), (bikini:1.5), wet, water droplets, anime, vibrant colors, sharp, high quality
 NEGATIVE: red rope, bondage, shibari, topless, nude, naked, deformed, extra limbs, bad anatomy, blurry, distorted, extra people
+
+Tags: "2girls, green hair, black hair, black dress, champagne glass, holding, cleavage, indoor, chandelier, party, anime" Change: "nude naked red hair, anime"
+DENOISE: 0.70
+TAGS: 2girls, (red hair:2.0), red hair, (nude:2.0), (naked:2.0), champagne glass, holding, cleavage, indoor, chandelier, party, anime, vibrant colors, sharp, high quality
+NEGATIVE: green hair, black hair, black dress, dress, clothing, clothed, deformed, extra limbs, bad anatomy, blurry, distorted, extra people, 1other
 
 Tags: "1girl, solo, long hair, breasts, looking at viewer, blush, smile, open mouth, large breasts, black hair, dress, holding, cleavage, bare shoulders, jewelry, standing, collarbone, earrings, choker, fang, nail polish, black eyes, black dress, hands up, strapless, covered navel, black choker, strapless dress, red nails" Change: "dark brown skin afro hair, anime"
 DENOISE: 0.85
