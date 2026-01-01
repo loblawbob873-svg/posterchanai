@@ -1,0 +1,10 @@
+# Native image generation dependencies (optional)
+# Install with: pip install -r requirements-image.txt
+
+diffusers>=0.27.0
+transformers>=4.37.0
+accelerate>=0.27.0
+safetensors>=0.4.0
+
+# Optional: faster attention (NVIDIA only)
+# xformers>=0.0.24

@@ -88,7 +88,7 @@ class ImageService:
             "9": {
                 "class_type": "SaveImage",
                 "inputs": {
-                    "filename_prefix": "posterchanai",
+                    "filename_prefix": "temp/posterchanai",
                     "images": ["8", 0]
                 }
             }
@@ -258,7 +258,7 @@ class ImageService:
             "9": {
                 "class_type": "SaveImage",
                 "inputs": {
-                    "filename_prefix": "posterchanai_img2img",
+                    "filename_prefix": "temp/posterchanai_img2img",
                     "images": ["8", 0]
                 }
             },

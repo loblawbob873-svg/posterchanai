@@ -2,7 +2,7 @@ import base64
 from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from app.services.search_service import SearchService
-from app.services.image_service import ImageService
+from app.services.image_factory import get_image_backend
 from app.services.chat_service import ChatService
 
 
@@ -18,7 +18,7 @@ class CommandService:
     def __init__(self, db: Session):
         self.db = db
         self.search_service = SearchService(db)
-        self.image_service = ImageService(db)
+        self.image_service = get_image_backend(db)
         self.chat_service = ChatService(db)
 
     def parse_command(self, message: str) -> Tuple[Optional[str], str]:

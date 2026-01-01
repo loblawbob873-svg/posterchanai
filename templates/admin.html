@@ -14,6 +14,7 @@
     <!-- Tab Navigation -->
     <div class="admin-tabs">
         <button class="tab-btn active" data-tab="ai">AI Settings</button>
+        <button class="tab-btn" data-tab="image">Image Generation</button>
         <button class="tab-btn" data-tab="services">Services</button>
         <button class="tab-btn" data-tab="site">Site Settings</button>
         <button class="tab-btn" data-tab="users">Users</button>
@@ -163,11 +164,77 @@
             </div>
 
             <!-- Services Tab -->
-            <div class="tab-content" id="tab-services">
+            <!-- Image Generation Tab -->
+            <div class="tab-content" id="tab-image">
                 <fieldset>
-                    <legend>ComfyUI (Image Generation)</legend>
+                    <legend>Image Backend</legend>
                     <div class="form-group">
-                        <label for="comfyui_url">URL</label>
+                        <label for="image_backend">Backend Type</label>
+                        <select id="image_backend" name="image_backend">
+                            <option value="comfyui">ComfyUI (External)</option>
+                            <option value="native">Native (diffusers)</option>
+                        </select>
+                        <small>Native: Built-in diffusers. ComfyUI: External ComfyUI instance.</small>
+                    </div>
+                </fieldset>
+
+                <fieldset id="native-image-settings" style="display: none;">
+                    <legend>Native Image Settings</legend>
+                    <div class="form-group">
+                        <label for="image_model_path">Model Path</label>
+                        <input type="text" id="image_model_path" name="image_model_path" placeholder="/path/to/model.safetensors">
+                        <small>Path to .safetensors or HuggingFace model ID</small>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="image_model_type">Model Type</label>
+                            <select id="image_model_type" name="image_model_type">
+                                <option value="sd15">SD 1.5</option>
+                                <option value="sdxl" selected>SDXL</option>
+                                <option value="sd3">SD 3</option>
+                                <option value="flux">Flux</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="image_gpu_device">GPU Device</label>
+                            <select id="image_gpu_device" name="image_gpu_device">
+                                <option value="auto">Auto-detect</option>
+                                <option value="cuda">CUDA (NVIDIA/AMD)</option>
+                                <option value="xpu">XPU (Intel Arc)</option>
+                                <option value="cpu">CPU</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="image_default_steps">Default Steps</label>
+                            <input type="number" id="image_default_steps" name="image_default_steps" value="20" min="1" max="150">
+                        </div>
+                        <div class="form-group">
+                            <label for="image_default_cfg">CFG Scale</label>
+                            <input type="number" id="image_default_cfg" name="image_default_cfg" value="7.0" min="1" max="30" step="0.5">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="image_default_width">Default Width</label>
+                            <input type="number" id="image_default_width" name="image_default_width" value="1024" min="256" max="2048" step="64">
+                        </div>
+                        <div class="form-group">
+                            <label for="image_default_height">Default Height</label>
+                            <input type="number" id="image_default_height" name="image_default_height" value="1024" min="256" max="2048" step="64">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <button type="button" id="reloadImageModelBtn" class="btn-secondary">Reload Model</button>
+                        <span id="imageModelStatus" class="model-status"></span>
+                    </div>
+                </fieldset>
+
+                <fieldset id="comfyui-settings">
+                    <legend>ComfyUI Settings</legend>
+                    <div class="form-group">
+                        <label for="comfyui_url">ComfyUI URL</label>
                         <input type="url" id="comfyui_url" name="comfyui_url" placeholder="http://localhost:8188">
                     </div>
                     <div class="form-row">
@@ -186,6 +253,35 @@
                     </div>
                 </fieldset>
 
+                <fieldset>
+                    <legend>Image Queue</legend>
+                    <div class="form-group">
+                        <div id="imageQueueStatus" class="queue-status">
+                            <div class="queue-item">
+                                <span class="queue-label">Status:</span>
+                                <span id="imageBackendStatus">-</span>
+                            </div>
+                            <div class="queue-item">
+                                <span class="queue-label">Model:</span>
+                                <span id="imageModelName">-</span>
+                            </div>
+                            <div class="queue-item">
+                                <span class="queue-label">Device:</span>
+                                <span id="imageDeviceName">-</span>
+                            </div>
+                            <div class="queue-item">
+                                <span class="queue-label">Queue:</span>
+                                <span id="imageQueueCount">0 pending</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <button type="button" id="refreshImageQueueBtn" class="btn-secondary">Refresh Status</button>
+                    </div>
+                </fieldset>
+            </div>
+
+            <div class="tab-content" id="tab-services">
                 <fieldset>
                     <legend>SearXNG (Search)</legend>
                     <div class="form-group">
@@ -515,7 +611,25 @@
     display: block;
     background: rgba(74, 158, 255, 0.2);
     border: 1px solid var(--accent);
-    color: var(--accent);
+}
+.queue-status {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 15px;
+}
+.queue-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+}
+.queue-item:last-child {
+    border-bottom: none;
+}
+.queue-label {
+    font-weight: 500;
+    color: var(--text-secondary);
 }
 </style>
 
@@ -761,11 +875,78 @@ document.getElementById('reloadModelBtn').addEventListener('click', async () => 
     }
 });
 
+// Image backend type switching
+function updateImageBackendUI() {
+    const backend = document.getElementById('image_backend').value;
+    const nativeSettings = document.getElementById('native-image-settings');
+    const comfyuiSettings = document.getElementById('comfyui-settings');
+
+    if (backend === 'native') {
+        nativeSettings.style.display = 'block';
+        comfyuiSettings.style.display = 'none';
+    } else {
+        nativeSettings.style.display = 'none';
+        comfyuiSettings.style.display = 'block';
+    }
+}
+
+document.getElementById('image_backend').addEventListener('change', updateImageBackendUI);
+
+// Reload image model button
+document.getElementById('reloadImageModelBtn').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('imageModelStatus');
+    statusDiv.className = 'model-status loading';
+    statusDiv.textContent = 'Reloading image model...';
+    statusDiv.style.display = 'block';
+
+    try {
+        const response = await fetch('/api/admin/reload-image-model', {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            statusDiv.className = 'model-status success';
+            statusDiv.textContent = data.message || 'Image model reloaded successfully!';
+            refreshImageQueue();
+        } else {
+            statusDiv.className = 'model-status error';
+            statusDiv.textContent = data.detail || 'Failed to reload image model';
+        }
+    } catch (err) {
+        statusDiv.className = 'model-status error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
+
+// Refresh image queue status
+async function refreshImageQueue() {
+    try {
+        const response = await fetch('/api/admin/image-status');
+        if (response.ok) {
+            const data = await response.json();
+            document.getElementById('imageBackendStatus').textContent = data.loaded ? 'Ready' : 'Not loaded';
+            document.getElementById('imageModelName').textContent = data.model_path || data.comfyui_url || '-';
+            document.getElementById('imageDeviceName').textContent = data.device || data.backend || '-';
+            document.getElementById('imageQueueCount').textContent = (data.queue_size || 0) + ' pending';
+        }
+    } catch (err) {
+        console.error('Failed to refresh image queue:', err);
+    }
+}
+
+document.getElementById('refreshImageQueueBtn').addEventListener('click', refreshImageQueue);
+
 // Initialize
 loadSettings();
 loadUsers();
 
 // Update backend UI after settings load
-setTimeout(updateBackendUI, 500);
+setTimeout(() => {
+    updateBackendUI();
+    updateImageBackendUI();
+    refreshImageQueue();
+}, 500);
 </script>
 {% endblock %}

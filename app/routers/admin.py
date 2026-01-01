@@ -180,3 +180,40 @@ def get_model_status(
     from app.services.inference_factory import get_inference_status
 
     return get_inference_status(db)
+
+
+@router.post("/reload-image-model")
+def reload_image_model(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Reload the image generation model (for native backend)"""
+    from app.services.image_factory import reload_image_model, get_image_backend_info
+
+    info = get_image_backend_info(db)
+
+    if info.get("backend") != "native":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Model reload is only available for native image backend. Current backend: " + info.get("backend", "unknown")
+        )
+
+    try:
+        reload_image_model(db)
+        return {"success": True, "message": "Image model reloaded successfully"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reload image model: {str(e)}"
+        )
+
+
+@router.get("/image-status")
+def get_image_status(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Get the current image generation backend status"""
+    from app.services.image_factory import get_image_backend_info
+
+    return get_image_backend_info(db)
