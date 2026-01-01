@@ -64,3 +64,4 @@ htmlcov/
 uploads/
 generated/
 venv-ipex/
+.secret_key

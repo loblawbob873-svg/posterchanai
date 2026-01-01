@@ -11,16 +11,33 @@ from app.models import User
 import os
 import warnings
 
-# Generate a secure random key if SECRET_KEY is not set
-_secret_key = os.getenv("SECRET_KEY")
-if not _secret_key:
-    _secret_key = secrets.token_hex(32)
-    warnings.warn(
-        "SECRET_KEY environment variable not set. Using a random key. "
-        "Sessions will be invalidated on restart. Set SECRET_KEY in production.",
-        RuntimeWarning
-    )
-SECRET_KEY = _secret_key
+# Get or generate a persistent secret key
+def _get_secret_key() -> str:
+    # First check environment variable
+    key = os.getenv("SECRET_KEY")
+    if key:
+        return key
+
+    # Try to load from file for persistence across restarts
+    key_file = os.path.join(os.path.dirname(__file__), ".secret_key")
+    if os.path.exists(key_file):
+        with open(key_file, "r") as f:
+            return f.read().strip()
+
+    # Generate new key and save to file
+    key = secrets.token_hex(32)
+    try:
+        with open(key_file, "w") as f:
+            f.write(key)
+        os.chmod(key_file, 0o600)  # Restrict permissions
+    except OSError:
+        warnings.warn(
+            "Could not save SECRET_KEY to file. Sessions will be invalidated on restart.",
+            RuntimeWarning
+        )
+    return key
+
+SECRET_KEY = _get_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 
