@@ -1,0 +1,19 @@
+[Unit]
+Description=Posterchan AI (IPEX-LLM for Intel Arc GPU)
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/posterchanai
+Environment="PATH=/path/to/posterchanai/venv-ipex/bin:/usr/local/bin:/usr/bin"
+Environment="VIRTUAL_ENV=/path/to/posterchanai/venv-ipex"
+
+# Use the wrapper script which sets up oneAPI, LD_PRELOAD, and setarch
+ExecStart=/path/to/posterchanai/run-ipex.sh
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

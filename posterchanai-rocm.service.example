@@ -1,0 +1,32 @@
+[Unit]
+Description=Posterchan AI (Native GPU - AMD ROCm)
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/posterchanai
+Environment="PATH=/path/to/posterchanai/venv/bin:/usr/local/bin:/usr/bin"
+Environment="VIRTUAL_ENV=/path/to/posterchanai/venv"
+
+# ROCm environment
+Environment="HSA_OVERRIDE_GFX_VERSION=10.3.0"
+Environment="ROCM_PATH=/opt/rocm"
+Environment="LD_LIBRARY_PATH=/opt/rocm/lib"
+
+ExecStart=/path/to/posterchanai/venv/bin/python run.py
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+# Installation notes:
+# 1. Install ROCm: https://rocm.docs.amd.com/
+# 2. Create venv: python3 -m venv venv && source venv/bin/activate
+# 3. Install ROCm llama-cpp-python:
+#    CMAKE_ARGS="-DGGML_HIP=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
+# 4. Install dependencies: pip install -r requirements.txt
+# 5. Set Backend Type to "Native GPU" in Admin Panel
+# 6. Adjust HSA_OVERRIDE_GFX_VERSION for your GPU (check with rocminfo)

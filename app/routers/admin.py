@@ -150,15 +150,15 @@ def reload_model(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
-    """Reload the LLM model (for native backend)"""
+    """Reload the LLM model (for native/ipex backend)"""
     from app.services.inference_factory import get_backend_type, reload_inference_model
 
     backend = get_backend_type(db)
 
-    if backend != "native":
+    if backend not in ("native", "ipex"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Model reload is only available for native backend. Current backend: " + backend
+            detail="Model reload is only available for native/ipex backend. Current backend: " + backend
         )
 
     try:

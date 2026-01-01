@@ -1,0 +1,28 @@
+[Unit]
+Description=Posterchan AI (Native GPU - NVIDIA CUDA)
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/posterchanai
+Environment="PATH=/path/to/posterchanai/venv/bin:/usr/local/bin:/usr/bin"
+Environment="VIRTUAL_ENV=/path/to/posterchanai/venv"
+
+# CUDA library path (adjust if needed)
+Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64"
+
+ExecStart=/path/to/posterchanai/venv/bin/python run.py
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+# Installation notes:
+# 1. Create venv: python3 -m venv venv && source venv/bin/activate
+# 2. Install CUDA llama-cpp-python:
+#    CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
+# 3. Install dependencies: pip install -r requirements.txt
+# 4. Set Backend Type to "Native GPU" in Admin Panel

@@ -20,3 +20,9 @@ Pillow>=10.0.0
 pillow-heif>=0.16.0
 # Native LLM inference (requires compilation with GPU flags - see README)
 # llama-cpp-python>=0.2.90
+
+# IPEX-LLM for Intel Arc GPU (requires separate Python 3.11 venv - see README)
+# torch==2.1.0a0 (Intel custom build from pip.intel.com)
+# intel-extension-for-pytorch==2.1.30+xpu
+# ipex-llm[xpu]==2.2.0
+# transformers>=4.37.0

@@ -30,8 +30,9 @@
                         <select id="llm_backend" name="llm_backend">
                             <option value="ollama">Ollama (External)</option>
                             <option value="native">Native GPU (llama-cpp-python)</option>
+                            <option value="ipex">IPEX-LLM (Intel Arc)</option>
                         </select>
-                        <small>Native GPU uses llama-cpp-python with SYCL (Intel) or CUDA (NVIDIA)</small>
+                        <small>IPEX-LLM: Best for Intel Arc. Native GPU: llama-cpp-python with SYCL/CUDA</small>
                     </div>
                 </fieldset>
 
@@ -693,7 +694,7 @@ function updateBackendUI() {
     const nativeSettings = document.getElementById('native-settings');
     const ollamaSettings = document.getElementById('ollama-settings');
 
-    if (backend === 'native') {
+    if (backend === 'native' || backend === 'ipex') {
         nativeSettings.style.display = 'block';
         ollamaSettings.style.display = 'none';
     } else {

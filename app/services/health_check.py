@@ -1,7 +1,7 @@
 """
 LLM Health Check Service
 Periodically checks the LLM backend and handles recovery.
-Supports both native llama-cpp-python and Ollama backends.
+Supports native llama-cpp-python, IPEX-LLM, and Ollama backends.
 """
 import asyncio
 import logging
@@ -121,6 +121,19 @@ def reload_native_model(db: Session) -> bool:
         return False
 
 
+def reload_ipex_model(db: Session) -> bool:
+    """Reload the IPEX-LLM model"""
+    logger.info("Reloading IPEX-LLM model...")
+    try:
+        from app.services.ipex_service import reload_ipex_model as ipex_reload
+        ipex_reload(db)
+        logger.info("IPEX-LLM model reloaded successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to reload IPEX model: {e}")
+        return False
+
+
 async def ping_native(db: Session) -> bool:
     """Check if native LLM is loaded and responsive"""
     try:
@@ -139,34 +152,39 @@ async def ping_native(db: Session) -> bool:
                 logger.error(f"Failed to load native model: {e}")
                 return False
 
-        # Model is loaded, do a quick inference test
-        try:
-            # Simple test - just check if we can call the model
-            loop = asyncio.get_event_loop()
-            result = await asyncio.wait_for(
-                service.chat_completion(
-                    messages=[{"role": "user", "content": "Hi"}],
-                    max_tokens=5
-                ),
-                timeout=30
-            )
-
-            if "error" in result:
-                logger.error(f"Native model test failed: {result['error']}")
-                return False
-
-            logger.info("Native model ping OK")
-            return True
-
-        except asyncio.TimeoutError:
-            logger.error("Native model test timed out")
-            return False
-        except Exception as e:
-            logger.error(f"Native model test error: {e}")
-            return False
+        # Model is loaded - that's enough, skip inference test to avoid blocking user requests
+        logger.debug("Native model is loaded")
+        return True
 
     except Exception as e:
         logger.error(f"Native ping failed: {e}")
+        return False
+
+
+async def ping_ipex(db: Session) -> bool:
+    """Check if IPEX-LLM is loaded and responsive"""
+    try:
+        from app.services.ipex_service import get_ipex_service
+
+        service = get_ipex_service(db)
+        info = service.get_model_info()
+
+        if not info["loaded"]:
+            logger.warning("IPEX model not loaded, attempting to load...")
+            try:
+                service._ensure_model_loaded()
+                logger.info("IPEX model loaded successfully")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to load IPEX model: {e}")
+                return False
+
+        # Model is loaded
+        logger.debug("IPEX model is loaded")
+        return True
+
+    except Exception as e:
+        logger.error(f"IPEX ping failed: {e}")
         return False
 
 
@@ -236,6 +254,9 @@ async def health_check_loop():
                 if backend == "native":
                     logger.debug("Pinging native LLM...")
                     success = await ping_native(db)
+                elif backend == "ipex":
+                    logger.debug("Pinging IPEX-LLM...")
+                    success = await ping_ipex(db)
                 else:
                     logger.debug(f"Pinging Ollama at {settings['ollama_url']}...")
                     success = await ping_ollama(settings["ollama_url"], settings["ollama_model"])
@@ -252,6 +273,9 @@ async def health_check_loop():
                         if backend == "native":
                             # For native, try to reload the model
                             reload_native_model(db)
+                        elif backend == "ipex":
+                            # For IPEX, try to reload the model
+                            reload_ipex_model(db)
                         else:
                             # For Ollama, restart the service
                             restart_ollama(settings["restart_command"])

@@ -1,6 +1,6 @@
 """
 Inference Factory - Returns the appropriate inference service based on settings.
-Supports both native llama-cpp-python and Ollama backends.
+Supports native llama-cpp-python, IPEX-LLM, and Ollama backends.
 """
 from sqlalchemy.orm import Session
 from typing import Union
@@ -14,16 +14,19 @@ def get_backend_type(db: Session) -> str:
     return setting.value if setting else "ollama"  # Default to ollama for backward compatibility
 
 
-def get_inference_service(db: Session) -> Union["LlamaService", "OllamaService"]:
+def get_inference_service(db: Session) -> Union["LlamaService", "IPEXService", "OllamaService"]:
     """
     Get the appropriate inference service based on settings.
-    Returns LlamaService for native backend, OllamaService for Ollama.
+    Returns LlamaService for native, IPEXService for ipex, OllamaService for ollama.
     """
     backend = get_backend_type(db)
 
     if backend == "native":
         from app.services.llama_service import get_llama_service
         return get_llama_service(db)
+    elif backend == "ipex":
+        from app.services.ipex_service import get_ipex_service
+        return get_ipex_service(db)
     else:
         from app.services.ollama_service import get_ollama_service
         return get_ollama_service(db)
@@ -36,6 +39,9 @@ def reload_inference_model(db: Session):
     if backend == "native":
         from app.services.llama_service import reload_llama_model
         reload_llama_model(db)
+    elif backend == "ipex":
+        from app.services.ipex_service import reload_ipex_model
+        reload_ipex_model(db)
     # Ollama doesn't need explicit reload - it handles this itself
 
 
@@ -49,6 +55,15 @@ def get_inference_status(db: Session) -> dict:
         info = service.get_model_info()
         return {
             "backend": "native",
+            "status": "loaded" if info["loaded"] else "not_loaded",
+            **info
+        }
+    elif backend == "ipex":
+        from app.services.ipex_service import get_ipex_service
+        service = get_ipex_service(db)
+        info = service.get_model_info()
+        return {
+            "backend": "ipex",
             "status": "loaded" if info["loaded"] else "not_loaded",
             **info
         }

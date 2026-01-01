@@ -97,13 +97,20 @@ Access the admin panel at `http://localhost:3051/admin`
 
 ### Advanced Model Settings
 
+These settings apply to both Native and Ollama backends:
+
 - **Temperature**: Controls randomness (0.0 - 2.0)
 - **Top P**: Nucleus sampling threshold
 - **Top K**: Top-k sampling
 - **Repeat Penalty**: Penalty for repeated tokens
 - **Context Length**: Maximum context window size
 - **Max Tokens**: Maximum tokens to generate
+- **Mirostat**: Mirostat sampling mode (0=disabled, 1=v1, 2=v2)
+
+Ollama-only settings:
 - **Keep Alive**: How long to keep model in memory (-1 = forever)
+- **Max Concurrent**: Maximum concurrent requests to Ollama
+- **TFS-Z**: Tail-free sampling parameter
 
 ### Optional Services
 
@@ -182,6 +189,32 @@ Type these commands in the chat (or use the mode buttons):
 | `geni <prompt>` | Generate an AI image from your prompt |
 | `img2img <prompt>` | Transform an uploaded image with your prompt |
 | `regen` | Regenerate the last image with a new seed |
+
+### Regen Auto-Trainer
+
+The img2img/regen system automatically logs successful transformations for LLM few-shot training. This improves future regen accuracy over time.
+
+**How it works:**
+1. Every successful regen auto-logs source tags (via WD14) + modification prompt to `regen_log.json`
+2. Examples accumulate until you sync
+3. Run `sync` to batch-write all pending examples to training files
+
+**Commands:**
+```bash
+# See pending examples
+python3 regen_trainer.py list
+
+# Write all pending to training files
+python3 regen_trainer.py sync
+
+# Clear pending without writing (discard)
+python3 regen_trainer.py clear
+```
+
+**Training file updated:**
+- `app/services/chat_service.py` - Few-shot examples in the regen prompt
+
+Run `sync` periodically (e.g., weekly) to incorporate successful regen patterns into the LLM's training examples. Restart service after sync to apply changes.
 
 ## Browser Search Engine Integration
 
@@ -382,12 +415,102 @@ Posterchanai includes an automatic health check that monitors Ollama and restart
 3. After 5 consecutive failures, executes restart command
 4. Logs all activity: `[HEALTH] Ping OK` or `[HEALTH] Ping FAILED (1/5)`
 
+## Architecture
+
+### Async Streaming
+
+The native GPU backend uses an async queue architecture for true real-time streaming:
+- LLM inference runs in a background thread pool
+- Tokens are pushed to an asyncio.Queue as they're generated
+- The main event loop yields tokens immediately without blocking
+- This enables responsive streaming for both Web UI (WebSocket) and API (SSE)
+
 ## GPU Acceleration
 
-Poster-chan AI supports two LLM backends:
+Poster-chan AI supports three LLM backends:
 
-1. **Native GPU** (Recommended) - Direct llama-cpp-python with SYCL (Intel) or CUDA (NVIDIA)
-2. **Ollama** - External Ollama instance (Docker or native)
+1. **IPEX-LLM** (Recommended for Intel Arc) - Intel's optimized LLM inference with best Arc GPU performance
+2. **Native GPU** - Direct llama-cpp-python with SYCL (Intel) or CUDA (NVIDIA)
+3. **Ollama** - External Ollama instance (Docker or native)
+
+### IPEX-LLM Setup (Intel Arc - Recommended)
+
+IPEX-LLM provides the best performance on Intel Arc GPUs using Intel's optimized inference backend. This is the same technology used by Docker-based Ollama solutions for Intel Arc.
+
+**See [docs/IPEX-LLM-SETUP.md](docs/IPEX-LLM-SETUP.md) for complete setup instructions for Gentoo, Debian/Ubuntu, and Fedora.**
+
+**Quick Requirements:**
+- Python 3.11 (required - not compatible with Python 3.12+)
+- Intel oneAPI Base Toolkit
+- Intel Arc GPU (A770, A750, A380, etc.)
+
+**Setup:**
+
+```bash
+# Create separate Python 3.11 virtual environment
+python3.11 -m venv venv-ipex
+source venv-ipex/bin/activate
+
+# Install Intel's custom PyTorch (required for XPU support)
+pip install torch==2.1.0a0 \
+    intel-extension-for-pytorch==2.1.30+xpu \
+    oneccl_bind_pt==2.1.300+xpu \
+    --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/
+
+# Install IPEX-LLM with XPU support
+pip install ipex-llm[xpu]==2.2.0
+
+# Install transformers for tokenizer support
+pip install transformers>=4.37.0
+
+# Install other app dependencies
+pip install -r requirements.txt
+```
+
+**Running with IPEX-LLM:**
+
+```bash
+# Set Intel oneAPI environment
+source /opt/intel/oneapi/2024.2/oneapi-vars.sh  # Gentoo
+# OR
+source /opt/intel/oneapi/setvars.sh  # Ubuntu/Debian
+
+# Activate IPEX venv
+source venv-ipex/bin/activate
+
+# Run the app
+python run.py
+```
+
+**Configuration:**
+
+1. In Admin Panel, set **Backend Type** to "IPEX-LLM"
+2. Set **Model Path** to your model (GGUF or HuggingFace path)
+3. Click **Save Settings**
+4. Click **Reload Model** to load the new model
+
+**Systemd Service (for IPEX):**
+
+Create `/etc/systemd/system/posterchanai-ipex.service`:
+
+```ini
+[Unit]
+Description=Posterchan AI (IPEX-LLM)
+After=network.target
+
+[Service]
+Type=simple
+User=verita84
+WorkingDirectory=/home/verita84/posterchanai
+Environment="PATH=/home/verita84/posterchanai/venv-ipex/bin:/usr/local/bin:/usr/bin"
+ExecStartPre=/bin/bash -c 'source /opt/intel/oneapi/setvars.sh'
+ExecStart=/home/verita84/posterchanai/venv-ipex/bin/python run.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
 
 ### Native GPU Setup (No Docker Required)
 
@@ -460,37 +583,6 @@ pip install llama-cpp-python
 3. Set **GPU Layers** to `-1` (all layers on GPU) or a specific number
 4. Click **Save Settings**
 5. Click **Reload Model** to load the new model
-
-### Ollama Setup (Docker)
-
-For running Ollama on Intel Arc GPUs, use the BigDL/IPEX-LLM container:
-
-```yaml
-# docker-compose.yml
-services:
-  ollama-intel-arc:
-    image: intelanalytics/ipex-llm-inference-cpp-xpu:latest
-    container_name: ollama-intel-arc
-    restart: unless-stopped
-    devices:
-      - /dev/dri:/dev/dri
-    volumes:
-      - ollama-volume:/root/.ollama
-    ports:
-      - 11434:11434
-    environment:
-      - OLLAMA_HOST=0.0.0.0
-      - DEVICE=Arc
-      - OLLAMA_INTEL_GPU=true
-      - OLLAMA_NUM_GPU=999
-      - OLLAMA_NUM_CTX=28024
-      - OLLAMA_KEEP_ALIVE=-1
-      - ZES_ENABLE_SYSMAN=1
-    command: sh -c 'mkdir -p /llm/ollama && cd /llm/ollama && init-ollama && exec ./ollama serve'
-
-volumes:
-  ollama-volume: {}
-```
 
 ### VRAM Usage Guidelines (16GB Intel Arc A770)
 
