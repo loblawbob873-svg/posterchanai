@@ -78,6 +78,14 @@ class Img2ImgRequest(BaseModel):
     negative_prompt: Optional[str] = ""
 
 
+class InpaintRequest(BaseModel):
+    prompt: str
+    image: str  # base64 encoded source image
+    mask: str  # base64 encoded mask (white=inpaint, black=keep)
+    denoise: Optional[float] = 0.85
+    negative_prompt: Optional[str] = ""
+
+
 class ImageResponse(BaseModel):
     image: Optional[str] = None  # base64 encoded result
     error: Optional[str] = None
@@ -182,6 +190,66 @@ async def img2img(
 
         except Exception as e:
             print(f"[IMAGE-API] img2img error: {e}")
+            return ImageResponse(error=str(e))
+
+
+@router.post("/inpaint", response_model=ImageResponse)
+async def inpaint(
+    request: InpaintRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(get_image_auth)
+):
+    """
+    Inpaint masked areas of an image.
+    Mask should be white (255) where to inpaint, black (0) where to keep original.
+    Returns base64 encoded image.
+    Supports JWT auth or API key auth (X-API-Key header or Bearer token).
+    Uses a lock to ensure sequential processing (one image at a time).
+    """
+    async with _image_generation_lock:
+        try:
+            # Decode source image
+            try:
+                image_bytes = base64.b64decode(request.image)
+            except Exception:
+                return ImageResponse(error="Invalid base64 image data")
+
+            # Decode mask
+            try:
+                mask_bytes = base64.b64decode(request.mask)
+            except Exception:
+                return ImageResponse(error="Invalid base64 mask data")
+
+            print(f"[IMAGE-API] inpaint: {request.prompt[:50]}... (denoise={request.denoise})")
+            # Prepare VRAM for image generation
+            prepare_vram_for_image(db)
+
+            # Get image backend
+            backend = get_image_backend(db)
+
+            # Check if backend supports inpainting
+            if not hasattr(backend, 'generate_inpaint'):
+                return ImageResponse(error="Inpainting not supported by current backend")
+
+            # Generate inpaint
+            result = await backend.generate_inpaint(
+                prompt=request.prompt,
+                image_bytes=image_bytes,
+                mask_bytes=mask_bytes,
+                denoise=request.denoise or 0.85,
+                negative_prompt=request.negative_prompt
+            )
+
+            if result:
+                print(f"[IMAGE-API] inpaint completed successfully")
+                return ImageResponse(image=result)
+            else:
+                print(f"[IMAGE-API] inpaint failed (no result)")
+                return ImageResponse(error="Inpaint generation failed")
+
+        except Exception as e:
+            print(f"[IMAGE-API] inpaint error: {e}")
             return ImageResponse(error=str(e))
 
 
