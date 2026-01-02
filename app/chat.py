@@ -305,7 +305,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             except Exception:
                 pass
 
-        chat_service = ChatService(db)
+        chat_service = ChatService(db, user)
         command_service = CommandService(db)
         storage_service = StorageService(db)
 
@@ -330,6 +330,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                 if data.get("type") == "message":
                     manager.set_stop(user.id, False)  # Reset for new message
+                    # Refresh user to pick up any settings changes (e.g., custom AI toggle)
+                    db.refresh(user)
+                    chat_service = ChatService(db, user)
                     content = data.get("content", "").strip()
                     image_data = data.get("image_data")  # base64 image
                     file_content = data.get("file_content")  # text file content
