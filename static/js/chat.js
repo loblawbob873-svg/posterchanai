@@ -203,6 +203,23 @@ class ChatHandler {
             });
         }
 
+        // Update placeholders based on service type
+        const updatePlaceholders = () => {
+            if (!customAiType || !customAiUrl || !customAiModel) return;
+            if (customAiType.value === 'ollama') {
+                customAiUrl.placeholder = 'http://192.168.1.100:11434';
+                customAiModel.placeholder = 'llama3:latest';
+            } else {
+                // OpenAI-compatible (Open-WebUI, Posterchanai)
+                customAiUrl.placeholder = 'http://192.168.1.100:3051';
+                customAiModel.placeholder = 'llama3';
+            }
+        };
+        if (customAiType) {
+            customAiType.addEventListener('change', updatePlaceholders);
+            updatePlaceholders(); // Set initial placeholders
+        }
+
         // Toggle custom image settings visibility
         if (customImageEnabled && customImageSettings) {
             customImageEnabled.addEventListener('change', () => {
