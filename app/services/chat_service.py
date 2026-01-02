@@ -149,6 +149,10 @@ class ChatService:
             custom_service = self._get_custom_ai_service()
             if custom_service:
                 # Use user's custom AI service - stream using SSE parsing
+                # With thinking tag filtering
+                buffer = ""
+                thinking_done = False
+
                 async for chunk in custom_service.chat_stream(
                     messages=messages,
                     temperature=self.temperature,
@@ -167,9 +171,32 @@ class ChatService:
                                 return
                             content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                             if content:
-                                yield content
+                                buffer += content
+
+                                if not thinking_done:
+                                    # Look for end of thinking tag
+                                    match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
+                                    if match:
+                                        thinking_done = True
+                                        after_think = buffer[match.end():]
+                                        buffer = ""
+                                        if after_think.strip():
+                                            yield after_think
+                                    # Also check if no think tag in first 50 chars - assume no thinking
+                                    elif len(buffer) > 50 and '<think' not in buffer.lower():
+                                        thinking_done = True
+                                        yield buffer
+                                        buffer = ""
+                                else:
+                                    yield content
                         except json.JSONDecodeError:
                             continue
+
+                # Yield any remaining buffer
+                if buffer:
+                    clean = self.strip_thinking_tags(buffer)
+                    if clean:
+                        yield clean
                 return
 
             # Use server's default AI service
