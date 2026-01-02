@@ -9,6 +9,7 @@ import io
 import logging
 import random
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any
 
@@ -30,6 +31,12 @@ if not logger.handlers:
 _diffusers_instance: Optional["DiffusersService"] = None
 _executor = ThreadPoolExecutor(max_workers=2)
 _load_lock = threading.Lock()
+
+# Idle timeout for automatic model unloading (seconds)
+# Default 120 seconds - unload model after 2 minutes of no activity
+DEFAULT_IDLE_TIMEOUT = 120
+_idle_check_thread: Optional[threading.Thread] = None
+_idle_check_stop = threading.Event()
 
 
 def detect_device() -> str:
@@ -55,10 +62,33 @@ def detect_device() -> str:
         return "cpu"
 
 
+def _idle_check_loop():
+    """Background thread to check for idle timeout and unload models"""
+    global _diffusers_instance
+    while not _idle_check_stop.wait(30):  # Check every 30 seconds
+        if _diffusers_instance is not None and _diffusers_instance._pipe is not None:
+            idle_time = time.time() - _diffusers_instance._last_used
+            timeout = _diffusers_instance._idle_timeout
+            if idle_time > timeout:
+                logger.info(f"Model idle for {idle_time:.0f}s (>{timeout}s), unloading to free VRAM")
+                _diffusers_instance.unload_model()
+
+
+def _start_idle_check():
+    """Start the idle check background thread"""
+    global _idle_check_thread
+    if _idle_check_thread is None or not _idle_check_thread.is_alive():
+        _idle_check_stop.clear()
+        _idle_check_thread = threading.Thread(target=_idle_check_loop, daemon=True)
+        _idle_check_thread.start()
+        logger.info("Started idle timeout monitor")
+
+
 class DiffusersService:
     """
     Native image generation service using diffusers.
     Provides txt2img and img2img capabilities.
+    Automatically unloads models after idle timeout to free VRAM.
     """
 
     def __init__(self, db: Session):
@@ -68,11 +98,17 @@ class DiffusersService:
         self._model_path: Optional[str] = None
         self._model_type: Optional[str] = None  # "sd15", "sdxl", "sd3", "flux"
         self._device: Optional[str] = None
+        self._last_used: float = time.time()
+        self._idle_timeout: int = DEFAULT_IDLE_TIMEOUT
         self._load_settings()
+        _start_idle_check()
 
     def _load_settings(self):
         """Load settings from database"""
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
+
+        # Idle timeout for automatic unloading (default 2 minutes)
+        self._idle_timeout = int(settings.get("image_idle_timeout", str(DEFAULT_IDLE_TIMEOUT)))
 
         # Model settings
         self.model_path = settings.get("image_model_path", "")
@@ -204,9 +240,14 @@ class DiffusersService:
 
     def _unload_model_internal(self):
         """Internal method to unload model (no lock)"""
-        if self._pipe is not None:
-            del self._pipe
-            self._pipe = None
+        if self._pipe is not None or self._img2img_pipe is not None:
+            # Clear both pipelines
+            if self._img2img_pipe is not None:
+                del self._img2img_pipe
+                self._img2img_pipe = None
+            if self._pipe is not None:
+                del self._pipe
+                self._pipe = None
             self._model_path = None
 
             # Force garbage collection
@@ -216,12 +257,13 @@ class DiffusersService:
                 import torch
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
                 elif hasattr(torch, "xpu") and torch.xpu.is_available():
                     torch.xpu.empty_cache()
             except Exception:
                 pass
 
-            logger.info("Model unloaded")
+            logger.info("Model unloaded, VRAM freed")
 
     def unload_model(self):
         """Unload model and free VRAM"""
@@ -306,6 +348,9 @@ class DiffusersService:
             img_bytes = img_byte_arr.getvalue()
 
             logger.info(f"Generation complete: {len(img_bytes)} bytes")
+
+            # Update last used timestamp for idle timeout
+            self._last_used = time.time()
 
             # Cleanup to free VRAM
             del result
@@ -418,6 +463,9 @@ class DiffusersService:
             img_bytes = img_byte_arr.getvalue()
 
             logger.info(f"img2img complete: {len(img_bytes)} bytes")
+
+            # Update last used timestamp for idle timeout
+            self._last_used = time.time()
 
             # Cleanup result only (keep pipeline cached)
             del result

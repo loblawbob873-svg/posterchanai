@@ -95,6 +95,7 @@ class SettingsResponse(BaseModel):
     image_default_width: str = "1024"
     image_default_height: str = "1024"
     image_gpu_device: str = "auto"  # "auto", "cuda", "xpu", "cpu"
+    image_idle_timeout: str = "120"  # Seconds before unloading image model (0=disabled)
     # VRAM management
     vram_mode: str = "shared"  # "shared" (swap models) or "dedicated" (keep both)
     searxng_url: str = ""

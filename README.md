@@ -184,6 +184,16 @@ Direct GPU image generation using the diffusers library. Supports SDXL models.
 | Setting | Description |
 |---------|-------------|
 | `vram_mode` | Memory management mode (see below) |
+| `image_idle_timeout` | Seconds before auto-unloading image model (default: 120, 0=disabled) |
+
+**Image Idle Timeout:**
+
+The image model automatically unloads after the configured idle timeout to free VRAM. This is useful for:
+- Shared VRAM setups where LLM and image model compete for memory
+- Preventing OOM errors from fragmented GPU memory
+- Reducing power consumption when not generating images
+
+Set to `0` to keep the image model loaded permanently (use with dedicated image servers).
 
 VRAM modes:
 - `shared` - LLM and image model share VRAM, swap as needed (default)
@@ -222,6 +232,7 @@ For setups with a dedicated image generation server:
 image_backend: native
 image_gpu_device: cuda
 image_model_path: /path/to/sdxl_model.safetensors
+image_idle_timeout: 120      # Unload after 2 min idle to free VRAM
 vram_mode: image_only
 ollama_ping_enabled: false   # No LLM health check needed
 ```
