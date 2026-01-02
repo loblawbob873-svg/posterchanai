@@ -245,9 +245,6 @@ class CustomAIService:
                         yield f"data: {json.dumps({'error': {'message': f'API returned status {response.status_code}', 'type': 'api_error'}})}\n\n"
                         return
 
-                    buffer = ""
-                    thinking_done = False
-
                     async for line in response.aiter_lines():
                         if not line.strip():
                             continue
@@ -268,37 +265,26 @@ class CustomAIService:
                                 yield f"data: {json.dumps(data)}\n\n"
                                 break
 
-                            # Extract content from the chunk
+                            # Extract content and forward as SSE chunk
+                            # Thinking tag filtering is handled by chat_service
                             choices = data.get("choices", [])
                             if choices:
                                 delta = choices[0].get("delta", {})
                                 content = delta.get("content", "")
 
                                 if content:
-                                    buffer += content
-
-                                    if not thinking_done:
-                                        match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
-                                        if match:
-                                            thinking_done = True
-                                            after_think = buffer[match.end():]
-                                            if after_think:
-                                                chunk = {
-                                                    "id": completion_id,
-                                                    "object": "chat.completion.chunk",
-                                                    "created": created,
-                                                    "model": model,
-                                                    "choices": [{
-                                                        "index": 0,
-                                                        "delta": {"content": after_think},
-                                                        "finish_reason": None
-                                                    }]
-                                                }
-                                                yield f"data: {json.dumps(chunk)}\n\n"
-                                            buffer = after_think
-                                    else:
-                                        # Forward the chunk as-is (already in correct format)
-                                        yield f"data: {line}\n\n"
+                                    chunk = {
+                                        "id": completion_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": created,
+                                        "model": model,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"content": content},
+                                            "finish_reason": None
+                                        }]
+                                    }
+                                    yield f"data: {json.dumps(chunk)}\n\n"
 
                                 # Check for finish reason
                                 finish_reason = choices[0].get("finish_reason")
