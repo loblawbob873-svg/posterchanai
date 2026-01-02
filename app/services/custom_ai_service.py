@@ -200,6 +200,9 @@ class CustomAIService:
             yield f"data: {json.dumps({'error': {'message': f'Could not connect to Ollama at {self.url}', 'type': 'connection_error'}})}\n\n"
         except httpx.TimeoutException:
             yield f"data: {json.dumps({'error': {'message': 'Ollama request timed out', 'type': 'timeout_error'}})}\n\n"
+        except httpx.RemoteProtocolError:
+            # Connection closed during streaming - send DONE to gracefully end
+            yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': {'message': f'Ollama error: {str(e)}', 'type': 'api_error'}})}\n\n"
 
@@ -310,6 +313,9 @@ class CustomAIService:
             yield f"data: {json.dumps({'error': {'message': f'Could not connect to API at {self.url}', 'type': 'connection_error'}})}\n\n"
         except httpx.TimeoutException:
             yield f"data: {json.dumps({'error': {'message': 'API request timed out', 'type': 'timeout_error'}})}\n\n"
+        except httpx.RemoteProtocolError:
+            # Connection closed during streaming - send DONE to gracefully end
+            yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': {'message': f'API error: {str(e)}', 'type': 'api_error'}})}\n\n"
 
