@@ -77,6 +77,24 @@ class StorageService:
 
         return str(filepath)
 
+    def save_raw_file(self, username: str, conversation_id: int, data: bytes, original_name: str) -> str:
+        """Save raw file bytes to disk and return the file path"""
+        conv_path = self.get_conversation_path(username, conversation_id)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        ext = Path(original_name).suffix or ""
+        safe_name = "".join(c for c in Path(original_name).stem if c.isalnum() or c in "-_")[:30]
+        filename = f"{safe_name}_{timestamp}{ext}"
+        filepath = conv_path / filename
+
+        with open(filepath, "wb") as f:
+            f.write(data)
+
+        return str(filepath)
+
+    def get_relative_path(self, full_path: str, username: str) -> str:
+        """Get relative path for API response (from upload_path)"""
+        return str(Path(full_path).relative_to(self.upload_path))
+
     def delete_conversation_files(self, username: str, conversation_id: int) -> bool:
         """Delete all files for a conversation"""
         conv_path = Path(self.upload_path) / username / str(conversation_id)

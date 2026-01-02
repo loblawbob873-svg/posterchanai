@@ -46,6 +46,7 @@ class MessageResponse(BaseModel):
     id: int
     role: str
     content: str
+    image_path: Optional[str] = None
     created_at: datetime
 
     class Config:

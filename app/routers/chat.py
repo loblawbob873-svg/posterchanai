@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from pathlib import Path
 import json
 from datetime import datetime
 
@@ -112,6 +114,52 @@ def get_messages(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     return conversation.messages
+
+
+@router.get("/files/{username}/{conversation_id}/{filename}")
+def serve_file(
+    username: str,
+    conversation_id: int,
+    filename: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Serve a stored file (image, document, etc.)"""
+    # Verify user owns this file (username must match)
+    if current_user.username != username:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Verify conversation belongs to user
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id
+    ).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Get file path
+    storage = StorageService(db)
+    file_path = Path(storage.upload_path) / username / str(conversation_id) / filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Determine media type
+    suffix = file_path.suffix.lower()
+    media_types = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".pdf": "application/pdf",
+        ".txt": "text/plain",
+        ".doc": "application/msword",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }
+    media_type = media_types.get(suffix, "application/octet-stream")
+
+    return FileResponse(file_path, media_type=media_type)
 
 
 @router.post("/chat/email-response")
@@ -303,17 +351,19 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     if not content and not file_content and not image_data:
                         continue
 
-                    # Save uploaded files to disk
+                    # Save uploaded files to disk and get paths
+                    user_image_path = None
                     if image_data:
-                        storage_service.save_image(user.username, conversation_id, image_data, "upload")
+                        user_image_path = storage_service.save_image(user.username, conversation_id, image_data, "upload")
                     if file_content:
                         storage_service.save_file(user.username, conversation_id, file_content)
 
-                    # Save user message
+                    # Save user message with image path if uploaded
                     user_msg = Message(
                         conversation_id=conversation_id,
                         role="user",
-                        content=content
+                        content=content,
+                        image_path=user_image_path
                     )
                     db.add(user_msg)
                     db.commit()
@@ -345,18 +395,20 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             traceback.print_exc()
                             result = {"type": "text", "content": f"Error: {cmd_err}"}
 
-                        # Track image prompts for regen
+                        # Track image prompts for regen and save generated image
+                        generated_image_path = None
                         if result.get("type") == "generated_image" and result.get("prompt"):
                             manager.last_image_prompts[user.id] = result["prompt"]
                             # Save generated image to disk
                             if result.get("image"):
-                                storage_service.save_image(user.username, conversation_id, result["image"], "generated")
+                                generated_image_path = storage_service.save_image(user.username, conversation_id, result["image"], "generated")
 
-                        # Save assistant response
+                        # Save assistant response with image path
                         assistant_msg = Message(
                             conversation_id=conversation_id,
                             role="assistant",
-                            content=result.get("content", "")
+                            content=result.get("content", ""),
+                            image_path=generated_image_path
                         )
                         db.add(assistant_msg)
                         db.commit()
