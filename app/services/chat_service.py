@@ -11,10 +11,8 @@ from app.services.inference_factory import get_inference_service, prepare_vram_f
 # Thread pool for running synchronous generators
 _stream_executor = ThreadPoolExecutor(max_workers=4)
 
-# Import WD14 tagger from posterchan's comfyui module
-import sys
-sys.path.insert(0, '/home/verita84/posterchan')
-from comfyui import describe_image_with_wd14
+# Import native WD14 tagger
+from app.services.wd14_service import tag_image as describe_image_with_wd14
 
 # Path to training data (local to this project)
 IMG2IMG_TRAINING_FILE = "/home/verita84/posterchanai/img2img_training.json"
