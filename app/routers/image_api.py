@@ -253,6 +253,121 @@ async def inpaint(
             return ImageResponse(error=str(e))
 
 
+class AutoInpaintRequest(BaseModel):
+    prompt: str  # What to generate in masked area (e.g., "nude, skin, nipples")
+    image: str  # base64 encoded source image
+    denoise: Optional[float] = 0.85
+    negative_prompt: Optional[str] = ""
+
+
+class MaskResponse(BaseModel):
+    mask: Optional[str] = None  # base64 encoded mask
+    error: Optional[str] = None
+
+
+@router.post("/auto-inpaint", response_model=ImageResponse)
+async def auto_inpaint(
+    request: AutoInpaintRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(get_image_auth)
+):
+    """
+    Auto-generate mask and inpaint in one step.
+    Detects mask type from prompt (nude -> body mask, background -> bg mask).
+    Returns base64 encoded image.
+    """
+    async with _image_generation_lock:
+        try:
+            # Decode source image
+            try:
+                image_bytes = base64.b64decode(request.image)
+            except Exception:
+                return ImageResponse(error="Invalid base64 image data")
+
+            print(f"[IMAGE-API] auto-inpaint: {request.prompt[:50]}...")
+
+            # Get tags for better mask generation
+            from app.services.wd14_service import tag_image as wd14_tag
+            tags = wd14_tag(image_bytes, threshold=0.35)
+            print(f"[IMAGE-API] Tags for mask: {tags[:80] if tags else 'None'}...")
+
+            # Auto-generate mask
+            from app.services.mask_service import auto_generate_mask
+            mask_bytes = auto_generate_mask(image_bytes, request.prompt, tags)
+
+            if not mask_bytes:
+                return ImageResponse(error="Could not auto-generate mask for this prompt. Use /inpaint with manual mask.")
+
+            # Prepare VRAM for image generation
+            prepare_vram_for_image(db)
+
+            # Get image backend
+            backend = get_image_backend(db)
+
+            if not hasattr(backend, 'generate_inpaint'):
+                return ImageResponse(error="Inpainting not supported by current backend")
+
+            # Generate inpaint
+            result = await backend.generate_inpaint(
+                prompt=request.prompt,
+                image_bytes=image_bytes,
+                mask_bytes=mask_bytes,
+                denoise=request.denoise or 0.85,
+                negative_prompt=request.negative_prompt
+            )
+
+            if result:
+                print(f"[IMAGE-API] auto-inpaint completed successfully")
+                return ImageResponse(image=result)
+            else:
+                print(f"[IMAGE-API] auto-inpaint failed (no result)")
+                return ImageResponse(error="Auto-inpaint generation failed")
+
+        except Exception as e:
+            print(f"[IMAGE-API] auto-inpaint error: {e}")
+            return ImageResponse(error=str(e))
+
+
+@router.post("/generate-mask", response_model=MaskResponse)
+async def generate_mask(
+    request: AutoInpaintRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(get_image_auth)
+):
+    """
+    Generate a mask for an image based on prompt.
+    Useful for previewing/adjusting masks before inpainting.
+    Returns base64 encoded mask (white=inpaint, black=keep).
+    """
+    try:
+        # Decode source image
+        try:
+            image_bytes = base64.b64decode(request.image)
+        except Exception:
+            return MaskResponse(error="Invalid base64 image data")
+
+        print(f"[IMAGE-API] generate-mask: {request.prompt[:50]}...")
+
+        # Get tags for better mask generation
+        from app.services.wd14_service import tag_image as wd14_tag
+        tags = wd14_tag(image_bytes, threshold=0.35)
+
+        # Auto-generate mask
+        from app.services.mask_service import auto_generate_mask
+        mask_bytes = auto_generate_mask(image_bytes, request.prompt, tags)
+
+        if mask_bytes:
+            return MaskResponse(mask=base64.b64encode(mask_bytes).decode())
+        else:
+            return MaskResponse(error="Could not generate mask for this prompt type")
+
+    except Exception as e:
+        print(f"[IMAGE-API] generate-mask error: {e}")
+        return MaskResponse(error=str(e))
+
+
 @router.post("/tag-image", response_model=TagImageResponse)
 async def tag_image(
     request: TagImageRequest,
