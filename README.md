@@ -793,10 +793,12 @@ Supports AMD Radeon RX 6000/7000 series and some RX 5000 series GPUs.
 **Gentoo:**
 ```bash
 # ROCm packages are ~amd64, add to package.accept_keywords first:
-echo -e 'dev-build/rocm-cmake\ndev-util/hipcc\ndev-libs/rocm-core\ndev-libs/roct-thunk-interface\ndev-libs/rocm-device-libs\ndev-libs/rocr-runtime\ndev-libs/rocm-comgr\ndev-util/rocminfo\ndev-libs/rocm-opencl-runtime\ndev-util/hip' | sudo tee /etc/portage/package.accept_keywords/rocm
+echo -e 'dev-build/rocm-cmake\ndev-util/hipcc\ndev-libs/rocm-core\ndev-libs/roct-thunk-interface\ndev-libs/rocm-device-libs\ndev-libs/rocr-runtime\ndev-libs/rocm-comgr\ndev-util/rocminfo\ndev-util/rocm-smi\ndev-libs/rocm-opencl-runtime\ndev-util/hip\nsci-libs/hipBLAS\nsci-libs/hipBLAS-common\nsci-libs/rocBLAS\nsci-libs/rocSOLVER\ndev-util/Tensile' | sudo tee /etc/portage/package.accept_keywords/rocm
 
-# Install ROCm
-emerge -av dev-libs/rocm-opencl-runtime dev-util/hip dev-libs/rocr-runtime
+# Install ROCm + hipBLAS (required for llama.cpp)
+# NOTE: Requires 30-50GB free in /var/tmp for building rocBLAS/Tensile!
+# If using tmpfs/zram, unmount it first: sudo umount /var/tmp
+emerge -av dev-libs/rocm-opencl-runtime dev-util/hip dev-libs/rocr-runtime sci-libs/hipBLAS
 
 # Add user to required groups
 sudo usermod -aG video,render $USER

@@ -43,8 +43,12 @@ WantedBy=multi-user.target
 # 1. Install ROCm for your distro:
 #
 #    GENTOO:
-#      emerge -av dev-libs/rocm-opencl-runtime dev-util/hip
-#      # Or use AMD's official packages
+#      # Add to package.accept_keywords first (ROCm is ~amd64):
+#      echo -e 'dev-build/rocm-cmake\ndev-util/hipcc\ndev-libs/rocm-core\ndev-libs/roct-thunk-interface\ndev-libs/rocm-device-libs\ndev-libs/rocr-runtime\ndev-libs/rocm-comgr\ndev-util/rocminfo\ndev-util/rocm-smi\ndev-libs/rocm-opencl-runtime\ndev-util/hip\nsci-libs/hipBLAS\nsci-libs/hipBLAS-common\nsci-libs/rocBLAS\nsci-libs/rocSOLVER\ndev-util/Tensile' | sudo tee /etc/portage/package.accept_keywords/rocm
+#      # Install ROCm + hipBLAS:
+#      # NOTE: Requires 30-50GB free in /var/tmp for rocBLAS/Tensile build!
+#      # If using tmpfs/zram: sudo umount /var/tmp
+#      emerge -av dev-libs/rocm-opencl-runtime dev-util/hip dev-libs/rocr-runtime sci-libs/hipBLAS
 #
 #    ARCH:
 #      pacman -S rocm-hip-sdk rocm-opencl-sdk
