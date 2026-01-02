@@ -77,12 +77,12 @@ class ChatService:
 
     def _load_settings(self):
         """Load settings - inference factory handles all backend-specific settings"""
-        settings = {s.key: s.value for s in self.db.query(Setting).all()}
-        self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
+        self._settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        self.system_prompt = self._settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
         # These are used for chat_stream kwargs
-        self.temperature = float(settings.get("ollama_temperature", "0.7"))
-        self.top_p = float(settings.get("ollama_top_p", "0.9"))
-        self.num_predict = int(settings.get("ollama_num_predict", "2048"))
+        self.temperature = float(self._settings.get("ollama_temperature", "0.7"))
+        self.top_p = float(self._settings.get("ollama_top_p", "0.9"))
+        self.num_predict = int(self._settings.get("ollama_num_predict", "2048"))
 
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
@@ -231,7 +231,7 @@ class ChatService:
                     print(f"[WD14] Native tagger failed: {e}")
 
             # Fall back to remote API
-            image_url = self._get_setting("comfyui_url") or self._get_setting("posterchanai_url")
+            image_url = self._settings.get("comfyui_url") or self._settings.get("posterchanai_url")
             if image_url:
                 import httpx
                 api_url = image_url.rstrip('/') + '/api/tag-image'
@@ -299,14 +299,16 @@ class ChatService:
             content = self.strip_thinking_tags(content)
             print(f"[IMG2IMG] Raw LLM response:\n{content}")
 
-            # Parse response
+            # Parse response - look for the 3 lines anywhere in output
             denoise = 1.0
             tags = user_prompt
             negative = "bad quality, blurry, distorted, deformed"
 
-            denoise_match = re.search(r'DENOISE:\s*([\d.]+)', content)
-            tags_match = re.search(r'TAGS:\s*(.+?)(?:\n|$)', content)
-            negative_match = re.search(r'NEGATIVE:\s*(.+?)(?:\n|$)', content)
+            # Try to find DENOISE/TAGS/NEGATIVE anywhere in output (handles thinking text)
+            denoise_match = re.search(r'DENOISE:\s*([\d.]+)', content, re.IGNORECASE)
+            # TAGS line - get everything after TAGS: until NEGATIVE: or end
+            tags_match = re.search(r'TAGS:\s*(.+?)(?=\nNEGATIVE:|\n\n|$)', content, re.IGNORECASE | re.DOTALL)
+            negative_match = re.search(r'NEGATIVE:\s*(.+?)(?:\n\n|$)', content, re.IGNORECASE | re.DOTALL)
 
             if denoise_match:
                 try:
@@ -316,8 +318,12 @@ class ChatService:
                     pass
             if tags_match:
                 tags = tags_match.group(1).strip().strip('"').strip("'")
+                # Clean up any newlines in tags
+                tags = ' '.join(tags.split())
             if negative_match:
                 negative = negative_match.group(1).strip().strip('"').strip("'")
+                # Clean up any newlines in negative
+                negative = ' '.join(negative.split())
 
             print(f"[IMG2IMG] Denoise: {denoise}, Tags: {tags[:80]}...")
             print(f"[IMG2IMG] Negative: {negative[:80]}...")

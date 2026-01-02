@@ -126,7 +126,8 @@ def get_messages(
         # Convert file path to API URL if exists
         if msg.image_path:
             filename = Path(msg.image_path).name
-            msg_dict["image_path"] = f"/api/files/{current_user.username}/{conversation_id}/{filename}"
+            from urllib.parse import quote
+            msg_dict["image_path"] = f"/api/files/{quote(current_user.username, safe='')}/{conversation_id}/{filename}"
         result.append(msg_dict)
     return result
 
@@ -394,15 +395,33 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     command, arg = command_service.parse_command(content)
 
                     if command:
-                        # Execute command
+                        # Execute command with stop check
                         try:
+                            # Check if already stopped before starting
+                            if manager.should_stop(user.id, conn_id):
+                                print(f"[DEBUG] Command cancelled before start")
+                                continue
+
                             print(f"[DEBUG] Executing command: {command} with arg: {arg[:50] if arg else ''}, has_image: {image_data is not None}")
                             last_prompt = manager.last_image_prompts.get(user.id)
+
+                            # Create stop check function for long-running commands
+                            def should_stop_command():
+                                return manager.should_stop(user.id, conn_id)
+
                             result = await command_service.execute_command(
                                 command, arg, last_prompt,
                                 image_data=image_data,
-                                file_content=file_content
+                                file_content=file_content,
+                                stop_check=should_stop_command
                             )
+
+                            # Check if stopped during execution
+                            if manager.should_stop(user.id, conn_id):
+                                print(f"[DEBUG] Command stopped during execution")
+                                manager.set_stop(user.id, False)
+                                continue
+
                             print(f"[DEBUG] Command result type: {result.get('type')}")
                         except Exception as cmd_err:
                             print(f"[DEBUG] Command execution failed: {type(cmd_err).__name__}: {cmd_err}")

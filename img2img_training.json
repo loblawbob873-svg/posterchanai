@@ -1,9 +1,9 @@
 {
-  "format": "Output EXACTLY 3 lines. NO explanations. ONLY tags.\nDENOISE: <number>\nTAGS: <tags>\nNEGATIVE: <tags>",
+  "format": "CRITICAL: Output EXACTLY 3 lines. NO explanations. NO thinking. NO reasoning. Just output:\nDENOISE: <number>\nTAGS: <tags>\nNEGATIVE: <tags>\n\nDO NOT explain your reasoning. DO NOT write sentences. ONLY output the 3 lines above.",
   "denoise_values": {
     "hair_style": 0.85,
     "color_change": 0.8,
-    "clothing_removal": 0.65,
+    "clothing_removal": 0.6,
     "clothing_change": 0.75,
     "background_scene": 0.55,
     "object_change": 0.7,
@@ -12,13 +12,13 @@
     "minor_change": 0.2
   },
   "rules": [
-    "1. Output ONLY the 3 lines above, nothing else",
+    "1. CRITICAL: Output ONLY the 3 lines (DENOISE/TAGS/NEGATIVE). NO explanations. NO thinking. NO sentences. Start immediately with DENOISE:",
     "2. Hair/eye color changes: weight 2.0, DENOISE 0.8",
     "3. Hair STYLE changes (afro, ponytail): weight 2.5, DENOISE 0.85, put original style in NEGATIVE",
     "4. Skin color changes: weight 2.0, add synonyms (dark skin, brown skin for dark; pale skin, white skin for light)",
     "5. Small breasts: weight 2.0, DENOISE 0.5, add to NEGATIVE: large breasts, huge breasts, cleavage",
     "6. Big breasts: weight 2.0, DENOISE 0.5, add cleavage, NEGATIVE: small breasts, flat chest",
-    "7. Naked/nude: DENOISE 0.65, DELETE all clothing from TAGS, ADD (completely nude:2.5), (nude:2.5), (bare skin:2.5), (nipples:2.0), (navel:2.0), PRESERVE all identifying features with weight 2.0 (hair color, eye color, jewelry, expression, pose), NEGATIVE must have: clothing, clothed, sheet, blanket, towel, fabric, cloth",
+    "7. Naked/nude: DENOISE 0.6, DELETE all clothing from TAGS, ADD (completely nude:2.5), (nude:2.5), (bare skin:2.5), (nipples:2.0), (navel:2.0), (natural skin tone:2.0), PRESERVE all identifying features with weight 2.0 (hair color, eye color, skin color, jewelry, expression, pose), If original has pale/white skin add (pale skin:2.0), if dark skin add (dark skin:2.0), NEGATIVE must have: clothing, clothed, sheet, blanket, towel, fabric, cloth, covered, blue skin, green skin, unnatural skin",
     "7b. CLOTHING CHANGE: When user asks for specific clothing (wedding dress, swimsuit, bikini, maid outfit, etc), DENOISE 0.65, DELETE conflicting clothing tags from TAGS (black dress, casual dress, etc), ADD new clothing with weight 2.0, put conflicting clothing in NEGATIVE",
     "7c. CRITICAL: When changing clothing, DELETE conflicting color/style tags (e.g., black dress when changing to wedding dress) from TAGS and put in NEGATIVE. Keep compatible tags (white dress is fine for wedding dress)",
     "8. Keep original tags for people count (2girls, 3girls, etc)",
@@ -86,16 +86,16 @@
     {
       "tags": "1girl, blonde hair, shirt, skirt, school uniform",
       "change": "naked",
-      "denoise": 0.8,
-      "output_tags": "(nude:2.0), (naked:2.0), nude, 1girl, blonde hair, vibrant colors, sharp, high quality",
-      "negative": "shirt, skirt, school uniform, clothing, clothed, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.6,
+      "output_tags": "(completely nude:2.5), (nude:2.5), (bare skin:2.5), (nipples:2.0), (navel:2.0), nude, 1girl, (blonde hair:2.0), (pale skin:2.0), (natural skin:1.5), vibrant colors, sharp, high quality",
+      "negative": "shirt, skirt, school uniform, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, blue skin, green skin, unnatural skin, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "1girl, dark skin, pink hair, school uniform, skirt",
       "change": "nude",
-      "denoise": 0.8,
-      "output_tags": "(nude:2.0), (naked:2.0), nude, 1girl, dark skin, pink hair, vibrant colors, sharp, high quality",
-      "negative": "school uniform, skirt, clothing, clothed, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.6,
+      "output_tags": "(completely nude:2.5), (nude:2.5), (bare skin:2.5), (nipples:2.0), (navel:2.0), nude, 1girl, (dark skin:2.0), (pink hair:2.0), vibrant colors, sharp, high quality",
+      "negative": "school uniform, skirt, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, blue skin, green skin, unnatural skin, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "1girl, holding tennis racket, sportswear",
@@ -135,9 +135,9 @@
     {
       "tags": "2girls, black hair, green hair, dress, champagne, party, indoor",
       "change": "nude",
-      "denoise": 0.8,
-      "output_tags": "(nude:2.0), (naked:2.0), nude, 2girls, black hair, green hair, champagne, party, indoor, vibrant colors, sharp, high quality",
-      "negative": "dress, clothing, clothed, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.6,
+      "output_tags": "(completely nude:2.5), (nude:2.5), (bare skin:2.5), (nipples:2.0), (navel:2.0), nude, 2girls, (black hair:2.0), (green hair:2.0), champagne, party, indoor, (pale skin:2.0), (natural skin:1.5), vibrant colors, sharp, high quality",
+      "negative": "dress, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, blue skin, green skin, unnatural skin, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "1girl, dark skin, kimono, cherry blossom",
@@ -191,9 +191,9 @@
     {
       "tags": "1girl, purple hair, bunny ears, leotard, dark skin",
       "change": "nude",
-      "denoise": 0.8,
-      "output_tags": "(nude:2.0), (naked:2.0), nude, 1girl, purple hair, bunny ears, dark skin, vibrant colors, sharp, high quality",
-      "negative": "leotard, clothing, clothed, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.6,
+      "output_tags": "(completely nude:2.5), (nude:2.5), (bare skin:2.5), (nipples:2.0), (navel:2.0), nude, 1girl, (purple hair:2.0), (bunny ears:2.5), (dark skin:2.0), vibrant colors, sharp, high quality",
+      "negative": "leotard, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, blue skin, green skin, unnatural skin, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "1girl, purple hair, bunny ears, leotard, dark skin",
@@ -205,9 +205,9 @@
     {
       "tags": "1girl, long hair, brown eyes, dress, garden",
       "change": "nude",
-      "denoise": 0.8,
-      "output_tags": "(nude:2.0), (naked:2.0), nude, 1girl, long hair, brown eyes, garden, vibrant colors, sharp, high quality",
-      "negative": "dress, clothing, clothed, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.6,
+      "output_tags": "(completely nude:2.5), (nude:2.5), (bare skin:2.5), (nipples:2.0), (navel:2.0), nude, 1girl, (long hair:2.0), (brown eyes:2.0), garden, (pale skin:2.0), (natural skin:1.5), vibrant colors, sharp, high quality",
+      "negative": "dress, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, blue skin, green skin, unnatural skin, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "1girl, school uniform, blue hair, smile",
@@ -226,9 +226,9 @@
     {
       "tags": "3girls, brown hair, black hair, pink hair, orange hair, horse ears, horse tail, gym uniform, buruma, sweat",
       "change": "nude",
-      "denoise": 0.8,
-      "output_tags": "(nude:2.0), (naked:2.0), nude, 3girls, brown hair, black hair, pink hair, orange hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
-      "negative": "gym uniform, buruma, shirt, clothing, clothed, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.6,
+      "output_tags": "(completely nude:2.5), (nude:2.5), (bare skin:2.5), (nipples:2.0), (navel:2.0), nude, 3girls, (brown hair:2.0), (black hair:2.0), (pink hair:2.0), (orange hair:2.0), (horse ears:2.5), (horse tail:2.5), sweat, (pale skin:2.0), (natural skin:1.5), vibrant colors, sharp, high quality",
+      "negative": "gym uniform, buruma, shirt, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, blue skin, green skin, unnatural skin, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse girl, gym uniform, buruma",
@@ -275,23 +275,23 @@
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, shirt, anime",
       "change": "nude anime",
-      "denoise": 0.7,
-      "output_tags": "(completely nude:2.5), (fully naked:2.5), (nipples:2.0), (navel:2.0), nude, anime style, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
-      "negative": "gym uniform, buruma, shirt, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.6,
+      "output_tags": "(completely nude:2.5), (fully naked:2.5), (nipples:2.0), (navel:2.0), nude, anime style, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, (pale skin:2.0), (natural skin:1.5), vibrant colors, sharp, high quality",
+      "negative": "gym uniform, buruma, shirt, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, realistic, photorealistic, blue skin, green skin, unnatural skin, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "1girl, solo, long hair, blonde hair, yellow eyes, fox ears, fox tail, school uniform, blazer, blue jacket, white shirt, pleated skirt, blue skirt, bowtie, red bow, pantyhose, standing, indoors",
       "change": "nude anime",
-      "denoise": 0.65,
-      "output_tags": "(completely nude:2.5), (nude:2.5), (bare skin:2.5), nude, anime style, 1girl, solo, long hair, blonde hair, (yellow eyes:2.0), (fox ears:2.5), (fox tail:2.5), standing, indoors, vibrant colors, sharp, high quality",
-      "negative": "school uniform, blazer, jacket, shirt, skirt, bowtie, pantyhose, clothing, clothed, sheet, blanket, towel, fabric, cloth, censored, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.6,
+      "output_tags": "(completely nude:2.5), (nude:2.5), (bare skin:2.5), nude, anime style, 1girl, solo, long hair, blonde hair, (yellow eyes:2.0), (fox ears:2.5), (fox tail:2.5), standing, indoors, (pale skin:2.0), (natural skin:1.5), vibrant colors, sharp, high quality",
+      "negative": "school uniform, blazer, jacket, shirt, skirt, bowtie, pantyhose, clothing, clothed, sheet, blanket, towel, fabric, cloth, censored, blue skin, green skin, unnatural skin, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, shirt",
       "change": "nude realistic",
-      "denoise": 0.7,
-      "output_tags": "(completely nude:2.5), (fully naked:2.5), (nipples:2.0), (navel:2.0), (realistic:1.5), nude, realistic, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
-      "negative": "gym uniform, buruma, shirt, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, anime, cartoon, drawing, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.6,
+      "output_tags": "(completely nude:2.5), (fully naked:2.5), (nipples:2.0), (navel:2.0), (realistic:1.5), nude, realistic, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, (pale skin:2.0), (natural skin:1.5), vibrant colors, sharp, high quality",
+      "negative": "gym uniform, buruma, shirt, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, anime, cartoon, drawing, blue skin, green skin, unnatural skin, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "1girl, long hair, red hair, yellow eyes, black dress, braid, looking back, from behind",
@@ -352,9 +352,9 @@
     {
       "tags": "1girl, jewelry, solo, ring, necklace, smile, cross, jacket, white_hair, long_hair, blue_eyes, formal, looking_at_viewer, cross_necklace",
       "change": "nude",
-      "denoise": 0.65,
-      "output_tags": "(completely nude:2.5), (nude:2.5), (bare skin:2.0), (nipples:2.0), (navel:2.0), nude, 1girl, solo, (white_hair:2.0), (long_hair:2.0), (blue_eyes:2.0), smile, looking_at_viewer, jewelry, ring, necklace, cross_necklace, vibrant colors, sharp, high quality",
-      "negative": "jacket, formal, clothing, clothed, dress, shirt, covered, sheet, blanket, towel, fabric, cloth, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.6,
+      "output_tags": "(completely nude:2.5), (nude:2.5), (bare skin:2.0), (nipples:2.0), (navel:2.0), nude, 1girl, solo, (white_hair:2.0), (long_hair:2.0), (blue_eyes:2.0), smile, looking_at_viewer, jewelry, ring, necklace, cross_necklace, (pale skin:2.0), (natural skin:1.5), vibrant colors, sharp, high quality",
+      "negative": "jacket, formal, clothing, clothed, dress, shirt, covered, sheet, blanket, towel, fabric, cloth, blue skin, green skin, unnatural skin, deformed, extra limbs, bad anatomy, blurry"
     }
   ],
   "txt2img_example": {

@@ -494,15 +494,19 @@ class ChatHandler {
 
         // Build display message
         let displayMsg = displayContent;
-        if (this.uploadedImage) {
-            displayMsg = displayContent + ' [with image]';
-        } else if (this.uploadedFile) {
+        if (this.uploadedFile) {
             displayMsg = displayContent + ' [with file]';
+        }
+
+        // Get image data URL before clearing (so we can show it inline)
+        let imageDataUrl = null;
+        if (this.uploadedImage) {
+            imageDataUrl = this.imagePreview.src;  // This is the data:image/... URL
         }
 
         // Add user message to UI (show what user typed, not the command)
         // skipUserButtons=true because we add them manually below with proper cleanup
-        this.lastUserMessage = this.addMessage('user', displayMsg || '[File uploaded]', false, true);
+        this.lastUserMessage = this.addMessage('user', displayMsg || '[File uploaded]', false, true, imageDataUrl);
 
         // Add action buttons to user message
         const userContentEl = this.lastUserMessage.querySelector('.message-content');

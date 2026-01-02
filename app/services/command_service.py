@@ -34,18 +34,19 @@ class CommandService:
         return None, message
 
     async def execute_command(self, command: str, arg: str, last_prompt: Optional[str] = None,
-                              image_data: Optional[str] = None, file_content: Optional[str] = None) -> dict:
+                              image_data: Optional[str] = None, file_content: Optional[str] = None,
+                              stop_check: Optional[callable] = None) -> dict:
         """Execute a command and return the result"""
         if command == "search":
             return await self._search_command(arg)
         elif command == "images":
             return await self._images_command(arg)
         elif command == "geni":
-            return await self._geni_command(arg)
+            return await self._geni_command(arg, stop_check)
         elif command == "img2img":
-            return await self._img2img_command(arg, image_data)
+            return await self._img2img_command(arg, image_data, stop_check)
         elif command == "regen":
-            return await self._regen_command(last_prompt)
+            return await self._regen_command(last_prompt, stop_check)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -89,12 +90,18 @@ class CommandService:
             "images": results
         }
 
-    async def _geni_command(self, prompt: str) -> dict:
+    async def _geni_command(self, prompt: str, stop_check: Optional[callable] = None) -> dict:
         if not prompt:
             return {"type": "text", "content": "Please provide a prompt. Example: `geni a beautiful sunset over mountains`"}
 
+        if stop_check and stop_check():
+            return {"type": "text", "content": "Generation cancelled."}
+
         # Prepare VRAM for image generation (swap models if needed)
         prepare_vram_for_image(self.db)
+
+        if stop_check and stop_check():
+            return {"type": "text", "content": "Generation cancelled."}
 
         image_data = await self.image_service.generate_image(prompt)
         if not image_data:
@@ -107,13 +114,18 @@ class CommandService:
             "prompt": prompt
         }
 
-    async def _img2img_command(self, prompt: str, image_data: Optional[str]) -> dict:
+    async def _img2img_command(self, prompt: str, image_data: Optional[str], stop_check: Optional[callable] = None) -> dict:
         print(f"[IMG2IMG] Starting - prompt: {prompt[:50] if prompt else 'None'}, has_image: {image_data is not None}")
         if not prompt:
             return {"type": "text", "content": "Please provide a prompt describing what you want."}
 
         if not image_data:
             return {"type": "text", "content": "Please upload an image to transform."}
+
+        # Check for stop before starting
+        if stop_check and stop_check():
+            print("[IMG2IMG] Stopped before start")
+            return {"type": "text", "content": "Generation cancelled."}
 
         # Prepare VRAM for image generation (swap models if needed)
         prepare_vram_for_image(self.db)
@@ -127,12 +139,27 @@ class CommandService:
             print(f"[IMG2IMG] Failed to decode image: {e}")
             return {"type": "text", "content": f"Invalid image data: {e}"}
 
+        # Check for stop before WD14
+        if stop_check and stop_check():
+            print("[IMG2IMG] Stopped before WD14")
+            return {"type": "text", "content": "Generation cancelled."}
+
         # First, analyze the image to get original tags
         print("[IMG2IMG] Analyzing source image...")
         original_tags = await self.chat_service.analyze_image_tags(image_data)
 
+        # Check for stop before LLM prompt generation
+        if stop_check and stop_check():
+            print("[IMG2IMG] Stopped before prompt generation")
+            return {"type": "text", "content": "Generation cancelled."}
+
         # Use AI to optimize the prompt with original tags context
         optimized_prompt, denoise, negative_prompt = await self.chat_service.modify_prompt_for_img2img(prompt, original_tags)
+
+        # Check for stop before image generation
+        if stop_check and stop_check():
+            print("[IMG2IMG] Stopped before image generation")
+            return {"type": "text", "content": "Generation cancelled."}
 
         # Ensure style keywords from original prompt are preserved for model selection
         prompt_lower = prompt.lower()
@@ -167,12 +194,18 @@ class CommandService:
             "prompt": optimized_prompt  # Store optimized prompt for regen
         }
 
-    async def _regen_command(self, last_prompt: Optional[str]) -> dict:
+    async def _regen_command(self, last_prompt: Optional[str], stop_check: Optional[callable] = None) -> dict:
         if not last_prompt:
             return {"type": "text", "content": "No previous image prompt found. Use `geni <prompt>` first."}
 
+        if stop_check and stop_check():
+            return {"type": "text", "content": "Generation cancelled."}
+
         # Prepare VRAM for image generation (swap models if needed)
         prepare_vram_for_image(self.db)
+
+        if stop_check and stop_check():
+            return {"type": "text", "content": "Generation cancelled."}
 
         image_data = await self.image_service.regenerate_image(last_prompt)
         if not image_data:
