@@ -445,6 +445,43 @@ class ImageService:
                 print(f"img2img generation error: {e}")
                 return None
 
+    async def generate_inpaint(self, prompt: str, image_bytes: bytes, mask_bytes: bytes,
+                               denoise: float = 0.85, negative_prompt: str = None) -> Optional[str]:
+        """
+        Inpaint masked areas of image.
+        Mask: white (255) = inpaint, black (0) = keep original.
+        Tries posterchanai inpaint API.
+        """
+        if not self.comfyui_url:
+            return None
+
+        try:
+            api_url = self.comfyui_url.rstrip('/') + '/api/inpaint'
+            image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+            mask_b64 = base64.b64encode(mask_bytes).decode('utf-8')
+
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    api_url,
+                    json={
+                        "prompt": prompt,
+                        "image": image_b64,
+                        "mask": mask_b64,
+                        "denoise": denoise,
+                        "negative_prompt": negative_prompt or ""
+                    }
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("image"):
+                        return data["image"]
+                    if data.get("error"):
+                        print(f"Inpaint error: {data['error']}")
+                return None
+        except Exception as e:
+            print(f"Inpaint error: {e}")
+            return None
+
 
 def get_image_service(db: Session) -> ImageService:
     return ImageService(db)
