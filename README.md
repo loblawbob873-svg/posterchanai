@@ -25,9 +25,13 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 - **Document translation** with language selection modal
 
 ### Image Generation
-- Image Generation (geni command)
-- Image-to-Image transformation (img2img command)
-- Image Search
+- **Native diffusers backend** - Direct GPU image generation (NVIDIA CUDA, Intel XPU, AMD ROCm, CPU)
+- **ComfyUI backend** - External ComfyUI or posterchanai proxy support
+- Text-to-image generation (`geni` command) with anime model auto-detection
+- Image-to-image transformation (`img2img` command)
+- VRAM management with model keep-alive modes
+- Distributed setup support (dedicated image generation server)
+- REST API endpoints for external integrations
 
 ### Search & Web
 - Web Search with AI summarization
@@ -152,10 +156,103 @@ Ollama-only settings:
 
 ### Optional Services
 
-- **ComfyUI URL**: URL to ComfyUI for image generation
 - **SearXNG URL**: URL to SearXNG instance for web search
 - **Upload Path**: Directory to store uploads (default: `/var/lib/posterchanai`)
 - **TTS Settings**: Voice, rate, and pitch for text-to-speech
+
+### Image Generation Settings
+
+Posterchanai supports two image generation backends:
+
+#### Native Diffusers Backend (Recommended for dedicated image servers)
+
+Direct GPU image generation using the diffusers library. Supports SDXL models.
+
+| Setting | Description |
+|---------|-------------|
+| `image_backend` | Set to `native` for direct GPU generation |
+| `image_model_path` | Path to SDXL checkpoint (.safetensors) |
+| `image_anime_model_path` | Path to anime-style model (auto-selected for anime prompts) |
+| `image_gpu_device` | GPU backend: `cuda` (NVIDIA), `xpu` (Intel), `rocm` (AMD), `cpu` |
+| `image_width` | Default image width (default: 1024) |
+| `image_height` | Default image height (default: 1024) |
+| `image_steps` | Sampling steps (default: 25) |
+| `image_cfg` | CFG scale (default: 7.0) |
+
+**VRAM Management:**
+
+| Setting | Description |
+|---------|-------------|
+| `vram_mode` | Memory management mode (see below) |
+
+VRAM modes:
+- `shared` - LLM and image model share VRAM, swap as needed (default)
+- `llm_only` - Keep LLM loaded, unload image model after use
+- `image_only` - Keep image model loaded, no LLM (dedicated image server)
+
+#### ComfyUI/External Backend (Recommended for proxy setups)
+
+Connects to an external image generation server (ComfyUI or another posterchanai instance).
+
+| Setting | Description |
+|---------|-------------|
+| `image_backend` | Set to `comfyui` for external backend |
+| `comfyui_url` | URL to ComfyUI or posterchanai (e.g., `http://nas.lan:3051`) |
+| `comfyui_timeout` | Request timeout in milliseconds |
+| `comfyui_default_model` | Default checkpoint name (for ComfyUI workflow fallback) |
+| `comfyui_anime_model` | Anime checkpoint name (for ComfyUI workflow fallback) |
+
+**How it works:**
+1. First tries posterchanai's REST API (`/api/generate-image`, `/api/img2img`)
+2. Falls back to ComfyUI's workflow API if REST API unavailable
+3. This allows proxying to a dedicated posterchanai image server
+
+#### Distributed Setup Example
+
+For setups with a dedicated image generation server:
+
+**Image Server (nas.lan with NVIDIA GPU):**
+```
+image_backend: native
+image_gpu_device: cuda
+image_model_path: /path/to/sdxl_model.safetensors
+vram_mode: image_only
+```
+
+**LLM Server (router.lan with Intel Arc):**
+```
+image_backend: comfyui
+comfyui_url: http://nas.lan:3051
+```
+
+Requests from the LLM server are proxied to the image server via the REST API.
+
+### Image Generation REST API
+
+Posterchanai provides REST endpoints for external integrations (e.g., Sharkey/Misskey).
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/generate-image` | POST | Text-to-image generation |
+| `/api/img2img` | POST | Image-to-image transformation |
+
+**Authentication:**
+- Set `IMAGE_API_KEY` environment variable for API key auth
+- Use `X-API-Key` header or `Bearer` token
+- If no API key is set, endpoints are open (for internal network use)
+
+**Example request:**
+```bash
+curl -X POST http://localhost:3051/api/generate-image \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"prompt": "a cat sitting on a couch", "negative_prompt": "blurry"}'
+```
+
+**Response:**
+```json
+{"image": "base64-encoded-png-data"}
+```
 
 ### Email Settings (SMTP/IMAP)
 

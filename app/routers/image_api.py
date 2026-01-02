@@ -2,7 +2,9 @@
 Direct Image Generation API for external integrations.
 Provides simple REST endpoints for txt2img and img2img.
 Supports both JWT auth and API key auth for external services.
+Sequential processing: Only one image is generated at a time to prevent GPU overload.
 """
+import asyncio
 import base64
 import os
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
@@ -19,6 +21,9 @@ router = APIRouter(prefix="/api", tags=["image"])
 
 # API key for external integrations (set via environment or admin settings)
 IMAGE_API_KEY = os.getenv("IMAGE_API_KEY", "")
+
+# Lock to ensure only one image is generated at a time
+_image_generation_lock = asyncio.Lock()
 
 
 async def get_image_auth(
@@ -89,31 +94,37 @@ async def generate_image(
     Generate an image from a text prompt.
     Returns base64 encoded image.
     Supports JWT auth or API key auth (X-API-Key header or Bearer token).
+    Uses a lock to ensure sequential processing (one image at a time).
     """
-    try:
-        # Prepare VRAM for image generation
-        prepare_vram_for_image(db)
+    async with _image_generation_lock:
+        try:
+            print(f"[IMAGE-API] Generating image: {request.prompt[:50]}...")
+            # Prepare VRAM for image generation
+            prepare_vram_for_image(db)
 
-        # Get image backend (native or comfyui)
-        backend = get_image_backend(db)
+            # Get image backend (native or comfyui)
+            backend = get_image_backend(db)
 
-        # Generate image
-        result = await backend.generate_image(
-            prompt=request.prompt,
-            negative_prompt=request.negative_prompt or "",
-            width=request.width,
-            height=request.height,
-            steps=request.steps,
-            cfg=request.cfg
-        )
+            # Generate image
+            result = await backend.generate_image(
+                prompt=request.prompt,
+                negative_prompt=request.negative_prompt or "",
+                width=request.width,
+                height=request.height,
+                steps=request.steps,
+                cfg=request.cfg
+            )
 
-        if result:
-            return ImageResponse(image=result)
-        else:
-            return ImageResponse(error="Image generation failed")
+            if result:
+                print(f"[IMAGE-API] Image generated successfully")
+                return ImageResponse(image=result)
+            else:
+                print(f"[IMAGE-API] Image generation failed (no result)")
+                return ImageResponse(error="Image generation failed")
 
-    except Exception as e:
-        return ImageResponse(error=str(e))
+        except Exception as e:
+            print(f"[IMAGE-API] Image generation error: {e}")
+            return ImageResponse(error=str(e))
 
 
 @router.post("/img2img", response_model=ImageResponse)
@@ -127,32 +138,38 @@ async def img2img(
     Generate an image from a source image and prompt.
     Returns base64 encoded image.
     Supports JWT auth or API key auth (X-API-Key header or Bearer token).
+    Uses a lock to ensure sequential processing (one image at a time).
     """
-    try:
-        # Decode source image
+    async with _image_generation_lock:
         try:
-            image_bytes = base64.b64decode(request.image)
-        except Exception:
-            return ImageResponse(error="Invalid base64 image data")
+            # Decode source image
+            try:
+                image_bytes = base64.b64decode(request.image)
+            except Exception:
+                return ImageResponse(error="Invalid base64 image data")
 
-        # Prepare VRAM for image generation
-        prepare_vram_for_image(db)
+            print(f"[IMAGE-API] img2img: {request.prompt[:50]}... (denoise={request.denoise})")
+            # Prepare VRAM for image generation
+            prepare_vram_for_image(db)
 
-        # Get image backend
-        backend = get_image_backend(db)
+            # Get image backend
+            backend = get_image_backend(db)
 
-        # Generate img2img
-        result = await backend.generate_img2img(
-            prompt=request.prompt,
-            image_bytes=image_bytes,
-            denoise=request.denoise or 0.75,
-            negative_prompt=request.negative_prompt
-        )
+            # Generate img2img
+            result = await backend.generate_img2img(
+                prompt=request.prompt,
+                image_bytes=image_bytes,
+                denoise=request.denoise or 0.75,
+                negative_prompt=request.negative_prompt
+            )
 
-        if result:
-            return ImageResponse(image=result)
-        else:
-            return ImageResponse(error="Img2img generation failed")
+            if result:
+                print(f"[IMAGE-API] img2img completed successfully")
+                return ImageResponse(image=result)
+            else:
+                print(f"[IMAGE-API] img2img failed (no result)")
+                return ImageResponse(error="Img2img generation failed")
 
-    except Exception as e:
-        return ImageResponse(error=str(e))
+        except Exception as e:
+            print(f"[IMAGE-API] img2img error: {e}")
+            return ImageResponse(error=str(e))
