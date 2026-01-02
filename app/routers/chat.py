@@ -100,7 +100,7 @@ def delete_all_conversations(
     return {"message": "All conversations deleted"}
 
 
-@router.get("/conversations/{conversation_id}/messages", response_model=List[MessageResponse])
+@router.get("/conversations/{conversation_id}/messages")
 def get_messages(
     conversation_id: int,
     db: Session = Depends(get_db),
@@ -113,7 +113,22 @@ def get_messages(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    return conversation.messages
+    # Build response with image URLs
+    result = []
+    for msg in conversation.messages:
+        msg_dict = {
+            "id": msg.id,
+            "role": msg.role,
+            "content": msg.content,
+            "created_at": msg.created_at,
+            "image_path": None
+        }
+        # Convert file path to API URL if exists
+        if msg.image_path:
+            filename = Path(msg.image_path).name
+            msg_dict["image_path"] = f"/api/files/{current_user.username}/{conversation_id}/{filename}"
+        result.append(msg_dict)
+    return result
 
 
 @router.get("/files/{username}/{conversation_id}/{filename}")

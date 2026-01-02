@@ -1022,7 +1022,7 @@ class ChatHandler {
         this.ws.send(JSON.stringify(payload));
     }
 
-    addMessage(role, content, isHtml = false, skipUserButtons = false) {
+    addMessage(role, content, isHtml = false, skipUserButtons = false, imagePath = null) {
         const messageEl = document.createElement('div');
         messageEl.className = `message ${role}`;
 
@@ -1033,6 +1033,22 @@ class ChatHandler {
             contentEl.innerHTML = content;
         } else {
             contentEl.innerHTML = this.formatMessage(content);
+        }
+
+        // Add stored image if present
+        if (imagePath) {
+            const imgContainer = document.createElement('div');
+            imgContainer.className = 'generated-image';
+            const img = document.createElement('img');
+            img.src = imagePath;
+            img.alt = 'Stored image';
+            img.style.maxWidth = '100%';
+            img.style.borderRadius = '8px';
+            img.style.marginTop = '10px';
+            img.onclick = () => window.open(imagePath, '_blank');
+            img.style.cursor = 'pointer';
+            imgContainer.appendChild(img);
+            contentEl.appendChild(imgContainer);
         }
 
         // Add buttons (skip for empty assistant messages - those are streaming placeholders)
@@ -1271,7 +1287,7 @@ class ChatHandler {
     loadMessages(messages) {
         this.messagesContainer.innerHTML = '';
         for (const msg of messages) {
-            this.addMessage(msg.role, msg.content);
+            this.addMessage(msg.role, msg.content, false, false, msg.image_path);
         }
     }
 
