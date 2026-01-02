@@ -252,6 +252,7 @@ Posterchanai provides REST endpoints for external integrations (e.g., Sharkey/Mi
 |----------|--------|-------------|
 | `/api/generate-image` | POST | Text-to-image generation |
 | `/api/img2img` | POST | Image-to-image transformation |
+| `/api/tag-image` | POST | WD14 image tagging (returns comma-separated tags) |
 
 **Authentication:**
 - Set `IMAGE_API_KEY` environment variable for API key auth
@@ -270,6 +271,21 @@ curl -X POST http://localhost:3051/api/generate-image \
 ```json
 {"image": "base64-encoded-png-data"}
 ```
+
+**Tag Image Example:**
+```bash
+curl -X POST http://localhost:3051/api/tag-image \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"image": "base64-encoded-image", "threshold": 0.35}'
+```
+
+**Response:**
+```json
+{"tags": "1girl, solo, long hair, blonde hair, blue eyes, dress, standing, outdoors"}
+```
+
+The WD14 tagger uses the SmilingWolf/wd-v1-4-moat-tagger-v2 model via ONNX runtime. The model is automatically downloaded on first use.
 
 ### Email Settings (SMTP/IMAP)
 
@@ -836,3 +852,12 @@ Key packages:
 - `edge-tts` - Text-to-speech
 - `python-docx`, `openpyxl`, `python-pptx` - Office document support
 - `PyMuPDF` - PDF text extraction
+
+### Image Generation Dependencies (requirements-image.txt)
+
+- `diffusers` - HuggingFace Stable Diffusion pipelines
+- `transformers` - Model tokenizers
+- `accelerate` - GPU acceleration utilities
+- `safetensors` - Efficient model loading
+- `onnxruntime` - WD14 tagger inference (CPU/GPU)
+- `huggingface_hub` - Model downloads
