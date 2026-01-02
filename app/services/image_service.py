@@ -108,7 +108,11 @@ class ImageService:
         return await self._try_comfyui_workflow(prompt)
 
     async def _try_posterchanai_api(self, prompt: str, negative_prompt: str = "") -> Optional[str]:
-        """Try posterchanai's simple REST API"""
+        """
+        Try posterchanai's simple REST API.
+        Returns image on success, raises Exception on server error (don't fallback),
+        returns None only on connection error (try ComfyUI fallback).
+        """
         try:
             api_url = self.comfyui_url.rstrip('/') + '/api/generate-image'
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -121,15 +125,23 @@ class ImageService:
                     if data.get("image"):
                         return data["image"]
                     if data.get("error"):
-                        print(f"Posterchanai error: {data['error']}")
+                        # Server responded with error - don't fall back to ComfyUI
+                        raise Exception(f"Posterchanai error: {data['error']}")
                 return None
-        except Exception as e:
-            # Not a posterchanai instance, will try ComfyUI
+        except httpx.ConnectError:
+            # Connection failed - not a posterchanai instance, try ComfyUI
+            return None
+        except httpx.TimeoutException:
+            # Timeout - try ComfyUI fallback
             return None
 
     async def _try_posterchanai_img2img(self, prompt: str, image_bytes: bytes,
                                          denoise: float = 0.75, negative_prompt: str = None) -> Optional[str]:
-        """Try posterchanai's img2img REST API"""
+        """
+        Try posterchanai's img2img REST API.
+        Returns image on success, raises Exception on server error (don't fallback),
+        returns None only on connection error (try ComfyUI fallback).
+        """
         try:
             api_url = self.comfyui_url.rstrip('/') + '/api/img2img'
             image_b64 = base64.b64encode(image_bytes).decode('utf-8')
@@ -148,10 +160,14 @@ class ImageService:
                     if data.get("image"):
                         return data["image"]
                     if data.get("error"):
-                        print(f"Posterchanai img2img error: {data['error']}")
+                        # Server responded with error - don't fall back to ComfyUI
+                        raise Exception(f"Posterchanai img2img error: {data['error']}")
                 return None
-        except Exception as e:
-            # Not a posterchanai instance, will try ComfyUI
+        except httpx.ConnectError:
+            # Connection failed - not a posterchanai instance, try ComfyUI
+            return None
+        except httpx.TimeoutException:
+            # Timeout - try ComfyUI fallback
             return None
 
     async def _try_comfyui_workflow(self, prompt: str) -> Optional[str]:
