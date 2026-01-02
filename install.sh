@@ -127,6 +127,14 @@ show_install_instructions() {
             echo "  # Base dependencies"
             echo "  emerge -av dev-lang/python dev-python/pip dev-build/cmake sys-devel/gcc"
             echo ""
+            echo "  # For AMD GPU (ROCm):"
+            echo "  # First, add ROCm packages to package.accept_keywords (they're ~amd64):"
+            echo "  echo -e 'dev-build/rocm-cmake\ndev-util/hipcc\ndev-libs/rocm-core\ndev-libs/roct-thunk-interface\ndev-libs/rocm-device-libs\ndev-libs/rocr-runtime\ndev-libs/rocm-comgr\ndev-util/rocminfo\ndev-libs/rocm-opencl-runtime\ndev-util/hip' | sudo tee /etc/portage/package.accept_keywords/rocm"
+            echo ""
+            echo "  # Then install ROCm:"
+            echo "  emerge -av dev-libs/rocm-opencl-runtime dev-util/hip dev-libs/rocr-runtime"
+            echo "  # Supported: RX 6000/7000 series, some RX 5000"
+            echo ""
             echo "  # For Intel Arc GPU (optional):"
             echo "  emerge -av dev-libs/intel-compute-runtime dev-libs/level-zero"
             echo "  # Install Intel oneAPI from Intel's repo or manually"
@@ -148,12 +156,23 @@ show_install_instructions() {
             echo -e "${BOLD}Arch Linux:${NC}"
             echo "  pacman -S python python-pip cmake gcc git"
             echo ""
+            echo "  # For AMD GPU (ROCm):"
+            echo "  pacman -S rocm-hip-sdk rocm-opencl-sdk"
+            echo "  # Or from AUR: yay -S rocm-hip-runtime"
+            echo ""
             echo "  # For Intel Arc GPU: Install intel-oneapi-basekit from AUR"
             echo "  # For NVIDIA GPU: pacman -S nvidia cuda"
             ;;
         debian)
             echo -e "${BOLD}Debian/Ubuntu:${NC}"
             echo "  apt install python3 python3-pip python3-venv cmake build-essential git"
+            echo ""
+            echo "  # For AMD GPU (ROCm):"
+            echo "  # Add AMD's repo and install:"
+            echo "  wget https://repo.radeon.com/amdgpu-install/latest/ubuntu/\$(lsb_release -cs)/amdgpu-install_6.0.60002-1_all.deb"
+            echo "  apt install ./amdgpu-install_*.deb"
+            echo "  amdgpu-install --usecase=rocm"
+            echo "  # Or see: https://rocm.docs.amd.com/projects/install-on-linux/en/latest/"
             echo ""
             echo "  # For Intel Arc GPU:"
             echo "  # See: https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html"
@@ -163,10 +182,18 @@ show_install_instructions() {
             echo -e "${BOLD}Fedora:${NC}"
             echo "  dnf install python3 python3-pip cmake gcc-c++ git"
             echo ""
+            echo "  # For AMD GPU (ROCm):"
+            echo "  # Add AMD's repo and install:"
+            echo "  dnf install https://repo.radeon.com/amdgpu-install/latest/rhel/\$(rpm -E %rhel)/amdgpu-install-*.noarch.rpm"
+            echo "  amdgpu-install --usecase=rocm"
+            echo ""
             echo "  # For NVIDIA GPU: dnf install nvidia-driver cuda"
             ;;
         *)
             echo "  Please install: python3, pip, cmake, gcc, git"
+            echo ""
+            echo "  # For AMD GPU (ROCm):"
+            echo "  # See: https://rocm.docs.amd.com/projects/install-on-linux/en/latest/"
             ;;
     esac
     echo ""
@@ -265,10 +292,13 @@ select_backend() {
     echo -e "  2) ${BOLD}NVIDIA GPU${NC} (llama.cpp CUDA)"
     echo "     Best for GeForce RTX, Tesla, etc."
     echo ""
-    echo -e "  3) ${BOLD}CPU Only${NC} (llama.cpp)"
+    echo -e "  3) ${BOLD}AMD GPU${NC} (llama.cpp ROCm/HIP)"
+    echo "     Best for Radeon RX 6000/7000 series"
+    echo ""
+    echo -e "  4) ${BOLD}CPU Only${NC} (llama.cpp)"
     echo "     Works on any system, slower inference"
     echo ""
-    echo -e "  4) ${BOLD}Ollama${NC} (External service)"
+    echo -e "  5) ${BOLD}Ollama${NC} (External service)"
     echo "     Use existing Ollama installation"
     echo ""
 
@@ -276,17 +306,19 @@ select_backend() {
     case "$GPU_TYPE" in
         intel) DEFAULT=1 ;;
         nvidia) DEFAULT=2 ;;
-        *) DEFAULT=3 ;;
+        amd) DEFAULT=3 ;;
+        *) DEFAULT=4 ;;
     esac
 
-    read -p "Select LLM backend [1-4, default=$DEFAULT]: " BACKEND_CHOICE
+    read -p "Select LLM backend [1-5, default=$DEFAULT]: " BACKEND_CHOICE
     BACKEND_CHOICE=${BACKEND_CHOICE:-$DEFAULT}
 
     case "$BACKEND_CHOICE" in
         1) LLM_BACKEND="intel" ;;
         2) LLM_BACKEND="nvidia" ;;
-        3) LLM_BACKEND="cpu" ;;
-        4) LLM_BACKEND="ollama" ;;
+        3) LLM_BACKEND="amd" ;;
+        4) LLM_BACKEND="cpu" ;;
+        5) LLM_BACKEND="ollama" ;;
         *) LLM_BACKEND="cpu" ;;
     esac
 
@@ -437,6 +469,32 @@ STUBCODE
             pip install llama-cpp-python --force-reinstall --no-cache-dir -q
             ;;
 
+        amd)
+            # Check for ROCm
+            if ! command -v rocminfo &>/dev/null && [ ! -d /opt/rocm ]; then
+                print_error "ROCm not found!"
+                echo ""
+                echo "  Please install ROCm first. See show_install_instructions for your distro."
+                echo "  After installing ROCm, run this installer again."
+                exit 1
+            fi
+
+            # Detect GPU architecture for HSA_OVERRIDE_GFX_VERSION
+            GFX_VERSION=""
+            if command -v rocminfo &>/dev/null; then
+                GFX_VERSION=$(rocminfo 2>/dev/null | grep -o 'gfx[0-9]*' | head -1)
+                if [ -n "$GFX_VERSION" ]; then
+                    print_success "Detected AMD GPU: $GFX_VERSION"
+                fi
+            fi
+
+            echo "  Building with ROCm/HIP backend..."
+            export CMAKE_ARGS="-DGGML_HIP=ON"
+            # Set HIP path if available
+            [ -d /opt/rocm ] && export HIP_PATH=/opt/rocm
+            pip install llama-cpp-python --force-reinstall --no-cache-dir -q
+            ;;
+
         cpu)
             echo "  Building CPU-only version..."
             pip install llama-cpp-python --force-reinstall --no-cache-dir -q
@@ -514,6 +572,8 @@ setup_systemd() {
     SERVICE_NAME="posterchanai"
     if [ "$BACKEND" = "intel" ]; then
         SERVICE_NAME="posterchanai-ipex"
+    elif [ "$BACKEND" = "amd" ]; then
+        SERVICE_NAME="posterchanai-rocm"
     fi
 
     print_step "Configure systemd service?"
@@ -572,6 +632,43 @@ cd "$SCRIPT_DIR"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 exec "$SCRIPT_DIR/venv/bin/python" run.py "$@"
+SCRIPT
+            ;;
+
+        amd)
+            # Get GFX version for HSA override
+            GFX_VER=""
+            if command -v rocminfo &>/dev/null; then
+                GFX_VER=$(rocminfo 2>/dev/null | grep -o 'gfx[0-9]*' | head -1 | sed 's/gfx//')
+                # Convert gfx1030 -> 10.3.0, gfx1100 -> 11.0.0, etc.
+                if [ -n "$GFX_VER" ]; then
+                    MAJOR=${GFX_VER:0:2}
+                    MINOR=${GFX_VER:2:1}
+                    PATCH=${GFX_VER:3:1}
+                    GFX_VER="${MAJOR#0}.${MINOR}.${PATCH:-0}"
+                fi
+            fi
+
+            cat > "$RUN_SCRIPT" << SCRIPT
+#!/bin/bash
+# AMD ROCm wrapper script
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+cd "\$SCRIPT_DIR"
+
+# ROCm environment
+export ROCM_PATH=/opt/rocm
+export HIP_PATH=/opt/rocm
+export LD_LIBRARY_PATH=/opt/rocm/lib:\$LD_LIBRARY_PATH
+export PATH=/opt/rocm/bin:\$PATH
+
+# GPU architecture override (adjust if needed for your GPU)
+# Common values: 10.3.0 (RX 6000), 11.0.0 (RX 7000)
+export HSA_OVERRIDE_GFX_VERSION=${GFX_VER:-10.3.0}
+
+# Help with memory management
+export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True
+
+exec "\$SCRIPT_DIR/venv/bin/python" run.py "\$@"
 SCRIPT
             ;;
 
@@ -742,6 +839,7 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "LLM Backends:"
     echo "  Intel Arc        IPEX-LLM + llama.cpp SYCL"
     echo "  NVIDIA           llama.cpp CUDA"
+    echo "  AMD              llama.cpp ROCm/HIP"
     echo "  CPU              llama.cpp (slow)"
     echo "  Ollama           External Ollama service"
     echo ""

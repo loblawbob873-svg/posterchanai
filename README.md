@@ -6,7 +6,7 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 
 ### AI & Chat
 - AI Chat with streaming responses
-- **Native GPU inference** with llama-cpp-python (Intel SYCL, NVIDIA CUDA, CPU fallback)
+- **Native GPU inference** with llama-cpp-python (Intel SYCL, NVIDIA CUDA, AMD ROCm, CPU fallback)
 - Ollama backend support (optional, for Docker-based setups)
 - OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`)
 - Per-user API keys for external app integration
@@ -64,7 +64,7 @@ cd posterchanai
 ```
 
 The installer will:
-- Detect your GPU (Intel Arc, NVIDIA, or CPU)
+- Detect your GPU (Intel Arc, NVIDIA, AMD, or CPU)
 - Install the correct llama-cpp-python backend
 - Set up a Python virtual environment
 - Configure and start a systemd service
@@ -91,6 +91,9 @@ CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
 
 # NVIDIA:
 CMAKE_ARGS="-DGGML_CUDA=ON" pip install llama-cpp-python --force-reinstall --no-cache-dir
+
+# AMD (ROCm):
+CMAKE_ARGS="-DGGML_HIP=ON" pip install llama-cpp-python --force-reinstall --no-cache-dir
 
 # CPU only:
 pip install llama-cpp-python
@@ -640,11 +643,12 @@ The native GPU backend uses an async queue architecture for true real-time strea
 
 ## GPU Acceleration
 
-Poster-chan AI supports three LLM backends:
+Poster-chan AI supports four LLM backends:
 
 1. **IPEX-LLM** (Recommended for Intel Arc) - Intel's optimized LLM inference with best Arc GPU performance
-2. **Native GPU** - Direct llama-cpp-python with SYCL (Intel) or CUDA (NVIDIA)
+2. **Native GPU** - Direct llama-cpp-python with SYCL (Intel), CUDA (NVIDIA), or HIP (AMD ROCm)
 3. **Ollama** - External Ollama instance (Docker or native)
+4. **AMD ROCm** - Native llama-cpp-python with HIP backend for AMD GPUs
 
 ### IPEX-LLM Setup (Intel Arc - Recommended)
 
@@ -781,6 +785,77 @@ emerge dev-util/nvidia-cuda-toolkit
 CMAKE_ARGS="-DGGML_CUDA=on" \
     pip install llama-cpp-python --force-reinstall --no-cache-dir
 ```
+
+#### AMD GPU (ROCm)
+
+Supports AMD Radeon RX 6000/7000 series and some RX 5000 series GPUs.
+
+**Gentoo:**
+```bash
+# ROCm packages are ~amd64, add to package.accept_keywords first:
+echo -e 'dev-build/rocm-cmake\ndev-util/hipcc\ndev-libs/rocm-core\ndev-libs/roct-thunk-interface\ndev-libs/rocm-device-libs\ndev-libs/rocr-runtime\ndev-libs/rocm-comgr\ndev-util/rocminfo\ndev-libs/rocm-opencl-runtime\ndev-util/hip' | sudo tee /etc/portage/package.accept_keywords/rocm
+
+# Install ROCm
+emerge -av dev-libs/rocm-opencl-runtime dev-util/hip dev-libs/rocr-runtime
+
+# Add user to required groups
+sudo usermod -aG video,render $USER
+# Log out and back in
+
+# Build llama-cpp-python with HIP
+CMAKE_ARGS="-DGGML_HIP=on" \
+    pip install llama-cpp-python --force-reinstall --no-cache-dir
+```
+
+**Arch Linux:**
+```bash
+# Install ROCm
+pacman -S rocm-hip-sdk rocm-opencl-sdk
+
+# Add user to required groups
+sudo usermod -aG video,render $USER
+
+# Build llama-cpp-python with HIP
+CMAKE_ARGS="-DGGML_HIP=on" \
+    pip install llama-cpp-python --force-reinstall --no-cache-dir
+```
+
+**Ubuntu/Debian:**
+```bash
+# Add AMD's repo and install ROCm
+wget https://repo.radeon.com/amdgpu-install/latest/ubuntu/$(lsb_release -cs)/amdgpu-install_6.0.60002-1_all.deb
+sudo apt install ./amdgpu-install_*.deb
+sudo amdgpu-install --usecase=rocm
+
+# Add user to required groups
+sudo usermod -aG video,render $USER
+
+# Build llama-cpp-python with HIP
+CMAKE_ARGS="-DGGML_HIP=on" \
+    pip install llama-cpp-python --force-reinstall --no-cache-dir
+```
+
+**Environment Variables (run-amd.sh):**
+
+The installer auto-generates `run-amd.sh` with these environment variables:
+```bash
+export ROCM_PATH=/opt/rocm
+export HIP_PATH=/opt/rocm
+export HSA_OVERRIDE_GFX_VERSION=10.3.1  # Adjust for your GPU
+export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True
+```
+
+**GFX Version Reference:**
+| GPU Series | GFX Version | HSA_OVERRIDE_GFX_VERSION |
+|------------|-------------|--------------------------|
+| RX 7900 XTX/XT | gfx1100 | 11.0.0 |
+| RX 7800/7700 | gfx1101 | 11.0.1 |
+| RX 7600 | gfx1102 | 11.0.2 |
+| RX 6800/6900 | gfx1030 | 10.3.0 |
+| RX 6700 XT | gfx1031 | 10.3.1 |
+| RX 6600 | gfx1032 | 10.3.2 |
+
+Check your GPU's GFX version with: `rocminfo | grep gfx`
 
 #### CPU Fallback
 

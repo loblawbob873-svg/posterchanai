@@ -1,20 +1,34 @@
 [Unit]
-Description=Posterchan AI (Native GPU - AMD ROCm)
+Description=Posterchan AI (AMD ROCm GPU)
 After=network.target
 
 [Service]
 Type=simple
 User=YOUR_USERNAME
 WorkingDirectory=/path/to/posterchanai
-Environment="PATH=/path/to/posterchanai/venv/bin:/usr/local/bin:/usr/bin"
+Environment="PATH=/path/to/posterchanai/venv/bin:/opt/rocm/bin:/usr/local/bin:/usr/bin"
 Environment="VIRTUAL_ENV=/path/to/posterchanai/venv"
 
 # ROCm environment
-Environment="HSA_OVERRIDE_GFX_VERSION=10.3.0"
 Environment="ROCM_PATH=/opt/rocm"
+Environment="HIP_PATH=/opt/rocm"
 Environment="LD_LIBRARY_PATH=/opt/rocm/lib"
 
-ExecStart=/path/to/posterchanai/venv/bin/python run.py
+# GPU architecture override - adjust for your GPU!
+# Common values:
+#   gfx1030 (10.3.0) - RX 6800/6900 series
+#   gfx1031 (10.3.1) - RX 6700 series
+#   gfx1032 (10.3.2) - RX 6600 series
+#   gfx1100 (11.0.0) - RX 7900 series
+#   gfx1101 (11.0.1) - RX 7800/7700 series
+#   gfx1102 (11.0.2) - RX 7600 series
+# Check your GPU with: rocminfo | grep gfx
+Environment="HSA_OVERRIDE_GFX_VERSION=10.3.0"
+
+# Memory management
+Environment="PYTORCH_HIP_ALLOC_CONF=expandable_segments:True"
+
+ExecStart=/path/to/posterchanai/run-amd.sh
 
 Restart=always
 RestartSec=5
@@ -22,11 +36,43 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 
-# Installation notes:
-# 1. Install ROCm: https://rocm.docs.amd.com/
-# 2. Create venv: python3 -m venv venv && source venv/bin/activate
-# 3. Install ROCm llama-cpp-python:
-#    CMAKE_ARGS="-DGGML_HIP=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
-# 4. Install dependencies: pip install -r requirements.txt
-# 5. Set Backend Type to "Native GPU" in Admin Panel
-# 6. Adjust HSA_OVERRIDE_GFX_VERSION for your GPU (check with rocminfo)
+# =============================================================================
+# INSTALLATION GUIDE FOR AMD ROCm
+# =============================================================================
+#
+# 1. Install ROCm for your distro:
+#
+#    GENTOO:
+#      emerge -av dev-libs/rocm-opencl-runtime dev-util/hip
+#      # Or use AMD's official packages
+#
+#    ARCH:
+#      pacman -S rocm-hip-sdk rocm-opencl-sdk
+#
+#    DEBIAN/UBUNTU:
+#      wget https://repo.radeon.com/amdgpu-install/latest/ubuntu/$(lsb_release -cs)/amdgpu-install_6.0.60002-1_all.deb
+#      apt install ./amdgpu-install_*.deb
+#      amdgpu-install --usecase=rocm
+#
+#    FEDORA:
+#      dnf install https://repo.radeon.com/amdgpu-install/latest/rhel/$(rpm -E %rhel)/amdgpu-install-*.noarch.rpm
+#      amdgpu-install --usecase=rocm
+#
+# 2. Add user to video and render groups:
+#      sudo usermod -aG video,render $USER
+#
+# 3. Run the installer:
+#      ./install.sh
+#      # Select "AMD GPU" when prompted for LLM backend
+#
+# 4. The installer will:
+#    - Create venv with ROCm PyTorch
+#    - Build llama-cpp-python with HIP backend
+#    - Create run-amd.sh with proper environment
+#    - Set up systemd service
+#
+# 5. Verify ROCm is working:
+#      rocminfo
+#      rocm-smi
+#
+# =============================================================================

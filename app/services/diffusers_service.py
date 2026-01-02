@@ -44,10 +44,12 @@ def detect_device() -> str:
     try:
         import torch
 
-        # Check for CUDA (NVIDIA or AMD ROCm)
+        # Check for CUDA (NVIDIA) or ROCm (AMD)
+        # ROCm uses the torch.cuda API, so we check device name to distinguish
         if torch.cuda.is_available():
             device_name = torch.cuda.get_device_name(0)
-            logger.info(f"Detected CUDA device: {device_name}")
+            logger.info(f"Detected GPU device: {device_name}")
+            # Both NVIDIA and AMD ROCm use "cuda" as the device string
             return "cuda"
 
         # Check for Intel XPU
@@ -60,6 +62,19 @@ def detect_device() -> str:
     except Exception as e:
         logger.warning(f"Error detecting device: {e}, falling back to CPU")
         return "cpu"
+
+
+def is_rocm() -> bool:
+    """Check if running on AMD ROCm (vs NVIDIA CUDA)"""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            # ROCm devices have "AMD" or "Radeon" in the name
+            device_name = torch.cuda.get_device_name(0).lower()
+            return "amd" in device_name or "radeon" in device_name
+        return False
+    except Exception:
+        return False
 
 
 def _idle_check_loop():
@@ -256,8 +271,11 @@ class DiffusersService:
             try:
                 import torch
                 if torch.cuda.is_available():
+                    # Works for both NVIDIA CUDA and AMD ROCm
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
+                    if is_rocm():
+                        logger.debug("Cleared ROCm HIP memory cache")
                 elif hasattr(torch, "xpu") and torch.xpu.is_available():
                     torch.xpu.empty_cache()
             except Exception:
