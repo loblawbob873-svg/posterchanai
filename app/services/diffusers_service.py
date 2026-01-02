@@ -305,10 +305,25 @@ class DiffusersService:
             img_bytes = img_byte_arr.getvalue()
 
             logger.info(f"Generation complete: {len(img_bytes)} bytes")
+
+            # Cleanup to free VRAM
+            del result
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
             return img_bytes
 
         except Exception as e:
             logger.error(f"Generation error: {e}")
+            # Try to clean up on error
+            try:
+                gc.collect()
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
             return None
 
     def _img2img_sync(
@@ -370,10 +385,26 @@ class DiffusersService:
             img_bytes = img_byte_arr.getvalue()
 
             logger.info(f"img2img complete: {len(img_bytes)} bytes")
+
+            # Cleanup img2img pipeline to free VRAM
+            del img2img_pipe
+            del result
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
             return img_bytes
 
         except Exception as e:
             logger.error(f"img2img error: {e}")
+            # Try to clean up on error too
+            try:
+                gc.collect()
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
             return None
 
     async def generate_image(self, prompt: str, negative_prompt: str = "",
