@@ -330,10 +330,13 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                 if data.get("type") == "message":
                     manager.set_stop(user.id, False)  # Reset for new message
-                    # Re-query user with fresh database state to pick up settings changes
-                    # expire_all() ensures we see committed changes from other sessions
-                    db.expire_all()
-                    user = db.query(User).filter(User.id == user.id).first()
+                    # Use fresh session to pick up settings changes from other connections
+                    user_id = user.id
+                    fresh_db = SessionLocal()
+                    try:
+                        user = fresh_db.query(User).filter(User.id == user_id).first()
+                    finally:
+                        fresh_db.close()
                     chat_service = ChatService(db, user)
                     content = data.get("content", "").strip()
                     image_data = data.get("image_data")  # base64 image
