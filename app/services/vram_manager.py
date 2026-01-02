@@ -164,14 +164,15 @@ def _ensure_llm_loaded(db: Session, settings: dict):
 
 
 def _ensure_image_loaded(db: Session, settings: dict):
-    """Ensure image model is loaded"""
+    """Ensure image service is ready (model loaded on-demand during generation)"""
     try:
         if settings["image_backend"] == "native":
             from app.services.diffusers_service import get_diffusers_service
-            service = get_diffusers_service(db)
-            service._ensure_model_loaded()
+            # Just initialize the service, don't pre-load model
+            # Model will be loaded during generation based on prompt (anime vs default)
+            get_diffusers_service(db)
     except Exception as e:
-        logger.error(f"Error loading image model: {e}")
+        logger.error(f"Error initializing image service: {e}")
         raise
 
 

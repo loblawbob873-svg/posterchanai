@@ -296,6 +296,7 @@ select_backend() {
     echo ""
     echo -e "  3) ${BOLD}AMD GPU${NC} (llama.cpp ROCm/HIP)"
     echo "     Best for Radeon RX 6000/7000 series"
+    echo -e "     ${YELLOW}Note: Requires ROCm installed, ~5GB download for PyTorch${NC}"
     echo ""
     echo -e "  4) ${BOLD}CPU Only${NC} (llama.cpp)"
     echo "     Works on any system, slower inference"
@@ -357,6 +358,27 @@ select_image_backend() {
         2) IMAGE_BACKEND="comfyui" ;;
         *) IMAGE_BACKEND="native" ;;
     esac
+
+    # Show AMD-specific warnings for native image generation
+    if [ "$IMAGE_BACKEND" = "native" ] && [ "$GPU_TYPE" = "amd" ]; then
+        echo ""
+        print_warning "AMD ROCm Image Generation Notes:"
+        echo ""
+        echo "  • PyTorch ROCm nightly is ~5GB download"
+        echo "  • Requires 10GB+ disk space for installation"
+        echo "  • SDXL models need 8GB+ VRAM (12GB recommended)"
+        echo "  • Close other GPU apps before generating images"
+        echo "  • First generation is slow (shader compilation)"
+        echo ""
+        echo "  If you have <8GB VRAM, consider using ComfyUI instead"
+        echo "  or SD 1.5 models which use less memory."
+        echo ""
+        read -p "Continue with native image generation? [Y/n]: " CONTINUE_AMD
+        if [[ "$CONTINUE_AMD" =~ ^[Nn] ]]; then
+            IMAGE_BACKEND="comfyui"
+            echo "  Switched to ComfyUI backend"
+        fi
+    fi
 }
 
 setup_directories() {
@@ -541,10 +563,48 @@ setup_image_deps() {
         amd)
             # Check for ROCm PyTorch
             if ! python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
-                echo "  Installing PyTorch with ROCm support..."
-                pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm5.7 -q
+                echo ""
+                print_warning "Installing PyTorch with ROCm support..."
+                echo "  This downloads ~5GB and may take 5-15 minutes."
+                echo "  Using ROCm 7.0 nightly (required for Python 3.13+)"
+                echo ""
+
+                # Check disk space
+                AVAIL_GB=$(df -BG "$HOME" | awk 'NR==2 {print $4}' | tr -d 'G')
+                if [ "$AVAIL_GB" -lt 10 ]; then
+                    print_error "Less than 10GB free disk space. Need ~10GB for PyTorch ROCm."
+                    echo "  Free up space and try again."
+                    exit 1
+                fi
+
+                # Use home dir for temp to avoid small /tmp (zram) issues
+                mkdir -p "$HOME/tmp"
+                TMPDIR="$HOME/tmp" TEMP="$HOME/tmp" TMP="$HOME/tmp" \
+                    pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/nightly/rocm7.0 || {
+                        print_error "PyTorch ROCm installation failed!"
+                        echo ""
+                        echo "  Common issues:"
+                        echo "  • Not enough disk space (need ~10GB)"
+                        echo "  • Network timeout (try again)"
+                        echo "  • Python version not supported (need 3.10-3.13)"
+                        echo ""
+                        echo "  Manual install:"
+                        echo "  TMPDIR=~/tmp pip install torch torchvision --index-url https://download.pytorch.org/whl/nightly/rocm7.0"
+                        rm -rf "$HOME/tmp"
+                        exit 1
+                    }
+                rm -rf "$HOME/tmp"
+
+                # Verify installation
+                if python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+                    GFX_VER=$(python3 -c "import torch; print(torch.cuda.get_device_name(0))" 2>/dev/null || echo "Unknown")
+                    print_success "PyTorch ROCm installed: $GFX_VER"
+                else
+                    print_warning "PyTorch installed but GPU not detected. Check ROCm installation."
+                fi
+            else
+                print_success "PyTorch ROCm already installed"
             fi
-            print_success "PyTorch ROCm ready"
             ;;
         *)
             # CPU fallback
@@ -732,9 +792,9 @@ download_model() {
     print_step "Download a model?"
     echo ""
     echo "  Recommended models for local inference:"
+    echo "  • Qwen3-8B-abliterated (5.9GB) - Fast, uncensored, good quality"
     echo "  • Qwen2.5-7B-Instruct (7GB) - Fast, good quality"
     echo "  • Mistral-7B-Instruct (7GB) - Great all-rounder"
-    echo "  • Llama-3.1-8B-Instruct (8GB) - Meta's latest"
     echo ""
 
     read -p "Download a starter model? [y/N]: " DOWNLOAD_MODEL
@@ -742,10 +802,10 @@ download_model() {
     if [[ "$DOWNLOAD_MODEL" =~ ^[Yy] ]]; then
         MODELS_PATH="/var/lib/posterchanai/models"
         echo ""
-        echo "  Downloading Qwen2.5-7B-Instruct Q5_K_M..."
+        echo "  Downloading Qwen3-8B-abliterated Q5_K_M..."
 
-        MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q5_k_m.gguf"
-        MODEL_FILE="$MODELS_PATH/qwen2.5-7b-instruct-q5_k_m.gguf"
+        MODEL_URL="https://huggingface.co/DevQuasar/huihui-ai.Qwen3-8B-abliterated-GGUF/resolve/main/huihui-ai.Qwen3-8B-abliterated.Q5_K_M.gguf"
+        MODEL_FILE="$MODELS_PATH/Qwen3-8B-abliterated-Q5_K_M.gguf"
 
         DOWNLOAD_OK=0
         if command -v wget &>/dev/null; then

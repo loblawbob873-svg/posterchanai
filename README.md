@@ -859,6 +859,62 @@ export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True
 
 Check your GPU's GFX version with: `rocminfo | grep gfx`
 
+**PyTorch ROCm for Image Generation:**
+
+For native image generation (diffusers) on AMD GPUs, you need PyTorch with ROCm support:
+
+```bash
+# ROCm 7.0 nightly (required for Python 3.13)
+# Note: ~5GB download, use temp dir if /tmp is small (zram)
+mkdir -p ~/tmp
+TMPDIR=~/tmp pip install --no-cache-dir torch torchvision \
+    --index-url https://download.pytorch.org/whl/nightly/rocm7.0
+rm -rf ~/tmp
+```
+
+The installer handles this automatically for AMD GPUs.
+
+**AMD ROCm Troubleshooting:**
+
+| Issue | Solution |
+|-------|----------|
+| "No space left on device" | Use `TMPDIR=~/tmp` for pip install (default /tmp may be small zram) |
+| "HIP out of memory" | Close other GPU apps, use SD 1.5 instead of SDXL, reduce image size |
+| "invalid device function" | Set correct `HSA_OVERRIDE_GFX_VERSION` in run-amd.sh |
+| PyTorch not detecting GPU | Ensure ROCm is installed and user is in `video` and `render` groups |
+| Slow first generation | Normal - HIP compiles shaders on first run (~1-2 min) |
+| Slower than NVIDIA | ROCm uses CPU offload for SDXL to fit in 12GB - expect ~2x slower |
+
+**VRAM Requirements for Image Generation:**
+
+| Model Type | Min VRAM | Recommended |
+|------------|----------|-------------|
+| SD 1.5 | 4GB | 6GB |
+| SDXL | 8GB | 12GB |
+| SD 1.5 + LLM | 8GB | 12GB |
+| SDXL + LLM | 12GB | 16GB+ |
+
+**Upgrading PyTorch ROCm:**
+
+If you need to upgrade or reinstall PyTorch for AMD:
+
+```bash
+# Activate venv first
+source venv/bin/activate
+
+# Force reinstall with ROCm support
+mkdir -p ~/tmp
+TMPDIR=~/tmp pip install --force-reinstall --no-cache-dir torch torchvision \
+    --index-url https://download.pytorch.org/whl/nightly/rocm7.0
+rm -rf ~/tmp
+
+# Verify installation
+python -c "import torch; print(f'PyTorch {torch.__version__}, ROCm: {torch.version.hip}, GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"Not detected\"}')"
+
+# Restart service
+sudo systemctl restart posterchanai-rocm
+```
+
 #### CPU Fallback
 
 If no GPU is available:
@@ -892,6 +948,19 @@ The following settings in Admin Panel control VRAM usage:
 | 14B | Q5_K_M | 20480 | 256 | ~15GB |
 | 14B | Q4_K_M | 28024 | 256 | ~12GB |
 | 8B | Q5_K_M | 40960 | 512 | ~10GB |
+
+**Recommended settings for 12GB AMD RX 6700/6750 XT:**
+
+| Model Size | Quantization | Context | Batch | VRAM Usage |
+|------------|--------------|---------|-------|------------|
+| 8B | Q5_K_M | 8192 | 128 | ~6GB |
+| 8B | Q4_K_M | 16384 | 128 | ~7GB |
+| 14B | Q4_K_M | 4096 | 64 | ~10GB |
+
+**For AMD GPUs with image generation:**
+- LLM only: Use full context settings above
+- LLM + SDXL: Reduce LLM context to 4096, or use "unload" mode in Image Settings
+- LLM + SD 1.5: Can use larger contexts, SD 1.5 needs less VRAM
 
 **Important**: Match the context size in Admin Panel with your GPU's VRAM capacity to prevent out-of-memory errors.
 

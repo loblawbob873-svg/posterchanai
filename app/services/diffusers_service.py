@@ -180,6 +180,14 @@ class DiffusersService:
             if self._pipe is not None:
                 logger.info("Unloading previous model for model switch...")
                 self._unload_model_internal()
+                # ROCm needs extra time to actually free VRAM
+                if is_rocm():
+                    import torch
+                    torch.cuda.synchronize()
+                    time.sleep(1)  # Give ROCm time to release memory
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    logger.info("ROCm memory cleanup complete")
 
             if not model_to_load:
                 logger.warning("No model path configured")
@@ -227,22 +235,48 @@ class DiffusersService:
                         torch_dtype=dtype,
                     )
 
-                # Move to device
-                self._pipe = self._pipe.to(self._device)
-
                 # Enable memory optimizations
                 if self._device != "cpu":
+                    # ROCm: use model_cpu_offload (like --medvram)
+                    # Keeps model in CPU, moves each component to GPU only when needed
+                    if is_rocm():
+                        try:
+                            # Disable VAE upcast to fp32 (saves ~6GB VRAM)
+                            if hasattr(self._pipe, 'vae') and hasattr(self._pipe.vae, 'config'):
+                                self._pipe.vae.config.force_upcast = False
+                            if hasattr(self._pipe, 'upcast_vae'):
+                                self._pipe.upcast_vae = False
+
+                            self._pipe.enable_model_cpu_offload()
+                            logger.info("ROCm: enabled model CPU offload + disabled VAE upcast")
+                        except Exception as e:
+                            logger.warning(f"CPU offload failed: {e}, loading to GPU")
+                            self._pipe = self._pipe.to(self._device)
+                    else:
+                        self._pipe = self._pipe.to(self._device)
+
                     try:
                         self._pipe.enable_attention_slicing()
                     except Exception:
                         pass
 
-                    # Try to enable xformers if available
+                    try:
+                        self._pipe.enable_vae_slicing()
+                    except Exception:
+                        pass
+
+                    try:
+                        self._pipe.enable_vae_tiling()
+                    except Exception:
+                        pass
+
                     try:
                         self._pipe.enable_xformers_memory_efficient_attention()
                         logger.info("Enabled xformers memory efficient attention")
                     except Exception:
                         pass
+                else:
+                    self._pipe = self._pipe.to(self._device)
 
                 self._model_path = model_to_load
                 self._model_type = self.model_type
@@ -265,7 +299,8 @@ class DiffusersService:
                 self._pipe = None
             self._model_path = None
 
-            # Force garbage collection
+            # Force garbage collection - run twice for thorough cleanup
+            gc.collect()
             gc.collect()
 
             try:
@@ -274,12 +309,22 @@ class DiffusersService:
                     # Works for both NVIDIA CUDA and AMD ROCm
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
+                    # ROCm may need additional cleanup
                     if is_rocm():
+                        # Reset memory stats and run IPC collect for ROCm
+                        torch.cuda.reset_peak_memory_stats()
+                        try:
+                            torch.cuda.ipc_collect()
+                        except Exception:
+                            pass
                         logger.debug("Cleared ROCm HIP memory cache")
                 elif hasattr(torch, "xpu") and torch.xpu.is_available():
                     torch.xpu.empty_cache()
             except Exception:
                 pass
+
+            # Additional gc pass after CUDA cleanup
+            gc.collect()
 
             logger.info("Model unloaded, VRAM freed")
 
@@ -340,9 +385,14 @@ class DiffusersService:
         try:
             import torch
 
-            generator = torch.Generator(device=self._device).manual_seed(seed)
+            # model_cpu_offload (ROCm) needs CPU generator
+            gen_device = "cpu" if is_rocm() else self._device
+            generator = torch.Generator(device=gen_device).manual_seed(seed)
 
             logger.info(f"Generating: {prompt[:50]}... (seed={seed}, steps={steps})")
+
+            # Update last used at START of generation to prevent idle timeout during long generations
+            self._last_used = time.time()
 
             # Default negative prompt
             if not negative_prompt:
@@ -457,7 +507,9 @@ class DiffusersService:
                 logger.error("Failed to get img2img pipeline")
                 return None
 
-            generator = torch.Generator(device=self._device).manual_seed(seed)
+            # model_cpu_offload (ROCm) needs CPU generator
+            gen_device = "cpu" if is_rocm() else self._device
+            generator = torch.Generator(device=gen_device).manual_seed(seed)
 
             logger.info(f"img2img: {prompt[:50]}... (strength={strength}, seed={seed})")
 
