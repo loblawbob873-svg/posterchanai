@@ -1,9 +1,13 @@
 import base64
+import asyncio
 from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from app.services.search_service import SearchService
 from app.services.image_factory import get_image_backend, prepare_vram_for_image
 from app.services.chat_service import ChatService
+
+# Global lock to prevent concurrent image generation (prevents WD14/LLM response mixing)
+_image_generation_lock = asyncio.Lock()
 
 
 class CommandService:
@@ -97,22 +101,24 @@ class CommandService:
         if stop_check and stop_check():
             return {"type": "text", "content": "Generation cancelled."}
 
-        # Prepare VRAM for image generation (swap models if needed)
-        prepare_vram_for_image(self.db)
+        # Use lock to prevent concurrent image generation
+        async with _image_generation_lock:
+            # Prepare VRAM for image generation (swap models if needed)
+            prepare_vram_for_image(self.db)
 
-        if stop_check and stop_check():
-            return {"type": "text", "content": "Generation cancelled."}
+            if stop_check and stop_check():
+                return {"type": "text", "content": "Generation cancelled."}
 
-        image_data = await self.image_service.generate_image(prompt)
-        if not image_data:
-            return {"type": "text", "content": "Failed to generate image. Please try again or check if ComfyUI is configured."}
+            image_data = await self.image_service.generate_image(prompt)
+            if not image_data:
+                return {"type": "text", "content": "Failed to generate image. Please try again or check if ComfyUI is configured."}
 
-        return {
-            "type": "generated_image",
-            "content": f"Generated image for: {prompt}",
-            "image": image_data,
-            "prompt": prompt
-        }
+            return {
+                "type": "generated_image",
+                "content": f"Generated image for: {prompt}",
+                "image": image_data,
+                "prompt": prompt
+            }
 
     async def _img2img_command(self, prompt: str, image_data: Optional[str], stop_check: Optional[callable] = None) -> dict:
         print(f"[IMG2IMG] Starting - prompt: {prompt[:50] if prompt else 'None'}, has_image: {image_data is not None}")
@@ -127,72 +133,74 @@ class CommandService:
             print("[IMG2IMG] Stopped before start")
             return {"type": "text", "content": "Generation cancelled."}
 
-        # Prepare VRAM for image generation (swap models if needed)
-        prepare_vram_for_image(self.db)
+        # Use lock to prevent concurrent image generation (prevents WD14/LLM mixing)
+        async with _image_generation_lock:
+            # Prepare VRAM for image generation (swap models if needed)
+            prepare_vram_for_image(self.db)
 
-        try:
-            # Decode base64 image
-            print(f"[IMG2IMG] Decoding base64 image, length: {len(image_data)}")
-            image_bytes = base64.b64decode(image_data)
-            print(f"[IMG2IMG] Decoded to {len(image_bytes)} bytes")
-        except Exception as e:
-            print(f"[IMG2IMG] Failed to decode image: {e}")
-            return {"type": "text", "content": f"Invalid image data: {e}"}
+            try:
+                # Decode base64 image
+                print(f"[IMG2IMG] Decoding base64 image, length: {len(image_data)}")
+                image_bytes = base64.b64decode(image_data)
+                print(f"[IMG2IMG] Decoded to {len(image_bytes)} bytes")
+            except Exception as e:
+                print(f"[IMG2IMG] Failed to decode image: {e}")
+                return {"type": "text", "content": f"Invalid image data: {e}"}
 
-        # Check for stop before WD14
-        if stop_check and stop_check():
-            print("[IMG2IMG] Stopped before WD14")
-            return {"type": "text", "content": "Generation cancelled."}
+            # Check for stop before WD14
+            if stop_check and stop_check():
+                print("[IMG2IMG] Stopped before WD14")
+                return {"type": "text", "content": "Generation cancelled."}
 
-        # First, analyze the image to get original tags
-        print("[IMG2IMG] Analyzing source image...")
-        original_tags = await self.chat_service.analyze_image_tags(image_data)
+            # First, analyze the image to get original tags
+            print("[IMG2IMG] Analyzing source image...")
+            original_tags = await self.chat_service.analyze_image_tags(image_data)
 
-        # Check for stop before LLM prompt generation
-        if stop_check and stop_check():
-            print("[IMG2IMG] Stopped before prompt generation")
-            return {"type": "text", "content": "Generation cancelled."}
+            # Check for stop before LLM prompt generation
+            if stop_check and stop_check():
+                print("[IMG2IMG] Stopped before prompt generation")
+                return {"type": "text", "content": "Generation cancelled."}
 
-        # Use AI to optimize the prompt with original tags context
-        optimized_prompt, denoise, negative_prompt = await self.chat_service.modify_prompt_for_img2img(prompt, original_tags)
+            # Use AI to optimize the prompt with original tags context
+            optimized_prompt, denoise, negative_prompt = await self.chat_service.modify_prompt_for_img2img(prompt, original_tags)
 
-        # Check for stop before image generation
-        if stop_check and stop_check():
-            print("[IMG2IMG] Stopped before image generation")
-            return {"type": "text", "content": "Generation cancelled."}
+            # Check for stop before image generation
+            if stop_check and stop_check():
+                print("[IMG2IMG] Stopped before image generation")
+                return {"type": "text", "content": "Generation cancelled."}
 
-        # Ensure style keywords from original prompt are preserved for model selection
-        prompt_lower = prompt.lower()
-        optimized_lower = optimized_prompt.lower()
-        if 'anime' in prompt_lower and 'anime' not in optimized_lower:
-            optimized_prompt = f"{optimized_prompt}, anime"
-            print(f"[IMG2IMG] Added 'anime' to prompt for model selection")
-        elif 'realistic' in prompt_lower and 'realistic' not in optimized_lower:
-            optimized_prompt = f"{optimized_prompt}, realistic"
-            print(f"[IMG2IMG] Added 'realistic' to prompt for model selection")
+            # Ensure style keywords from original prompt are preserved for model selection
+            prompt_lower = prompt.lower()
+            optimized_lower = optimized_prompt.lower()
+            if 'anime' in prompt_lower and 'anime' not in optimized_lower:
+                optimized_prompt = f"{optimized_prompt}, anime"
+                print(f"[IMG2IMG] Added 'anime' to prompt for model selection")
+            elif 'realistic' in prompt_lower and 'realistic' not in optimized_lower:
+                optimized_prompt = f"{optimized_prompt}, realistic"
+                print(f"[IMG2IMG] Added 'realistic' to prompt for model selection")
 
-        # Generate with AI-determined parameters
-        result_image = await self.image_service.generate_img2img(
-            optimized_prompt, image_bytes,
-            denoise=denoise,
-            negative_prompt=negative_prompt
-        )
-        if not result_image:
-            return {"type": "text", "content": "Failed to transform image. Please try again."}
+            # Generate with AI-determined parameters
+            result_image = await self.image_service.generate_img2img(
+                optimized_prompt, image_bytes,
+                denoise=denoise,
+                negative_prompt=negative_prompt
+            )
+            if not result_image:
+                return {"type": "text", "content": "Failed to transform image. Please try again."}
 
-        # Auto-log for training
-        try:
-            from regen_trainer import log_regen_request
-            log_regen_request(image_bytes, prompt, source_tags=original_tags)
-        except Exception as train_err:
-            print(f"[TRAINER] Log failed: {train_err}")
+            # Auto-log for training
+            try:
+                from regen_trainer import log_regen_request
+                log_regen_request(image_bytes, prompt, source_tags=original_tags)
+            except Exception as train_err:
+                print(f"[TRAINER] Log failed: {train_err}")
 
-        return {
-            "type": "generated_image",
-            "content": f"Transformed image: {prompt}",
-            "image": result_image,
-            "prompt": optimized_prompt  # Store optimized prompt for regen
-        }
+            return {
+                "type": "generated_image",
+                "content": f"Transformed image: {prompt}",
+                "image": result_image,
+                "prompt": optimized_prompt  # Store optimized prompt for regen
+            }
 
     async def _regen_command(self, last_prompt: Optional[str], stop_check: Optional[callable] = None) -> dict:
         if not last_prompt:
@@ -201,22 +209,24 @@ class CommandService:
         if stop_check and stop_check():
             return {"type": "text", "content": "Generation cancelled."}
 
-        # Prepare VRAM for image generation (swap models if needed)
-        prepare_vram_for_image(self.db)
+        # Use lock to prevent concurrent image generation
+        async with _image_generation_lock:
+            # Prepare VRAM for image generation (swap models if needed)
+            prepare_vram_for_image(self.db)
 
-        if stop_check and stop_check():
-            return {"type": "text", "content": "Generation cancelled."}
+            if stop_check and stop_check():
+                return {"type": "text", "content": "Generation cancelled."}
 
-        image_data = await self.image_service.regenerate_image(last_prompt)
-        if not image_data:
-            return {"type": "text", "content": "Failed to regenerate image. Please try again."}
+            image_data = await self.image_service.regenerate_image(last_prompt)
+            if not image_data:
+                return {"type": "text", "content": "Failed to regenerate image. Please try again."}
 
-        return {
-            "type": "generated_image",
-            "content": f"Regenerated image for: {last_prompt}",
-            "image": image_data,
-            "prompt": last_prompt
-        }
+            return {
+                "type": "generated_image",
+                "content": f"Regenerated image for: {last_prompt}",
+                "image": image_data,
+                "prompt": last_prompt
+            }
 
 
 def get_command_service(db: Session) -> CommandService:

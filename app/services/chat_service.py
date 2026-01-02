@@ -293,7 +293,8 @@ class ChatService:
 
             if "error" in result:
                 print(f"[IMG2IMG] Inference error: {result['error']}")
-                return user_prompt + ", vibrant colors, sharp, high quality", 1.0, "bad quality, blurry, distorted"
+                # Use safe fallback - 0.65 denoise preserves most of original image
+                return user_prompt + ", vibrant colors, sharp, high quality", 0.65, "bad quality, blurry, distorted, deformed"
 
             content = result["choices"][0]["message"]["content"]
             content = self.strip_thinking_tags(content)

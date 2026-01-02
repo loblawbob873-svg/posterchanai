@@ -725,6 +725,7 @@ class ChatHandler {
 
     handleCommandResponse(data) {
         this.hideTypingIndicator();
+        this.resetSendButton();
 
         let html = this.formatMessage(data.content || '');
 
@@ -785,6 +786,7 @@ class ChatHandler {
 
     handleError(message) {
         this.hideTypingIndicator();
+        this.resetSendButton();
 
         // Show error as assistant message
         this.addMessage('assistant', `Error: ${message}`);
