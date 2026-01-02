@@ -1125,6 +1125,50 @@ fieldset legend {
     color: var(--error);
 }
 
+/* Custom AI Settings inner containers */
+#customAiSettings,
+#customImageSettings {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+}
+#customAiSettings label,
+#customImageSettings label {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: -8px;
+}
+#customAiSettings input,
+#customAiSettings select,
+#customImageSettings input {
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 16px;
+}
+#customAiSettings input:focus,
+#customAiSettings select:focus,
+#customImageSettings input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+#apiKeySection {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+#apiKeySection label {
+    margin-bottom: 0;
+}
+#apiKeyHint {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-weight: normal;
+}
+
 /* Quick AI Toggle in User Menu */
 .ai-toggle-item {
     display: flex !important;

@@ -199,7 +199,7 @@ class ChatHandler {
         // Toggle custom AI settings visibility
         if (customAiEnabled && customAiSettings) {
             customAiEnabled.addEventListener('change', () => {
-                customAiSettings.style.display = customAiEnabled.checked ? 'block' : 'none';
+                customAiSettings.style.display = customAiEnabled.checked ? 'flex' : 'none';
             });
         }
 
@@ -230,7 +230,7 @@ class ChatHandler {
         // Toggle custom image settings visibility
         if (customImageEnabled && customImageSettings) {
             customImageEnabled.addEventListener('change', () => {
-                customImageSettings.style.display = customImageEnabled.checked ? 'block' : 'none';
+                customImageSettings.style.display = customImageEnabled.checked ? 'flex' : 'none';
             });
         }
 
@@ -294,7 +294,7 @@ class ChatHandler {
                         // Load custom AI settings
                         if (customAiEnabled) {
                             customAiEnabled.checked = data.custom_ai_enabled || false;
-                            customAiSettings.style.display = data.custom_ai_enabled ? 'block' : 'none';
+                            customAiSettings.style.display = data.custom_ai_enabled ? 'flex' : 'none';
                         }
                         if (customAiType) customAiType.value = data.custom_ai_type || 'ollama';
                         if (customAiUrl) customAiUrl.value = data.custom_ai_url || '';
@@ -306,7 +306,7 @@ class ChatHandler {
                         // Load custom image settings
                         if (customImageEnabled) {
                             customImageEnabled.checked = data.custom_image_enabled || false;
-                            customImageSettings.style.display = data.custom_image_enabled ? 'block' : 'none';
+                            customImageSettings.style.display = data.custom_image_enabled ? 'flex' : 'none';
                         }
                         if (customImageUrl) customImageUrl.value = data.custom_image_url || '';
                     }
