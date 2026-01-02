@@ -100,16 +100,16 @@ def _load_model():
         except Exception:
             _model = ort.InferenceSession(model_file, providers=['CPUExecutionProvider'])
 
-        # Load tags
+        # Load tags - CSV format: tag_id,name,category,count
         _tags = []
         with open(tags_file, 'r') as f:
             reader = csv.reader(f)
             next(reader)  # Skip header
             for row in reader:
-                if len(row) >= 2:
+                if len(row) >= 3:
                     _tags.append({
-                        'name': row[0],
-                        'category': int(row[1]) if len(row) > 1 else 0
+                        'name': row[1],  # name is second column
+                        'category': int(row[2])  # category is third column
                     })
 
         logger.info(f"WD14 model loaded with {len(_tags)} tags")
