@@ -73,7 +73,6 @@ def load_img2img_prompt():
 
     return "\n".join(lines)
 
-
 class ChatService:
     def __init__(self, db: Session, user: Optional["User"] = None):
         self.db = db
@@ -419,8 +418,6 @@ class ChatService:
             print(f"[IMG2IMG] Prompt modification failed: {e}")
             return user_prompt + ", vibrant colors, sharp, high quality", 1.0, "bad quality, blurry, distorted"
 
-
-# Old hardcoded training data removed - now loaded from /home/verita84/posterchan/img2img_training.json
 
 
 def get_chat_service(db: Session) -> ChatService:

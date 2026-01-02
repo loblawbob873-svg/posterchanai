@@ -489,7 +489,57 @@ STUBCODE
 
         nvidia)
             echo "  Building with CUDA backend..."
-            export CMAKE_ARGS="-DGGML_CUDA=ON"
+
+            # Check GCC version - CUDA has strict GCC version requirements
+            GCC_MAJOR=$(gcc -dumpversion | cut -d. -f1)
+            CUDA_HOST_COMPILER=""
+
+            if [ "$GCC_MAJOR" -gt 14 ]; then
+                print_warning "GCC $GCC_MAJOR detected, but CUDA requires GCC 14 or earlier"
+
+                # Look for compatible GCC versions (prefer newest compatible)
+                for ver in 14 13 12 11; do
+                    if [ -x "/usr/bin/gcc-$ver" ] && [ -x "/usr/bin/g++-$ver" ]; then
+                        CUDA_HOST_COMPILER="/usr/bin/gcc-$ver"
+                        print_success "Found compatible compiler: gcc-$ver"
+                        break
+                    fi
+                done
+
+                if [ -z "$CUDA_HOST_COMPILER" ]; then
+                    print_error "No compatible GCC found (need GCC 14 or earlier)"
+                    echo ""
+                    echo "  Please install GCC 14:"
+                    case "$DISTRO" in
+                        gentoo)
+                            echo "    emerge -av sys-devel/gcc:14"
+                            ;;
+                        arch)
+                            echo "    pacman -S gcc13  # or install gcc14 from AUR"
+                            ;;
+                        debian)
+                            echo "    apt install gcc-14 g++-14"
+                            ;;
+                        fedora)
+                            echo "    dnf install gcc g++  # ensure version <= 14"
+                            ;;
+                        *)
+                            echo "    Install GCC 14 or earlier for your distribution"
+                            ;;
+                    esac
+                    exit 1
+                fi
+
+                # Set environment for CUDA compilation with older GCC
+                export CC="$CUDA_HOST_COMPILER"
+                export CXX="${CUDA_HOST_COMPILER/gcc/g++}"
+                export CUDAHOSTCXX="$CUDA_HOST_COMPILER"
+                export CMAKE_ARGS="-DGGML_CUDA=ON -DCMAKE_CUDA_HOST_COMPILER=$CUDA_HOST_COMPILER"
+            else
+                export CMAKE_ARGS="-DGGML_CUDA=ON"
+            fi
+
+            echo "  This may take 5-10 minutes..."
             pip install llama-cpp-python --force-reinstall --no-cache-dir -q
             ;;
 

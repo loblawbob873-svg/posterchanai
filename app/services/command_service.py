@@ -147,23 +147,27 @@ class CommandService:
             if not mask_bytes:
                 return {"type": "text", "content": "Could not generate mask."}
 
-            # Just use prompt directly + detect anime style
+            # Detect anime style from tags
             from app.services.wd14_service import tag_image
             tags = tag_image(image_bytes, threshold=0.35) or ""
             is_anime = 'anime' in prompt.lower() or 'anime' in tags.lower()
             style = "anime" if is_anime else "realistic"
 
+            # Boost nude-related keywords for better results
+            boosted_prompt = prompt
+            if any(kw in prompt.lower() for kw in ['nude', 'naked', 'topless']):
+                boosted_prompt = f"(nude:1.5), (bare skin:1.3), (naked body:1.2), {prompt}"
+
             result = await self.image_service.generate_inpaint(
-                prompt=f"{prompt}, {style}, high quality",
+                prompt=f"{boosted_prompt}, {style}, high quality",
                 image_bytes=image_bytes,
                 mask_bytes=mask_bytes,
-                denoise=0.85,
-                negative_prompt=f"{'realistic' if is_anime else 'anime'}, deformed, bad anatomy"
+                denoise=0.95,
+                negative_prompt=f"clothing, clothes, shirt, dress, {'realistic' if is_anime else 'anime'}, deformed, bad anatomy"
             )
 
             if not result:
                 return {"type": "text", "content": "Inpaint failed."}
-
             return {"type": "generated_image", "content": f"Inpainted: {prompt}", "image": result, "prompt": prompt}
 
     async def _regen_command(self, last_prompt: Optional[str], stop_check: Optional[callable] = None) -> dict:

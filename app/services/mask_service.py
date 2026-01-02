@@ -10,13 +10,13 @@ from PIL import Image, ImageDraw, ImageFilter
 logger = logging.getLogger("mask_service")
 
 
-def generate_body_mask(image_bytes: bytes, preserve_face: bool = True) -> Optional[bytes]:
+def generate_body_mask(image_bytes: bytes, preserve_face: bool = True, mask_type: str = "chest") -> Optional[bytes]:
     """
-    Generate a mask for the body area of a person image.
-    White (255) = area to inpaint (body/clothing)
-    Black (0) = area to preserve (face/background)
+    Generate a mask for specific body areas.
+    White (255) = area to inpaint
+    Black (0) = area to preserve
 
-    Simple approach: assumes person is centered, masks middle body area.
+    mask_type: "chest" (default), "lower", "hands", "full"
     """
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -26,25 +26,22 @@ def generate_body_mask(image_bytes: bytes, preserve_face: bool = True) -> Option
         mask = Image.new("L", (w, h), 0)
         draw = ImageDraw.Draw(mask)
 
-        # Simple heuristic: body is roughly center 60% width, from 20% to 90% height
-        # Face is top 25% of image typically
+        if mask_type == "chest":
+            # Elliptical mask for chest/torso (nudification)
+            draw.ellipse([int(w*0.25), int(h*0.32), int(w*0.75), int(h*0.78)], fill=255)
+        elif mask_type == "lower":
+            # Lower body area (for dildo, etc.)
+            draw.ellipse([int(w*0.20), int(h*0.55), int(w*0.80), int(h*0.95)], fill=255)
+        elif mask_type == "hands":
+            # Hand areas on sides
+            draw.ellipse([int(w*0.0), int(h*0.35), int(w*0.30), int(h*0.70)], fill=255)
+            draw.ellipse([int(w*0.70), int(h*0.35), int(w*1.0), int(h*0.70)], fill=255)
+        elif mask_type == "full":
+            # Full body except face
+            draw.rectangle([int(w*0.10), int(h*0.30), int(w*0.90), int(h*0.95)], fill=255)
 
-        body_left = int(w * 0.15)
-        body_right = int(w * 0.85)
-
-        if preserve_face:
-            # Start below face area (roughly top 30% is head)
-            body_top = int(h * 0.28)
-        else:
-            body_top = int(h * 0.1)
-
-        body_bottom = int(h * 0.95)
-
-        # Draw white rectangle for body area
-        draw.rectangle([body_left, body_top, body_right, body_bottom], fill=255)
-
-        # Feather the edges for smoother blending
-        mask = mask.filter(ImageFilter.GaussianBlur(radius=10))
+        # Heavy blur for seamless blending
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=30))
 
         # Convert back to bytes
         mask_bytes = io.BytesIO()
@@ -115,15 +112,24 @@ def generate_background_mask(image_bytes: bytes) -> Optional[bytes]:
 def detect_mask_type_from_prompt(prompt: str) -> str:
     """
     Detect what type of mask is needed based on the prompt.
-    Returns: "body", "background", "none", or "custom"
+    Returns: "chest", "lower", "hands", "full", "background", or "none"
     """
     prompt_lower = prompt.lower()
 
-    # Nude/clothing removal keywords
-    nude_keywords = ["nude", "naked", "undress", "remove clothes", "no clothes",
-                     "strip", "nudify", "topless", "bottomless"]
+    # Nude/clothing removal keywords -> chest mask
+    nude_keywords = ["nude", "naked", "undress", "topless", "breasts", "nipples", "bare"]
     if any(kw in prompt_lower for kw in nude_keywords):
-        return "body"
+        return "chest"
+
+    # Lower body keywords -> lower mask
+    lower_keywords = ["dildo", "vibrator", "pussy", "ass", "butt", "bottomless", "panties", "penis", "cock"]
+    if any(kw in prompt_lower for kw in lower_keywords):
+        return "lower"
+
+    # Holding/hand object keywords -> hands mask
+    hand_keywords = ["holding", "carry", "grab", "hand", "can", "bottle", "phone", "weapon", "sword", "gun"]
+    if any(kw in prompt_lower for kw in hand_keywords):
+        return "hands"
 
     # Background change keywords
     bg_keywords = ["background", "scene", "location", "setting", "environment",
@@ -131,7 +137,8 @@ def detect_mask_type_from_prompt(prompt: str) -> str:
     if any(kw in prompt_lower for kw in bg_keywords):
         return "background"
 
-    return "none"
+    # Default to full body for general changes
+    return "full"
 
 
 def auto_generate_mask(image_bytes: bytes, prompt: str, tags: str = None) -> Optional[bytes]:
