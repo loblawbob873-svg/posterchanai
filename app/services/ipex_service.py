@@ -79,10 +79,23 @@ class IPEXService:
         # Context and generation settings
         self.num_ctx = int(settings.get("ollama_num_ctx", "4096"))
         self.num_predict = int(settings.get("ollama_num_predict", "2048"))
-        self.n_batch = int(settings.get("llm_n_batch", "128"))  # Batch size for prompt processing
+        self.n_batch = int(settings.get("llm_n_batch", "512"))  # Batch size for prompt processing
         self.n_gpu_layers = int(settings.get("llm_gpu_layers", "-1"))  # -1 = all layers on GPU
-        self.n_threads = int(settings.get("llm_n_threads", "4"))  # CPU threads for inference
         self.max_concurrent = int(settings.get("llm_max_concurrent", "1"))  # Max concurrent inferences
+
+        # CPU settings - auto-detect threads if set to 0
+        n_threads_setting = int(settings.get("llm_n_threads", "0"))
+        if n_threads_setting <= 0:
+            cpu_count = os.cpu_count() or 4
+            self.n_threads = max(1, cpu_count - 2)  # Leave 2 cores for system
+            logger.info(f"Auto-detected CPU threads: {self.n_threads} (from {cpu_count} cores)")
+        else:
+            self.n_threads = n_threads_setting
+
+        # CPU optimization settings
+        self.cpu_mode = settings.get("llm_cpu_mode", "false").lower() == "true"
+        self.use_mmap = settings.get("llm_use_mmap", "true").lower() == "true"
+        self.use_mlock = settings.get("llm_use_mlock", "false").lower() == "true"
 
         # Sampling settings
         self.temperature = float(settings.get("ollama_temperature", "0.7"))
@@ -116,8 +129,12 @@ class IPEXService:
                 self._model = None
                 self._tokenizer = None
 
+            # Determine GPU layers - force 0 if CPU mode enabled
+            gpu_layers = 0 if self.cpu_mode else self.n_gpu_layers
+
             logger.info(f"Loading model with IPEX-LLM: {self.model_path}")
-            logger.info(f"  ctx: {self.num_ctx}, batch: {self.n_batch}, gpu_layers: {self.n_gpu_layers}, threads: {self.n_threads}")
+            logger.info(f"  ctx: {self.num_ctx}, batch: {self.n_batch}, gpu_layers: {gpu_layers}, threads: {self.n_threads}")
+            logger.info(f"  CPU mode: {self.cpu_mode}, mmap: {self.use_mmap}, mlock: {self.use_mlock}")
 
             try:
                 # Check if GGUF model - use llama.cpp backend
@@ -133,10 +150,12 @@ class IPEXService:
                     self._model = Llama(
                         model_path=self.model_path,
                         n_ctx=self.num_ctx,
-                        n_gpu_layers=self.n_gpu_layers,  # Configurable via admin (-1 = all)
-                        n_batch=self.n_batch,  # Configurable via admin
-                        n_threads=self.n_threads,  # Configurable via admin
-                        n_threads_batch=self.n_threads,  # Match n_threads for batch processing
+                        n_gpu_layers=gpu_layers,  # Force 0 if CPU mode
+                        n_batch=self.n_batch,
+                        n_threads=self.n_threads,
+                        n_threads_batch=self.n_threads,
+                        use_mmap=self.use_mmap,
+                        use_mlock=self.use_mlock,
                         verbose=False,
                     )
                     self._tokenizer = None  # llama.cpp handles tokenization

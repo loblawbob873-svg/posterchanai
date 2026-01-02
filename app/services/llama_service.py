@@ -69,8 +69,23 @@ class LlamaService:
 
         # GPU settings
         self.n_gpu_layers = int(settings.get("llm_gpu_layers", "-1"))  # -1 = all layers on GPU
-        self.n_threads = int(settings.get("llm_n_threads", "4"))
         self.max_concurrent = int(settings.get("llm_max_concurrent", "1"))  # Max concurrent inferences
+
+        # CPU settings - auto-detect threads if set to 0
+        n_threads_setting = int(settings.get("llm_n_threads", "0"))
+        if n_threads_setting <= 0:
+            import os
+            cpu_count = os.cpu_count() or 4
+            self.n_threads = max(1, cpu_count - 2)  # Leave 2 cores for system
+            logger.info(f"Auto-detected CPU threads: {self.n_threads} (from {cpu_count} cores)")
+        else:
+            self.n_threads = n_threads_setting
+
+        # CPU optimization settings
+        self.cpu_mode = settings.get("llm_cpu_mode", "false").lower() == "true"
+        self.n_batch = int(settings.get("llm_n_batch", "512"))
+        self.use_mmap = settings.get("llm_use_mmap", "true").lower() == "true"
+        self.use_mlock = settings.get("llm_use_mlock", "false").lower() == "true"
 
         # Sampling settings
         self.temperature = float(settings.get("ollama_temperature", "0.7"))
@@ -114,12 +129,20 @@ class LlamaService:
             safe_ctx = min(self.num_ctx, 8192)
             logger.info(f"  Using context size: {safe_ctx}")
 
+            # Determine GPU layers - force 0 if CPU mode enabled
+            gpu_layers = 0 if self.cpu_mode else self.n_gpu_layers
+            logger.info(f"  GPU layers: {gpu_layers} (CPU mode: {self.cpu_mode})")
+            logger.info(f"  Batch size: {self.n_batch}, mmap: {self.use_mmap}, mlock: {self.use_mlock}")
+
             self._model = Llama(
                 model_path=self.model_path,
                 n_ctx=safe_ctx,
-                n_gpu_layers=0,  # CPU only - ROCm build not working yet
+                n_gpu_layers=gpu_layers,
                 n_threads=self.n_threads,
-                n_batch=512,
+                n_threads_batch=self.n_threads,  # Use same threads for batch processing
+                n_batch=self.n_batch,
+                use_mmap=self.use_mmap,
+                use_mlock=self.use_mlock,
                 flash_attn=False,
                 verbose=False,
             )

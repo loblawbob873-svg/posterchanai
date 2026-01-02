@@ -105,12 +105,16 @@ class SettingsResponse(BaseModel):
     tts_pitch: str = "+10Hz"
     upload_path: str = "/var/lib/posterchanai"
     # LLM Backend settings
-    llm_backend: str = "native"  # "native" or "ollama"
+    llm_backend: str = "native"  # "native", "ipex", or "ollama"
     llm_model_path: str = ""
-    llm_gpu_layers: str = "-1"
-    llm_n_threads: str = "4"
-    llm_n_batch: str = "128"  # Batch size for prompt processing (lower = less VRAM)
+    llm_gpu_layers: str = "-1"  # -1 = all layers on GPU
+    llm_n_threads: str = "0"  # 0 = auto-detect (cpu_count - 2)
+    llm_n_batch: str = "512"  # Batch size for prompt processing
     llm_max_concurrent: str = "1"  # Max concurrent inference requests
+    # CPU optimization settings
+    llm_cpu_mode: str = "false"  # Force CPU-only (n_gpu_layers=0)
+    llm_use_mmap: str = "true"  # Memory-map model file
+    llm_use_mlock: str = "false"  # Lock model in RAM
     # Ollama settings (also used for native backend sampling parameters)
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "richardyoung/qwen3-14b-abliterated:Q5_K_M"
