@@ -94,11 +94,41 @@ class ImageService:
             }
         }
 
-    async def generate_image(self, prompt: str) -> Optional[str]:
+    async def generate_image(self, prompt: str, negative_prompt: str = "", **kwargs) -> Optional[str]:
         """Generate image from prompt, returns base64 encoded image or None"""
         if not self.comfyui_url:
             return None
 
+        # Try posterchanai REST API first (simpler, faster)
+        result = await self._try_posterchanai_api(prompt, negative_prompt)
+        if result:
+            return result
+
+        # Fall back to ComfyUI workflow API
+        return await self._try_comfyui_workflow(prompt)
+
+    async def _try_posterchanai_api(self, prompt: str, negative_prompt: str = "") -> Optional[str]:
+        """Try posterchanai's simple REST API"""
+        try:
+            api_url = self.comfyui_url.rstrip('/') + '/api/generate-image'
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    api_url,
+                    json={"prompt": prompt, "negative_prompt": negative_prompt}
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("image"):
+                        return data["image"]
+                    if data.get("error"):
+                        print(f"Posterchanai error: {data['error']}")
+                return None
+        except Exception as e:
+            # Not a posterchanai instance, will try ComfyUI
+            return None
+
+    async def _try_comfyui_workflow(self, prompt: str) -> Optional[str]:
+        """Try ComfyUI workflow API"""
         # Select model based on prompt
         model = self.anime_model if self._is_anime_prompt(prompt) else self.default_model
         if not model:

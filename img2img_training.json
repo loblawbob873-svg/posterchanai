@@ -4,6 +4,7 @@
     "hair_style": 0.85,
     "color_change": 0.8,
     "clothing_removal": 0.8,
+    "clothing_change": 0.75,
     "background_scene": 0.55,
     "object_change": 0.7,
     "art_style": 0.65,
@@ -17,7 +18,9 @@
     "4. Skin color changes: weight 2.0, add synonyms (dark skin, brown skin for dark; pale skin, white skin for light)",
     "5. Small breasts: weight 2.0, DENOISE 0.5, add to NEGATIVE: large breasts, huge breasts, cleavage",
     "6. Big breasts: weight 2.0, DENOISE 0.5, add cleavage, NEGATIVE: small breasts, flat chest",
-    "7. CRITICAL - Naked/nude: DENOISE 0.65, DELETE all clothing from TAGS, ADD (completely nude:2.0), (nude:2.0), (nipples:1.5), (navel:1.5), weight animal features HIGH like (fox ears:2.0), NEGATIVE must have: clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, holes, torn, upside down",
+    "7. Naked/nude: DENOISE 0.75, DELETE all clothing from TAGS, ADD (completely nude:2.5), (nude:2.5), (bare skin:2.5), weight animal features HIGH like (fox ears:2.5), NEGATIVE must have: clothing, clothed, sheet, blanket, towel, fabric, cloth",
+    "7b. CLOTHING CHANGE: When user asks for specific clothing (wedding dress, swimsuit, bikini, maid outfit, etc), DENOISE 0.65, DELETE conflicting clothing tags from TAGS (black dress, casual dress, etc), ADD new clothing with weight 2.0, put conflicting clothing in NEGATIVE",
+    "7c. CRITICAL: When changing clothing, DELETE conflicting color/style tags (e.g., black dress when changing to wedding dress) from TAGS and put in NEGATIVE. Keep compatible tags (white dress is fine for wedding dress)",
     "8. Keep original tags for people count (2girls, 3girls, etc)",
     "8b. PRESERVE animal features: fox ears, fox tail, cat ears, cat tail, bunny ears, horse ears, wolf ears, animal ear fluff, etc. NEVER remove these",
     "9. Always end TAGS with: vibrant colors, sharp, high quality",
@@ -31,6 +34,13 @@
     "15. SCENE CHANGES: Use denoise 0.55, weight scene tags high (2.0), put original location in NEGATIVE"
   ],
   "examples": [
+    {
+      "tags": "1girl, long hair, yellow eyes, black dress, braid, red hair, from behind, underwear, panties",
+      "change": "wedding dress anime",
+      "denoise": 0.65,
+      "output_tags": "(wedding dress:2.0), (white dress:2.0), (bridal:1.5), (anime:2.0), (anime style:2.0), wedding dress, white dress, anime, 1girl, long hair, yellow eyes, braid, red hair, from behind, vibrant colors, sharp, high quality",
+      "negative": "black dress, dress, underwear, panties, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry"
+    },
     {
       "tags": "1girl, blonde hair, blue eyes",
       "change": "red hair",
@@ -209,7 +219,7 @@
     {
       "tags": "1girl, elf, china dress, green eyes, ponytail",
       "change": "brown skin black hair big breasts",
-      "denoise": 0.75,
+      "denoise": 0.65,
       "output_tags": "(dark skin:2.0), (brown skin:2.0), (black hair:2.0), (large breasts:2.0), dark skin, black hair, large breasts, 1girl, elf, china dress, green eyes, ponytail, vibrant colors, sharp, high quality",
       "negative": "pale skin, white skin, small breasts, flat chest, deformed, extra limbs, bad anatomy, blurry"
     },
@@ -230,28 +240,28 @@
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, gym uniform, anime",
       "change": "realistic",
-      "denoise": 0.75,
+      "denoise": 0.65,
       "output_tags": "(realistic:2.0), (photorealistic:2.0), (real photo:1.5), realistic, photorealistic, 3girls, brown hair, black hair, pink hair, horse ears, gym uniform, vibrant colors, sharp, high quality",
       "negative": "anime, cartoon, drawing, illustration, 2d, cel shaded, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "3girls, brown hair, black hair, pink hair, gym uniform, realistic, photo",
       "change": "anime",
-      "denoise": 0.75,
+      "denoise": 0.65,
       "output_tags": "(anime:2.0), (anime style:2.0), (illustration:1.5), anime, 2d, cel shaded, 3girls, brown hair, black hair, pink hair, gym uniform, vibrant colors, sharp, high quality",
       "negative": "realistic, photorealistic, real photo, 3d, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "1girl, solo, long hair, brown hair, brown eyes, smile, kitchen, indoors, realistic",
       "change": "anime",
-      "denoise": 0.75,
+      "denoise": 0.65,
       "output_tags": "(anime:2.0), (anime style:2.0), (illustration:1.5), anime, 2d, cel shaded, 1girl, solo, long hair, brown hair, brown eyes, smile, kitchen, indoors, vibrant colors, sharp, high quality",
       "negative": "realistic, photorealistic, real photo, 3d, photograph, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "1girl, solo, long hair, brown hair, large breasts, smile, kitchen, indoors, realistic",
       "change": "small breasts anime",
-      "denoise": 0.75,
+      "denoise": 0.65,
       "output_tags": "(small breasts:2.0), (flat chest:1.5), (anime:2.0), (anime style:2.0), small breasts, anime, 2d, 1girl, solo, long hair, brown hair, smile, kitchen, indoors, vibrant colors, sharp, high quality",
       "negative": "large breasts, huge breasts, cleavage, realistic, photorealistic, real photo, 3d, deformed, extra limbs, bad anatomy, blurry"
     },
@@ -273,8 +283,8 @@
       "tags": "1girl, solo, long hair, blonde hair, yellow eyes, fox ears, fox tail, school uniform, blazer, blue jacket, white shirt, pleated skirt, blue skirt, bowtie, red bow, pantyhose, standing, indoors",
       "change": "nude anime",
       "denoise": 0.65,
-      "output_tags": "(completely nude:2.0), (nude:2.0), (nipples:1.5), (navel:1.5), nude, anime style, 1girl, solo, long hair, blonde hair, (yellow eyes:1.5), (fox ears:2.0), (fox tail:2.0), standing, indoors, vibrant colors, sharp, high quality",
-      "negative": "school uniform, blazer, jacket, shirt, skirt, bowtie, pantyhose, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, censored, deformed, extra limbs, bad anatomy, blurry"
+      "output_tags": "(completely nude:2.5), (nude:2.5), (bare skin:2.5), nude, anime style, 1girl, solo, long hair, blonde hair, (yellow eyes:2.0), (fox ears:2.5), (fox tail:2.5), standing, indoors, vibrant colors, sharp, high quality",
+      "negative": "school uniform, blazer, jacket, shirt, skirt, bowtie, pantyhose, clothing, clothed, sheet, blanket, towel, fabric, cloth, censored, deformed, extra limbs, bad anatomy, blurry"
     },
     {
       "tags": "3girls, brown hair, black hair, pink hair, horse ears, horse tail, gym uniform, buruma, shirt",
@@ -282,6 +292,41 @@
       "denoise": 0.7,
       "output_tags": "(completely nude:2.5), (fully naked:2.5), (nipples:2.0), (navel:2.0), (realistic:1.5), nude, realistic, 3girls, brown hair, black hair, pink hair, horse ears, horse tail, sweat, vibrant colors, sharp, high quality",
       "negative": "gym uniform, buruma, shirt, clothing, clothed, covered, sheet, blanket, towel, fabric, cloth, see-through, transparent, anime, cartoon, drawing, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1girl, long hair, red hair, yellow eyes, black dress, braid, looking back, from behind",
+      "change": "wedding dress",
+      "denoise": 0.65,
+      "output_tags": "(wedding dress:2.0), (white dress:2.0), (bridal:1.5), wedding dress, white dress, 1girl, long hair, red hair, yellow eyes, braid, looking back, from behind, vibrant colors, sharp, high quality",
+      "negative": "black dress, dark dress, casual dress, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1girl, brown hair, school uniform, blazer, skirt, indoors",
+      "change": "wedding dress",
+      "denoise": 0.65,
+      "output_tags": "(wedding dress:2.0), (white dress:2.0), (bridal:1.5), wedding dress, white dress, 1girl, brown hair, indoors, vibrant colors, sharp, high quality",
+      "negative": "school uniform, blazer, skirt, uniform, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1girl, blonde hair, casual clothes, jeans, t-shirt, outdoors",
+      "change": "maid outfit",
+      "denoise": 0.65,
+      "output_tags": "(maid:2.0), (maid outfit:2.0), (maid headdress:1.5), maid, maid outfit, apron, 1girl, blonde hair, outdoors, vibrant colors, sharp, high quality",
+      "negative": "casual clothes, jeans, t-shirt, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1girl, pink hair, dress, formal, evening gown",
+      "change": "swimsuit",
+      "denoise": 0.65,
+      "output_tags": "(swimsuit:2.0), (bikini:2.0), swimsuit, bikini, 1girl, pink hair, vibrant colors, sharp, high quality",
+      "negative": "dress, formal, evening gown, clothing, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1girl, red hair, yellow eyes, black dress, braid, from behind, adjusting clothes",
+      "change": "wedding dress anime",
+      "denoise": 0.65,
+      "output_tags": "(wedding dress:2.0), (white dress:2.0), (bridal:1.5), (anime:2.0), (anime style:2.0), wedding dress, white dress, anime, 1girl, red hair, yellow eyes, braid, from behind, vibrant colors, sharp, high quality",
+      "negative": "black dress, dark dress, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry"
     }
   ],
   "txt2img_example": {
