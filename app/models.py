@@ -15,6 +15,18 @@ class User(Base):
     email_verified = Column(Boolean, default=False)
     notification_email = Column(String(255), nullable=True)
     avatar = Column(String(255), nullable=True)  # Path to avatar image
+
+    # Custom LLM service settings
+    custom_ai_enabled = Column(Boolean, default=False)
+    custom_ai_type = Column(String(50), nullable=True)  # "ollama" or "openai"
+    custom_ai_url = Column(String(500), nullable=True)
+    custom_ai_model = Column(String(200), nullable=True)
+    custom_ai_api_key = Column(String(500), nullable=True)
+
+    # Custom Image Generation service settings
+    custom_image_enabled = Column(Boolean, default=False)
+    custom_image_url = Column(String(500), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")

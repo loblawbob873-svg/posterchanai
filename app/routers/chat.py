@@ -321,8 +321,8 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             except Exception:
                 pass
 
-        chat_service = ChatService(db)
-        command_service = CommandService(db)
+        chat_service = ChatService(db, user=user)
+        command_service = CommandService(db, user=user)
         storage_service = StorageService(db)
 
         try:

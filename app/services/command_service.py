@@ -1,10 +1,13 @@
 import base64
 import asyncio
-from typing import Optional, Tuple
+from typing import Optional, Tuple, TYPE_CHECKING
 from sqlalchemy.orm import Session
 from app.services.search_service import SearchService
-from app.services.image_factory import get_image_backend, prepare_vram_for_image
+from app.services.image_factory import get_image_backend, get_image_backend_for_user, prepare_vram_for_image
 from app.services.chat_service import ChatService
+
+if TYPE_CHECKING:
+    from app.models import User
 
 # Global lock to prevent concurrent image generation (prevents WD14/LLM response mixing)
 _image_generation_lock = asyncio.Lock()
@@ -19,11 +22,13 @@ class CommandService:
         "regen": "Regenerate the last image with a new seed",
     }
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user: Optional["User"] = None):
         self.db = db
+        self.user = user
         self.search_service = SearchService(db)
-        self.image_service = get_image_backend(db)
-        self.chat_service = ChatService(db)
+        # Use user's custom ComfyUI if enabled, otherwise use default
+        self.image_service = get_image_backend_for_user(db, user)
+        self.chat_service = ChatService(db, user=user)
 
     def parse_command(self, message: str) -> Tuple[Optional[str], str]:
         """Parse message for commands, return (command, argument)"""

@@ -7,7 +7,10 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, Setting, APIKey, VerificationToken
-from app.schemas import UserLogin, UserResponse, Token, UserRegister, APIKeyCreate, APIKeyResponse, APIKeyListItem
+from app.schemas import (
+    UserLogin, UserResponse, Token, UserRegister, APIKeyCreate, APIKeyResponse, APIKeyListItem,
+    UserSettingsUpdate, UserSettingsResponse, TestConnectionRequest, TestConnectionResponse
+)
 from app.auth import verify_password, create_access_token, get_current_user, get_password_hash
 from app.services.email_service import EmailService
 from app.services.storage_service import StorageService
@@ -367,36 +370,64 @@ def toggle_api_key(
 
 # ============== User Settings ==============
 
-@router.get("/settings")
+@router.get("/settings", response_model=UserSettingsResponse)
 def get_user_settings(current_user: User = Depends(get_current_user)):
-    """Get current user's settings"""
+    """Get current user's settings including custom AI service configuration"""
     avatar_url = f"/api/auth/avatar/{current_user.username}" if current_user.avatar else None
-    return {
-        "notification_email": current_user.notification_email,
-        "avatar": avatar_url
-    }
+    return UserSettingsResponse(
+        notification_email=current_user.notification_email,
+        avatar=avatar_url,
+        # Custom LLM settings
+        custom_ai_enabled=current_user.custom_ai_enabled or False,
+        custom_ai_type=current_user.custom_ai_type,
+        custom_ai_url=current_user.custom_ai_url,
+        custom_ai_model=current_user.custom_ai_model,
+        custom_ai_has_api_key=bool(current_user.custom_ai_api_key),
+        # Custom Image Generation settings
+        custom_image_enabled=current_user.custom_image_enabled or False,
+        custom_image_url=current_user.custom_image_url
+    )
 
 
 @router.put("/settings")
 def update_user_settings(
-    settings: dict,
+    settings: UserSettingsUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update current user's settings"""
-    notification_email = settings.get("notification_email", "").strip()
+    """Update current user's settings including custom AI service configuration"""
+    # Update notification email if provided
+    if settings.notification_email is not None:
+        notification_email = settings.notification_email.strip()
+        if notification_email and "@" not in notification_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid email address"
+            )
+        current_user.notification_email = notification_email if notification_email else None
 
-    # Basic email validation if provided
-    if notification_email and "@" not in notification_email:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid email address"
-        )
+    # Update custom LLM settings
+    if settings.custom_ai_enabled is not None:
+        current_user.custom_ai_enabled = settings.custom_ai_enabled
+    if settings.custom_ai_type is not None:
+        current_user.custom_ai_type = settings.custom_ai_type
+    if settings.custom_ai_url is not None:
+        current_user.custom_ai_url = settings.custom_ai_url.strip() if settings.custom_ai_url else None
+    if settings.custom_ai_model is not None:
+        current_user.custom_ai_model = settings.custom_ai_model.strip() if settings.custom_ai_model else None
+    if settings.custom_ai_api_key is not None:
+        # Allow clearing the API key with empty string
+        current_user.custom_ai_api_key = settings.custom_ai_api_key if settings.custom_ai_api_key else None
 
-    current_user.notification_email = notification_email if notification_email else None
+    # Update custom Image Generation settings
+    if settings.custom_image_enabled is not None:
+        current_user.custom_image_enabled = settings.custom_image_enabled
+    if settings.custom_image_url is not None:
+        current_user.custom_image_url = settings.custom_image_url.strip() if settings.custom_image_url else None
+
     db.commit()
 
-    return {"message": "Settings updated", "notification_email": current_user.notification_email}
+    return {"message": "Settings updated"}
 
 
 @router.post("/avatar")
@@ -473,3 +504,126 @@ def get_avatar(username: str, db: Session = Depends(get_db)):
     content_type = content_types.get(ext, "image/png")
 
     return FileResponse(avatar_path, media_type=content_type)
+
+
+# ============== Custom AI Service Testing ==============
+
+@router.post("/test-custom-ai", response_model=TestConnectionResponse)
+async def test_custom_ai_connection(
+    request: TestConnectionRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Test connection to a custom AI service (Ollama or OpenAI-compatible)"""
+    import httpx
+
+    url = request.url.rstrip('/')
+    models = []
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            if request.api_type == "ollama":
+                # Test Ollama API - list models
+                response = await client.get(f"{url}/api/tags")
+                if response.status_code == 200:
+                    data = response.json()
+                    models = [m.get("name", m.get("model", "unknown")) for m in data.get("models", [])]
+                    return TestConnectionResponse(
+                        success=True,
+                        message=f"Connected to Ollama. Found {len(models)} model(s).",
+                        models=models
+                    )
+                else:
+                    return TestConnectionResponse(
+                        success=False,
+                        message=f"Ollama returned status {response.status_code}"
+                    )
+            else:
+                # Test OpenAI-compatible API (Open-WebUI, Posterchanai)
+                headers = {}
+                if request.api_key:
+                    headers["Authorization"] = f"Bearer {request.api_key}"
+
+                response = await client.get(f"{url}/v1/models", headers=headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    models = [m.get("id", "unknown") for m in data.get("data", [])]
+                    return TestConnectionResponse(
+                        success=True,
+                        message=f"Connected to OpenAI-compatible API. Found {len(models)} model(s).",
+                        models=models
+                    )
+                elif response.status_code == 401:
+                    return TestConnectionResponse(
+                        success=False,
+                        message="Authentication failed. Check your API key."
+                    )
+                else:
+                    return TestConnectionResponse(
+                        success=False,
+                        message=f"API returned status {response.status_code}"
+                    )
+
+    except httpx.ConnectError:
+        return TestConnectionResponse(
+            success=False,
+            message=f"Could not connect to {url}. Check the URL and ensure the service is running."
+        )
+    except httpx.TimeoutException:
+        return TestConnectionResponse(
+            success=False,
+            message="Connection timed out. The service may be slow or unreachable."
+        )
+    except Exception as e:
+        return TestConnectionResponse(
+            success=False,
+            message=f"Error: {str(e)}"
+        )
+
+
+@router.post("/test-custom-image", response_model=TestConnectionResponse)
+async def test_custom_image_connection(
+    url: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Test connection to a custom ComfyUI instance"""
+    import httpx
+
+    url = url.rstrip('/')
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Test ComfyUI API - get system stats
+            response = await client.get(f"{url}/system_stats")
+            if response.status_code == 200:
+                return TestConnectionResponse(
+                    success=True,
+                    message="Connected to ComfyUI successfully."
+                )
+            else:
+                # Try alternative endpoint
+                response = await client.get(f"{url}/prompt")
+                if response.status_code in [200, 400]:  # 400 means it's running but needs a prompt
+                    return TestConnectionResponse(
+                        success=True,
+                        message="Connected to ComfyUI successfully."
+                    )
+                return TestConnectionResponse(
+                    success=False,
+                    message=f"ComfyUI returned status {response.status_code}"
+                )
+
+    except httpx.ConnectError:
+        return TestConnectionResponse(
+            success=False,
+            message=f"Could not connect to {url}. Check the URL and ensure ComfyUI is running."
+        )
+    except httpx.TimeoutException:
+        return TestConnectionResponse(
+            success=False,
+            message="Connection timed out. ComfyUI may be slow or unreachable."
+        )
+    except Exception as e:
+        return TestConnectionResponse(
+            success=False,
+            message=f"Error: {str(e)}"
+        )

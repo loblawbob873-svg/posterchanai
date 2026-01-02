@@ -3,10 +3,14 @@ import re
 import asyncio
 import base64
 from concurrent.futures import ThreadPoolExecutor
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, TYPE_CHECKING
 from sqlalchemy.orm import Session
 from app.models import Setting
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
+from app.services.custom_ai_service import CustomAIService
+
+if TYPE_CHECKING:
+    from app.models import User
 
 # Thread pool for running synchronous generators
 _stream_executor = ThreadPoolExecutor(max_workers=4)
@@ -71,8 +75,9 @@ def load_img2img_prompt():
 
 
 class ChatService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user: Optional["User"] = None):
         self.db = db
+        self.user = user
         self._load_settings()
 
     def _load_settings(self):
@@ -84,6 +89,20 @@ class ChatService:
         self.top_p = float(self._settings.get("ollama_top_p", "0.9"))
         self.num_predict = int(self._settings.get("ollama_num_predict", "2048"))
 
+    def _get_custom_ai_service(self) -> Optional[CustomAIService]:
+        """Get custom AI service if user has it enabled, otherwise return None"""
+        if (self.user and
+            self.user.custom_ai_enabled and
+            self.user.custom_ai_url and
+            self.user.custom_ai_type):
+            return CustomAIService(
+                api_type=self.user.custom_ai_type,
+                url=self.user.custom_ai_url,
+                model=self.user.custom_ai_model or "default",
+                api_key=self.user.custom_ai_api_key
+            )
+        return None
+
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
         matches = list(re.finditer(r'</think(?:ing)?>', response, re.IGNORECASE))
@@ -93,28 +112,67 @@ class ChatService:
         return response
 
     async def chat(self, messages: list[dict]) -> str:
-        """Non-streaming chat completion using inference factory"""
+        """Non-streaming chat completion using inference factory or custom AI service"""
         try:
-            # Prepare VRAM for LLM (swap models if needed)
-            prepare_vram_for_llm(self.db)
-            service = get_inference_service(self.db)
-            result = await service.chat_completion(
-                messages=messages,
-                temperature=self.temperature,
-                top_p=self.top_p,
-                max_tokens=self.num_predict
-            )
-            if "error" in result:
-                return f"Error: {result['error'].get('message', 'Unknown error')}"
-            content = result["choices"][0]["message"]["content"]
-            return self.strip_thinking_tags(content)
+            # Check if user has custom AI service enabled
+            custom_service = self._get_custom_ai_service()
+            if custom_service:
+                # Use user's custom AI service
+                content = await custom_service.chat(
+                    messages=messages,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.num_predict
+                )
+                return content
+            else:
+                # Use server's default AI service
+                prepare_vram_for_llm(self.db)
+                service = get_inference_service(self.db)
+                result = await service.chat_completion(
+                    messages=messages,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.num_predict
+                )
+                if "error" in result:
+                    return f"Error: {result['error'].get('message', 'Unknown error')}"
+                content = result["choices"][0]["message"]["content"]
+                return self.strip_thinking_tags(content)
         except Exception as e:
             return f"Error: {str(e)}"
 
     async def chat_stream(self, messages: list[dict]) -> AsyncGenerator[str, None]:
         """Streaming chat completion - uses async queue to avoid blocking event loop"""
         try:
-            # Prepare VRAM for LLM (swap models if needed)
+            # Check if user has custom AI service enabled
+            custom_service = self._get_custom_ai_service()
+            if custom_service:
+                # Use user's custom AI service - stream using SSE parsing
+                async for chunk in custom_service.chat_stream(
+                    messages=messages,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.num_predict
+                ):
+                    if chunk.startswith("data: "):
+                        data_str = chunk[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(data_str)
+                            # Check for error
+                            if "error" in data:
+                                yield f"Error: {data['error'].get('message', 'Unknown error')}"
+                                return
+                            content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if content:
+                                yield content
+                        except json.JSONDecodeError:
+                            continue
+                return
+
+            # Use server's default AI service
             prepare_vram_for_llm(self.db)
             service = get_inference_service(self.db)
 

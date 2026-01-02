@@ -21,9 +21,44 @@ def get_db():
         db.close()
 
 
+def _run_migrations():
+    """Add new columns to existing tables if they don't exist."""
+    from sqlalchemy import text, inspect
+
+    inspector = inspect(engine)
+
+    # Get existing columns in users table
+    existing_columns = {col['name'] for col in inspector.get_columns('users')} if inspector.has_table('users') else set()
+
+    # Define new columns to add to users table
+    new_user_columns = [
+        ("custom_ai_enabled", "BOOLEAN DEFAULT 0"),
+        ("custom_ai_type", "VARCHAR(50)"),
+        ("custom_ai_url", "VARCHAR(500)"),
+        ("custom_ai_model", "VARCHAR(200)"),
+        ("custom_ai_api_key", "VARCHAR(500)"),
+        ("custom_image_enabled", "BOOLEAN DEFAULT 0"),
+        ("custom_image_url", "VARCHAR(500)"),
+    ]
+
+    # Add missing columns
+    with engine.connect() as conn:
+        for col_name, col_type in new_user_columns:
+            if col_name not in existing_columns:
+                try:
+                    conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
+                    conn.commit()
+                except Exception:
+                    # Column might already exist or other error - ignore
+                    pass
+
+
 def init_db():
     from app.models import User, Conversation, Message, Setting
     Base.metadata.create_all(bind=engine)
+
+    # Run migrations for new columns on existing databases
+    _run_migrations()
 
     # Create default settings if not exist
     db = SessionLocal()

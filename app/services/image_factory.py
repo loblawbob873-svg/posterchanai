@@ -2,12 +2,16 @@
 Image Generation Factory
 Selects between native diffusers and ComfyUI backends based on settings.
 Integrates with VRAM manager for model swapping on shared GPU.
+Supports user-specific custom ComfyUI endpoints.
 """
 import logging
-from typing import Optional, Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable, TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from app.models import Setting
+
+if TYPE_CHECKING:
+    from app.models import User
 
 logger = logging.getLogger("image_factory")
 
@@ -96,3 +100,27 @@ def unload_image_model(db: Session):
         service = get_diffusers_service(db)
         service.unload_model()
         logger.info("Native image model unloaded")
+
+
+def get_image_backend_for_user(db: Session, user: Optional["User"] = None) -> ImageBackend:
+    """
+    Get the appropriate image generation backend for a specific user.
+
+    If user has custom image generation enabled with a custom ComfyUI URL,
+    returns a ComfyUI service pointing to their custom endpoint.
+    Otherwise returns the default server backend.
+    """
+    # Check if user has custom image generation enabled
+    if (user and
+        user.custom_image_enabled and
+        user.custom_image_url):
+        # Use custom ComfyUI endpoint
+        from app.services.image_service import ImageService
+        service = ImageService(db)
+        # Override the URL with user's custom URL
+        service.comfyui_url = user.custom_image_url.rstrip('/')
+        logger.debug(f"Using custom ComfyUI backend for user: {user.custom_image_url}")
+        return service
+
+    # Use default server backend
+    return get_image_backend(db)

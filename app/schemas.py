@@ -263,3 +263,44 @@ class APIKeyListItem(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# User Settings schemas (for custom AI service)
+class UserSettingsUpdate(BaseModel):
+    notification_email: Optional[str] = None
+    # Custom LLM settings
+    custom_ai_enabled: Optional[bool] = None
+    custom_ai_type: Optional[str] = None  # "ollama" or "openai"
+    custom_ai_url: Optional[str] = None
+    custom_ai_model: Optional[str] = None
+    custom_ai_api_key: Optional[str] = None
+    # Custom Image Generation settings
+    custom_image_enabled: Optional[bool] = None
+    custom_image_url: Optional[str] = None
+
+
+class UserSettingsResponse(BaseModel):
+    notification_email: Optional[str] = None
+    avatar: Optional[str] = None
+    # Custom LLM settings
+    custom_ai_enabled: bool = False
+    custom_ai_type: Optional[str] = None
+    custom_ai_url: Optional[str] = None
+    custom_ai_model: Optional[str] = None
+    custom_ai_has_api_key: bool = False  # Don't expose actual key
+    # Custom Image Generation settings
+    custom_image_enabled: bool = False
+    custom_image_url: Optional[str] = None
+
+
+class TestConnectionRequest(BaseModel):
+    api_type: str  # "ollama" or "openai"
+    url: str
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+
+
+class TestConnectionResponse(BaseModel):
+    success: bool
+    message: str
+    models: Optional[List[str]] = None  # Available models if successful

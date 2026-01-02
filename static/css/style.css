@@ -1073,6 +1073,112 @@ fieldset legend {
     color: var(--success);
 }
 
+/* Custom AI Settings */
+.settings-subsection {
+    background: var(--bg-primary);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+    border: 1px solid var(--border-color);
+}
+.settings-subsection h4 {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    color: var(--text-primary);
+}
+.toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+}
+.toggle-row label {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+.toggle-row input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+}
+.settings-form select {
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 16px;
+    cursor: pointer;
+}
+.settings-form select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+.test-result {
+    font-size: 14px;
+    margin-left: 12px;
+}
+.test-result.success {
+    color: var(--success);
+}
+.test-result.error {
+    color: var(--error);
+}
+
+/* Quick AI Toggle in User Menu */
+.ai-toggle-item {
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    cursor: default !important;
+}
+.ai-toggle-item:hover {
+    background: var(--bg-secondary) !important;
+}
+#aiToggleLabel {
+    flex: 1;
+    font-size: 13px;
+}
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+}
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--border-color);
+    transition: 0.3s;
+    border-radius: 20px;
+}
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+.toggle-switch input:checked + .toggle-slider {
+    background-color: var(--accent);
+}
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(16px);
+}
+
 /* Avatar upload */
 .avatar-upload-section {
     display: flex;

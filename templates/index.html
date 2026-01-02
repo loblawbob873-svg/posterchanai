@@ -30,6 +30,14 @@
                     <button class="menu-item" id="apiKeysBtn">
                         <span class="menu-icon">🔑</span> API Keys
                     </button>
+                    <div class="menu-item ai-toggle-item" id="aiToggleItem" style="display: none;">
+                        <span class="menu-icon">🤖</span>
+                        <span id="aiToggleLabel">Using: Server AI</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="quickAiToggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
                     {% if user.is_admin %}
                     <a href="/admin" class="menu-item">
                         <span class="menu-icon">⚙️</span> Admin Panel
@@ -157,9 +165,61 @@
                 <div class="settings-form">
                     <label for="notificationEmail">Notification Email</label>
                     <input type="email" id="notificationEmail" placeholder="your@email.com">
-                    <button class="btn-primary" id="saveUserSettings">Save Settings</button>
                 </div>
                 <div id="settingsStatus" class="settings-status"></div>
+            </div>
+
+            <!-- Custom AI Service Section -->
+            <div class="settings-section">
+                <h3>Custom AI Service</h3>
+                <p class="modal-info">Connect to your own AI running on your desktop (Ollama, Open-WebUI, or Posterchanai).</p>
+
+                <!-- Custom LLM Settings -->
+                <div class="settings-subsection">
+                    <h4>Chat / LLM</h4>
+                    <div class="settings-form">
+                        <div class="toggle-row">
+                            <label for="customAiEnabled">Use Custom LLM</label>
+                            <input type="checkbox" id="customAiEnabled">
+                        </div>
+                        <div id="customAiSettings" style="display: none;">
+                            <label for="customAiType">Service Type</label>
+                            <select id="customAiType">
+                                <option value="ollama">Ollama</option>
+                                <option value="openai">Open-WebUI / Posterchanai</option>
+                            </select>
+                            <label for="customAiUrl">Service URL</label>
+                            <input type="text" id="customAiUrl" placeholder="http://192.168.1.100:11434">
+                            <label for="customAiModel">Model Name</label>
+                            <input type="text" id="customAiModel" placeholder="llama3:latest">
+                            <label for="customAiApiKey">API Key (optional)</label>
+                            <input type="password" id="customAiApiKey" placeholder="API key for authentication">
+                            <button class="btn-secondary" id="testCustomAi">Test Connection</button>
+                            <span id="testAiResult" class="test-result"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Custom Image Generation Settings -->
+                <div class="settings-subsection">
+                    <h4>Image Generation (ComfyUI)</h4>
+                    <div class="settings-form">
+                        <div class="toggle-row">
+                            <label for="customImageEnabled">Use Custom ComfyUI</label>
+                            <input type="checkbox" id="customImageEnabled">
+                        </div>
+                        <div id="customImageSettings" style="display: none;">
+                            <label for="customImageUrl">ComfyUI URL</label>
+                            <input type="text" id="customImageUrl" placeholder="http://192.168.1.100:8188">
+                            <button class="btn-secondary" id="testCustomImage">Test Connection</button>
+                            <span id="testImageResult" class="test-result"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <button class="btn-primary" id="saveUserSettings">Save All Settings</button>
             </div>
         </div>
     </div>

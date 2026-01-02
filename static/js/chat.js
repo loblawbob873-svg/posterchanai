@@ -129,6 +129,132 @@ class ChatHandler {
         const emailInput = document.getElementById('notificationEmail');
         const statusEl = document.getElementById('settingsStatus');
 
+        // Custom AI elements
+        const customAiEnabled = document.getElementById('customAiEnabled');
+        const customAiSettings = document.getElementById('customAiSettings');
+        const customAiType = document.getElementById('customAiType');
+        const customAiUrl = document.getElementById('customAiUrl');
+        const customAiModel = document.getElementById('customAiModel');
+        const customAiApiKey = document.getElementById('customAiApiKey');
+        const testCustomAi = document.getElementById('testCustomAi');
+        const testAiResult = document.getElementById('testAiResult');
+
+        // Custom Image elements
+        const customImageEnabled = document.getElementById('customImageEnabled');
+        const customImageSettings = document.getElementById('customImageSettings');
+        const customImageUrl = document.getElementById('customImageUrl');
+        const testCustomImage = document.getElementById('testCustomImage');
+        const testImageResult = document.getElementById('testImageResult');
+
+        // Quick AI Toggle elements (in user menu)
+        const aiToggleItem = document.getElementById('aiToggleItem');
+        const aiToggleLabel = document.getElementById('aiToggleLabel');
+        const quickAiToggle = document.getElementById('quickAiToggle');
+
+        // Load initial state for quick toggle
+        this.loadQuickToggleState = async () => {
+            try {
+                const response = await fetch('/api/auth/settings');
+                if (response.ok) {
+                    const data = await response.json();
+                    // Only show toggle if custom AI URL is configured
+                    if (data.custom_ai_url) {
+                        aiToggleItem.style.display = 'flex';
+                        quickAiToggle.checked = data.custom_ai_enabled || false;
+                        aiToggleLabel.textContent = data.custom_ai_enabled ? 'Using: Custom AI' : 'Using: Server AI';
+                    } else {
+                        aiToggleItem.style.display = 'none';
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load AI toggle state:', e);
+            }
+        };
+
+        // Quick toggle handler
+        if (quickAiToggle) {
+            quickAiToggle.addEventListener('change', async () => {
+                const enabled = quickAiToggle.checked;
+                aiToggleLabel.textContent = enabled ? 'Using: Custom AI' : 'Using: Server AI';
+
+                try {
+                    await fetch('/api/auth/settings', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ custom_ai_enabled: enabled })
+                    });
+                    // Also update the modal checkbox if open
+                    if (customAiEnabled) {
+                        customAiEnabled.checked = enabled;
+                    }
+                } catch (e) {
+                    console.error('Failed to toggle AI:', e);
+                }
+            });
+        }
+
+        // Load initial state
+        this.loadQuickToggleState();
+
+        // Toggle custom AI settings visibility
+        if (customAiEnabled && customAiSettings) {
+            customAiEnabled.addEventListener('change', () => {
+                customAiSettings.style.display = customAiEnabled.checked ? 'block' : 'none';
+            });
+        }
+
+        // Toggle custom image settings visibility
+        if (customImageEnabled && customImageSettings) {
+            customImageEnabled.addEventListener('change', () => {
+                customImageSettings.style.display = customImageEnabled.checked ? 'block' : 'none';
+            });
+        }
+
+        // Test custom AI connection
+        if (testCustomAi) {
+            testCustomAi.addEventListener('click', async () => {
+                testAiResult.textContent = 'Testing...';
+                testAiResult.className = 'test-result';
+                try {
+                    const response = await fetch('/api/auth/test-custom-ai', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            api_type: customAiType.value,
+                            url: customAiUrl.value,
+                            model: customAiModel.value,
+                            api_key: customAiApiKey.value || null
+                        })
+                    });
+                    const data = await response.json();
+                    testAiResult.textContent = data.message;
+                    testAiResult.className = 'test-result ' + (data.success ? 'success' : 'error');
+                } catch (e) {
+                    testAiResult.textContent = 'Test failed';
+                    testAiResult.className = 'test-result error';
+                }
+            });
+        }
+
+        // Test custom image connection
+        if (testCustomImage) {
+            testCustomImage.addEventListener('click', async () => {
+                testImageResult.textContent = 'Testing...';
+                testImageResult.className = 'test-result';
+                try {
+                    const response = await fetch('/api/auth/test-custom-image?url=' + encodeURIComponent(customImageUrl.value), {
+                        method: 'POST'
+                    });
+                    const data = await response.json();
+                    testImageResult.textContent = data.message;
+                    testImageResult.className = 'test-result ' + (data.success ? 'success' : 'error');
+                } catch (e) {
+                    testImageResult.textContent = 'Test failed';
+                    testImageResult.className = 'test-result error';
+                }
+            });
+        }
+
         if (settingsBtn && settingsModal) {
             settingsBtn.addEventListener('click', async () => {
                 // Load current settings
@@ -140,6 +266,23 @@ class ChatHandler {
                         this.notificationEmail = data.notification_email;
                         // Update avatar preview
                         this.updateAvatarPreview(data.avatar);
+
+                        // Load custom AI settings
+                        if (customAiEnabled) {
+                            customAiEnabled.checked = data.custom_ai_enabled || false;
+                            customAiSettings.style.display = data.custom_ai_enabled ? 'block' : 'none';
+                        }
+                        if (customAiType) customAiType.value = data.custom_ai_type || 'ollama';
+                        if (customAiUrl) customAiUrl.value = data.custom_ai_url || '';
+                        if (customAiModel) customAiModel.value = data.custom_ai_model || '';
+                        if (customAiApiKey) customAiApiKey.value = data.custom_ai_has_api_key ? '********' : '';
+
+                        // Load custom image settings
+                        if (customImageEnabled) {
+                            customImageEnabled.checked = data.custom_image_enabled || false;
+                            customImageSettings.style.display = data.custom_image_enabled ? 'block' : 'none';
+                        }
+                        if (customImageUrl) customImageUrl.value = data.custom_image_url || '';
                     }
                 } catch (e) {
                     console.error('Failed to load settings:', e);
@@ -164,11 +307,42 @@ class ChatHandler {
                 statusEl.textContent = 'Saving...';
                 statusEl.className = 'settings-status';
 
+                // Build settings object
+                const settingsData = {
+                    notification_email: email
+                };
+
+                // Add custom AI settings
+                if (customAiEnabled) {
+                    settingsData.custom_ai_enabled = customAiEnabled.checked;
+                }
+                if (customAiType) {
+                    settingsData.custom_ai_type = customAiType.value;
+                }
+                if (customAiUrl) {
+                    settingsData.custom_ai_url = customAiUrl.value.trim();
+                }
+                if (customAiModel) {
+                    settingsData.custom_ai_model = customAiModel.value.trim();
+                }
+                // Only update API key if it's not the placeholder
+                if (customAiApiKey && customAiApiKey.value !== '********') {
+                    settingsData.custom_ai_api_key = customAiApiKey.value;
+                }
+
+                // Add custom image settings
+                if (customImageEnabled) {
+                    settingsData.custom_image_enabled = customImageEnabled.checked;
+                }
+                if (customImageUrl) {
+                    settingsData.custom_image_url = customImageUrl.value.trim();
+                }
+
                 try {
                     const response = await fetch('/api/auth/settings', {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ notification_email: email })
+                        body: JSON.stringify(settingsData)
                     });
 
                     if (response.ok) {
@@ -176,6 +350,8 @@ class ChatHandler {
                         statusEl.textContent = 'Settings saved!';
                         statusEl.className = 'settings-status success';
                         setTimeout(() => { statusEl.textContent = ''; }, 2000);
+                        // Update quick toggle in user menu
+                        this.loadQuickToggleState();
                     } else {
                         const data = await response.json();
                         statusEl.textContent = data.detail || 'Failed to save';
