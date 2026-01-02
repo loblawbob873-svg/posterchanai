@@ -330,9 +330,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                 if data.get("type") == "message":
                     manager.set_stop(user.id, False)  # Reset for new message
-                    # Re-query user to pick up any settings changes (e.g., custom AI toggle)
-                    # db.refresh() is unreliable with SQLAlchemy caching, so we query fresh
-                    db.expire(user)
+                    # Re-query user with fresh database state to pick up settings changes
+                    # expire_all() ensures we see committed changes from other sessions
+                    db.expire_all()
                     user = db.query(User).filter(User.id == user.id).first()
                     chat_service = ChatService(db, user)
                     content = data.get("content", "").strip()
