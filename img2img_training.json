@@ -3,7 +3,7 @@
   "denoise_values": {
     "hair_style": 0.85,
     "color_change": 0.8,
-    "clothing_removal": 0.8,
+    "clothing_removal": 0.65,
     "clothing_change": 0.75,
     "background_scene": 0.55,
     "object_change": 0.7,
@@ -18,7 +18,7 @@
     "4. Skin color changes: weight 2.0, add synonyms (dark skin, brown skin for dark; pale skin, white skin for light)",
     "5. Small breasts: weight 2.0, DENOISE 0.5, add to NEGATIVE: large breasts, huge breasts, cleavage",
     "6. Big breasts: weight 2.0, DENOISE 0.5, add cleavage, NEGATIVE: small breasts, flat chest",
-    "7. Naked/nude: DENOISE 0.75, DELETE all clothing from TAGS, ADD (completely nude:2.5), (nude:2.5), (bare skin:2.5), weight animal features HIGH like (fox ears:2.5), NEGATIVE must have: clothing, clothed, sheet, blanket, towel, fabric, cloth",
+    "7. Naked/nude: DENOISE 0.65, DELETE all clothing from TAGS, ADD (completely nude:2.5), (nude:2.5), (bare skin:2.5), (nipples:2.0), (navel:2.0), PRESERVE all identifying features with weight 2.0 (hair color, eye color, jewelry, expression, pose), NEGATIVE must have: clothing, clothed, sheet, blanket, towel, fabric, cloth",
     "7b. CLOTHING CHANGE: When user asks for specific clothing (wedding dress, swimsuit, bikini, maid outfit, etc), DENOISE 0.65, DELETE conflicting clothing tags from TAGS (black dress, casual dress, etc), ADD new clothing with weight 2.0, put conflicting clothing in NEGATIVE",
     "7c. CRITICAL: When changing clothing, DELETE conflicting color/style tags (e.g., black dress when changing to wedding dress) from TAGS and put in NEGATIVE. Keep compatible tags (white dress is fine for wedding dress)",
     "8. Keep original tags for people count (2girls, 3girls, etc)",
@@ -348,6 +348,13 @@
       "denoise": 0.7,
       "output_tags": "(wedding dress:2.0), (white dress:2.0), (bridal gown:1.5), (elegant:1.5), wedding dress, white dress, 1girl, solo, red_hair, blush, white_background, vibrant colors, sharp, high quality",
       "negative": "nude, naked, nipples, navel, breasts, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1girl, jewelry, solo, ring, necklace, smile, cross, jacket, white_hair, long_hair, blue_eyes, formal, looking_at_viewer, cross_necklace",
+      "change": "nude",
+      "denoise": 0.65,
+      "output_tags": "(completely nude:2.5), (nude:2.5), (bare skin:2.0), (nipples:2.0), (navel:2.0), nude, 1girl, solo, (white_hair:2.0), (long_hair:2.0), (blue_eyes:2.0), smile, looking_at_viewer, jewelry, ring, necklace, cross_necklace, vibrant colors, sharp, high quality",
+      "negative": "jacket, formal, clothing, clothed, dress, shirt, covered, sheet, blanket, towel, fabric, cloth, deformed, extra limbs, bad anatomy, blurry"
     }
   ],
   "txt2img_example": {
