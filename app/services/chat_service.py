@@ -11,8 +11,11 @@ from app.services.inference_factory import get_inference_service, prepare_vram_f
 # Thread pool for running synchronous generators
 _stream_executor = ThreadPoolExecutor(max_workers=4)
 
-# Import native WD14 tagger
-from app.services.wd14_service import tag_image as describe_image_with_wd14
+# Try native WD14 tagger first, fall back to None if not available
+try:
+    from app.services.wd14_service import tag_image as native_wd14_tag
+except ImportError:
+    native_wd14_tag = None
 
 # Path to training data (local to this project)
 IMG2IMG_TRAINING_FILE = "/home/verita84/posterchanai/img2img_training.json"
@@ -208,23 +211,44 @@ class ChatService:
 
     async def analyze_image_tags(self, image_base64: str) -> str:
         """
-        Use WD14 Tagger in ComfyUI to analyze image and extract tags.
+        Use WD14 Tagger to analyze image and extract tags.
+        Tries native tagger first, falls back to remote API.
         Returns comma-separated tags or empty string on failure.
         """
         try:
             # Decode base64 to bytes
             image_bytes = base64.b64decode(image_base64)
 
-            # Run WD14 tagger in thread pool (it's synchronous)
-            loop = asyncio.get_event_loop()
-            tags = await loop.run_in_executor(None, describe_image_with_wd14, image_bytes)
+            # Try native WD14 first
+            if native_wd14_tag is not None:
+                try:
+                    loop = asyncio.get_event_loop()
+                    tags = await loop.run_in_executor(None, native_wd14_tag, image_bytes)
+                    if tags:
+                        print(f"[WD14] Native tags: {tags[:100]}...")
+                        return tags
+                except Exception as e:
+                    print(f"[WD14] Native tagger failed: {e}")
 
-            if tags:
-                print(f"[WD14] Analyzed image tags: {tags[:100]}...")
-                return tags
-            else:
-                print("[WD14] No tags returned")
-                return ""
+            # Fall back to remote API
+            image_url = self._get_setting("comfyui_url") or self._get_setting("posterchanai_url")
+            if image_url:
+                import httpx
+                api_url = image_url.rstrip('/') + '/api/tag-image'
+                print(f"[WD14] Trying remote API: {api_url}")
+                async with httpx.AsyncClient(timeout=60) as client:
+                    response = await client.post(
+                        api_url,
+                        json={"image": image_base64, "threshold": 0.35}
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get("tags"):
+                            print(f"[WD14] Remote tags: {data['tags'][:100]}...")
+                            return data["tags"]
+
+            print("[WD14] No tags returned")
+            return ""
         except Exception as e:
             print(f"[WD14] Image analysis failed: {e}")
             import traceback
@@ -273,6 +297,7 @@ class ChatService:
 
             content = result["choices"][0]["message"]["content"]
             content = self.strip_thinking_tags(content)
+            print(f"[IMG2IMG] Raw LLM response:\n{content}")
 
             # Parse response
             denoise = 1.0
