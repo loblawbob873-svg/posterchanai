@@ -65,3 +65,4 @@ uploads/
 generated/
 venv-ipex/
 .secret_key
+models/
