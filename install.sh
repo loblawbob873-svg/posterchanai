@@ -512,11 +512,39 @@ STUBCODE
                 fi
             fi
 
-            echo "  Building with ROCm/HIP backend..."
+            # Gentoo-specific warning about llama-cpp-python ROCm build issues
+            if [ "$DISTRO" = "gentoo" ]; then
+                echo ""
+                print_warning "Gentoo ROCm Note:"
+                echo "  llama-cpp-python may not build with HIP support on Gentoo"
+                echo "  due to non-standard library paths (/usr/lib64 vs /opt/rocm)."
+                echo "  The installer will build CPU-only version as fallback."
+                echo ""
+                echo "  For GPU LLM inference on Gentoo, consider:"
+                echo "    1. Use Ollama with ROCm support (pre-built)"
+                echo "    2. Build llama.cpp manually with correct cmake paths"
+                echo "  See README.md 'Known Issues' section for details."
+                echo ""
+                echo "  Note: Image generation (diffusers) works fine with ROCm."
+                echo ""
+            fi
+
+            echo "  Building with ROCm/HIP backend (may fall back to CPU)..."
             export CMAKE_ARGS="-DGGML_HIP=ON"
-            # Set HIP path if available
-            [ -d /opt/rocm ] && export HIP_PATH=/opt/rocm
-            pip install llama-cpp-python --force-reinstall --no-cache-dir -q
+            # Set HIP path - try /opt/rocm first, fall back to /usr for Gentoo
+            if [ -d /opt/rocm ]; then
+                export HIP_PATH=/opt/rocm
+                export ROCM_PATH=/opt/rocm
+            else
+                export HIP_PATH=/usr
+                export ROCM_PATH=/usr
+                export CMAKE_PREFIX_PATH="/usr/lib64/cmake:${CMAKE_PREFIX_PATH:-}"
+            fi
+            pip install llama-cpp-python --force-reinstall --no-cache-dir -q || {
+                print_warning "HIP build failed, falling back to CPU-only..."
+                unset CMAKE_ARGS
+                pip install llama-cpp-python --force-reinstall --no-cache-dir -q
+            }
             ;;
 
         cpu)

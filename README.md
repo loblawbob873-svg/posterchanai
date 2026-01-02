@@ -976,6 +976,30 @@ The installer handles this automatically for AMD GPUs.
 | PyTorch not detecting GPU | Ensure ROCm is installed and user is in `video` and `render` groups |
 | Slow first generation | Normal - HIP compiles shaders on first run (~1-2 min) |
 | Slower than NVIDIA | ROCm uses CPU offload for SDXL to fit in 12GB - expect ~2x slower |
+| llama-cpp-python SEGV crash | See "Known Issues" below - use CPU mode or Ollama as workaround |
+
+**Known Issues - llama-cpp-python ROCm on Gentoo:**
+
+On Gentoo Linux, `llama-cpp-python` with ROCm/HIP support may crash with SEGFAULT during inference. This is because:
+
+1. Gentoo installs ROCm libraries in `/usr/lib64/` instead of `/opt/rocm/lib/`
+2. HIP cmake files are in `/usr/lib64/cmake/hip/` instead of `/opt/rocm/lib/cmake/hip/`
+3. The `CMAKE_ARGS` passed via pip don't properly configure cmake to find HIP
+
+**Workarounds:**
+
+1. **Use CPU mode** (automatic fallback) - LLM runs on CPU, slower but works
+2. **Use Ollama** - Install Ollama with ROCm support (pre-built, works correctly)
+3. **Manual llama.cpp build** - Clone llama.cpp and build manually with correct cmake paths:
+   ```bash
+   git clone https://github.com/ggerganov/llama.cpp
+   cd llama.cpp
+   cmake -B build -DGGML_HIPBLAS=ON -DCMAKE_PREFIX_PATH=/usr/lib64/cmake
+   cmake --build build --config Release
+   # Use the built llama-server binary instead of llama-cpp-python
+   ```
+
+**Image generation (diffusers) works correctly** with PyTorch ROCm - only llama-cpp-python has the build issue.
 
 **VRAM Requirements for Image Generation:**
 

@@ -110,15 +110,18 @@ class LlamaService:
         try:
             from llama_cpp import Llama
 
+            # Limit context to avoid memory issues
+            safe_ctx = min(self.num_ctx, 8192)
+            logger.info(f"  Using context size: {safe_ctx}")
+
             self._model = Llama(
                 model_path=self.model_path,
-                n_ctx=self.num_ctx,
-                n_gpu_layers=self.n_gpu_layers,
+                n_ctx=safe_ctx,
+                n_gpu_layers=0,  # CPU only - ROCm build not working yet
                 n_threads=self.n_threads,
-                n_batch=512,  # Larger batch for faster prompt processing
-                flash_attn=True,  # Enable flash attention if supported
+                n_batch=512,
+                flash_attn=False,
                 verbose=False,
-                chat_format="chatml",  # Works with most models
             )
             self._model_path = self.model_path
             logger.info("Model loaded successfully")
