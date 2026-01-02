@@ -327,6 +327,27 @@
       "denoise": 0.65,
       "output_tags": "(wedding dress:2.0), (white dress:2.0), (bridal:1.5), (anime:2.0), (anime style:2.0), wedding dress, white dress, anime, 1girl, red hair, yellow eyes, braid, from behind, vibrant colors, sharp, high quality",
       "negative": "black dress, dark dress, realistic, photorealistic, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1girl, solo, blonde_hair, long_hair, red_eyes, nude, navel, breasts, white_background, blush, covering_breasts",
+      "change": "wedding dress",
+      "denoise": 0.7,
+      "output_tags": "(wedding dress:2.0), (white dress:2.0), (bridal gown:1.5), (elegant:1.5), wedding dress, white dress, 1girl, solo, blonde_hair, long_hair, red_eyes, white_background, blush, vibrant colors, sharp, high quality",
+      "negative": "nude, naked, nipples, breasts, navel, covering, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1girl, solo, japanese_clothes, sash, obi, kimono, long_hair, white_background, blue_eyes",
+      "change": "wedding dress",
+      "denoise": 0.7,
+      "output_tags": "(wedding dress:2.0), (white dress:2.0), (bridal gown:1.5), (elegant:1.5), wedding dress, white dress, 1girl, solo, long_hair, white_background, blue_eyes, vibrant colors, sharp, high quality",
+      "negative": "japanese_clothes, sash, obi, kimono, traditional, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "tags": "1girl, solo, red_hair, blush, nude, navel, white_background, nipples",
+      "change": "wedding dress",
+      "denoise": 0.7,
+      "output_tags": "(wedding dress:2.0), (white dress:2.0), (bridal gown:1.5), (elegant:1.5), wedding dress, white dress, 1girl, solo, red_hair, blush, white_background, vibrant colors, sharp, high quality",
+      "negative": "nude, naked, nipples, navel, breasts, deformed, extra limbs, bad anatomy, blurry"
     }
   ],
   "txt2img_example": {
