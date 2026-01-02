@@ -126,86 +126,45 @@ class CommandService:
             }
 
     async def _img2img_command(self, prompt: str, image_data: Optional[str], stop_check: Optional[callable] = None) -> dict:
-        print(f"[IMG2IMG] Starting - prompt: {prompt[:50] if prompt else 'None'}, has_image: {image_data is not None}")
-        if not prompt:
-            return {"type": "text", "content": "Please provide a prompt describing what you want."}
+        """Inpaint body area while preserving face"""
+        if not prompt or not image_data:
+            return {"type": "text", "content": "Need both prompt and image."}
 
-        if not image_data:
-            return {"type": "text", "content": "Please upload an image to transform."}
-
-        # Check for stop before starting
         if stop_check and stop_check():
-            print("[IMG2IMG] Stopped before start")
-            return {"type": "text", "content": "Generation cancelled."}
+            return {"type": "text", "content": "Cancelled."}
 
-        # Use lock to prevent concurrent image generation (prevents WD14/LLM mixing)
         async with _image_generation_lock:
-            # Prepare VRAM for image generation (swap models if needed)
             prepare_vram_for_image(self.db)
 
             try:
-                # Decode base64 image
-                print(f"[IMG2IMG] Decoding base64 image, length: {len(image_data)}")
                 image_bytes = base64.b64decode(image_data)
-                print(f"[IMG2IMG] Decoded to {len(image_bytes)} bytes")
-            except Exception as e:
-                print(f"[IMG2IMG] Failed to decode image: {e}")
-                return {"type": "text", "content": f"Invalid image data: {e}"}
+            except:
+                return {"type": "text", "content": "Invalid image."}
 
-            # Check for stop before WD14
-            if stop_check and stop_check():
-                print("[IMG2IMG] Stopped before WD14")
-                return {"type": "text", "content": "Generation cancelled."}
+            # Body mask - preserves face
+            from app.services.mask_service import generate_body_mask
+            mask_bytes = generate_body_mask(image_bytes)
+            if not mask_bytes:
+                return {"type": "text", "content": "Could not generate mask."}
 
-            # First, analyze the image to get original tags
-            print("[IMG2IMG] Analyzing source image...")
-            original_tags = await self.chat_service.analyze_image_tags(image_data)
+            # Just use prompt directly + detect anime style
+            from app.services.wd14_service import tag_image
+            tags = tag_image(image_bytes, threshold=0.35) or ""
+            is_anime = 'anime' in prompt.lower() or 'anime' in tags.lower()
+            style = "anime" if is_anime else "realistic"
 
-            # Check for stop before LLM prompt generation
-            if stop_check and stop_check():
-                print("[IMG2IMG] Stopped before prompt generation")
-                return {"type": "text", "content": "Generation cancelled."}
-
-            # Use AI to optimize the prompt with original tags context
-            optimized_prompt, denoise, negative_prompt = await self.chat_service.modify_prompt_for_img2img(prompt, original_tags)
-
-            # Check for stop before image generation
-            if stop_check and stop_check():
-                print("[IMG2IMG] Stopped before image generation")
-                return {"type": "text", "content": "Generation cancelled."}
-
-            # Ensure style keywords from original prompt are preserved for model selection
-            prompt_lower = prompt.lower()
-            optimized_lower = optimized_prompt.lower()
-            if 'anime' in prompt_lower and 'anime' not in optimized_lower:
-                optimized_prompt = f"{optimized_prompt}, anime"
-                print(f"[IMG2IMG] Added 'anime' to prompt for model selection")
-            elif 'realistic' in prompt_lower and 'realistic' not in optimized_lower:
-                optimized_prompt = f"{optimized_prompt}, realistic"
-                print(f"[IMG2IMG] Added 'realistic' to prompt for model selection")
-
-            # Generate with AI-determined parameters
-            result_image = await self.image_service.generate_img2img(
-                optimized_prompt, image_bytes,
-                denoise=denoise,
-                negative_prompt=negative_prompt
+            result = await self.image_service.generate_inpaint(
+                prompt=f"{prompt}, {style}, high quality",
+                image_bytes=image_bytes,
+                mask_bytes=mask_bytes,
+                denoise=0.85,
+                negative_prompt=f"{'realistic' if is_anime else 'anime'}, deformed, bad anatomy"
             )
-            if not result_image:
-                return {"type": "text", "content": "Failed to transform image. Please try again."}
 
-            # Auto-log for training
-            try:
-                from regen_trainer import log_regen_request
-                log_regen_request(image_bytes, prompt, source_tags=original_tags)
-            except Exception as train_err:
-                print(f"[TRAINER] Log failed: {train_err}")
+            if not result:
+                return {"type": "text", "content": "Inpaint failed."}
 
-            return {
-                "type": "generated_image",
-                "content": f"Transformed image: {prompt}",
-                "image": result_image,
-                "prompt": optimized_prompt  # Store optimized prompt for regen
-            }
+            return {"type": "generated_image", "content": f"Inpainted: {prompt}", "image": result, "prompt": prompt}
 
     async def _regen_command(self, last_prompt: Optional[str], stop_check: Optional[callable] = None) -> dict:
         if not last_prompt:
