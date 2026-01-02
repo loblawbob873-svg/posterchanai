@@ -654,20 +654,49 @@ setup_systemd() {
 
     case "$BACKEND" in
         intel)
+            # Detect oneAPI version for the run script
+            ONEAPI_VER=""
+            if [ -d /opt/intel/oneapi/2025.0 ]; then
+                ONEAPI_VER="2025.0"
+            elif [ -d /opt/intel/oneapi/2024.2 ]; then
+                ONEAPI_VER="2024.2"
+            fi
+
             cat > "$RUN_SCRIPT" << 'SCRIPT'
 #!/bin/bash
 # IPEX-LLM wrapper script for Intel Arc GPU
+# Sets up the environment and runs with executable stack enabled
 
-# Set Intel oneAPI environment
-if [ -f /opt/intel/oneapi/2025.0/oneapi-vars.sh ]; then
-    source /opt/intel/oneapi/2025.0/oneapi-vars.sh --force
-elif [ -f /opt/intel/oneapi/2024.2/oneapi-vars.sh ]; then
-    source /opt/intel/oneapi/2024.2/oneapi-vars.sh --force
-elif [ -f /opt/intel/oneapi/setvars.sh ]; then
-    source /opt/intel/oneapi/setvars.sh --force
+# Detect oneAPI installation path
+ONEAPI_ROOT=""
+if [ -d /opt/intel/oneapi/2025.0 ]; then
+    ONEAPI_ROOT="/opt/intel/oneapi/2025.0"
+elif [ -d /opt/intel/oneapi/2024.2 ]; then
+    ONEAPI_ROOT="/opt/intel/oneapi/2024.2"
+elif [ -d /opt/intel/oneapi ]; then
+    ONEAPI_ROOT="/opt/intel/oneapi"
 fi
 
-# Preload VTune stub if available
+if [ -z "$ONEAPI_ROOT" ]; then
+    echo "ERROR: Intel oneAPI not found in /opt/intel/oneapi" >&2
+    exit 1
+fi
+
+# Set Intel oneAPI environment explicitly
+# This is more reliable than 'source oneapi-vars.sh' in systemd contexts
+export ONEAPI_ROOT
+export LD_LIBRARY_PATH="$ONEAPI_ROOT/lib:${LD_LIBRARY_PATH:-/usr/local/lib}"
+export PATH="$ONEAPI_ROOT/bin:$PATH"
+export OCL_ICD_FILENAMES="$ONEAPI_ROOT/lib/libintelocl.so"
+
+# Also source the vars script for any additional setup
+if [ -f "$ONEAPI_ROOT/oneapi-vars.sh" ]; then
+    source "$ONEAPI_ROOT/oneapi-vars.sh" --force 2>/dev/null || true
+elif [ -f "$ONEAPI_ROOT/setvars.sh" ]; then
+    source "$ONEAPI_ROOT/setvars.sh" --force 2>/dev/null || true
+fi
+
+# Preload VTune stub if available (suppresses symbol warnings)
 [ -f /usr/local/lib/libittnotify.so ] && export LD_PRELOAD=/usr/local/lib/libittnotify.so
 
 # IPEX-LLM optimizations
@@ -751,7 +780,60 @@ SCRIPT
     VENV_PATH="$SCRIPT_DIR/venv"
     [ "$BACKEND" = "intel" ] && VENV_PATH="$SCRIPT_DIR/venv-ipex"
 
-    sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << EOF
+    # Detect oneAPI path for Intel backend
+    ONEAPI_PATH=""
+    if [ "$BACKEND" = "intel" ]; then
+        if [ -d /opt/intel/oneapi/2025.0 ]; then
+            ONEAPI_PATH="/opt/intel/oneapi/2025.0"
+        elif [ -d /opt/intel/oneapi/2024.2 ]; then
+            ONEAPI_PATH="/opt/intel/oneapi/2024.2"
+        elif [ -d /opt/intel/oneapi ]; then
+            ONEAPI_PATH="/opt/intel/oneapi"
+        fi
+    fi
+
+    if [ "$BACKEND" = "intel" ] && [ -n "$ONEAPI_PATH" ]; then
+        # Intel backend needs explicit oneAPI environment variables
+        sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << EOF
+[Unit]
+Description=Posterchan AI ($BACKEND backend)
+After=network.target
+
+[Service]
+Type=simple
+User=$(whoami)
+WorkingDirectory=$SCRIPT_DIR
+
+# Python virtual environment
+Environment="PATH=$VENV_PATH/bin:$ONEAPI_PATH/bin:/usr/local/bin:/usr/bin"
+Environment="VIRTUAL_ENV=$VENV_PATH"
+
+# Intel oneAPI libraries - CRITICAL for SYCL/llama.cpp
+# These must be set explicitly since 'source oneapi-vars.sh' doesn't work in systemd
+Environment="LD_LIBRARY_PATH=$ONEAPI_PATH/lib:/usr/local/lib"
+Environment="OCL_ICD_FILENAMES=$ONEAPI_PATH/lib/libintelocl.so"
+Environment="ONEAPI_ROOT=$ONEAPI_PATH"
+
+# IPEX-LLM optimizations
+Environment="ENABLE_SDP_FUSION=1"
+Environment="SYCL_CACHE_PERSISTENT=1"
+Environment="BIGDL_LLM_XMX_DISABLED=1"
+Environment="ZES_ENABLE_SYSMAN=1"
+Environment="TORCH_DEVICE_BACKEND_AUTOLOAD=0"
+
+# Preload VTune stub to suppress symbol warnings
+Environment="LD_PRELOAD=/usr/local/lib/libittnotify.so"
+
+ExecStart=$RUN_SCRIPT
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    else
+        # Non-Intel backends use simple service file
+        sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << EOF
 [Unit]
 Description=Posterchan AI ($BACKEND backend)
 After=network.target
@@ -769,6 +851,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
+    fi
 
     sudo systemctl daemon-reload
     print_success "Created systemd service: $SERVICE_NAME"

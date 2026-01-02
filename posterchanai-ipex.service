@@ -6,8 +6,27 @@ After=network.target
 Type=simple
 User=verita84
 WorkingDirectory=/home/verita84/posterchanai
-Environment="PATH=/home/verita84/posterchanai/venv-ipex/bin:/usr/local/bin:/usr/bin"
+
+# Python virtual environment
+Environment="PATH=/home/verita84/posterchanai/venv-ipex/bin:/opt/intel/oneapi/2025.0/bin:/usr/local/bin:/usr/bin"
 Environment="VIRTUAL_ENV=/home/verita84/posterchanai/venv-ipex"
+
+# Intel oneAPI libraries - CRITICAL for SYCL/llama.cpp
+# These must be set explicitly since 'source oneapi-vars.sh' doesn't work in systemd
+Environment="LD_LIBRARY_PATH=/opt/intel/oneapi/2025.0/lib:/usr/local/lib"
+Environment="OCL_ICD_FILENAMES=/opt/intel/oneapi/2025.0/lib/libintelocl.so"
+Environment="ONEAPI_ROOT=/opt/intel/oneapi/2025.0"
+
+# IPEX-LLM optimizations
+Environment="ENABLE_SDP_FUSION=1"
+Environment="SYCL_CACHE_PERSISTENT=1"
+Environment="BIGDL_LLM_XMX_DISABLED=1"
+Environment="ZES_ENABLE_SYSMAN=1"
+Environment="TORCH_DEVICE_BACKEND_AUTOLOAD=0"
+
+# Preload VTune stub to suppress symbol warnings
+Environment="LD_PRELOAD=/usr/local/lib/libittnotify.so"
+
 ExecStart=/home/verita84/posterchanai/run-ipex.sh
 Restart=always
 RestartSec=5

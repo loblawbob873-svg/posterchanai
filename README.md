@@ -84,8 +84,9 @@ If you prefer manual control:
 ./setup.sh
 
 # For GPU acceleration, manually install llama-cpp-python:
-# Intel Arc:
-source /opt/intel/oneapi/setvars.sh
+
+# Intel Arc (use venv-ipex for Python 3.11):
+source /opt/intel/oneapi/2025.0/oneapi-vars.sh  # or 2024.2
 CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
     pip install llama-cpp-python --force-reinstall --no-cache-dir
 
@@ -97,6 +98,18 @@ CMAKE_ARGS="-DGGML_HIP=ON" pip install llama-cpp-python --force-reinstall --no-c
 
 # CPU only:
 pip install llama-cpp-python
+```
+
+**Important for Intel Arc:** When running manually (not via systemd), always source oneAPI first:
+```bash
+source /opt/intel/oneapi/2025.0/oneapi-vars.sh
+source venv-ipex/bin/activate
+python run.py
+```
+
+Or use the wrapper script which handles this automatically:
+```bash
+./run-ipex.sh
 ```
 
 ## Running
@@ -708,7 +721,7 @@ python run.py
 
 **Systemd Service (for IPEX):**
 
-Create `/etc/systemd/system/posterchanai-ipex.service`:
+The installer automatically creates a systemd service with the correct environment. If setting up manually, create `/etc/systemd/system/posterchanai-ipex.service`:
 
 ```ini
 [Unit]
@@ -719,15 +732,36 @@ After=network.target
 Type=simple
 User=verita84
 WorkingDirectory=/home/verita84/posterchanai
-Environment="PATH=/home/verita84/posterchanai/venv-ipex/bin:/usr/local/bin:/usr/bin"
-ExecStartPre=/bin/bash -c 'source /opt/intel/oneapi/setvars.sh'
-ExecStart=/home/verita84/posterchanai/venv-ipex/bin/python run.py
+
+# Python virtual environment
+Environment="PATH=/home/verita84/posterchanai/venv-ipex/bin:/opt/intel/oneapi/2025.0/bin:/usr/local/bin:/usr/bin"
+Environment="VIRTUAL_ENV=/home/verita84/posterchanai/venv-ipex"
+
+# Intel oneAPI libraries - CRITICAL for SYCL/llama.cpp
+# These must be set explicitly since 'source oneapi-vars.sh' doesn't work in systemd
+Environment="LD_LIBRARY_PATH=/opt/intel/oneapi/2025.0/lib:/usr/local/lib"
+Environment="OCL_ICD_FILENAMES=/opt/intel/oneapi/2025.0/lib/libintelocl.so"
+Environment="ONEAPI_ROOT=/opt/intel/oneapi/2025.0"
+
+# IPEX-LLM optimizations
+Environment="ENABLE_SDP_FUSION=1"
+Environment="SYCL_CACHE_PERSISTENT=1"
+Environment="BIGDL_LLM_XMX_DISABLED=1"
+Environment="ZES_ENABLE_SYSMAN=1"
+Environment="TORCH_DEVICE_BACKEND_AUTOLOAD=0"
+
+# Preload VTune stub to suppress symbol warnings (optional)
+Environment="LD_PRELOAD=/usr/local/lib/libittnotify.so"
+
+ExecStart=/home/verita84/posterchanai/run-ipex.sh
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+**Note:** Adjust the oneAPI path (`2025.0`) to match your installed version (`2024.2`, etc.).
 
 ### Native GPU Setup (No Docker Required)
 
