@@ -1,19 +1,60 @@
 """
 Direct Image Generation API for external integrations.
 Provides simple REST endpoints for txt2img and img2img.
+Supports both JWT auth and API key auth for external services.
 """
 import base64
-from fastapi import APIRouter, Depends, HTTPException
+import os
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User
-from app.auth import get_current_user
+from app.auth import get_current_user_optional
 from app.services.image_factory import get_image_backend, prepare_vram_for_image
 
 router = APIRouter(prefix="/api", tags=["image"])
+
+# API key for external integrations (set via environment or admin settings)
+IMAGE_API_KEY = os.getenv("IMAGE_API_KEY", "")
+
+
+async def get_image_auth(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+) -> bool:
+    """
+    Authenticate for image API - supports JWT token or API key.
+    Returns True if authenticated, raises HTTPException otherwise.
+    """
+    # Check API key first (for external integrations like Sharkey)
+    if x_api_key and IMAGE_API_KEY and x_api_key == IMAGE_API_KEY:
+        return True
+
+    # Check for API key in Authorization header (Bearer format)
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:]
+        if IMAGE_API_KEY and token == IMAGE_API_KEY:
+            return True
+
+    # Try JWT auth (for logged-in users)
+    from app.auth import get_current_user_optional
+    try:
+        user = await get_current_user_optional(request, db)
+        if user:
+            return True
+    except Exception:
+        pass
+
+    # Allow if no API key is configured (open access mode)
+    if not IMAGE_API_KEY:
+        return True
+
+    raise HTTPException(status_code=401, detail="Not authenticated")
 
 
 class ImageGenRequest(BaseModel):
@@ -40,12 +81,14 @@ class ImageResponse(BaseModel):
 @router.post("/generate-image", response_model=ImageResponse)
 async def generate_image(
     request: ImageGenRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    _auth: bool = Depends(get_image_auth)
 ):
     """
     Generate an image from a text prompt.
     Returns base64 encoded image.
+    Supports JWT auth or API key auth (X-API-Key header or Bearer token).
     """
     try:
         # Prepare VRAM for image generation
@@ -76,12 +119,14 @@ async def generate_image(
 @router.post("/img2img", response_model=ImageResponse)
 async def img2img(
     request: Img2ImgRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    _auth: bool = Depends(get_image_auth)
 ):
     """
     Generate an image from a source image and prompt.
     Returns base64 encoded image.
+    Supports JWT auth or API key auth (X-API-Key header or Bearer token).
     """
     try:
         # Decode source image
