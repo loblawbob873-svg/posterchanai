@@ -9,6 +9,7 @@ safetensors>=0.4.0
 # WD14 tagging
 onnxruntime>=1.16.0
 huggingface_hub>=0.20.0
+numpy>=1.21.0
 
 # Optional: faster attention (NVIDIA only)
 # xformers>=0.0.24
