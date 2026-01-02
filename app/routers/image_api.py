@@ -83,6 +83,16 @@ class ImageResponse(BaseModel):
     error: Optional[str] = None
 
 
+class TagImageRequest(BaseModel):
+    image: str  # base64 encoded image
+    threshold: Optional[float] = 0.35
+
+
+class TagImageResponse(BaseModel):
+    tags: Optional[str] = None  # comma-separated tags
+    error: Optional[str] = None
+
+
 @router.post("/generate-image", response_model=ImageResponse)
 async def generate_image(
     request: ImageGenRequest,
@@ -173,3 +183,40 @@ async def img2img(
         except Exception as e:
             print(f"[IMAGE-API] img2img error: {e}")
             return ImageResponse(error=str(e))
+
+
+@router.post("/tag-image", response_model=TagImageResponse)
+async def tag_image(
+    request: TagImageRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(get_image_auth)
+):
+    """
+    Tag an image using WD14 tagger.
+    Returns comma-separated tags describing the image content.
+    """
+    try:
+        # Decode image
+        try:
+            image_bytes = base64.b64decode(request.image)
+        except Exception:
+            return TagImageResponse(error="Invalid base64 image data")
+
+        print(f"[IMAGE-API] Tagging image ({len(image_bytes)} bytes)...")
+
+        # Import WD14 service
+        from app.services.wd14_service import tag_image as wd14_tag
+
+        # Tag the image
+        tags = wd14_tag(image_bytes, threshold=request.threshold or 0.35)
+
+        if tags:
+            print(f"[IMAGE-API] Tags: {tags[:100]}...")
+            return TagImageResponse(tags=tags)
+        else:
+            return TagImageResponse(error="Failed to tag image")
+
+    except Exception as e:
+        print(f"[IMAGE-API] Tagging error: {e}")
+        return TagImageResponse(error=str(e))

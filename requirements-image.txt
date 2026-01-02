@@ -6,5 +6,12 @@ transformers>=4.37.0
 accelerate>=0.27.0
 safetensors>=0.4.0
 
+# WD14 tagging
+onnxruntime>=1.16.0
+huggingface_hub>=0.20.0
+
 # Optional: faster attention (NVIDIA only)
 # xformers>=0.0.24
+
+# Optional: GPU acceleration for ONNX (NVIDIA)
+# onnxruntime-gpu>=1.16.0

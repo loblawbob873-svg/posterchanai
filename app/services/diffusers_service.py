@@ -64,6 +64,7 @@ class DiffusersService:
     def __init__(self, db: Session):
         self.db = db
         self._pipe = None
+        self._img2img_pipe = None  # Cached img2img pipeline for faster generation
         self._model_path: Optional[str] = None
         self._model_type: Optional[str] = None  # "sd15", "sdxl", "sd3", "flux"
         self._device: Optional[str] = None
@@ -326,6 +327,20 @@ class DiffusersService:
                 pass
             return None
 
+    def _get_img2img_pipe(self):
+        """Get or create cached img2img pipeline"""
+        if self._img2img_pipe is not None:
+            return self._img2img_pipe
+
+        if self._pipe is None:
+            return None
+
+        from diffusers import AutoPipelineForImage2Image
+        logger.info("Creating img2img pipeline from txt2img pipeline...")
+        self._img2img_pipe = AutoPipelineForImage2Image.from_pipe(self._pipe)
+        logger.info("img2img pipeline ready")
+        return self._img2img_pipe
+
     def _img2img_sync(
         self,
         prompt: str,
@@ -353,13 +368,15 @@ class DiffusersService:
 
         try:
             import torch
-            from diffusers import AutoPipelineForImage2Image
 
             # Load source image
             source_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-            # Get img2img pipeline
-            img2img_pipe = AutoPipelineForImage2Image.from_pipe(self._pipe)
+            # Get cached img2img pipeline (much faster than recreating each time)
+            img2img_pipe = self._get_img2img_pipe()
+            if img2img_pipe is None:
+                logger.error("Failed to get img2img pipeline")
+                return None
 
             generator = torch.Generator(device=self._device).manual_seed(seed)
 
@@ -386,8 +403,7 @@ class DiffusersService:
 
             logger.info(f"img2img complete: {len(img_bytes)} bytes")
 
-            # Cleanup img2img pipeline to free VRAM
-            del img2img_pipe
+            # Cleanup result only (keep pipeline cached)
             del result
             gc.collect()
             if torch.cuda.is_available():
