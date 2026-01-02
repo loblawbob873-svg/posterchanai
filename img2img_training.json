@@ -576,9 +576,9 @@
       "output_url": "https://poster.place/files/thumbnail-3f4dad92-e9ff-4562-b34d-92ff3ddb5cf8.png",
       "tags": "1woman, dark skin, brown skin, black hair, hair bun, updo, huge breasts, large breasts, plus size, chubby, bbw, gray shirt, t-shirt, blue pants, standing, hands on hips, indoors, living room, realistic, photorealistic, photograph",
       "change": "regen nude",
-      "denoise": 0.75,
-      "output_tags": "(completely nude:3.0), (fully naked:3.0), (bare skin:3.0), (nipples:2.5), (navel:2.5), (exposed breasts:3.0), (no clothes:3.0), nude, naked, 1woman, (dark skin:2.5), (brown skin:2.5), (black hair:2.0), (hair bun:2.0), (huge breasts:2.0), (large breasts:2.0), (plus size:2.0), (chubby:2.0), standing, hands on hips, indoors, living room, (realistic:3.0), (photorealistic:3.0), (photograph:2.5), (skin texture:2.0), (natural skin tone:2.5), vibrant colors, sharp, high quality",
-      "negative": "(shirt:3.0), (t-shirt:3.0), (gray shirt:3.0), (pants:3.0), (blue pants:3.0), (clothing:3.0), (clothed:3.0), (dressed:3.0), (wearing clothes:3.0), see-through, transparent, sheer, partially clothed, covered, fabric, cloth, anime, 2d, illustration, cartoon, drawn, 3d render, cgi, deformed, extra limbs, bad anatomy, blurry"
+      "denoise": 0.65,
+      "output_tags": "(dark skin:3.5), (brown skin:3.5), (black skin:3.0), (ebony:3.0), (dark skinned female:3.0), (completely nude:3.0), (fully naked:3.0), (bare skin:3.0), (nipples:2.5), (navel:2.5), (exposed breasts:3.0), (no clothes:3.0), nude, naked, 1woman, (black hair:2.5), (hair bun:2.5), (huge breasts:3.0), (large breasts:3.0), (plus size:3.0), (chubby:3.0), (bbw:3.0), (thick body:2.5), (curvy:2.5), standing, hands on hips, indoors, living room, (realistic:3.0), (photorealistic:3.0), (photograph:2.5), (natural skin texture:3.0), (real skin:2.5), vibrant colors, sharp, high quality",
+      "negative": "(pale skin:3.5), (white skin:3.5), (light skin:3.5), (fair skin:3.0), (thin:3.0), (skinny:3.0), (slim:3.0), (plastic skin:3.0), (smooth skin:2.5), (shiny skin:2.5), (shirt:3.0), (t-shirt:3.0), (gray shirt:3.0), (pants:3.0), (blue pants:3.0), (clothing:3.0), (clothed:3.0), (dressed:3.0), (wearing clothes:3.0), see-through, transparent, sheer, partially clothed, covered, fabric, cloth, anime, 2d, illustration, cartoon, drawn, 3d render, cgi, text, watermark, deformed, extra limbs, bad anatomy, blurry"
     }
   ],
   "txt2img_example": {
