@@ -372,6 +372,22 @@ class DiffusersService:
             # Load source image
             source_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
+            # Resize large images to prevent OOM (use admin-configured dimensions)
+            max_dim = max(self.default_width, self.default_height)
+            w, h = source_image.size
+            if max(w, h) > max_dim:
+                if w > h:
+                    new_w = max_dim
+                    new_h = int(h * max_dim / w)
+                else:
+                    new_h = max_dim
+                    new_w = int(w * max_dim / h)
+                # Round to nearest 8 (required for SDXL)
+                new_w = (new_w // 8) * 8
+                new_h = (new_h // 8) * 8
+                logger.info(f"Resizing {w}x{h} -> {new_w}x{new_h} to prevent OOM")
+                source_image = source_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
             # Get cached img2img pipeline (much faster than recreating each time)
             img2img_pipe = self._get_img2img_pipe()
             if img2img_pipe is None:
