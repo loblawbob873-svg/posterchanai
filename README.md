@@ -187,8 +187,14 @@ Direct GPU image generation using the diffusers library. Supports SDXL models.
 
 VRAM modes:
 - `shared` - LLM and image model share VRAM, swap as needed (default)
-- `llm_only` - Keep LLM loaded, unload image model after use
-- `image_only` - Keep image model loaded, no LLM (dedicated image server)
+- `dedicated` - Keep both models loaded (requires high VRAM or dual GPU)
+- `llm_only` - Keep LLM loaded, use external service for images
+- `image_only` - Keep image model loaded, use external service for LLM
+
+**Notes:**
+- When using `image_only`, the LLM health check is automatically disabled
+- Sequential processing: Only one image is generated at a time to prevent GPU overload
+- CUDA memory fragmentation is handled automatically with `PYTORCH_CUDA_ALLOC_CONF`
 
 #### ComfyUI/External Backend (Recommended for proxy setups)
 
@@ -217,15 +223,26 @@ image_backend: native
 image_gpu_device: cuda
 image_model_path: /path/to/sdxl_model.safetensors
 vram_mode: image_only
+ollama_ping_enabled: false   # No LLM health check needed
 ```
 
 **LLM Server (router.lan with Intel Arc):**
 ```
+llm_backend: ipex
 image_backend: comfyui
 comfyui_url: http://nas.lan:3051
+vram_mode: llm_only
+ollama_ping_enabled: true    # LLM health check enabled
+gpu_memory_check_enabled: true
+gpu_memory_threshold: 95
+gpu_type: intel
 ```
 
-Requests from the LLM server are proxied to the image server via the REST API.
+**How it works:**
+- Image requests from the LLM server are proxied to the image server via REST API
+- Each server only loads the model it's responsible for
+- Health checks only monitor the local model type
+- Sequential image generation prevents GPU overload on the image server
 
 ### Image Generation REST API
 
@@ -533,6 +550,8 @@ Key settings for WebSocket and streaming:
 ## LLM Health Check
 
 Posterchanai includes an automatic health check that monitors the LLM backend and recovers if unresponsive. Works with all backends: Native GPU, IPEX-LLM, and Ollama.
+
+**Important:** The LLM health check is automatically disabled when `vram_mode` is set to `image_only`, since there's no local LLM to monitor in that configuration.
 
 ### Settings
 
