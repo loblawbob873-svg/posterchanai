@@ -31,8 +31,17 @@ _consecutive_failures: int = 0
 def _get_settings(db: Session) -> dict:
     """Get health check settings from database"""
     settings = {s.key: s.value for s in db.query(Setting).all()}
+
+    # Get vram_mode to determine if LLM health check should run
+    vram_mode = settings.get("vram_mode", "shared")
+
+    # LLM health check is disabled in image_only mode (no local LLM)
+    enabled = settings.get("ollama_ping_enabled", "false").lower() == "true"
+    if vram_mode == "image_only":
+        enabled = False
+
     return {
-        "enabled": settings.get("ollama_ping_enabled", "false").lower() == "true",
+        "enabled": enabled,
         "backend": settings.get("llm_backend", "ollama"),
         "ollama_url": settings.get("ollama_url", "http://localhost:11434"),
         "ollama_model": settings.get("ollama_model", "llama3"),
@@ -42,10 +51,11 @@ def _get_settings(db: Session) -> dict:
         # Restart after 2 consecutive failures (Intel Arc GPU can be flaky)
         "restart_after_failures": int(settings.get("ollama_restart_after_failures", "2")),
         "restart_command": settings.get("ollama_restart_command", "sudo docker restart ollama-intel-arc"),
-        # GPU memory monitoring
-        "gpu_memory_check_enabled": settings.get("gpu_memory_check_enabled", "false").lower() == "true",
+        # GPU memory monitoring - also disabled in image_only mode
+        "gpu_memory_check_enabled": settings.get("gpu_memory_check_enabled", "false").lower() == "true" and vram_mode != "image_only",
         "gpu_memory_threshold": int(settings.get("gpu_memory_threshold", "99")),
         "gpu_type": settings.get("gpu_type", "nvidia"),  # "nvidia" or "intel"
+        "vram_mode": vram_mode,
     }
 
 

@@ -567,6 +567,10 @@ SCRIPT
 # NVIDIA CUDA wrapper script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# Help with CUDA memory fragmentation for image generation
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 exec "$SCRIPT_DIR/venv/bin/python" run.py "$@"
 SCRIPT
             ;;

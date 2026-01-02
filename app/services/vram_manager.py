@@ -1,8 +1,10 @@
 """
 VRAM Manager - Handles GPU memory when LLM and Image models share the same GPU.
-Supports two modes:
-- shared: Swap models in/out of VRAM (single GPU)
+Supports four modes:
+- shared: Swap models in/out of VRAM (single GPU) - default
 - dedicated: Keep both loaded (dual GPU or high VRAM)
+- llm_only: Keep LLM loaded, use external image service
+- image_only: Keep image model loaded, use external LLM service
 """
 import logging
 import threading
@@ -49,13 +51,19 @@ def prepare_for_llm(db: Session) -> bool:
     global _current_mode
 
     settings = _get_vram_settings(db)
+    vram_mode = settings["vram_mode"]
 
-    # If using external services (ollama/comfyui), no VRAM management needed
+    # If using external services (ollama), no VRAM management needed
     if settings["llm_backend"] == "ollama":
         return True
 
-    # In dedicated mode, just ensure LLM is loaded
-    if settings["vram_mode"] == "dedicated":
+    # image_only mode - LLM should use external service, don't load locally
+    if vram_mode == "image_only":
+        logger.debug("image_only mode - LLM uses external service")
+        return True
+
+    # In dedicated or llm_only mode, just ensure LLM is loaded
+    if vram_mode in ("dedicated", "llm_only"):
         _ensure_llm_loaded(db, settings)
         _current_mode = "llm"
         return True
@@ -93,13 +101,19 @@ def prepare_for_image(db: Session) -> bool:
     global _current_mode
 
     settings = _get_vram_settings(db)
+    vram_mode = settings["vram_mode"]
 
     # If using ComfyUI or disabled, no VRAM management needed on our side
     if settings["image_backend"] in ("comfyui", "disabled"):
         return True
 
-    # In dedicated mode, just ensure image model is loaded
-    if settings["vram_mode"] == "dedicated":
+    # llm_only mode - image should use external service, don't load locally
+    if vram_mode == "llm_only":
+        logger.debug("llm_only mode - image uses external service")
+        return True
+
+    # In dedicated or image_only mode, just ensure image model is loaded
+    if vram_mode in ("dedicated", "image_only"):
         _ensure_image_loaded(db, settings)
         _current_mode = "image"
         return True
