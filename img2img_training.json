@@ -561,6 +561,24 @@
       "denoise": 0.65,
       "output_tags": "(panties:2.5), (underwear only:2.0), 1girl, (pink hair:2.0), shirt, (anime:2.0), anime, vibrant colors, sharp, high quality",
       "negative": "skirt, pleated skirt, pants, shorts, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "input_url": "https://i.poastcdn.org/11/bf/b0/11bfb04774170b118b011ec9516373937607b95a0e45f24f4c1085cfaf005011.jpeg",
+      "output_url": "https://poster.place/files/thumbnail-26963155-81dd-447e-8b27-b97d00edffeb.png",
+      "tags": "1girl, long hair, brown hair, red eyes, wolf ears, wolf tail, black tracksuit, sportswear, standing, leaning, outdoors, urban, city, winter, snow, snowing, anime, illustration",
+      "change": "regen nude dildo, anime",
+      "denoise": 0.70,
+      "output_tags": "(completely nude:3.0), (fully naked:3.0), (dildo:3.0), (sex toy:2.5), (insertion:2.5), (bare skin:2.5), (nipples:2.0), (navel:2.0), nude, dildo, 1girl, (long hair:2.0), (brown hair:2.0), (red eyes:2.0), (wolf ears:2.5), (wolf tail:2.5), outdoors, winter, snow, (anime:2.0), (illustration:2.0), anime, illustration, (pale skin:2.0), (natural skin:1.5), vibrant colors, sharp, high quality",
+      "negative": "tracksuit, sportswear, clothing, clothed, see-through, transparent, sheer, partially clothed, covered, sheet, blanket, towel, fabric, cloth, realistic, photorealistic, 3d, blue skin, green skin, unnatural skin, deformed, extra limbs, bad anatomy, blurry"
+    },
+    {
+      "input_url": "https://poster.place/files/thumbnail-f8f38e4a-0144-4a14-a06c-24cb9920abb1.png",
+      "output_url": "https://poster.place/files/thumbnail-3f4dad92-e9ff-4562-b34d-92ff3ddb5cf8.png",
+      "tags": "1woman, dark skin, brown skin, black hair, hair bun, updo, huge breasts, large breasts, plus size, chubby, bbw, gray shirt, t-shirt, blue pants, standing, hands on hips, indoors, living room, realistic, photorealistic, photograph",
+      "change": "regen nude",
+      "denoise": 0.75,
+      "output_tags": "(completely nude:3.0), (fully naked:3.0), (bare skin:3.0), (nipples:2.5), (navel:2.5), (exposed breasts:3.0), (no clothes:3.0), nude, naked, 1woman, (dark skin:2.5), (brown skin:2.5), (black hair:2.0), (hair bun:2.0), (huge breasts:2.0), (large breasts:2.0), (plus size:2.0), (chubby:2.0), standing, hands on hips, indoors, living room, (realistic:3.0), (photorealistic:3.0), (photograph:2.5), (skin texture:2.0), (natural skin tone:2.5), vibrant colors, sharp, high quality",
+      "negative": "(shirt:3.0), (t-shirt:3.0), (gray shirt:3.0), (pants:3.0), (blue pants:3.0), (clothing:3.0), (clothed:3.0), (dressed:3.0), (wearing clothes:3.0), see-through, transparent, sheer, partially clothed, covered, fabric, cloth, anime, 2d, illustration, cartoon, drawn, 3d render, cgi, deformed, extra limbs, bad anatomy, blurry"
     }
   ],
   "txt2img_example": {
