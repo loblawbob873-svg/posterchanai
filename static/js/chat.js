@@ -203,16 +203,23 @@ class ChatHandler {
             });
         }
 
-        // Update placeholders based on service type
+        // Update placeholders and API key hint based on service type
+        const apiKeySection = document.getElementById('apiKeySection');
+        const apiKeyHint = document.getElementById('apiKeyHint');
         const updatePlaceholders = () => {
             if (!customAiType || !customAiUrl || !customAiModel) return;
             if (customAiType.value === 'ollama') {
                 customAiUrl.placeholder = 'http://192.168.1.100:11434';
                 customAiModel.placeholder = 'llama3:latest';
+                // Ollama typically doesn't need API key
+                if (apiKeyHint) apiKeyHint.textContent = '(not required for Ollama)';
+                if (apiKeySection) apiKeySection.style.display = 'none';
             } else {
                 // OpenAI-compatible (Open-WebUI, Posterchanai)
                 customAiUrl.placeholder = 'http://192.168.1.100:3051';
                 customAiModel.placeholder = 'llama3';
+                if (apiKeyHint) apiKeyHint.textContent = '(required for Open-WebUI/Posterchanai)';
+                if (apiKeySection) apiKeySection.style.display = 'block';
             }
         };
         if (customAiType) {
@@ -293,6 +300,8 @@ class ChatHandler {
                         if (customAiUrl) customAiUrl.value = data.custom_ai_url || '';
                         if (customAiModel) customAiModel.value = data.custom_ai_model || '';
                         if (customAiApiKey) customAiApiKey.value = data.custom_ai_has_api_key ? '********' : '';
+                        // Update placeholders based on loaded service type
+                        updatePlaceholders();
 
                         // Load custom image settings
                         if (customImageEnabled) {

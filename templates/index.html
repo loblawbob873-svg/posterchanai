@@ -192,8 +192,10 @@
                             <input type="text" id="customAiUrl" placeholder="http://192.168.1.100:11434">
                             <label for="customAiModel">Model Name</label>
                             <input type="text" id="customAiModel" placeholder="llama3:latest">
-                            <label for="customAiApiKey">API Key (optional)</label>
-                            <input type="password" id="customAiApiKey" placeholder="API key for authentication">
+                            <div id="apiKeySection">
+                                <label for="customAiApiKey">API Key <span id="apiKeyHint">(required for Open-WebUI/Posterchanai)</span></label>
+                                <input type="password" id="customAiApiKey" placeholder="API key for authentication">
+                            </div>
                             <button class="btn-secondary" id="testCustomAi">Test Connection</button>
                             <span id="testAiResult" class="test-result"></span>
                         </div>
@@ -270,7 +272,7 @@
 
 <script src="/static/js/mascot.js"></script>
 <script src="/static/js/tts.js"></script>
-<script src="/static/js/chat.js?v=5"></script>
+<script src="/static/js/chat.js?v=6"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/apikeys.js"></script>
 {% endblock %}
