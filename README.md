@@ -8,6 +8,7 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 - AI Chat with streaming responses
 - **Native GPU inference** with llama-cpp-python (Intel SYCL, NVIDIA CUDA, AMD ROCm, CPU fallback)
 - Ollama backend support (optional, for Docker-based setups)
+- **Custom AI Service** - Users can connect to their own AI (Ollama, Open-WebUI, Posterchanai)
 - OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`)
 - Per-user API keys for external app integration
 - Stop button to halt AI response generation mid-stream
@@ -457,6 +458,63 @@ The Translate button allows you to translate entire documents to different langu
 2. Select target language from dropdown
 3. Choose a file to translate
 4. AI will translate the full document
+
+## Custom AI Service
+
+Users can connect to their own AI service running on their desktop or home server, allowing them to use their personal LLM and ComfyUI instances instead of the server's default.
+
+### Supported Services
+
+**LLM (Chat):**
+- **Ollama** - Direct Ollama API (`/api/chat`)
+- **Open-WebUI** - OpenAI-compatible API (`/v1/chat/completions`)
+- **Posterchanai** - OpenAI-compatible API (`/v1/chat/completions`)
+
+**Image Generation:**
+- **ComfyUI** - User's own ComfyUI instance
+
+### Setup
+
+1. Click your username in the sidebar
+2. Click **Settings**
+3. In the **Custom AI Service** section:
+
+**For Chat/LLM:**
+- Enable **Use Custom LLM**
+- Select **Service Type** (Ollama or Open-WebUI/Posterchanai)
+- Enter **Service URL** (e.g., `http://192.168.1.100:11434` for Ollama)
+- Enter **Model Name** (e.g., `llama3:latest` for Ollama, or your model ID for Open-WebUI)
+- Optionally enter **API Key** (required for Open-WebUI/Posterchanai)
+- Click **Test Connection** to verify
+
+**For Image Generation:**
+- Enable **Use Custom ComfyUI**
+- Enter **ComfyUI URL** (e.g., `http://192.168.1.100:8188`)
+- Click **Test Connection** to verify
+
+4. Click **Save All Settings**
+
+### Quick Toggle
+
+Once configured, a quick toggle appears in the user menu to switch between:
+- **Server AI** - Uses the server's default AI service
+- **Custom AI** - Uses your personal AI service
+
+This allows one-click switching without opening settings.
+
+### How It Works
+
+- Chat requests are routed to your custom LLM endpoint
+- Image generation requests are routed to your custom ComfyUI
+- **All uploads and generated images remain stored on the main server**
+- Your conversation history stays on the main server
+- If your custom service is unavailable, you'll see an error message
+
+### Security Notes
+
+- Your API key is stored encrypted on the server
+- The server only proxies requests to your custom endpoint
+- No data is shared with the custom service except the chat messages/prompts
 
 ## Email AI Responses
 
