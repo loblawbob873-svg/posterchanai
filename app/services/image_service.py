@@ -127,6 +127,33 @@ class ImageService:
             # Not a posterchanai instance, will try ComfyUI
             return None
 
+    async def _try_posterchanai_img2img(self, prompt: str, image_bytes: bytes,
+                                         denoise: float = 0.75, negative_prompt: str = None) -> Optional[str]:
+        """Try posterchanai's img2img REST API"""
+        try:
+            api_url = self.comfyui_url.rstrip('/') + '/api/img2img'
+            image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    api_url,
+                    json={
+                        "prompt": prompt,
+                        "image": image_b64,
+                        "denoise": denoise,
+                        "negative_prompt": negative_prompt or ""
+                    }
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("image"):
+                        return data["image"]
+                    if data.get("error"):
+                        print(f"Posterchanai img2img error: {data['error']}")
+                return None
+        except Exception as e:
+            # Not a posterchanai instance, will try ComfyUI
+            return None
+
     async def _try_comfyui_workflow(self, prompt: str) -> Optional[str]:
         """Try ComfyUI workflow API"""
         # Select model based on prompt
@@ -329,6 +356,12 @@ class ImageService:
         if not self.comfyui_url:
             return None
 
+        # Try posterchanai REST API first
+        result = await self._try_posterchanai_img2img(prompt, image_bytes, denoise, negative_prompt)
+        if result:
+            return result
+
+        # Fall back to ComfyUI workflow API
         # Upload source image
         uploaded_filename = await self._upload_image(image_bytes)
         if not uploaded_filename:

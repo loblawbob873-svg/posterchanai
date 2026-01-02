@@ -94,8 +94,8 @@ def prepare_for_image(db: Session) -> bool:
 
     settings = _get_vram_settings(db)
 
-    # If using ComfyUI, no VRAM management needed on our side
-    if settings["image_backend"] == "comfyui":
+    # If using ComfyUI or disabled, no VRAM management needed on our side
+    if settings["image_backend"] in ("comfyui", "disabled"):
         return True
 
     # In dedicated mode, just ensure image model is loaded
