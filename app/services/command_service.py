@@ -1,16 +1,16 @@
 import base64
-import asyncio
-from typing import Optional, Tuple, TYPE_CHECKING
+import logging
+from typing import Optional, Tuple, Callable, TYPE_CHECKING
 from sqlalchemy.orm import Session
 from app.services.search_service import SearchService
 from app.services.image_factory import get_image_backend, get_image_backend_for_user, prepare_vram_for_image
 from app.services.chat_service import ChatService
+from app.services.locks import image_generation_lock
 
 if TYPE_CHECKING:
     from app.models import User
 
-# Global lock to prevent concurrent image generation (prevents WD14/LLM response mixing)
-_image_generation_lock = asyncio.Lock()
+logger = logging.getLogger(__name__)
 
 
 class CommandService:
@@ -43,8 +43,8 @@ class CommandService:
         return None, message
 
     async def execute_command(self, command: str, arg: str, last_prompt: Optional[str] = None,
-                              image_data: Optional[str] = None, file_content: Optional[str] = None,
-                              stop_check: Optional[callable] = None) -> dict:
+                              image_data: Optional[str] = None,
+                              stop_check: Optional[Callable[[], bool]] = None) -> dict:
         """Execute a command and return the result"""
         if command == "search":
             return await self._search_command(arg)
@@ -107,7 +107,7 @@ class CommandService:
             return {"type": "text", "content": "Generation cancelled."}
 
         # Use lock to prevent concurrent image generation
-        async with _image_generation_lock:
+        async with image_generation_lock:
             # Prepare VRAM for image generation (swap models if needed)
             prepare_vram_for_image(self.db)
 
@@ -133,19 +133,19 @@ class CommandService:
         if stop_check and stop_check():
             return {"type": "text", "content": "Cancelled."}
 
-        async with _image_generation_lock:
+        async with image_generation_lock:
             prepare_vram_for_image(self.db)
 
             try:
                 image_bytes = base64.b64decode(image_data)
             except Exception as e:
-                print(f"[IMG2IMG] Failed to decode image: {e}")
+                logger.info(f"[IMG2IMG] Failed to decode image: {e}")
                 return {"type": "text", "content": "Invalid image."}
 
             # Get tags and detect style
             from app.services.wd14_service import tag_image
             tags = tag_image(image_bytes, threshold=0.35) or ""
-            print(f"[IMG2IMG] WD14 tags: {tags[:200]}...")
+            logger.info(f"[IMG2IMG] WD14 tags: {tags[:200]}...")
             is_anime = 'anime' in prompt.lower() or 'anime' in tags.lower()
             style = "anime" if is_anime else "realistic"
 
@@ -164,7 +164,7 @@ class CommandService:
             if has_light_hair:
                 extra_tags.append("pale skin, white skin, fair skin, caucasian")
                 neg_extra.append("dark skin, brown skin, black skin")
-                print(f"[IMG2IMG] Light hair detected - forcing pale skin")
+                logger.info(f"[IMG2IMG] Light hair detected - forcing pale skin")
             elif has_dark_skin_tag and has_dark_hair:
                 # Only use dark skin if hair is also dark (consistent)
                 extra_tags.append("dark brown skin")
@@ -178,7 +178,7 @@ class CommandService:
             if any(t in tags_lower for t in ["large_breasts", "huge_breasts"]):
                 extra_tags.append("large breasts")
             extra_str = ", ".join(extra_tags)
-            print(f"[IMG2IMG] Identity tags: {extra_str}")
+            logger.info(f"[IMG2IMG] Identity tags: {extra_str}")
 
             # Check if prompt contains NSFW keywords - add trigger phrase to use NSFW model
             nsfw_keywords = ["nude", "naked", "topless", "bare breasts", "nipples", "nsfw", "undress"]
@@ -194,8 +194,8 @@ class CommandService:
             # Add more negatives to prevent latex/shiny material and unwanted compositions
             neg_identity = ", ".join(neg_extra) if neg_extra else ""
             neg_prompt = f"frame, framed, picture frame, window frame, door frame, bars, cage, border, furniture, close-up, cropped, headless, no face, clothing, clothes, shirt, top, bra, pants, shorts, fabric, dressed, wearing, covered, mesh, sheer, latex, rubber, spandex, shiny, glossy, wet look, bodysuit, catsuit, thin, slim, skinny, {'realistic' if is_anime else 'anime'}, deformed, {neg_identity}".strip(', ')
-            print(f"[IMG2IMG-DEBUG] Final prompt: {final_prompt}")
-            print(f"[IMG2IMG-DEBUG] Negative prompt: {neg_prompt[:100]}...")
+            logger.debug(f"[IMG2IMG] Final prompt: {final_prompt}")
+            logger.debug(f"[IMG2IMG] Negative prompt: {neg_prompt[:100]}...")
 
             # Import face detection for retry logic
             from app.services.face_swap_service import swap_face_bytes, detect_face
@@ -208,7 +208,7 @@ class CommandService:
             # Retry up to 3 times if generated image has no face
             max_retries = 3
             for attempt in range(max_retries):
-                print(f"[IMG2IMG] Generation attempt {attempt + 1}/{max_retries} (denoise={denoise_value})")
+                logger.info(f"[IMG2IMG] Generation attempt {attempt + 1}/{max_retries} (denoise={denoise_value})")
 
                 result_b64 = await self.image_service.generate_img2img(
                     prompt=final_prompt,
@@ -226,10 +226,10 @@ class CommandService:
                 gen_face = detect_face(gen_image)
 
                 if gen_face is not None:
-                    print(f"[IMG2IMG] Face detected in generated image at bbox: {gen_face.bbox}")
+                    logger.info(f"[IMG2IMG] Face detected in generated image at bbox: {gen_face.bbox}")
                     break
                 else:
-                    print(f"[IMG2IMG] No face in generated image, retrying...")
+                    logger.info(f"[IMG2IMG] No face in generated image, retrying...")
             else:
                 print("[IMG2IMG] All retries failed to generate face, using last result")
 
@@ -249,7 +249,7 @@ class CommandService:
                     else:
                         print("[IMG2IMG] Face swap returned None (no face detected)")
                 except Exception as e:
-                    print(f"[IMG2IMG] Face swap error: {e}")
+                    logger.info(f"[IMG2IMG] Face swap error: {e}")
             else:
                 print("[IMG2IMG] Skipped face swap for anime")
 
@@ -263,7 +263,7 @@ class CommandService:
             return {"type": "text", "content": "Generation cancelled."}
 
         # Use lock to prevent concurrent image generation
-        async with _image_generation_lock:
+        async with image_generation_lock:
             # Prepare VRAM for image generation (swap models if needed)
             prepare_vram_for_image(self.db)
 
