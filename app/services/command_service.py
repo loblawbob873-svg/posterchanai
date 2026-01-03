@@ -175,11 +175,11 @@ class CommandService:
             # Add strong NSFW keywords to ensure clothes removal - emphasize bare/exposed skin
             nsfw_trigger = "ecchi, hentai, nude, nipples, topless, exposed breasts, bare skin, naked body, no clothing at all, " if is_nsfw and "ecchi" not in prompt.lower() and "hentai" not in prompt.lower() else ""
 
-            # Add composition guidance - preserve original framing, just ensure face is visible
-            composition = "same pose, same framing, face visible"
+            # Add composition guidance - preserve pose, ensure face visible
+            composition = "same pose, same composition, face visible, full body"
             final_prompt = f"{nsfw_trigger}{prompt}, {composition}, {extra_str}, {style}, realistic photography".strip(', ')
             # Add more negatives to prevent latex/shiny material and unwanted compositions
-            neg_prompt = f"picture frame, frame, framed, painting, border, close-up, cropped, headless, no face, clothing, clothes, shirt, top, bra, pants, shorts, fabric, dressed, wearing, covered, mesh, sheer, latex, rubber, spandex, shiny, glossy, wet look, bodysuit, catsuit, thin, slim, skinny, {'realistic' if is_anime else 'anime'}, deformed"
+            neg_prompt = f"frame, framed, picture frame, window frame, door frame, bars, cage, border, furniture, close-up, cropped, headless, no face, clothing, clothes, shirt, top, bra, pants, shorts, fabric, dressed, wearing, covered, mesh, sheer, latex, rubber, spandex, shiny, glossy, wet look, bodysuit, catsuit, thin, slim, skinny, {'realistic' if is_anime else 'anime'}, deformed"
             print(f"[IMG2IMG-DEBUG] Final prompt: {final_prompt}")
             print(f"[IMG2IMG-DEBUG] Negative prompt: {neg_prompt[:100]}...")
 
@@ -193,11 +193,11 @@ class CommandService:
             for attempt in range(max_retries):
                 print(f"[IMG2IMG] Generation attempt {attempt + 1}/{max_retries}")
 
-                # Use 0.92 denoise - high value needed to fully remove clothes (lower values create latex effect)
+                # Use 0.88 denoise - balance between clothes removal and preserving skin tone
                 result_b64 = await self.image_service.generate_img2img(
                     prompt=final_prompt,
                     image_bytes=image_bytes,
-                    denoise=0.92,
+                    denoise=0.88,
                     negative_prompt=neg_prompt
                 )
 

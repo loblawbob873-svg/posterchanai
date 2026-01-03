@@ -51,22 +51,30 @@ def swap_face(original: Image.Image, generated: Image.Image) -> Image.Image:
         logger.warning("Could not detect face in one or both images")
         return generated
 
-    # Extract face from original with margin for blending
+    # Extract face from original - include forehead/hair area
     ox1, oy1, ox2, oy2 = [int(x) for x in orig_face.bbox]
-    margin = int((ox2 - ox1) * 0.35)  # Larger margin for more context
-    ox1 = max(0, ox1 - margin)
-    oy1 = max(0, oy1 - margin)
-    ox2 = min(original.width, ox2 + margin)
-    oy2 = min(original.height, oy2 + margin)
+    face_h = oy2 - oy1
+    face_w = ox2 - ox1
+    margin_side = int(face_w * 0.15)  # Small side margin
+    margin_top = int(face_h * 0.35)   # Top margin for hair (not too much)
+    margin_bottom = int(face_h * 0.1) # Small bottom margin
+    ox1 = max(0, ox1 - margin_side)
+    oy1 = max(0, oy1 - margin_top)
+    ox2 = min(original.width, ox2 + margin_side)
+    oy2 = min(original.height, oy2 + margin_bottom)
     face_crop = original.crop((ox1, oy1, ox2, oy2))
 
     # Get target position in generated image
     gx1, gy1, gx2, gy2 = [int(x) for x in gen_face.bbox]
-    margin = int((gx2 - gx1) * 0.35)  # Match margin
-    gx1 = max(0, gx1 - margin)
-    gy1 = max(0, gy1 - margin)
-    gx2 = min(generated.width, gx2 + margin)
-    gy2 = min(generated.height, gy2 + margin)
+    face_h = gy2 - gy1
+    face_w = gx2 - gx1
+    margin_side = int(face_w * 0.15)
+    margin_top = int(face_h * 0.35)
+    margin_bottom = int(face_h * 0.1)
+    gx1 = max(0, gx1 - margin_side)
+    gy1 = max(0, gy1 - margin_top)
+    gx2 = min(generated.width, gx2 + margin_side)
+    gy2 = min(generated.height, gy2 + margin_bottom)
 
     # Resize face to target size
     target_w = gx2 - gx1
@@ -76,15 +84,16 @@ def swap_face(original: Image.Image, generated: Image.Image) -> Image.Image:
     # Start with generated image
     result = generated.copy()
 
-    # Create elliptical mask with heavy feathering for seamless blend
+    # Create elliptical mask - covers face and hair with soft edges
     mask = Image.new('L', (target_w, target_h), 0)
     draw = ImageDraw.Draw(mask)
-    # Large inset - only blend the center face area
-    inset_x = int(target_w * 0.2)
-    inset_y = int(target_h * 0.15)
-    draw.ellipse([inset_x, inset_y, target_w - inset_x, target_h - inset_y], fill=255)
-    # Heavy blur for seamless transition
-    blur_radius = max(25, target_w // 4)
+    # Ellipse with small insets - covers most of the crop
+    inset_x = int(target_w * 0.05)
+    inset_top = int(target_h * 0.02)  # Minimal top inset to include hair
+    inset_bottom = int(target_h * 0.08)
+    draw.ellipse([inset_x, inset_top, target_w - inset_x, target_h - inset_bottom], fill=255)
+    # Moderate blur for blending
+    blur_radius = max(20, target_w // 5)
     mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_radius))
 
     # Paste face with mask

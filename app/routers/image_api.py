@@ -76,6 +76,8 @@ class Img2ImgRequest(BaseModel):
     image: str  # base64 encoded image
     denoise: Optional[float] = 0.75
     negative_prompt: Optional[str] = ""
+    face_swap: Optional[bool] = False  # Swap original face onto result
+    auto_identity: Optional[bool] = False  # Auto-detect identity tags from image
 
 
 class InpaintRequest(BaseModel):
@@ -173,16 +175,52 @@ async def img2img(
             # Get image backend
             backend = get_image_backend(db)
 
+            # Build final prompt with identity tags if requested
+            final_prompt = request.prompt
+            if request.auto_identity:
+                try:
+                    from app.services.wd14_tagger import tag_image_bytes
+                    tags = await tag_image_bytes(image_bytes)
+                    if tags:
+                        tags_lower = tags.lower()
+                        identity_parts = []
+                        if 'dark_skin' in tags_lower or 'dark-skinned' in tags_lower:
+                            identity_parts.append('dark brown skin')
+                        if any(t in tags_lower for t in ['fat', 'chubby', 'plump', 'overweight']):
+                            identity_parts.append('fat, obese, bbw, plus-size body')
+                        if any(t in tags_lower for t in ['large_breasts', 'huge_breasts']):
+                            identity_parts.append('large breasts')
+                        if identity_parts:
+                            identity_str = ", ".join(identity_parts)
+                            final_prompt = f"{request.prompt}, {identity_str}"
+                            print(f"[IMAGE-API] Added identity tags: {identity_str}")
+                except Exception as e:
+                    print(f"[IMAGE-API] Identity detection error: {e}")
+
             # Generate img2img
             result = await backend.generate_img2img(
-                prompt=request.prompt,
+                prompt=final_prompt,
                 image_bytes=image_bytes,
                 denoise=request.denoise or 0.75,
                 negative_prompt=request.negative_prompt
             )
 
             if result:
-                print(f"[IMAGE-API] img2img completed successfully")
+                # Face swap if requested
+                if request.face_swap:
+                    try:
+                        from app.services.face_swap_service import swap_face_bytes
+                        result_bytes = base64.b64decode(result)
+                        swapped = swap_face_bytes(image_bytes, result_bytes)
+                        if swapped:
+                            result = base64.b64encode(swapped).decode('utf-8')
+                            print(f"[IMAGE-API] img2img with face swap completed")
+                        else:
+                            print(f"[IMAGE-API] img2img completed (face swap failed)")
+                    except Exception as e:
+                        print(f"[IMAGE-API] Face swap error: {e}")
+                else:
+                    print(f"[IMAGE-API] img2img completed successfully")
                 return ImageResponse(image=result)
             else:
                 print(f"[IMAGE-API] img2img failed (no result)")
