@@ -156,6 +156,18 @@ class CommandService:
             neg_extra = []
             tags_lower = tags.lower()
 
+            # Gender detection - important for preserving identity!
+            is_male = any(t in tags_lower for t in ['1boy', 'male', 'boy', 'man', 'male_focus'])
+            is_female = any(t in tags_lower for t in ['1girl', 'female', 'girl', 'woman', 'female_focus'])
+            if is_male and not is_female:
+                extra_tags.append("male, man, boy, masculine")
+                neg_extra.append("female, woman, girl, feminine, breasts")
+                logger.info(f"[IMG2IMG] Male detected - preserving gender")
+            elif is_female and not is_male:
+                extra_tags.append("female, woman, girl, feminine")
+                neg_extra.append("male, man, boy, masculine, penis")
+                logger.info(f"[IMG2IMG] Female detected - preserving gender")
+
             # Hair color detection
             has_light_hair = any(h in tags_lower for h in ['blonde', 'yellow_hair', 'orange_hair', 'red_hair', 'redhead', 'pink_hair', 'white_hair', 'silver_hair'])
             has_dark_hair = any(h in tags_lower for h in ['black_hair', 'brown_hair'])
