@@ -126,6 +126,28 @@ class StorageService:
             count += len(files)
         return count
 
+    def load_image_as_base64(self, image_url: str) -> str | None:
+        """Load image from URL path and return as base64"""
+        import base64
+        from urllib.parse import unquote
+
+        # URL is like /api/files/username/conv_id/filename.png
+        # Extract path parts
+        try:
+            parts = image_url.strip('/').split('/')
+            if len(parts) >= 4 and parts[0] == 'api' and parts[1] == 'files':
+                username = unquote(parts[2])
+                conv_id = parts[3]
+                filename = unquote(parts[4]) if len(parts) > 4 else None
+                if filename:
+                    file_path = Path(self.upload_path) / username / conv_id / filename
+                    if file_path.exists():
+                        with open(file_path, 'rb') as f:
+                            return base64.b64encode(f.read()).decode('utf-8')
+        except Exception as e:
+            print(f"[STORAGE] Failed to load image: {e}")
+        return None
+
 
 def get_storage_service(db: Session) -> StorageService:
     return StorageService(db)

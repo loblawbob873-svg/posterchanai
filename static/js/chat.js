@@ -1231,6 +1231,12 @@ class ChatHandler {
             if (window.app) {
                 payload.denoise = window.app.getDenoiseValue();
             }
+        } else if (messageEl._imagePath) {
+            // For historical messages, use the stored image path
+            payload.image_path = messageEl._imagePath;
+            if (window.app) {
+                payload.denoise = window.app.getDenoiseValue();
+            }
         }
 
         // Store payload for potential retry
@@ -1267,6 +1273,9 @@ class ChatHandler {
 
         // Add stored image if present
         if (imagePath) {
+            // Store image path on element for editing later
+            messageEl._imagePath = imagePath;
+
             const imgContainer = document.createElement('div');
             imgContainer.className = 'generated-image';
             const img = document.createElement('img');
@@ -1315,8 +1324,8 @@ class ChatHandler {
                 contentEl.appendChild(emailBtn);
 
                 if (this.lastPayload) {
-                    // Remove regenerate button from previous assistant messages
-                    const prevRegenBtns = this.messagesContainer.querySelectorAll('.btn-regenerate');
+                    // Remove regenerate button from previous assistant messages (not user messages)
+                    const prevRegenBtns = this.messagesContainer.querySelectorAll('.message.assistant .btn-regenerate');
                     prevRegenBtns.forEach(btn => btn.remove());
 
                     const regenBtn = document.createElement('button');

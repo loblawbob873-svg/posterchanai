@@ -349,10 +349,21 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     manager.set_stop(user.id, False)  # Reset for new message
                     content = data.get("content", "").strip()
                     image_data = data.get("image_data")  # base64 image
+                    image_path = data.get("image_path")  # path to stored image (for editing)
                     file_content = data.get("file_content")  # text file content
                     pdf_data = data.get("pdf_data")  # base64 PDF
                     document_data = data.get("document_data")  # base64 Office document
                     denoise = data.get("denoise")  # denoise value for img2img (0.2-1.0)
+
+                    # If image_path provided but no image_data, load from disk
+                    if image_path and not image_data:
+                        try:
+                            loaded_image = storage_service.load_image_as_base64(image_path)
+                            if loaded_image:
+                                image_data = loaded_image
+                                print(f"[DEBUG] Loaded image from path: {image_path}")
+                        except Exception as e:
+                            print(f"[DEBUG] Failed to load image from path: {e}")
 
                     # Extract text from PDF if provided
                     if pdf_data:
