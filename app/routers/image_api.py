@@ -74,9 +74,8 @@ class ImageGenRequest(BaseModel):
 class Img2ImgRequest(BaseModel):
     prompt: str
     image: str  # base64 encoded image
-    denoise: Optional[float] = 0.60
+    denoise: Optional[float] = 0.50
     negative_prompt: Optional[str] = ""
-    face_swap: Optional[bool] = True  # Swap original face onto result
     auto_identity: Optional[bool] = True  # Auto-detect identity tags from image
 
 

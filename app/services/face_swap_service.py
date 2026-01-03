@@ -48,63 +48,6 @@ def detect_face(image: Image.Image):
     return None
 
 
-def create_body_mask(image: Image.Image, face_margin: float = 0.3) -> Optional[Image.Image]:
-    """
-    Create a mask for inpainting body while preserving face.
-    Returns mask where WHITE=inpaint (body), BLACK=keep (face).
-    Only works if exactly ONE face detected (avoids complex backgrounds).
-    """
-    faces = detect_faces(image)
-    if not faces:
-        logger.warning("No face detected - cannot create body mask")
-        return None
-    if len(faces) > 1:
-        logger.warning(f"Multiple faces ({len(faces)}) detected - skipping face mask to avoid chaos")
-        return None
-
-    # Create white mask (inpaint everything)
-    mask = Image.new('L', image.size, 255)
-    draw = ImageDraw.Draw(mask)
-
-    # Draw black ellipse for the single face
-    for face in faces:
-        x1, y1, x2, y2 = [int(x) for x in face.bbox]
-        face_w = x2 - x1
-        face_h = y2 - y1
-
-        # Add margin around face
-        margin_x = int(face_w * face_margin)
-        margin_y = int(face_h * face_margin)
-        x1 = max(0, x1 - margin_x)
-        y1 = max(0, y1 - margin_y)
-        x2 = min(image.width, x2 + margin_x)
-        y2 = min(image.height, y2 + margin_y)
-
-        # Draw black ellipse (keep face area)
-        draw.ellipse([x1, y1, x2, y2], fill=0)
-
-    # Blur mask edges for smooth blending
-    mask = mask.filter(ImageFilter.GaussianBlur(radius=20))
-
-    logger.info(f"Created body mask preserving {len(faces)} face(s)")
-    return mask
-
-
-def create_body_mask_bytes(image_bytes: bytes, face_margin: float = 0.3) -> Optional[bytes]:
-    """Create body mask from image bytes, return mask as PNG bytes."""
-    try:
-        image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-        mask = create_body_mask(image, face_margin)
-        if mask is None:
-            return None
-        output = io.BytesIO()
-        mask.save(output, format='PNG')
-        return output.getvalue()
-    except Exception as e:
-        logger.error(f"Failed to create body mask: {e}")
-        return None
-
-
 def swap_face(original: Image.Image, generated: Image.Image) -> Image.Image:
     """
     Swap face from original image onto generated image.

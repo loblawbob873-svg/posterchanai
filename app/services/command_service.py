@@ -202,8 +202,8 @@ class CommandService:
             from PIL import Image
             import io
 
-            # Lower denoise = better preservation of original (face, body, colors)
-            denoise_value = 0.45 if is_anime else 0.55
+            # Denoise: anime 0.70 (needs more change), realistic 0.50 (preserve composition)
+            denoise_value = 0.70 if is_anime else 0.50
 
             # Retry up to 3 times if generated image has no face
             max_retries = 3
