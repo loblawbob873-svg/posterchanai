@@ -683,12 +683,6 @@ class ChatHandler {
         const displayContent = content;
         console.log('[DEBUG] sendMessage - mode:', mode, 'content:', content, 'hasImage:', !!this.uploadedImage);
 
-        // Check if we have an upload without text for img2img mode
-        if (mode === 'img2img' && this.uploadedImage && !content) {
-            this.addMessage('user', '[Uploaded image - please add a prompt]');
-            return;
-        }
-
         // Need either content or a file upload
         if (!content && !this.uploadedFile && !this.uploadedImage) return;
 
@@ -746,7 +740,7 @@ class ChatHandler {
 
         // Notify mascot
         if (window.mascotController) {
-            if (mode === 'geni' || mode === 'img2img') {
+            if (mode === 'geni') {
                 window.mascotController.onGeneratingImage();
             } else {
                 window.mascotController.onUserMessage();
@@ -771,11 +765,6 @@ class ChatHandler {
         }
         if (this.uploadedDocument) {
             payload.document_data = this.uploadedDocument;
-        }
-
-        // Include denoise value for img2img mode
-        if (mode === 'img2img' && window.app) {
-            payload.denoise = window.app.getDenoiseValue();
         }
 
         // Store payload for potential retry
@@ -1047,17 +1036,11 @@ class ChatHandler {
         // Notify mascot
         if (window.mascotController) {
             const mode = window.app ? window.app.getMode() : '';
-            if (mode === 'geni' || mode === 'img2img') {
+            if (mode === 'geni') {
                 window.mascotController.onGeneratingImage();
             } else {
                 window.mascotController.onUserMessage();
             }
-        }
-
-        // Update denoise to current slider value for img2img
-        const mode = window.app ? window.app.getMode() : '';
-        if ((mode === 'img2img' || this.lastPayload.image_data || this.lastPayload.image_path) && window.app) {
-            this.lastPayload.denoise = window.app.getDenoiseValue();
         }
 
         // Resend the last payload
@@ -1086,7 +1069,7 @@ class ChatHandler {
         // Notify mascot
         if (window.mascotController) {
             const mode = window.app ? window.app.getMode() : '';
-            if (mode === 'geni' || mode === 'img2img') {
+            if (mode === 'geni') {
                 window.mascotController.onGeneratingImage();
             } else {
                 window.mascotController.onUserMessage();
@@ -1230,19 +1213,12 @@ class ChatHandler {
             content: content
         };
 
-        // Include stored image data if this was an img2img message
+        // Include stored image data
         if (messageEl._imageData) {
             payload.image_data = messageEl._imageData;
-            // Also include denoise value for img2img
-            if (window.app) {
-                payload.denoise = window.app.getDenoiseValue();
-            }
         } else if (messageEl._imagePath) {
             // For historical messages, use the stored image path
             payload.image_path = messageEl._imagePath;
-            if (window.app) {
-                payload.denoise = window.app.getDenoiseValue();
-            }
         }
 
         // Store payload for potential retry
@@ -1253,7 +1229,7 @@ class ChatHandler {
 
         // Notify mascot
         if (window.mascotController) {
-            if (mode === 'geni' || mode === 'img2img') {
+            if (mode === 'geni') {
                 window.mascotController.onGeneratingImage();
             } else {
                 window.mascotController.onUserMessage();
