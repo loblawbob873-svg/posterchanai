@@ -253,12 +253,13 @@ async def img2img(
             is_anime = 'anime' in final_prompt.lower() or 'manga' in final_prompt.lower() or 'illustration' in final_prompt.lower()
             # Check if nude/nsfw request
             is_nsfw = any(kw in final_prompt.lower() for kw in ['nude', 'naked', 'topless', 'nsfw'])
-            # Optimal denoise: anime 0.70 (balance nude vs face), realistic 0.50 (best preservation)
-            if is_anime:
-                denoise_value = min(request.denoise or 0.70, 0.70)
+            # Denoise: use provided value if given, otherwise defaults (anime 0.70, realistic 0.50)
+            if request.denoise is not None:
+                denoise_value = request.denoise
+            elif is_anime:
+                denoise_value = 0.70
             else:
-                # Use 0.50 for realistic - best face/pose/background preservation
-                denoise_value = min(request.denoise or 0.50, 0.50)
+                denoise_value = 0.50
 
             # For NSFW, add strong clothing removal and background cleanup negatives
             if is_nsfw:

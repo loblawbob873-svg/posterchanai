@@ -92,10 +92,14 @@ body {
     color: var(--text-primary);
     font-size: 20px;
     cursor: pointer;
-    padding: 8px;
+    padding: 12px;
     border-radius: 8px;
+    min-width: 44px;
+    min-height: 44px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(233, 69, 96, 0.3);
 }
-.btn-icon:hover { background: var(--bg-tertiary); }
+.btn-icon:hover, .btn-icon:active { background: var(--bg-tertiary); }
 
 .btn-small { padding: 5px 10px; font-size: 12px; }
 
@@ -764,12 +768,12 @@ fieldset legend {
         display: block;
     }
     .mascot-section {
-        min-height: 150px;
-        padding: 10px;
+        min-height: 100px;
+        padding: 6px;
     }
     .mascot-container {
-        width: 100px;
-        height: 120px;
+        width: 70px;
+        height: 85px;
     }
     .quick-actions {
         padding: 8px;
@@ -1592,4 +1596,66 @@ fieldset legend {
     height: 1px;
     background: var(--border-color);
     margin: 4px 0;
+}
+
+/* Denoise Slider */
+.denoise-slider-container {
+    padding: 8px 16px;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border-color);
+}
+.denoise-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.denoise-slider-row label {
+    color: var(--text-secondary);
+    font-size: 13px;
+    white-space: nowrap;
+}
+#denoiseSlider {
+    flex: 1;
+    height: 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: linear-gradient(to right, var(--bg-tertiary), var(--accent));
+    border-radius: 3px;
+    cursor: pointer;
+}
+#denoiseSlider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: 2px solid white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+#denoiseSlider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: 2px solid white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+#denoiseValue {
+    color: var(--accent);
+    font-weight: bold;
+    font-size: 14px;
+    min-width: 36px;
+    text-align: right;
+}
+.denoise-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+.denoise-label-left, .denoise-label-right {
+    opacity: 0.7;
 }

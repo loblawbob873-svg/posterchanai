@@ -44,7 +44,9 @@ class CommandService:
 
     async def execute_command(self, command: str, arg: str, last_prompt: Optional[str] = None,
                               image_data: Optional[str] = None,
-                              stop_check: Optional[Callable[[], bool]] = None) -> dict:
+                              stop_check: Optional[Callable[[], bool]] = None,
+                              denoise: Optional[float] = None,
+                              **kwargs) -> dict:
         """Execute a command and return the result"""
         if command == "search":
             return await self._search_command(arg)
@@ -53,7 +55,7 @@ class CommandService:
         elif command == "geni":
             return await self._geni_command(arg, stop_check)
         elif command == "img2img":
-            return await self._img2img_command(arg, image_data, stop_check)
+            return await self._img2img_command(arg, image_data, stop_check, denoise=denoise)
         elif command == "regen":
             return await self._regen_command(last_prompt, stop_check)
         else:
@@ -125,7 +127,7 @@ class CommandService:
                 "prompt": prompt
             }
 
-    async def _img2img_command(self, prompt: str, image_data: Optional[str], stop_check: Optional[callable] = None) -> dict:
+    async def _img2img_command(self, prompt: str, image_data: Optional[str], stop_check: Optional[callable] = None, denoise: Optional[float] = None) -> dict:
         """Edit image using img2img + face swap to preserve identity"""
         if not prompt or not image_data:
             return {"type": "text", "content": "Need both prompt and image."}
@@ -202,8 +204,12 @@ class CommandService:
             from PIL import Image
             import io
 
-            # Denoise: anime 0.70 (needs more change), realistic 0.50 (preserve composition)
-            denoise_value = 0.70 if is_anime else 0.50
+            # Denoise: use provided value if given, otherwise anime 0.70, realistic 0.50
+            if denoise is not None:
+                denoise_value = denoise
+                logger.info(f"[IMG2IMG] Using user-specified denoise: {denoise_value}")
+            else:
+                denoise_value = 0.70 if is_anime else 0.50
 
             # Retry up to 3 times if generated image has no face
             max_retries = 3

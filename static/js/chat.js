@@ -768,6 +768,11 @@ class ChatHandler {
             payload.document_data = this.uploadedDocument;
         }
 
+        // Include denoise value for img2img mode
+        if (mode === 'img2img' && window.app) {
+            payload.denoise = window.app.getDenoiseValue();
+        }
+
         // Store payload for potential retry
         this.lastPayload = payload;
 

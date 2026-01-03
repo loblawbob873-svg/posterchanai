@@ -308,6 +308,17 @@ class App {
         };
         this.messageInput.placeholder = placeholders[mode] || 'Type a message...';
         this.messageInput.focus();
+
+        // Show/hide denoise slider for img2img mode
+        const denoiseContainer = document.getElementById('denoiseSliderContainer');
+        if (denoiseContainer) {
+            denoiseContainer.style.display = mode === 'img2img' ? 'block' : 'none';
+        }
+    }
+
+    getDenoiseValue() {
+        const slider = document.getElementById('denoiseSlider');
+        return slider ? parseFloat(slider.value) : 0.50;
     }
 
     getMode() {
@@ -404,8 +415,21 @@ function initTranslateModal() {
     }
 }
 
+// Initialize denoise slider
+function initDenoiseSlider() {
+    const slider = document.getElementById('denoiseSlider');
+    const valueDisplay = document.getElementById('denoiseValue');
+
+    if (slider && valueDisplay) {
+        slider.addEventListener('input', () => {
+            valueDisplay.textContent = slider.value;
+        });
+    }
+}
+
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new App();
     initTranslateModal();
+    initDenoiseSlider();
 });

@@ -352,6 +352,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     file_content = data.get("file_content")  # text file content
                     pdf_data = data.get("pdf_data")  # base64 PDF
                     document_data = data.get("document_data")  # base64 Office document
+                    denoise = data.get("denoise")  # denoise value for img2img (0.2-1.0)
 
                     # Extract text from PDF if provided
                     if pdf_data:
@@ -414,7 +415,8 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 command, arg, last_prompt,
                                 image_data=image_data,
                                 file_content=file_content,
-                                stop_check=should_stop_command
+                                stop_check=should_stop_command,
+                                denoise=denoise
                             )
 
                             # Check if stopped during execution
