@@ -169,7 +169,8 @@ class CommandService:
 
             # Add composition guidance - preserve pose, ensure face visible
             composition = "same pose, same composition, face visible, full body"
-            final_prompt = f"{nsfw_trigger}{prompt}, {composition}, {extra_str}, {style}, realistic photography".strip(', ')
+            style_suffix = "anime illustration" if is_anime else "realistic photography"
+            final_prompt = f"{nsfw_trigger}{prompt}, {composition}, {extra_str}, {style_suffix}".strip(', ')
             # Add more negatives to prevent latex/shiny material and unwanted compositions
             neg_prompt = f"frame, framed, picture frame, window frame, door frame, bars, cage, border, furniture, close-up, cropped, headless, no face, clothing, clothes, shirt, top, bra, pants, shorts, fabric, dressed, wearing, covered, mesh, sheer, latex, rubber, spandex, shiny, glossy, wet look, bodysuit, catsuit, thin, slim, skinny, {'realistic' if is_anime else 'anime'}, deformed"
             print(f"[IMG2IMG-DEBUG] Final prompt: {final_prompt}")
