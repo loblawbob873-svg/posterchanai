@@ -164,7 +164,8 @@ class CommandService:
             nsfw_keywords = ["nude", "naked", "topless", "bare breasts", "nipples", "nsfw", "undress"]
             is_nsfw = any(kw in prompt.lower() for kw in nsfw_keywords)
             # Add strong NSFW keywords to ensure clothes removal - emphasize bare/exposed skin
-            nsfw_trigger = "ecchi, hentai, nude, nipples, topless, exposed breasts, bare skin, naked body, no clothing at all, " if is_nsfw and "ecchi" not in prompt.lower() and "hentai" not in prompt.lower() else ""
+            # Use NSFW keywords that don't trigger anime model selection
+            nsfw_trigger = "nude, nipples, topless, exposed breasts, bare skin, naked body, no clothing at all, " if is_nsfw else ""
 
             # Add composition guidance - preserve pose, ensure face visible
             composition = "same pose, same composition, face visible, full body"
@@ -184,11 +185,11 @@ class CommandService:
             for attempt in range(max_retries):
                 print(f"[IMG2IMG] Generation attempt {attempt + 1}/{max_retries}")
 
-                # Use 0.90 denoise for clothes removal, face swap will restore identity
+                # Use 0.70 denoise to preserve more of original (pose, setting, body)
                 result_b64 = await self.image_service.generate_img2img(
                     prompt=final_prompt,
                     image_bytes=image_bytes,
-                    denoise=0.90,
+                    denoise=0.70,
                     negative_prompt=neg_prompt
                 )
 
