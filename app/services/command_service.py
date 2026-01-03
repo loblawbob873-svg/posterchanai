@@ -138,17 +138,8 @@ class CommandService:
 
             try:
                 image_bytes = base64.b64decode(image_data)
-                # Debug: Log input image info and save for comparison
-                from PIL import Image
-                import io
-                debug_img = Image.open(io.BytesIO(image_bytes))
-                print(f"[IMG2IMG-DEBUG] Input image: {len(image_bytes)} bytes, {debug_img.size[0]}x{debug_img.size[1]}, mode={debug_img.mode}")
-                # Save debug copy of input
-                with open("/tmp/webui_input.png", "wb") as f:
-                    f.write(image_bytes)
-                print(f"[IMG2IMG-DEBUG] Saved input to /tmp/webui_input.png")
             except Exception as e:
-                print(f"[IMG2IMG-DEBUG] Failed to decode image: {e}")
+                print(f"[IMG2IMG] Failed to decode image: {e}")
                 return {"type": "text", "content": "Invalid image."}
 
             # Get tags and detect style
@@ -207,11 +198,6 @@ class CommandService:
                 # Check if generated image has a face
                 generated_bytes = base64.b64decode(result_b64)
                 gen_image = Image.open(io.BytesIO(generated_bytes)).convert('RGB')
-                print(f"[IMG2IMG-DEBUG] Output image: {len(generated_bytes)} bytes, {gen_image.size[0]}x{gen_image.size[1]}")
-                # Save debug copy of output
-                with open(f"/tmp/webui_output_{attempt}.png", "wb") as f:
-                    f.write(generated_bytes)
-                print(f"[IMG2IMG-DEBUG] Saved output to /tmp/webui_output_{attempt}.png")
                 gen_face = detect_face(gen_image)
 
                 if gen_face is not None:

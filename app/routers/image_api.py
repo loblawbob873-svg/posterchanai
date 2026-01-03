@@ -49,7 +49,7 @@ async def get_image_auth(
     # Try JWT auth (for logged-in users)
     from app.auth import get_current_user_optional
     try:
-        user = await get_current_user_optional(request, db)
+        user = get_current_user_optional(request, db)  # Sync function, no await
         if user:
             return True
     except Exception:

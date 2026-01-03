@@ -13,6 +13,9 @@ from app.models import Setting
 _request_semaphore: Optional[asyncio.Semaphore] = None
 _semaphore_limit: int = 2
 
+# Global HTTP client pool for connection reuse (performance optimization)
+_http_client: Optional[httpx.AsyncClient] = None
+
 
 def _get_semaphore(max_concurrent: int) -> asyncio.Semaphore:
     """Get or create global semaphore for request limiting"""
@@ -21,6 +24,17 @@ def _get_semaphore(max_concurrent: int) -> asyncio.Semaphore:
         _request_semaphore = asyncio.Semaphore(max_concurrent)
         _semaphore_limit = max_concurrent
     return _request_semaphore
+
+
+def _get_http_client(timeout: float = 120) -> httpx.AsyncClient:
+    """Get or create global HTTP client with connection pooling"""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout, connect=10.0),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        )
+    return _http_client
 
 
 class OllamaService:
@@ -89,23 +103,20 @@ class OllamaService:
 
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
-        matches = list(re.finditer(r'</think(?:ing)?>', response, re.IGNORECASE))
-        if matches:
-            last_match = matches[-1]
-            return response[last_match.end():].strip()
-        return response
+        from app.services.text_utils import strip_thinking_tags
+        return strip_thinking_tags(response)
 
     async def list_models(self) -> List[Dict[str, Any]]:
         """List available Ollama models"""
-        async with httpx.AsyncClient(timeout=30) as client:
-            try:
-                response = await client.get(f"{self.ollama_url}/api/tags")
-                response.raise_for_status()
-                data = response.json()
-                return data.get("models", [])
-            except Exception as e:
-                print(f"[OLLAMA] Failed to list models: {e}")
-                return []
+        client = _get_http_client(timeout=30)
+        try:
+            response = await client.get(f"{self.ollama_url}/api/tags")
+            response.raise_for_status()
+            data = response.json()
+            return data.get("models", [])
+        except Exception as e:
+            print(f"[OLLAMA] Failed to list models: {e}")
+            return []
 
     async def chat_completion(
         self,
@@ -125,62 +136,61 @@ class OllamaService:
         semaphore = _get_semaphore(self.max_concurrent)
 
         async with semaphore:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                try:
-                    # Use Ollama's native API to ensure options are respected
-                    response = await client.post(
-                        f"{self.ollama_url}/api/chat",
-                        json={
-                            "model": model,
-                            "messages": messages,
-                            "stream": False,
-                            "options": options,
-                            "keep_alive": self.keep_alive
-                        }
-                    )
-                    response.raise_for_status()
-                    ollama_data = response.json()
-
-                    # Convert to OpenAI format
-                    content = ollama_data.get("message", {}).get("content", "")
-                    content = self.strip_thinking_tags(content)
-
-                    import time
-                    data = {
-                        "id": f"chatcmpl-{int(time.time())}",
-                        "object": "chat.completion",
-                        "created": int(time.time()),
+            client = _get_http_client(timeout=self.timeout)
+            try:
+                # Use Ollama's native API to ensure options are respected
+                response = await client.post(
+                    f"{self.ollama_url}/api/chat",
+                    json={
                         "model": model,
-                        "system_fingerprint": "fp_ollama",
-                        "choices": [{
-                            "index": 0,
-                            "message": {"role": "assistant", "content": content},
-                            "finish_reason": "stop"
-                        }],
-                        "usage": {
-                            "prompt_tokens": ollama_data.get("prompt_eval_count", 0),
-                            "completion_tokens": ollama_data.get("eval_count", 0),
-                            "total_tokens": ollama_data.get("prompt_eval_count", 0) + ollama_data.get("eval_count", 0)
-                        }
+                        "messages": messages,
+                        "stream": False,
+                        "options": options,
+                        "keep_alive": self.keep_alive
                     }
+                )
+                response.raise_for_status()
+                ollama_data = response.json()
 
-                    return data
+                # Convert to OpenAI format
+                content = ollama_data.get("message", {}).get("content", "")
+                content = self.strip_thinking_tags(content)
 
-                except httpx.HTTPStatusError as e:
-                    return {
-                        "error": {
-                            "message": f"Ollama returned status {e.response.status_code}",
-                            "type": "api_error",
-                            "code": e.response.status_code
-                        }
+                data = {
+                    "id": f"chatcmpl-{int(time.time())}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": model,
+                    "system_fingerprint": "fp_ollama",
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": content},
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {
+                        "prompt_tokens": ollama_data.get("prompt_eval_count", 0),
+                        "completion_tokens": ollama_data.get("eval_count", 0),
+                        "total_tokens": ollama_data.get("prompt_eval_count", 0) + ollama_data.get("eval_count", 0)
                     }
-                except Exception as e:
-                    return {
-                        "error": {
-                            "message": str(e),
-                            "type": "api_error"
-                        }
+                }
+
+                return data
+
+            except httpx.HTTPStatusError as e:
+                return {
+                    "error": {
+                        "message": f"Ollama returned status {e.response.status_code}",
+                        "type": "api_error",
+                        "code": e.response.status_code
                     }
+                }
+            except Exception as e:
+                return {
+                    "error": {
+                        "message": str(e),
+                        "type": "api_error"
+                    }
+                }
 
     async def chat_completion_stream(
         self,

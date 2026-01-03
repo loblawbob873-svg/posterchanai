@@ -182,11 +182,8 @@ class LlamaService:
 
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
-        matches = list(re.finditer(r'</think(?:ing)?>', response, re.IGNORECASE))
-        if matches:
-            last_match = matches[-1]
-            return response[last_match.end():].strip()
-        return response
+        from app.services.text_utils import strip_thinking_tags
+        return strip_thinking_tags(response)
 
     def _sync_chat_completion(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
         """Synchronous chat completion (runs in thread pool)"""

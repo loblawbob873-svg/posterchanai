@@ -30,13 +30,18 @@ def login(user_data: UserLogin, response: Response, db: Session = Depends(get_db
     token = create_access_token({"sub": str(user.id)})
 
     # Set cookie for browser-based auth
+    # Note: httponly=False required for WebSocket auth (JS reads token for ws:// connection)
+    # secure=True in production to prevent cookie transmission over HTTP
+    import os
+    is_production = os.getenv("ENVIRONMENT", "").lower() == "production"
     response.set_cookie(
         key="access_token",
         value=token,
-        httponly=False,  # Allow JS to read for WebSocket auth
+        httponly=False,  # Required: JS reads token for WebSocket auth handshake
+        secure=is_production,  # HTTPS only in production
         max_age=30 * 24 * 60 * 60,  # 30 days
         samesite="lax",
-        path="/"  # Cookie available for all paths
+        path="/"
     )
 
     return {"access_token": token, "token_type": "bearer"}
