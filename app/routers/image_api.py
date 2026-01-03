@@ -190,7 +190,9 @@ async def img2img(
                         elif 'pale' not in tags_lower and 'white' not in tags_lower:
                             identity_parts.append('(natural skin tone:1.5)')
                         # Hair color
-                        if 'blonde' in tags_lower or 'yellow_hair' in tags_lower:
+                        if 'orange_hair' in tags_lower:
+                            identity_parts.append('(orange hair:2.0), (auburn hair:1.5)')
+                        elif 'blonde' in tags_lower or 'yellow_hair' in tags_lower:
                             identity_parts.append('(blonde hair:2.0)')
                         elif 'brown_hair' in tags_lower:
                             identity_parts.append('(brown hair:2.0)')
@@ -198,6 +200,16 @@ async def img2img(
                             identity_parts.append('(black hair:2.0)')
                         elif 'red_hair' in tags_lower or 'redhead' in tags_lower:
                             identity_parts.append('(red hair:2.0)')
+                        elif 'pink_hair' in tags_lower:
+                            identity_parts.append('(pink hair:2.0)')
+                        elif 'blue_hair' in tags_lower:
+                            identity_parts.append('(blue hair:2.0)')
+                        elif 'green_hair' in tags_lower:
+                            identity_parts.append('(green hair:2.0)')
+                        elif 'purple_hair' in tags_lower:
+                            identity_parts.append('(purple hair:2.0)')
+                        elif 'white_hair' in tags_lower or 'silver_hair' in tags_lower:
+                            identity_parts.append('(white hair:2.0), (silver hair:1.5)')
                         # Body type
                         if any(t in tags_lower for t in ['fat', 'chubby', 'plump', 'overweight']):
                             identity_parts.append('(fat:2.0), (bbw:1.5), (plus-size body:1.5)')
