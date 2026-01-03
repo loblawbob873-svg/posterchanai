@@ -39,7 +39,7 @@ def detect_face(image: Image.Image):
     return max(faces, key=lambda x: (x.bbox[2]-x.bbox[0]) * (x.bbox[3]-x.bbox[1]))
 
 
-def swap_face(original: Image.Image, generated: Image.Image, preserve_background: bool = True) -> Image.Image:
+def swap_face(original: Image.Image, generated: Image.Image) -> Image.Image:
     """
     Swap face from original image onto generated image.
     Returns generated image with original face blended in.
@@ -53,7 +53,7 @@ def swap_face(original: Image.Image, generated: Image.Image, preserve_background
 
     # Extract face from original with margin for blending
     ox1, oy1, ox2, oy2 = [int(x) for x in orig_face.bbox]
-    margin = int((ox2 - ox1) * 0.25)
+    margin = int((ox2 - ox1) * 0.35)  # Larger margin for more context
     ox1 = max(0, ox1 - margin)
     oy1 = max(0, oy1 - margin)
     ox2 = min(original.width, ox2 + margin)
@@ -62,7 +62,7 @@ def swap_face(original: Image.Image, generated: Image.Image, preserve_background
 
     # Get target position in generated image
     gx1, gy1, gx2, gy2 = [int(x) for x in gen_face.bbox]
-    margin = int((gx2 - gx1) * 0.25)
+    margin = int((gx2 - gx1) * 0.35)  # Match margin
     gx1 = max(0, gx1 - margin)
     gy1 = max(0, gy1 - margin)
     gx2 = min(generated.width, gx2 + margin)
@@ -76,58 +76,21 @@ def swap_face(original: Image.Image, generated: Image.Image, preserve_background
     # Start with generated image
     result = generated.copy()
 
-    # Create elliptical mask with smooth feathering
+    # Create elliptical mask with heavy feathering for seamless blend
     mask = Image.new('L', (target_w, target_h), 0)
     draw = ImageDraw.Draw(mask)
-    # Moderate inset for good coverage
-    inset = int(target_w * 0.12)
-    draw.ellipse([inset, inset, target_w - inset, target_h - inset], fill=255)
-    # Blur for seamless blend
-    blur_radius = max(15, min(25, target_w // 5))
+    # Large inset - only blend the center face area
+    inset_x = int(target_w * 0.2)
+    inset_y = int(target_h * 0.15)
+    draw.ellipse([inset_x, inset_y, target_w - inset_x, target_h - inset_y], fill=255)
+    # Heavy blur for seamless transition
+    blur_radius = max(25, target_w // 4)
     mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_radius))
 
     # Paste face with mask
     result.paste(face_resized, (gx1, gy1), mask)
 
-    # Skip background preservation - causes artifacts with high denoise
-    # if preserve_background:
-    #     result = _blend_background(original, result, generated)
-
     logger.info("Face swap completed")
-    return result
-
-
-def _blend_background(original: Image.Image, face_swapped: Image.Image, generated: Image.Image) -> Image.Image:
-    """
-    Blend original background with face-swapped result.
-    Keeps the generated body but restores original background.
-    """
-    # Resize original to match generated size if needed
-    if original.size != generated.size:
-        original = original.resize(generated.size, Image.LANCZOS)
-    if face_swapped.size != generated.size:
-        face_swapped = face_swapped.resize(generated.size, Image.LANCZOS)
-
-    orig_arr = np.array(original).astype(float)
-    gen_arr = np.array(generated).astype(float)
-
-    # Calculate pixel-wise difference to find body (changed areas)
-    diff = np.abs(orig_arr - gen_arr).mean(axis=2)
-
-    # Threshold to find changed areas (body) - lower = more generated kept
-    threshold = 25
-    body_mask = (diff > threshold).astype(np.uint8) * 255
-
-    # Convert to PIL and process mask
-    body_mask_pil = Image.fromarray(body_mask, mode='L')
-
-    # Dilate to include edges, then blur for smooth transition
-    body_mask_pil = body_mask_pil.filter(ImageFilter.MaxFilter(size=11))
-    body_mask_pil = body_mask_pil.filter(ImageFilter.GaussianBlur(radius=30))
-
-    # Composite: original background + face_swapped body
-    result = Image.composite(face_swapped, original, body_mask_pil)
-
     return result
 
 

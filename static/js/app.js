@@ -304,7 +304,7 @@ class App {
             'search': 'Enter search query...',
             'images': 'Search for images...',
             'geni': 'Describe the image to generate...',
-            'img2img': 'Describe changes (upload image first)...'
+            'img2img': 'Describe how to edit the image...'
         };
         this.messageInput.placeholder = placeholders[mode] || 'Type a message...';
         this.messageInput.focus();
