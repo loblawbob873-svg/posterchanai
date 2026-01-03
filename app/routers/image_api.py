@@ -188,25 +188,34 @@ async def img2img(
                         # Hair color (with negatives to prevent wrong colors)
                         if 'orange_hair' in tags_lower:
                             identity_parts.append('(orange hair:2.5), (auburn hair:2.0), (ginger hair:1.5)')
-                            negative_parts.append('blonde hair, yellow hair')
+                            negative_parts.append('blonde hair, yellow hair, brown hair')
                         elif 'blonde' in tags_lower or 'yellow_hair' in tags_lower:
-                            identity_parts.append('(blonde hair:2.0)')
+                            identity_parts.append('(blonde hair:2.5), (golden hair:1.5)')
+                            negative_parts.append('brown hair, black hair, dark hair')
                         elif 'brown_hair' in tags_lower:
-                            identity_parts.append('(brown hair:2.0)')
+                            identity_parts.append('(brown hair:2.5)')
+                            negative_parts.append('blonde hair, black hair')
                         elif 'black_hair' in tags_lower:
-                            identity_parts.append('(black hair:2.0)')
+                            identity_parts.append('(black hair:2.5)')
+                            negative_parts.append('blonde hair, brown hair')
                         elif 'red_hair' in tags_lower or 'redhead' in tags_lower:
-                            identity_parts.append('(red hair:2.0)')
+                            identity_parts.append('(red hair:2.5), (redhead:2.0)')
+                            negative_parts.append('blonde hair, brown hair, black hair')
                         elif 'pink_hair' in tags_lower:
-                            identity_parts.append('(pink hair:2.0)')
+                            identity_parts.append('(pink hair:2.5)')
+                            negative_parts.append('blonde hair, brown hair')
                         elif 'blue_hair' in tags_lower:
-                            identity_parts.append('(blue hair:2.0)')
+                            identity_parts.append('(blue hair:2.5)')
+                            negative_parts.append('blonde hair, brown hair')
                         elif 'green_hair' in tags_lower:
-                            identity_parts.append('(green hair:2.0)')
+                            identity_parts.append('(green hair:2.5)')
+                            negative_parts.append('blonde hair, brown hair')
                         elif 'purple_hair' in tags_lower:
-                            identity_parts.append('(purple hair:2.0)')
+                            identity_parts.append('(purple hair:2.5)')
+                            negative_parts.append('blonde hair, brown hair')
                         elif 'white_hair' in tags_lower or 'silver_hair' in tags_lower:
-                            identity_parts.append('(white hair:2.0), (silver hair:1.5)')
+                            identity_parts.append('(white hair:2.5), (silver hair:2.0)')
+                            negative_parts.append('blonde hair, brown hair, black hair')
                         # Body type
                         if any(t in tags_lower for t in ['fat', 'chubby', 'plump', 'overweight']):
                             identity_parts.append('(fat:2.0), (bbw:1.5), (plus-size body:1.5)')
