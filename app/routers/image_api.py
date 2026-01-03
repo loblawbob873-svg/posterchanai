@@ -249,11 +249,17 @@ async def img2img(
                 neg_identity = ", ".join(negative_parts)
                 final_negative = f"{final_negative}, {neg_identity}" if final_negative else neg_identity
 
+            # Detect if anime - use lower denoise for better face preservation
+            is_anime = 'anime' in final_prompt.lower() or 'manga' in final_prompt.lower() or 'illustration' in final_prompt.lower()
+            denoise_value = request.denoise or (0.50 if is_anime else 0.60)
+            if is_anime:
+                print(f"[IMAGE-API] Anime detected - using lower denoise: {denoise_value}")
+
             # Generate img2img
             result = await backend.generate_img2img(
                 prompt=final_prompt,
                 image_bytes=image_bytes,
-                denoise=request.denoise or 0.60,
+                denoise=denoise_value,
                 negative_prompt=final_negative
             )
 
