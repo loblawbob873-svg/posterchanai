@@ -193,11 +193,11 @@ class CommandService:
             for attempt in range(max_retries):
                 print(f"[IMG2IMG] Generation attempt {attempt + 1}/{max_retries}")
 
-                # Use 0.88 denoise - balance between clothes removal and preserving skin tone
+                # Use 0.90 denoise for clothes removal, face swap will restore identity
                 result_b64 = await self.image_service.generate_img2img(
                     prompt=final_prompt,
                     image_bytes=image_bytes,
-                    denoise=0.88,
+                    denoise=0.90,
                     negative_prompt=neg_prompt
                 )
 

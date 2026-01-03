@@ -51,13 +51,13 @@ def swap_face(original: Image.Image, generated: Image.Image) -> Image.Image:
         logger.warning("Could not detect face in one or both images")
         return generated
 
-    # Extract face from original - include forehead/hair area
+    # Extract face from original - tight crop, just the face
     ox1, oy1, ox2, oy2 = [int(x) for x in orig_face.bbox]
     face_h = oy2 - oy1
     face_w = ox2 - ox1
-    margin_side = int(face_w * 0.15)  # Small side margin
-    margin_top = int(face_h * 0.35)   # Top margin for hair (not too much)
-    margin_bottom = int(face_h * 0.1) # Small bottom margin
+    margin_side = int(face_w * 0.05)  # Minimal side margin
+    margin_top = int(face_h * 0.1)    # Small top margin
+    margin_bottom = int(face_h * 0.05) # Minimal bottom margin
     ox1 = max(0, ox1 - margin_side)
     oy1 = max(0, oy1 - margin_top)
     ox2 = min(original.width, ox2 + margin_side)
@@ -68,9 +68,9 @@ def swap_face(original: Image.Image, generated: Image.Image) -> Image.Image:
     gx1, gy1, gx2, gy2 = [int(x) for x in gen_face.bbox]
     face_h = gy2 - gy1
     face_w = gx2 - gx1
-    margin_side = int(face_w * 0.15)
-    margin_top = int(face_h * 0.35)
-    margin_bottom = int(face_h * 0.1)
+    margin_side = int(face_w * 0.05)
+    margin_top = int(face_h * 0.1)
+    margin_bottom = int(face_h * 0.05)
     gx1 = max(0, gx1 - margin_side)
     gy1 = max(0, gy1 - margin_top)
     gx2 = min(generated.width, gx2 + margin_side)
@@ -84,16 +84,16 @@ def swap_face(original: Image.Image, generated: Image.Image) -> Image.Image:
     # Start with generated image
     result = generated.copy()
 
-    # Create elliptical mask - covers face and hair with soft edges
+    # Create elliptical mask - tight to face with heavy feathering
     mask = Image.new('L', (target_w, target_h), 0)
     draw = ImageDraw.Draw(mask)
-    # Ellipse with small insets - covers most of the crop
-    inset_x = int(target_w * 0.05)
-    inset_top = int(target_h * 0.02)  # Minimal top inset to include hair
-    inset_bottom = int(target_h * 0.08)
+    # Larger insets for tight mask
+    inset_x = int(target_w * 0.12)
+    inset_top = int(target_h * 0.08)
+    inset_bottom = int(target_h * 0.12)
     draw.ellipse([inset_x, inset_top, target_w - inset_x, target_h - inset_bottom], fill=255)
-    # Moderate blur for blending
-    blur_radius = max(20, target_w // 5)
+    # Heavy blur for smooth blending
+    blur_radius = max(25, target_w // 4)
     mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_radius))
 
     # Paste face with mask
