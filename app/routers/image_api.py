@@ -177,6 +177,7 @@ async def img2img(
 
             # Build final prompt with identity tags if requested
             final_prompt = request.prompt
+            negative_parts = []
             if request.auto_identity:
                 try:
                     from app.services.wd14_service import tag_image
@@ -184,14 +185,10 @@ async def img2img(
                     if tags:
                         tags_lower = tags.lower()
                         identity_parts = []
-                        # Skin tone
-                        if 'dark_skin' in tags_lower or 'dark-skinned' in tags_lower:
-                            identity_parts.append('(dark brown skin:2.0)')
-                        elif 'pale' not in tags_lower and 'white' not in tags_lower:
-                            identity_parts.append('(natural skin tone:1.5)')
-                        # Hair color
+                        # Hair color (with negatives to prevent wrong colors)
                         if 'orange_hair' in tags_lower:
-                            identity_parts.append('(orange hair:2.0), (auburn hair:1.5)')
+                            identity_parts.append('(orange hair:2.5), (auburn hair:2.0), (ginger hair:1.5)')
+                            negative_parts.append('blonde hair, yellow hair')
                         elif 'blonde' in tags_lower or 'yellow_hair' in tags_lower:
                             identity_parts.append('(blonde hair:2.0)')
                         elif 'brown_hair' in tags_lower:
@@ -219,16 +216,25 @@ async def img2img(
                             identity_str = ", ".join(identity_parts)
                             final_prompt = f"{request.prompt}, {identity_str}"
                             print(f"[IMAGE-API] Added identity tags: {identity_str}")
+                        if negative_parts:
+                            neg_str = ", ".join(negative_parts)
+                            print(f"[IMAGE-API] Added negative tags: {neg_str}")
                         print(f"[IMAGE-API] WD14 tags: {tags[:100]}...")
                 except Exception as e:
                     print(f"[IMAGE-API] Identity detection error: {e}")
+
+            # Build final negative prompt
+            final_negative = request.negative_prompt or ""
+            if negative_parts:
+                neg_identity = ", ".join(negative_parts)
+                final_negative = f"{final_negative}, {neg_identity}" if final_negative else neg_identity
 
             # Generate img2img
             result = await backend.generate_img2img(
                 prompt=final_prompt,
                 image_bytes=image_bytes,
-                denoise=request.denoise or 0.75,
-                negative_prompt=request.negative_prompt
+                denoise=request.denoise or 0.60,
+                negative_prompt=final_negative
             )
 
             if result:
