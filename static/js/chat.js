@@ -720,6 +720,11 @@ class ChatHandler {
         const prevUserActionBtns = this.messagesContainer.querySelectorAll('.message.user .btn-regenerate, .message.user .btn-edit');
         prevUserActionBtns.forEach(btn => btn.remove());
 
+        // Store image data on message element for editing later
+        if (this.uploadedImage) {
+            this.lastUserMessage._imageData = this.uploadedImage;
+        }
+
         // Add edit button
         const editBtn = document.createElement('button');
         editBtn.className = 'btn-edit';
@@ -1218,6 +1223,15 @@ class ChatHandler {
             type: 'message',
             content: content
         };
+
+        // Include stored image data if this was an img2img message
+        if (messageEl._imageData) {
+            payload.image_data = messageEl._imageData;
+            // Also include denoise value for img2img
+            if (window.app) {
+                payload.denoise = window.app.getDenoiseValue();
+            }
+        }
 
         // Store payload for potential retry
         this.lastPayload = payload;
