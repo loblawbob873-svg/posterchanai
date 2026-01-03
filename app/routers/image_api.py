@@ -74,7 +74,7 @@ class ImageGenRequest(BaseModel):
 class Img2ImgRequest(BaseModel):
     prompt: str
     image: str  # base64 encoded image
-    denoise: Optional[float] = 0.75
+    denoise: Optional[float] = 0.60
     negative_prompt: Optional[str] = ""
     face_swap: Optional[bool] = True  # Swap original face onto result
     auto_identity: Optional[bool] = True  # Auto-detect identity tags from image
@@ -179,21 +179,35 @@ async def img2img(
             final_prompt = request.prompt
             if request.auto_identity:
                 try:
-                    from app.services.wd14_tagger import tag_image_bytes
-                    tags = await tag_image_bytes(image_bytes)
+                    from app.services.wd14_service import tag_image
+                    tags = tag_image(image_bytes)
                     if tags:
                         tags_lower = tags.lower()
                         identity_parts = []
+                        # Skin tone
                         if 'dark_skin' in tags_lower or 'dark-skinned' in tags_lower:
-                            identity_parts.append('dark brown skin')
+                            identity_parts.append('(dark brown skin:2.0)')
+                        elif 'pale' not in tags_lower and 'white' not in tags_lower:
+                            identity_parts.append('(natural skin tone:1.5)')
+                        # Hair color
+                        if 'blonde' in tags_lower or 'yellow_hair' in tags_lower:
+                            identity_parts.append('(blonde hair:2.0)')
+                        elif 'brown_hair' in tags_lower:
+                            identity_parts.append('(brown hair:2.0)')
+                        elif 'black_hair' in tags_lower:
+                            identity_parts.append('(black hair:2.0)')
+                        elif 'red_hair' in tags_lower or 'redhead' in tags_lower:
+                            identity_parts.append('(red hair:2.0)')
+                        # Body type
                         if any(t in tags_lower for t in ['fat', 'chubby', 'plump', 'overweight']):
-                            identity_parts.append('fat, obese, bbw, plus-size body')
+                            identity_parts.append('(fat:2.0), (bbw:1.5), (plus-size body:1.5)')
                         if any(t in tags_lower for t in ['large_breasts', 'huge_breasts']):
-                            identity_parts.append('large breasts')
+                            identity_parts.append('(large breasts:2.0)')
                         if identity_parts:
                             identity_str = ", ".join(identity_parts)
                             final_prompt = f"{request.prompt}, {identity_str}"
                             print(f"[IMAGE-API] Added identity tags: {identity_str}")
+                        print(f"[IMAGE-API] WD14 tags: {tags[:100]}...")
                 except Exception as e:
                     print(f"[IMAGE-API] Identity detection error: {e}")
 

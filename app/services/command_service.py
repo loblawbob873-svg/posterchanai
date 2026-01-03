@@ -186,11 +186,11 @@ class CommandService:
             for attempt in range(max_retries):
                 print(f"[IMG2IMG] Generation attempt {attempt + 1}/{max_retries}")
 
-                # Use 0.70 denoise to preserve more of original (pose, setting, body)
+                # Use 0.60 denoise to preserve more of original (pose, setting, body, identity)
                 result_b64 = await self.image_service.generate_img2img(
                     prompt=final_prompt,
                     image_bytes=image_bytes,
-                    denoise=0.70,
+                    denoise=0.60,
                     negative_prompt=neg_prompt
                 )
 
