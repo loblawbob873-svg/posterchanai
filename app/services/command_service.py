@@ -151,11 +151,31 @@ class CommandService:
 
             # Build prompt with identity preservation tags
             extra_tags = []
-            if "dark_skin" in tags or "dark-skinned" in tags:
+            neg_extra = []
+            tags_lower = tags.lower()
+
+            # Hair color detection
+            has_light_hair = any(h in tags_lower for h in ['blonde', 'yellow_hair', 'orange_hair', 'red_hair', 'redhead', 'pink_hair', 'white_hair', 'silver_hair'])
+            has_dark_hair = any(h in tags_lower for h in ['black_hair', 'brown_hair'])
+            has_dark_skin_tag = 'dark_skin' in tags_lower or 'dark-skinned' in tags_lower
+
+            # Skin tone - be smart about it!
+            # Light-colored hair = pale skin, ignore dark_skin tag (probably from background)
+            if has_light_hair:
+                extra_tags.append("pale skin, white skin, fair skin, caucasian")
+                neg_extra.append("dark skin, brown skin, black skin")
+                print(f"[IMG2IMG] Light hair detected - forcing pale skin")
+            elif has_dark_skin_tag and has_dark_hair:
+                # Only use dark skin if hair is also dark (consistent)
                 extra_tags.append("dark brown skin")
-            if any(t in tags.lower() for t in ["fat", "chubby", "plump", "overweight", "plus-size", "bbw"]):
+            else:
+                # Default to natural/pale
+                extra_tags.append("natural skin tone, fair skin")
+                neg_extra.append("dark skin, brown skin")
+
+            if any(t in tags_lower for t in ["fat", "chubby", "plump", "overweight", "plus-size", "bbw"]):
                 extra_tags.append("fat, obese, bbw, plus-size body")
-            if any(t in tags.lower() for t in ["large_breasts", "huge_breasts"]):
+            if any(t in tags_lower for t in ["large_breasts", "huge_breasts"]):
                 extra_tags.append("large breasts")
             extra_str = ", ".join(extra_tags)
             print(f"[IMG2IMG] Identity tags: {extra_str}")
@@ -172,7 +192,8 @@ class CommandService:
             style_suffix = "anime illustration" if is_anime else "realistic photography"
             final_prompt = f"{nsfw_trigger}{prompt}, {composition}, {extra_str}, {style_suffix}".strip(', ')
             # Add more negatives to prevent latex/shiny material and unwanted compositions
-            neg_prompt = f"frame, framed, picture frame, window frame, door frame, bars, cage, border, furniture, close-up, cropped, headless, no face, clothing, clothes, shirt, top, bra, pants, shorts, fabric, dressed, wearing, covered, mesh, sheer, latex, rubber, spandex, shiny, glossy, wet look, bodysuit, catsuit, thin, slim, skinny, {'realistic' if is_anime else 'anime'}, deformed"
+            neg_identity = ", ".join(neg_extra) if neg_extra else ""
+            neg_prompt = f"frame, framed, picture frame, window frame, door frame, bars, cage, border, furniture, close-up, cropped, headless, no face, clothing, clothes, shirt, top, bra, pants, shorts, fabric, dressed, wearing, covered, mesh, sheer, latex, rubber, spandex, shiny, glossy, wet look, bodysuit, catsuit, thin, slim, skinny, {'realistic' if is_anime else 'anime'}, deformed, {neg_identity}".strip(', ')
             print(f"[IMG2IMG-DEBUG] Final prompt: {final_prompt}")
             print(f"[IMG2IMG-DEBUG] Negative prompt: {neg_prompt[:100]}...")
 
@@ -181,16 +202,18 @@ class CommandService:
             from PIL import Image
             import io
 
+            # Lower denoise = better preservation of original (face, body, colors)
+            denoise_value = 0.45 if is_anime else 0.55
+
             # Retry up to 3 times if generated image has no face
             max_retries = 3
             for attempt in range(max_retries):
-                print(f"[IMG2IMG] Generation attempt {attempt + 1}/{max_retries}")
+                print(f"[IMG2IMG] Generation attempt {attempt + 1}/{max_retries} (denoise={denoise_value})")
 
-                # Use 0.60 denoise to preserve more of original (pose, setting, body, identity)
                 result_b64 = await self.image_service.generate_img2img(
                     prompt=final_prompt,
                     image_bytes=image_bytes,
-                    denoise=0.60,
+                    denoise=denoise_value,
                     negative_prompt=neg_prompt
                 )
 
@@ -214,17 +237,21 @@ class CommandService:
                 return {"type": "text", "content": "Edit failed."}
 
             # Face swap: paste original face onto generated image
-            try:
-                print("[IMG2IMG] Attempting face swap...")
-                generated_bytes = base64.b64decode(result_b64)
-                swapped_bytes = swap_face_bytes(image_bytes, generated_bytes)
-                if swapped_bytes:
-                    result_b64 = base64.b64encode(swapped_bytes).decode()
-                    print("[IMG2IMG] Face swap successful")
-                else:
-                    print("[IMG2IMG] Face swap returned None (no face detected)")
-            except Exception as e:
-                print(f"[IMG2IMG] Face swap error: {e}")
+            # Skip for anime - InsightFace doesn't work with anime faces
+            if not is_anime:
+                try:
+                    print("[IMG2IMG] Attempting face swap...")
+                    generated_bytes = base64.b64decode(result_b64)
+                    swapped_bytes = swap_face_bytes(image_bytes, generated_bytes)
+                    if swapped_bytes:
+                        result_b64 = base64.b64encode(swapped_bytes).decode()
+                        print("[IMG2IMG] Face swap successful")
+                    else:
+                        print("[IMG2IMG] Face swap returned None (no face detected)")
+                except Exception as e:
+                    print(f"[IMG2IMG] Face swap error: {e}")
+            else:
+                print("[IMG2IMG] Skipped face swap for anime")
 
             return {"type": "generated_image", "content": f"Edited: {prompt}", "image": result_b64, "prompt": prompt}
 

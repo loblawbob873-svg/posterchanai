@@ -185,48 +185,51 @@ async def img2img(
                     if tags:
                         tags_lower = tags.lower()
                         identity_parts = []
-                        # Hair color (with negatives to prevent wrong colors)
+                        # Hair color (simplified to save tokens)
                         if 'orange_hair' in tags_lower:
-                            identity_parts.append('(orange hair:2.5), (auburn hair:2.0), (ginger hair:1.5)')
-                            negative_parts.append('blonde hair, yellow hair, brown hair')
+                            identity_parts.append('orange hair, ginger')
+                            negative_parts.append('blonde hair')
                         elif 'blonde' in tags_lower or 'yellow_hair' in tags_lower:
-                            identity_parts.append('(blonde hair:2.5), (golden hair:1.5)')
-                            negative_parts.append('brown hair, black hair, dark hair')
+                            identity_parts.append('blonde hair')
+                            negative_parts.append('dark hair')
                         elif 'brown_hair' in tags_lower:
-                            identity_parts.append('(brown hair:2.5)')
-                            negative_parts.append('blonde hair, black hair')
+                            identity_parts.append('brown hair')
                         elif 'black_hair' in tags_lower:
-                            identity_parts.append('(black hair:2.5)')
-                            negative_parts.append('blonde hair, brown hair')
+                            identity_parts.append('black hair')
                         elif 'red_hair' in tags_lower or 'redhead' in tags_lower:
-                            identity_parts.append('(red hair:2.5), (redhead:2.0)')
-                            negative_parts.append('blonde hair, brown hair, black hair')
+                            identity_parts.append('red hair')
                         elif 'pink_hair' in tags_lower:
-                            identity_parts.append('(pink hair:2.5)')
-                            negative_parts.append('blonde hair, brown hair')
+                            identity_parts.append('pink hair')
                         elif 'blue_hair' in tags_lower:
-                            identity_parts.append('(blue hair:2.5)')
-                            negative_parts.append('blonde hair, brown hair')
+                            identity_parts.append('blue hair')
                         elif 'green_hair' in tags_lower:
-                            identity_parts.append('(green hair:2.5)')
-                            negative_parts.append('blonde hair, brown hair')
+                            identity_parts.append('green hair')
                         elif 'purple_hair' in tags_lower:
-                            identity_parts.append('(purple hair:2.5)')
-                            negative_parts.append('blonde hair, brown hair')
+                            identity_parts.append('purple hair')
                         elif 'white_hair' in tags_lower or 'silver_hair' in tags_lower:
-                            identity_parts.append('(white hair:2.5), (silver hair:2.0)')
-                            negative_parts.append('blonde hair, brown hair, black hair')
-                        # Skin tone - only if clearly indicated
-                        if 'dark_skin' in tags_lower or 'dark-skinned' in tags_lower:
-                            identity_parts.append('(dark skin:2.5), (brown skin:2.0)')
-                            negative_parts.append('pale skin, white skin')
+                            identity_parts.append('white hair')
+
+                        # Skin tone - be smart about it!
+                        # Light-colored hair (blonde, orange, red, pink, white) almost always = pale skin
+                        # Only trust dark_skin tag if hair is dark (black, brown) or no hair detected
+                        has_light_hair = any(h in tags_lower for h in ['blonde', 'yellow_hair', 'orange_hair', 'red_hair', 'redhead', 'pink_hair', 'white_hair', 'silver_hair'])
+                        has_dark_hair = any(h in tags_lower for h in ['black_hair', 'brown_hair'])
+                        has_dark_skin_tag = 'dark_skin' in tags_lower or 'dark-skinned' in tags_lower
+
+                        if has_light_hair:
+                            # Light hair = force pale skin (simplified to save tokens)
+                            identity_parts.append('pale skin, white woman')
+                            negative_parts.append('dark skin, black woman')
+                            print(f"[IMAGE-API] Light hair detected - forcing pale skin")
+                        elif has_dark_skin_tag and has_dark_hair:
+                            identity_parts.append('dark skin')
+                            negative_parts.append('pale skin')
                         elif 'pale' in tags_lower or 'light_skin' in tags_lower:
-                            identity_parts.append('(pale skin:2.5), (white skin:2.0), (fair skin:1.5)')
-                            negative_parts.append('dark skin, brown skin, black skin')
+                            identity_parts.append('pale skin')
+                            negative_parts.append('dark skin')
                         else:
-                            # Default to natural/pale for most subjects without explicit skin tag
-                            identity_parts.append('(natural skin tone:2.0)')
-                            negative_parts.append('dark skin, brown skin')
+                            identity_parts.append('natural skin')
+                            negative_parts.append('dark skin')
                         # Body type
                         if any(t in tags_lower for t in ['fat', 'chubby', 'plump', 'overweight']):
                             identity_parts.append('(fat:2.0), (bbw:1.5), (plus-size body:1.5)')
@@ -249,36 +252,36 @@ async def img2img(
                 neg_identity = ", ".join(negative_parts)
                 final_negative = f"{final_negative}, {neg_identity}" if final_negative else neg_identity
 
-            # Detect if anime - use lower denoise for better face preservation
+            # Detect if anime
             is_anime = 'anime' in final_prompt.lower() or 'manga' in final_prompt.lower() or 'illustration' in final_prompt.lower()
-            denoise_value = request.denoise or (0.50 if is_anime else 0.60)
+            # Check if nude/nsfw request
+            is_nsfw = any(kw in final_prompt.lower() for kw in ['nude', 'naked', 'topless', 'nsfw'])
+            # Optimal denoise: anime 0.70 (balance nude vs face), realistic 0.50 (best preservation)
             if is_anime:
-                print(f"[IMAGE-API] Anime detected - using lower denoise: {denoise_value}")
+                denoise_value = min(request.denoise or 0.70, 0.70)
+            else:
+                # Use 0.50 for realistic - best face/pose/background preservation
+                denoise_value = min(request.denoise or 0.50, 0.50)
 
-            # Generate img2img
+            # For NSFW, add strong clothing removal and background cleanup negatives
+            if is_nsfw:
+                clothing_neg = "clothing, clothes, dress, skirt, shirt, bra, panties, underwear, lingerie, fabric, covered"
+                background_neg = "multiple people, crowd, group, extra faces, background people"
+                final_negative = f"{final_negative}, {clothing_neg}, {background_neg}" if final_negative else f"{clothing_neg}, {background_neg}"
+                print(f"[IMAGE-API] NSFW mode - added clothing/background negatives")
+
+            print(f"[IMAGE-API] {'Anime' if is_anime else 'Realistic'} mode, denoise: {denoise_value}")
+
+            # Generate img2img (inpainting disabled - causes more problems than it solves)
             result = await backend.generate_img2img(
-                prompt=final_prompt,
-                image_bytes=image_bytes,
-                denoise=denoise_value,
-                negative_prompt=final_negative
-            )
+                    prompt=final_prompt,
+                    image_bytes=image_bytes,
+                    denoise=denoise_value,
+                    negative_prompt=final_negative
+                )
 
             if result:
-                # Face swap if requested
-                if request.face_swap:
-                    try:
-                        from app.services.face_swap_service import swap_face_bytes
-                        result_bytes = base64.b64decode(result)
-                        swapped = swap_face_bytes(image_bytes, result_bytes)
-                        if swapped:
-                            result = base64.b64encode(swapped).decode('utf-8')
-                            print(f"[IMAGE-API] img2img with face swap completed")
-                        else:
-                            print(f"[IMAGE-API] img2img completed (face swap failed)")
-                    except Exception as e:
-                        print(f"[IMAGE-API] Face swap error: {e}")
-                else:
-                    print(f"[IMAGE-API] img2img completed successfully")
+                print(f"[IMAGE-API] img2img completed")
                 return ImageResponse(image=result)
             else:
                 print(f"[IMAGE-API] img2img failed (no result)")
