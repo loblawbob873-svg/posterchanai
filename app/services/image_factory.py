@@ -24,12 +24,6 @@ class ImageBackend(Protocol):
         """Generate image from text prompt, returns base64"""
         ...
 
-    async def generate_img2img(self, prompt: str, image_bytes: bytes,
-                               denoise: float = 0.75,
-                               negative_prompt: str = None) -> Optional[str]:
-        """Generate image from source image, returns base64"""
-        ...
-
     async def regenerate_image(self, prompt: str) -> Optional[str]:
         """Regenerate with new seed"""
         ...

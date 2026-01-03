@@ -102,15 +102,13 @@ def _start_idle_check():
 class DiffusersService:
     """
     Native image generation service using diffusers.
-    Provides txt2img and img2img capabilities.
+    Provides txt2img capabilities.
     Automatically unloads models after idle timeout to free VRAM.
     """
 
     def __init__(self, db: Session):
         self.db = db
         self._pipe = None
-        self._img2img_pipe = None  # Cached img2img pipeline for faster generation
-        self._inpaint_pipe = None  # Cached inpaint pipeline
         self._model_path: Optional[str] = None
         self._model_type: Optional[str] = None  # "sd15", "sdxl", "sd3", "flux"
         self._device: Optional[str] = None
@@ -202,10 +200,7 @@ class DiffusersService:
                 from diffusers import (
                     StableDiffusionPipeline,
                     StableDiffusionXLPipeline,
-                    StableDiffusionImg2ImgPipeline,
-                    StableDiffusionXLImg2ImgPipeline,
                     AutoPipelineForText2Image,
-                    AutoPipelineForImage2Image,
                 )
 
                 # Determine dtype based on device
@@ -290,17 +285,9 @@ class DiffusersService:
 
     def _unload_model_internal(self):
         """Internal method to unload model (no lock)"""
-        if self._pipe is not None or self._img2img_pipe is not None or self._inpaint_pipe is not None:
-            # Clear all pipelines
-            if self._inpaint_pipe is not None:
-                del self._inpaint_pipe
-                self._inpaint_pipe = None
-            if self._img2img_pipe is not None:
-                del self._img2img_pipe
-                self._img2img_pipe = None
-            if self._pipe is not None:
-                del self._pipe
-                self._pipe = None
+        if self._pipe is not None:
+            del self._pipe
+            self._pipe = None
             self._model_path = None
 
             # Force garbage collection - run twice for thorough cleanup
@@ -461,256 +448,6 @@ class DiffusersService:
                 pass
             return None
 
-    def _get_img2img_pipe(self):
-        """Get or create cached img2img pipeline"""
-        if self._img2img_pipe is not None:
-            return self._img2img_pipe
-
-        if self._pipe is None:
-            return None
-
-        from diffusers import AutoPipelineForImage2Image
-        logger.info("Creating img2img pipeline from txt2img pipeline...")
-        self._img2img_pipe = AutoPipelineForImage2Image.from_pipe(self._pipe)
-        logger.info("img2img pipeline ready")
-        return self._img2img_pipe
-
-    def _get_inpaint_pipe(self):
-        """Get or create cached inpaint pipeline"""
-        if self._inpaint_pipe is not None:
-            return self._inpaint_pipe
-
-        if self._pipe is None:
-            return None
-
-        from diffusers import AutoPipelineForInpainting
-        logger.info("Creating inpaint pipeline from txt2img pipeline...")
-        self._inpaint_pipe = AutoPipelineForInpainting.from_pipe(self._pipe)
-        logger.info("inpaint pipeline ready")
-        return self._inpaint_pipe
-
-    def _img2img_sync(
-        self,
-        prompt: str,
-        image_bytes: bytes,
-        negative_prompt: str = "",
-        strength: float = 0.75,
-        steps: int = None,
-        cfg: float = None,
-        seed: int = None,
-    ) -> Optional[bytes]:
-        """Synchronous img2img generation"""
-        # Truncate prompt to avoid token limit errors
-        prompt = self._truncate_prompt(prompt)
-
-        # Select model based on prompt (anime vs default)
-        target_model = self._get_model_for_prompt(prompt)
-        self._ensure_model_loaded(target_model)
-
-        if self._pipe is None:
-            logger.error("No model loaded")
-            return None
-
-        steps = steps or self.default_steps
-        cfg = cfg or self.default_cfg
-
-        if seed is None or seed < 0:
-            seed = random.randint(0, 2**32 - 1)
-
-        try:
-            import torch
-
-            # Load source image
-            source_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-            # Resize large images to prevent OOM (use admin-configured dimensions)
-            max_dim = max(self.default_width, self.default_height)
-            w, h = source_image.size
-            if max(w, h) > max_dim:
-                if w > h:
-                    new_w = max_dim
-                    new_h = int(h * max_dim / w)
-                else:
-                    new_h = max_dim
-                    new_w = int(w * max_dim / h)
-                # Round to nearest 8 (required for SDXL)
-                new_w = (new_w // 8) * 8
-                new_h = (new_h // 8) * 8
-                logger.info(f"Resizing {w}x{h} -> {new_w}x{new_h} to prevent OOM")
-                source_image = source_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
-
-            # Get cached img2img pipeline (much faster than recreating each time)
-            img2img_pipe = self._get_img2img_pipe()
-            if img2img_pipe is None:
-                logger.error("Failed to get img2img pipeline")
-                return None
-
-            # model_cpu_offload (ROCm) needs CPU generator
-            gen_device = "cpu" if is_rocm() else self._device
-            generator = torch.Generator(device=gen_device).manual_seed(seed)
-
-            logger.info(f"img2img: {prompt[:50]}... (strength={strength}, seed={seed})")
-
-            if not negative_prompt:
-                negative_prompt = "bad quality, blurry, distorted, ugly, deformed, low resolution"
-
-            result = img2img_pipe(
-                prompt=prompt,
-                image=source_image,
-                negative_prompt=negative_prompt,
-                strength=strength,
-                num_inference_steps=steps,
-                guidance_scale=cfg,
-                generator=generator,
-            )
-
-            image = result.images[0]
-
-            img_byte_arr = io.BytesIO()
-            image.save(img_byte_arr, format='PNG')
-            img_bytes = img_byte_arr.getvalue()
-
-            logger.info(f"img2img complete: {len(img_bytes)} bytes")
-
-            # Update last used timestamp for idle timeout
-            self._last_used = time.time()
-
-            # Cleanup result only (keep pipeline cached)
-            del result
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-            return img_bytes
-
-        except Exception as e:
-            logger.error(f"img2img error: {e}")
-            # Try to clean up on error too
-            try:
-                gc.collect()
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
-            return None
-
-    def _inpaint_sync(
-        self,
-        prompt: str,
-        image_bytes: bytes,
-        mask_bytes: bytes,
-        negative_prompt: str = "",
-        strength: float = 0.85,
-        steps: int = None,
-        cfg: float = None,
-        seed: int = None,
-    ) -> Optional[bytes]:
-        """Synchronous inpainting generation - paint over masked areas"""
-        # Truncate prompt to avoid token limit errors
-        prompt = self._truncate_prompt(prompt)
-
-        # Select model based on prompt (anime vs default)
-        target_model = self._get_model_for_prompt(prompt)
-        self._ensure_model_loaded(target_model)
-
-        if self._pipe is None:
-            logger.error("No model loaded")
-            return None
-
-        steps = steps or self.default_steps
-        cfg = cfg or self.default_cfg
-
-        if seed is None or seed < 0:
-            seed = random.randint(0, 2**32 - 1)
-
-        try:
-            import torch
-
-            # Load source image and mask
-            source_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            mask_image = Image.open(io.BytesIO(mask_bytes)).convert("L")  # Grayscale
-
-            # Ensure mask is same size as source
-            if mask_image.size != source_image.size:
-                mask_image = mask_image.resize(source_image.size, Image.Resampling.LANCZOS)
-
-            # Resize large images to prevent OOM
-            max_dim = max(self.default_width, self.default_height)
-            w, h = source_image.size
-            if max(w, h) > max_dim:
-                if w > h:
-                    new_w = max_dim
-                    new_h = int(h * max_dim / w)
-                else:
-                    new_h = max_dim
-                    new_w = int(w * max_dim / h)
-                # Round to nearest 8 (required for SDXL)
-                new_w = (new_w // 8) * 8
-                new_h = (new_h // 8) * 8
-                logger.info(f"Resizing {w}x{h} -> {new_w}x{new_h} to prevent OOM")
-                source_image = source_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                mask_image = mask_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
-
-            # Get cached inpaint pipeline
-            inpaint_pipe = self._get_inpaint_pipe()
-            if inpaint_pipe is None:
-                logger.error("Failed to get inpaint pipeline")
-                return None
-
-            # model_cpu_offload (ROCm) needs CPU generator
-            gen_device = "cpu" if is_rocm() else self._device
-            generator = torch.Generator(device=gen_device).manual_seed(seed)
-
-            logger.info(f"inpaint: {prompt[:50]}... (strength={strength}, seed={seed})")
-
-            if not negative_prompt:
-                negative_prompt = "bad quality, blurry, distorted, ugly, deformed, low resolution"
-
-            # Update last used at START to prevent idle timeout
-            self._last_used = time.time()
-
-            result = inpaint_pipe(
-                prompt=prompt,
-                image=source_image,
-                mask_image=mask_image,
-                negative_prompt=negative_prompt,
-                strength=strength,
-                num_inference_steps=steps,
-                guidance_scale=cfg,
-                generator=generator,
-            )
-
-            image = result.images[0]
-
-            img_byte_arr = io.BytesIO()
-            image.save(img_byte_arr, format='PNG')
-            img_bytes = img_byte_arr.getvalue()
-
-            logger.info(f"inpaint complete: {len(img_bytes)} bytes")
-
-            # Update last used timestamp for idle timeout
-            self._last_used = time.time()
-
-            # Cleanup result only (keep pipeline cached)
-            del result
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-            return img_bytes
-
-        except Exception as e:
-            logger.error(f"inpaint error: {e}")
-            try:
-                gc.collect()
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
-            return None
-
     async def generate_image(self, prompt: str, negative_prompt: str = "",
                             width: int = None, height: int = None,
                             steps: int = None, cfg: float = None,
@@ -724,50 +461,6 @@ class DiffusersService:
         img_bytes = await loop.run_in_executor(
             _executor,
             lambda: self._generate_sync(prompt, negative_prompt, width, height, steps, cfg, seed)
-        )
-
-        if img_bytes:
-            return base64.b64encode(img_bytes).decode()
-        return None
-
-    async def generate_img2img(self, prompt: str, image_bytes: bytes,
-                               denoise: float = 0.75,
-                               negative_prompt: str = None) -> Optional[str]:
-        """
-        Generate image from prompt using source image as base.
-        denoise is converted to strength (0.0 = keep original, 1.0 = full denoise)
-        Returns base64 encoded image or None.
-        """
-        loop = asyncio.get_event_loop()
-
-        # denoise parameter matches ComfyUI convention
-        strength = denoise
-
-        img_bytes = await loop.run_in_executor(
-            _executor,
-            lambda: self._img2img_sync(prompt, image_bytes, negative_prompt or "", strength)
-        )
-
-        if img_bytes:
-            return base64.b64encode(img_bytes).decode()
-        return None
-
-    async def generate_inpaint(self, prompt: str, image_bytes: bytes,
-                               mask_bytes: bytes, denoise: float = 0.85,
-                               negative_prompt: str = None) -> Optional[str]:
-        """
-        Inpaint masked areas of image with prompt.
-        Mask should be white (255) where to inpaint, black (0) where to keep.
-        denoise/strength controls how much to change masked area (0.0-1.0)
-        Returns base64 encoded image or None.
-        """
-        loop = asyncio.get_event_loop()
-
-        strength = denoise
-
-        img_bytes = await loop.run_in_executor(
-            _executor,
-            lambda: self._inpaint_sync(prompt, image_bytes, mask_bytes, negative_prompt or "", strength)
         )
 
         if img_bytes:
