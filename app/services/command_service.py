@@ -126,7 +126,7 @@ class CommandService:
             }
 
     async def _img2img_command(self, prompt: str, image_data: Optional[str], stop_check: Optional[callable] = None) -> dict:
-        """Inpaint body area while preserving face"""
+        """Edit image using img2img + face swap to preserve identity"""
         if not prompt or not image_data:
             return {"type": "text", "content": "Need both prompt and image."}
 
@@ -138,37 +138,107 @@ class CommandService:
 
             try:
                 image_bytes = base64.b64decode(image_data)
-            except:
+                # Debug: Log input image info and save for comparison
+                from PIL import Image
+                import io
+                debug_img = Image.open(io.BytesIO(image_bytes))
+                print(f"[IMG2IMG-DEBUG] Input image: {len(image_bytes)} bytes, {debug_img.size[0]}x{debug_img.size[1]}, mode={debug_img.mode}")
+                # Save debug copy of input
+                with open("/tmp/webui_input.png", "wb") as f:
+                    f.write(image_bytes)
+                print(f"[IMG2IMG-DEBUG] Saved input to /tmp/webui_input.png")
+            except Exception as e:
+                print(f"[IMG2IMG-DEBUG] Failed to decode image: {e}")
                 return {"type": "text", "content": "Invalid image."}
 
-            # Body mask - preserves face
-            from app.services.mask_service import generate_body_mask
-            mask_bytes = generate_body_mask(image_bytes)
-            if not mask_bytes:
-                return {"type": "text", "content": "Could not generate mask."}
-
-            # Detect anime style from tags
+            # Get tags and detect style
             from app.services.wd14_service import tag_image
             tags = tag_image(image_bytes, threshold=0.35) or ""
+            print(f"[IMG2IMG] WD14 tags: {tags[:200]}...")
             is_anime = 'anime' in prompt.lower() or 'anime' in tags.lower()
             style = "anime" if is_anime else "realistic"
 
-            # Boost nude-related keywords for better results
-            boosted_prompt = prompt
-            if any(kw in prompt.lower() for kw in ['nude', 'naked', 'topless']):
-                boosted_prompt = f"(nude:1.5), (bare skin:1.3), (naked body:1.2), {prompt}"
+            # Build prompt with identity preservation tags
+            extra_tags = []
+            if "dark_skin" in tags or "dark-skinned" in tags:
+                extra_tags.append("dark brown skin")
+            if any(t in tags.lower() for t in ["fat", "chubby", "plump", "overweight", "plus-size", "bbw"]):
+                extra_tags.append("fat, obese, bbw, plus-size body")
+            if any(t in tags.lower() for t in ["large_breasts", "huge_breasts"]):
+                extra_tags.append("large breasts")
+            extra_str = ", ".join(extra_tags)
+            print(f"[IMG2IMG] Identity tags: {extra_str}")
 
-            result = await self.image_service.generate_inpaint(
-                prompt=f"{boosted_prompt}, {style}, high quality",
-                image_bytes=image_bytes,
-                mask_bytes=mask_bytes,
-                denoise=0.95,
-                negative_prompt=f"clothing, clothes, shirt, dress, {'realistic' if is_anime else 'anime'}, deformed, bad anatomy"
-            )
+            # Check if prompt contains NSFW keywords - add trigger phrase to use NSFW model
+            nsfw_keywords = ["nude", "naked", "topless", "bare breasts", "nipples", "nsfw", "undress"]
+            is_nsfw = any(kw in prompt.lower() for kw in nsfw_keywords)
+            # Add strong NSFW keywords to ensure clothes removal - emphasize bare/exposed skin
+            nsfw_trigger = "ecchi, hentai, nude, nipples, topless, exposed breasts, bare skin, naked body, no clothing at all, " if is_nsfw and "ecchi" not in prompt.lower() and "hentai" not in prompt.lower() else ""
 
-            if not result:
-                return {"type": "text", "content": "Inpaint failed."}
-            return {"type": "generated_image", "content": f"Inpainted: {prompt}", "image": result, "prompt": prompt}
+            # Add composition guidance - preserve original framing, just ensure face is visible
+            composition = "same pose, same framing, face visible"
+            final_prompt = f"{nsfw_trigger}{prompt}, {composition}, {extra_str}, {style}, realistic photography".strip(', ')
+            # Add more negatives to prevent latex/shiny material transformation
+            neg_prompt = f"close-up, cropped, headless, no face, clothing, clothes, shirt, top, bra, pants, shorts, fabric, dressed, wearing, covered, mesh, sheer, latex, rubber, spandex, shiny, glossy, wet look, bodysuit, catsuit, thin, slim, skinny, {'realistic' if is_anime else 'anime'}, deformed"
+            print(f"[IMG2IMG-DEBUG] Final prompt: {final_prompt}")
+            print(f"[IMG2IMG-DEBUG] Negative prompt: {neg_prompt[:100]}...")
+
+            # Import face detection for retry logic
+            from app.services.face_swap_service import swap_face_bytes, detect_face
+            from PIL import Image
+            import io
+
+            # Retry up to 3 times if generated image has no face
+            max_retries = 3
+            for attempt in range(max_retries):
+                print(f"[IMG2IMG] Generation attempt {attempt + 1}/{max_retries}")
+
+                # Use 0.92 denoise - high value needed to fully remove clothes (lower values create latex effect)
+                result_b64 = await self.image_service.generate_img2img(
+                    prompt=final_prompt,
+                    image_bytes=image_bytes,
+                    denoise=0.92,
+                    negative_prompt=neg_prompt
+                )
+
+                if not result_b64:
+                    continue
+
+                # Check if generated image has a face
+                generated_bytes = base64.b64decode(result_b64)
+                gen_image = Image.open(io.BytesIO(generated_bytes)).convert('RGB')
+                print(f"[IMG2IMG-DEBUG] Output image: {len(generated_bytes)} bytes, {gen_image.size[0]}x{gen_image.size[1]}")
+                # Save debug copy of output
+                with open(f"/tmp/webui_output_{attempt}.png", "wb") as f:
+                    f.write(generated_bytes)
+                print(f"[IMG2IMG-DEBUG] Saved output to /tmp/webui_output_{attempt}.png")
+                gen_face = detect_face(gen_image)
+
+                if gen_face is not None:
+                    print(f"[IMG2IMG] Face detected in generated image at bbox: {gen_face.bbox}")
+                    break
+                else:
+                    print(f"[IMG2IMG] No face in generated image, retrying...")
+            else:
+                print("[IMG2IMG] All retries failed to generate face, using last result")
+
+            if not result_b64:
+                return {"type": "text", "content": "Edit failed."}
+
+            # Face swap: paste original face onto generated image
+            try:
+                print("[IMG2IMG] Attempting face swap...")
+                generated_bytes = base64.b64decode(result_b64)
+                swapped_bytes = swap_face_bytes(image_bytes, generated_bytes)
+                if swapped_bytes:
+                    result_b64 = base64.b64encode(swapped_bytes).decode()
+                    print("[IMG2IMG] Face swap successful")
+                else:
+                    print("[IMG2IMG] Face swap returned None (no face detected)")
+            except Exception as e:
+                print(f"[IMG2IMG] Face swap error: {e}")
+
+            return {"type": "generated_image", "content": f"Edited: {prompt}", "image": result_b64, "prompt": prompt}
 
     async def _regen_command(self, last_prompt: Optional[str], stop_check: Optional[callable] = None) -> dict:
         if not last_prompt:

@@ -21,58 +21,6 @@ try:
 except ImportError:
     native_wd14_tag = None
 
-# Path to training data (local to this project)
-IMG2IMG_TRAINING_FILE = "/home/verita84/posterchanai/img2img_training.json"
-
-def load_img2img_prompt():
-    """Load and format the img2img training prompt from JSON file."""
-    try:
-        with open(IMG2IMG_TRAINING_FILE, 'r') as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"[WARN] Could not load img2img training data: {e}")
-        return None
-
-    # Build the prompt
-    lines = [data["format"], ""]
-
-    # Add denoise values
-    lines.append("DENOISE values:")
-    lines.append(f"- {data['denoise_values']['hair_style']} = hair STYLE changes (afro, ponytail, straight, curly, short, long), ANIMAL changes (pig to cat, dog to wolf)")
-    lines.append(f"- {data['denoise_values']['color_change']} = color changes (hair, eyes, skin), clothing removal (naked/nude)")
-    lines.append(f"- {data['denoise_values']['background_scene']} = background/scene changes")
-    lines.append(f"- {data['denoise_values']['object_change']} = object changes (holding different items)")
-    lines.append(f"- {data['denoise_values']['art_style']} = art style changes (anime, realistic)")
-    lines.append(f"- {data['denoise_values']['body_modification']} = body modifications (breast size)")
-    lines.append(f"- {data['denoise_values']['minor_change']} = minor changes (accessories)")
-    lines.append("")
-
-    # Add rules
-    lines.append("RULES:")
-    for rule in data["rules"]:
-        lines.append(rule)
-    lines.append("")
-
-    # Add examples
-    lines.append("Examples:")
-    for ex in data["examples"]:
-        lines.append(f'Tags: "{ex["tags"]}" Change: "{ex["change"]}"')
-        lines.append(f'DENOISE: {ex["denoise"]:.2f}')
-        lines.append(f'TAGS: {ex["output_tags"]}')
-        if ex.get("negative"):
-            lines.append(f'NEGATIVE: {ex["negative"]}')
-        lines.append("")
-
-    # Add txt2img example
-    if "txt2img_example" in data:
-        ex = data["txt2img_example"]
-        lines.append(f'User wants: "{ex["prompt"]}"')
-        lines.append(f'DENOISE: {ex["denoise"]:.1f}')
-        lines.append(f'TAGS: {ex["output_tags"]}')
-        lines.append(f'NEGATIVE: {ex["negative"]}')
-
-    return "\n".join(lines)
-
 class ChatService:
     def __init__(self, db: Session, user: Optional["User"] = None):
         self.db = db
@@ -82,7 +30,8 @@ class ChatService:
     def _load_settings(self):
         """Load settings - inference factory handles all backend-specific settings"""
         self._settings = {s.key: s.value for s in self.db.query(Setting).all()}
-        self.system_prompt = self._settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
+        default_prompt = "You are a helpful, friendly AI assistant. When writing code, always use markdown code blocks with the language specified (```python, ```bash, etc.) for proper syntax highlighting."
+        self.system_prompt = self._settings.get("ollama_system_prompt") or default_prompt
         # These are used for chat_stream kwargs
         self.temperature = float(self._settings.get("ollama_temperature", "0.7"))
         self.top_p = float(self._settings.get("ollama_top_p", "0.9"))
@@ -338,87 +287,6 @@ class ChatService:
             import traceback
             traceback.print_exc()
             return ""
-
-    async def modify_prompt_for_img2img(self, user_prompt: str, original_tags: str = "") -> tuple[str, float, str]:
-        """
-        Use AI to create optimized img2img parameters from user's request.
-        original_tags: tags describing the source image (from vision analysis)
-        Returns: (prompt, denoise, negative_prompt)
-        """
-
-        # Load prompt from JSON file
-        system_prompt = load_img2img_prompt()
-        if not system_prompt:
-            print("[IMG2IMG] Could not load training data, using fallback")
-            return user_prompt + ", vibrant colors, sharp, high quality", 0.70, "bad quality, blurry, distorted"
-
-        # Prompt is now loaded from img2img_training.json
-
-        # Format message based on whether we have original tags
-        if original_tags:
-            user_message = f'Tags: "{original_tags}" Change: "{user_prompt}"'
-        else:
-            user_message = f'User wants: "{user_prompt}"'
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ]
-
-        try:
-            # Prepare VRAM for LLM (swap models if needed)
-            prepare_vram_for_llm(self.db)
-            service = get_inference_service(self.db)
-            result = await service.chat_completion(
-                messages=messages,
-                temperature=0.2,
-                max_tokens=400
-            )
-
-            if "error" in result:
-                print(f"[IMG2IMG] Inference error: {result['error']}")
-                # Use safe fallback - 0.65 denoise preserves most of original image
-                return user_prompt + ", vibrant colors, sharp, high quality", 0.65, "bad quality, blurry, distorted, deformed"
-
-            content = result["choices"][0]["message"]["content"]
-            content = self.strip_thinking_tags(content)
-            print(f"[IMG2IMG] Raw LLM response:\n{content}")
-
-            # Parse response - look for the 3 lines anywhere in output
-            denoise = 1.0
-            tags = user_prompt
-            negative = "bad quality, blurry, distorted, deformed"
-
-            # Try to find DENOISE/TAGS/NEGATIVE anywhere in output (handles thinking text)
-            denoise_match = re.search(r'DENOISE:\s*([\d.]+)', content, re.IGNORECASE)
-            # TAGS line - get everything after TAGS: until NEGATIVE: or end
-            tags_match = re.search(r'TAGS:\s*(.+?)(?=\nNEGATIVE:|\n\n|$)', content, re.IGNORECASE | re.DOTALL)
-            negative_match = re.search(r'NEGATIVE:\s*(.+?)(?:\n\n|$)', content, re.IGNORECASE | re.DOTALL)
-
-            if denoise_match:
-                try:
-                    denoise = float(denoise_match.group(1))
-                    denoise = max(0.20, min(1.0, denoise))
-                except ValueError:
-                    pass
-            if tags_match:
-                tags = tags_match.group(1).strip().strip('"').strip("'")
-                # Clean up any newlines in tags
-                tags = ' '.join(tags.split())
-            if negative_match:
-                negative = negative_match.group(1).strip().strip('"').strip("'")
-                # Clean up any newlines in negative
-                negative = ' '.join(negative.split())
-
-            print(f"[IMG2IMG] Denoise: {denoise}, Tags: {tags[:80]}...")
-            print(f"[IMG2IMG] Negative: {negative[:80]}...")
-            return tags, denoise, negative
-
-        except Exception as e:
-            print(f"[IMG2IMG] Prompt modification failed: {e}")
-            return user_prompt + ", vibrant colors, sharp, high quality", 1.0, "bad quality, blurry, distorted"
-
-
 
 def get_chat_service(db: Session) -> ChatService:
     return ChatService(db)

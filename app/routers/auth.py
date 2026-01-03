@@ -519,6 +519,11 @@ async def test_custom_ai_connection(
     url = request.url.rstrip('/')
     models = []
 
+    # Use stored API key if requested and available
+    api_key = request.api_key
+    if request.use_stored_key and current_user.custom_ai_api_key:
+        api_key = current_user.custom_ai_api_key
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             if request.api_type == "ollama":
@@ -540,8 +545,8 @@ async def test_custom_ai_connection(
             else:
                 # Test OpenAI-compatible API (Open-WebUI, Posterchanai)
                 headers = {}
-                if request.api_key:
-                    headers["Authorization"] = f"Bearer {request.api_key}"
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
 
                 response = await client.get(f"{url}/v1/models", headers=headers)
                 if response.status_code == 200:

@@ -612,15 +612,29 @@ STUBCODE
 }
 
 setup_image_deps() {
-    # Skip if not installing native image backend
-    if [ "$INSTALL_IMAGE" = "0" ] || [ "$IMAGE_BACKEND" != "native" ]; then
+    # Skip if not installing image features at all
+    if [ "$INSTALL_IMAGE" = "0" ]; then
         return
     fi
 
-    print_step "Installing image generation dependencies..."
+    print_step "Installing image processing dependencies..."
 
-    # Install base diffusers dependencies
-    pip install -r requirements-image.txt -q
+    # Always install face detection/swap dependencies (needed for img2img with any backend)
+    # These include: onnxruntime, insightface, opencv, mkl (for Intel systems)
+    echo "  Installing face detection dependencies (InsightFace, MKL)..."
+    pip install onnxruntime huggingface_hub insightface opencv-python-headless mkl -q
+    print_success "Face detection dependencies installed"
+
+    # Skip diffusers if using ComfyUI backend
+    if [ "$IMAGE_BACKEND" != "native" ]; then
+        print_success "Using ComfyUI backend - skipping diffusers installation"
+        return
+    fi
+
+    print_step "Installing native image generation dependencies..."
+
+    # Install diffusers/transformers/accelerate for native backend
+    pip install diffusers transformers accelerate safetensors -q
     print_success "Diffusers installed"
 
     # Install GPU-specific PyTorch if needed
@@ -763,7 +777,8 @@ fi
 # Set Intel oneAPI environment explicitly
 # This is more reliable than 'source oneapi-vars.sh' in systemd contexts
 export ONEAPI_ROOT
-export LD_LIBRARY_PATH="$ONEAPI_ROOT/lib:${LD_LIBRARY_PATH:-/usr/local/lib}"
+# Include venv-ipex/lib for MKL libraries (required for InsightFace face detection)
+export LD_LIBRARY_PATH="$SCRIPT_DIR/venv-ipex/lib:$ONEAPI_ROOT/lib:${LD_LIBRARY_PATH:-/usr/local/lib}"
 export PATH="$ONEAPI_ROOT/bin:$PATH"
 export OCL_ICD_FILENAMES="$ONEAPI_ROOT/lib/libintelocl.so"
 
@@ -888,7 +903,8 @@ Environment="VIRTUAL_ENV=$VENV_PATH"
 
 # Intel oneAPI libraries - CRITICAL for SYCL/llama.cpp
 # These must be set explicitly since 'source oneapi-vars.sh' doesn't work in systemd
-Environment="LD_LIBRARY_PATH=$ONEAPI_PATH/lib:/usr/local/lib"
+# Include venv-ipex/lib for MKL libraries (required for InsightFace face detection)
+Environment="LD_LIBRARY_PATH=$VENV_PATH/lib:$ONEAPI_PATH/lib:/usr/local/lib"
 Environment="OCL_ICD_FILENAMES=$ONEAPI_PATH/lib/libintelocl.so"
 Environment="ONEAPI_ROOT=$ONEAPI_PATH"
 

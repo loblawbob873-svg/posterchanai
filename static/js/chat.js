@@ -240,6 +240,8 @@ class ChatHandler {
                 testAiResult.textContent = 'Testing...';
                 testAiResult.className = 'test-result';
                 try {
+                    // Don't send placeholder '********' as actual key - use null to indicate "use stored key"
+                    const apiKeyValue = customAiApiKey.value === '********' ? null : (customAiApiKey.value || null);
                     const response = await fetch('/api/auth/test-custom-ai', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -247,7 +249,8 @@ class ChatHandler {
                             api_type: customAiType.value,
                             url: customAiUrl.value,
                             model: customAiModel.value,
-                            api_key: customAiApiKey.value || null
+                            api_key: apiKeyValue,
+                            use_stored_key: customAiApiKey.value === '********'  // Tell backend to use stored key
                         })
                     });
                     const data = await response.json();
@@ -1421,8 +1424,37 @@ class ChatHandler {
     formatMessage(text) {
         if (!text) return '';
 
+        // Strip LLM thinking tags (Qwen and other models use <think>...</think>)
+        // First remove complete think blocks
+        text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+        // Also remove unclosed think tags (during streaming)
+        text = text.replace(/<think>[\s\S]*$/gi, '');
+        text = text.trim();
+
+        // First, extract and preserve fenced code blocks before escaping
+        const codeBlocks = [];
+        let processed = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+            const index = codeBlocks.length;
+            codeBlocks.push({ lang: lang || '', code: code.trimEnd() });
+            return `\x00CODEBLOCK${index}\x00`;
+        });
+
+        // Auto-detect: if entire message starts with shebang, treat it all as code
+        if (/^#!\//.test(processed.trim()) && !processed.includes('\x00CODEBLOCK')) {
+            const trimmed = processed.trim();
+            let lang = 'bash';
+            if (trimmed.includes('python')) lang = 'python';
+            else if (trimmed.includes('node')) lang = 'javascript';
+            else if (trimmed.includes('ruby')) lang = 'ruby';
+            else if (trimmed.includes('perl')) lang = 'perl';
+
+            const index = codeBlocks.length;
+            codeBlocks.push({ lang, code: trimmed });
+            processed = `\x00CODEBLOCK${index}\x00`;
+        }
+
         // Escape HTML
-        let html = text
+        let html = processed
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
@@ -1433,7 +1465,7 @@ class ChatHandler {
         // Italic *text*
         html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
 
-        // Code `text`
+        // Inline code `text` (but not inside code blocks)
         html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
 
         // Links
@@ -1442,7 +1474,40 @@ class ChatHandler {
         // Newlines
         html = html.replace(/\n/g, '<br>');
 
+        // Restore code blocks with proper formatting
+        html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (match, index) => {
+            const block = codeBlocks[parseInt(index)];
+            const escapedCode = block.code
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+            const langClass = block.lang ? ` class="language-${block.lang}"` : '';
+            const langLabel = block.lang ? `<span class="code-lang">${block.lang}</span>` : '';
+            const blockId = `code-${Date.now()}-${index}`;
+            return `<div class="code-block-wrapper">
+                ${langLabel}
+                <button class="code-copy-btn" onclick="window.chatHandler.copyCodeBlock('${blockId}')" title="Copy code">Copy</button>
+                <pre${langClass}><code id="${blockId}">${escapedCode}</code></pre>
+            </div>`;
+        });
+
         return html;
+    }
+
+    copyCodeBlock(blockId) {
+        const codeEl = document.getElementById(blockId);
+        if (codeEl) {
+            navigator.clipboard.writeText(codeEl.textContent).then(() => {
+                const btn = codeEl.parentElement.parentElement.querySelector('.code-copy-btn');
+                if (btn) {
+                    const originalText = btn.textContent;
+                    btn.textContent = 'Copied!';
+                    setTimeout(() => { btn.textContent = originalText; }, 2000);
+                }
+            }).catch(err => {
+                console.error('Failed to copy code:', err);
+            });
+        }
     }
 
     showTypingIndicator() {

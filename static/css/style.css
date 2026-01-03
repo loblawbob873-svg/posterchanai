@@ -380,18 +380,86 @@ body {
 .message-content a {
     color: var(--accent);
 }
+/* Inline code */
 .message-content code {
     background: rgba(0,0,0,0.3);
     padding: 2px 6px;
     border-radius: 4px;
-    font-family: monospace;
+    font-family: 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.9em;
 }
+
+/* Code block wrapper */
+.code-block-wrapper {
+    position: relative;
+    margin: 12px 0;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #1e1e2e;
+}
+.code-block-wrapper .code-lang {
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    font-size: 11px;
+    color: #888;
+    text-transform: uppercase;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+}
+.code-block-wrapper .code-copy-btn {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    background: rgba(255,255,255,0.1);
+    border: none;
+    color: #aaa;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+}
+.code-block-wrapper .code-copy-btn:hover {
+    background: rgba(255,255,255,0.2);
+    color: #fff;
+}
+.code-block-wrapper pre {
+    margin: 0;
+    padding: 36px 12px 12px 12px;
+    background: transparent;
+    overflow-x: auto;
+}
+.code-block-wrapper pre code {
+    background: transparent;
+    padding: 0;
+    font-family: 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #e0e0e0;
+    white-space: pre;
+    display: block;
+}
+
+/* Standalone pre (without wrapper) */
 .message-content pre {
     background: rgba(0,0,0,0.3);
     padding: 12px;
     border-radius: 8px;
     overflow-x: auto;
     margin: 8px 0;
+}
+
+/* Syntax highlighting colors */
+.code-block-wrapper .language-python code,
+.code-block-wrapper .language-javascript code,
+.code-block-wrapper .language-typescript code,
+.code-block-wrapper .language-java code,
+.code-block-wrapper .language-cpp code,
+.code-block-wrapper .language-c code,
+.code-block-wrapper .language-go code,
+.code-block-wrapper .language-rust code {
+    color: #e0e0e0;
 }
 
 /* Image Grid */

@@ -2,6 +2,9 @@
 # IPEX-LLM wrapper script for Intel Arc GPU
 # Sets up the environment and runs with executable stack enabled
 
+# Get script directory first (needed for library paths)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Detect oneAPI installation path
 ONEAPI_ROOT=""
 if [ -d /opt/intel/oneapi/2025.0 ]; then
@@ -20,7 +23,7 @@ fi
 # Set Intel oneAPI environment explicitly
 # This is more reliable than 'source oneapi-vars.sh' in systemd contexts
 export ONEAPI_ROOT
-export LD_LIBRARY_PATH="$ONEAPI_ROOT/lib:${LD_LIBRARY_PATH:-/usr/local/lib}"
+export LD_LIBRARY_PATH="$SCRIPT_DIR/venv-ipex/lib:$ONEAPI_ROOT/lib:${LD_LIBRARY_PATH:-/usr/local/lib}"
 export PATH="$ONEAPI_ROOT/bin:$PATH"
 export OCL_ICD_FILENAMES="$ONEAPI_ROOT/lib/libintelocl.so"
 
@@ -42,9 +45,6 @@ export ZES_ENABLE_SYSMAN=1
 
 # Workaround for GLIBC 2.41 executable stack issue
 export TORCH_DEVICE_BACKEND_AUTOLOAD=0
-
-# Get script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Activate venv and run with executable stack enabled
 cd "$SCRIPT_DIR"

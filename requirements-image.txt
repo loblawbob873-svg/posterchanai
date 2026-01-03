@@ -6,10 +6,15 @@ transformers>=4.37.0
 accelerate>=0.27.0
 safetensors>=0.4.0
 
-# WD14 tagging
+# WD14 tagging & Face swap (identity preservation for img2img)
 onnxruntime>=1.16.0
 huggingface_hub>=0.20.0
 numpy>=1.21.0
+insightface>=0.7.3
+opencv-python-headless>=4.8.0
+
+# Intel MKL (required for face detection with InsightFace on Intel systems)
+mkl>=2024.0.0
 
 # Optional: faster attention (NVIDIA only)
 # xformers>=0.0.24

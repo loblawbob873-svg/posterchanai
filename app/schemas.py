@@ -302,6 +302,7 @@ class TestConnectionRequest(BaseModel):
     url: str
     model: Optional[str] = None
     api_key: Optional[str] = None
+    use_stored_key: bool = False  # If true, use the user's stored API key
 
 
 class TestConnectionResponse(BaseModel):

@@ -386,6 +386,41 @@ Type these commands in the chat (or use the mode buttons):
 | `img2img <prompt>` | Transform an uploaded image with your prompt |
 | `regen` | Regenerate the last image with a new seed |
 
+### Edit Image (img2img) with Face Swap
+
+The `img2img` command transforms uploaded images while preserving the subject's identity through:
+
+1. **WD14 Tagging** - Automatically detects identity features (skin tone, body type, etc.)
+2. **Identity Preservation** - Adds detected features to the prompt (e.g., "dark brown skin", "plus-size body")
+3. **NSFW Model Selection** - Automatically uses the anime/NSFW model for nude-related prompts
+4. **Face Swap** - Pastes the original face onto the generated image using InsightFace
+
+**Example usage:**
+```
+img2img nude
+img2img wearing a red dress
+img2img anime style
+```
+
+**How it works:**
+1. WD14 tagger extracts identity tags from the original image
+2. Tags like `dark_skin`, `fat`, `large_breasts` are added to preserve identity
+3. NSFW keywords trigger the uncensored model automatically
+4. After generation, InsightFace detects faces and swaps the original face back
+
+**Dependencies:**
+- `onnxruntime` - Required for WD14 tagging and InsightFace
+- `insightface` - Face detection and swapping
+- `opencv-python-headless` - Image processing for face swap
+- `mkl` - Intel Math Kernel Library (required for InsightFace on Intel systems)
+
+**Note for Intel systems:** The MKL library path must be in `LD_LIBRARY_PATH` for face detection to work.
+If using a virtual environment, ensure `$VENV/lib` is included:
+```bash
+export LD_LIBRARY_PATH=/path/to/venv/lib:$LD_LIBRARY_PATH
+```
+For systemd services, add the path to the Environment directive in the service file.
+
 ### Regen Auto-Trainer
 
 The img2img/regen system automatically logs successful transformations for LLM few-shot training. This improves future regen accuracy over time.
