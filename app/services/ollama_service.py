@@ -12,29 +12,33 @@ from app.models import Setting
 # Global semaphore for request limiting (shared across instances)
 _request_semaphore: Optional[asyncio.Semaphore] = None
 _semaphore_limit: int = 2
+_semaphore_lock = asyncio.Lock()
 
 # Global HTTP client pool for connection reuse (performance optimization)
 _http_client: Optional[httpx.AsyncClient] = None
+_http_client_lock = asyncio.Lock()
 
 
-def _get_semaphore(max_concurrent: int) -> asyncio.Semaphore:
-    """Get or create global semaphore for request limiting"""
+async def _get_semaphore(max_concurrent: int) -> asyncio.Semaphore:
+    """Get or create global semaphore for request limiting (async-safe)"""
     global _request_semaphore, _semaphore_limit
-    if _request_semaphore is None or _semaphore_limit != max_concurrent:
-        _request_semaphore = asyncio.Semaphore(max_concurrent)
-        _semaphore_limit = max_concurrent
-    return _request_semaphore
+    async with _semaphore_lock:
+        if _request_semaphore is None or _semaphore_limit != max_concurrent:
+            _request_semaphore = asyncio.Semaphore(max_concurrent)
+            _semaphore_limit = max_concurrent
+        return _request_semaphore
 
 
-def _get_http_client(timeout: float = 120) -> httpx.AsyncClient:
-    """Get or create global HTTP client with connection pooling"""
+async def _get_http_client(timeout: float = 120) -> httpx.AsyncClient:
+    """Get or create global HTTP client with connection pooling (async-safe)"""
     global _http_client
-    if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout, connect=10.0),
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
-        )
-    return _http_client
+    async with _http_client_lock:
+        if _http_client is None or _http_client.is_closed:
+            _http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout, connect=10.0),
+                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+            )
+        return _http_client
 
 
 class OllamaService:
@@ -108,7 +112,7 @@ class OllamaService:
 
     async def list_models(self) -> List[Dict[str, Any]]:
         """List available Ollama models"""
-        client = _get_http_client(timeout=30)
+        client = await _get_http_client(timeout=30)
         try:
             response = await client.get(f"{self.ollama_url}/api/tags")
             response.raise_for_status()
@@ -133,10 +137,10 @@ class OllamaService:
         options = self.get_model_options(**kwargs)
 
         # Acquire semaphore for rate limiting
-        semaphore = _get_semaphore(self.max_concurrent)
+        semaphore = await _get_semaphore(self.max_concurrent)
 
         async with semaphore:
-            client = _get_http_client(timeout=self.timeout)
+            client = await _get_http_client(timeout=self.timeout)
             try:
                 # Use Ollama's native API to ensure options are respected
                 response = await client.post(
@@ -210,7 +214,7 @@ class OllamaService:
         created = int(time.time())
 
         # Acquire semaphore for rate limiting
-        semaphore = _get_semaphore(self.max_concurrent)
+        semaphore = await _get_semaphore(self.max_concurrent)
 
         async with semaphore:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -316,7 +320,7 @@ class OllamaService:
         model = model or self.default_model
         options = self.get_model_options(**kwargs)
 
-        semaphore = _get_semaphore(self.max_concurrent)
+        semaphore = await _get_semaphore(self.max_concurrent)
 
         async with semaphore:
             async with httpx.AsyncClient(timeout=self.timeout) as client:

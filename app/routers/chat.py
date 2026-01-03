@@ -288,10 +288,11 @@ manager = ConnectionManager()
 
 @router.websocket("/ws/chat/{conversation_id}")
 async def websocket_chat(websocket: WebSocket, conversation_id: int):
-    db = SessionLocal()
     conn_id = None
     user = None
+    db = None
     try:
+        db = SessionLocal()
         user = await get_user_from_websocket(websocket, db)
         if not user:
             await websocket.accept()
@@ -523,6 +524,8 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                         await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
 
         except WebSocketDisconnect:
-            manager.disconnect(user.id)
+            if user:
+                manager.disconnect(user.id)
     finally:
-        db.close()
+        if db:
+            db.close()
