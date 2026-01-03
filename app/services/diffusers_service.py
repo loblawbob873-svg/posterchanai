@@ -357,6 +357,20 @@ class DiffusersService:
             "backend": "native",
         }
 
+    def _truncate_prompt(self, prompt: str, max_tokens: int = 75) -> str:
+        """Truncate prompt to avoid token limit errors (SDXL limit is 77)"""
+        # Rough estimate: ~4 chars per token on average
+        max_chars = max_tokens * 4
+        if len(prompt) > max_chars:
+            # Truncate at last comma before limit to keep tags intact
+            truncated = prompt[:max_chars]
+            last_comma = truncated.rfind(',')
+            if last_comma > max_chars * 0.7:  # Keep at least 70% of content
+                truncated = truncated[:last_comma]
+            logger.warning(f"Prompt truncated from {len(prompt)} to {len(truncated)} chars")
+            return truncated
+        return prompt
+
     def _generate_sync(
         self,
         prompt: str,
@@ -368,6 +382,9 @@ class DiffusersService:
         seed: int = None,
     ) -> Optional[bytes]:
         """Synchronous image generation"""
+        # Truncate prompt to avoid token limit errors
+        prompt = self._truncate_prompt(prompt)
+
         # Select model based on prompt (anime vs default)
         target_model = self._get_model_for_prompt(prompt)
         self._ensure_model_loaded(target_model)
@@ -483,6 +500,9 @@ class DiffusersService:
         seed: int = None,
     ) -> Optional[bytes]:
         """Synchronous img2img generation"""
+        # Truncate prompt to avoid token limit errors
+        prompt = self._truncate_prompt(prompt)
+
         # Select model based on prompt (anime vs default)
         target_model = self._get_model_for_prompt(prompt)
         self._ensure_model_loaded(target_model)
@@ -587,6 +607,9 @@ class DiffusersService:
         seed: int = None,
     ) -> Optional[bytes]:
         """Synchronous inpainting generation - paint over masked areas"""
+        # Truncate prompt to avoid token limit errors
+        prompt = self._truncate_prompt(prompt)
+
         # Select model based on prompt (anime vs default)
         target_model = self._get_model_for_prompt(prompt)
         self._ensure_model_loaded(target_model)
