@@ -76,8 +76,8 @@ class Img2ImgRequest(BaseModel):
     image: str  # base64 encoded image
     denoise: Optional[float] = 0.75
     negative_prompt: Optional[str] = ""
-    face_swap: Optional[bool] = False  # Swap original face onto result
-    auto_identity: Optional[bool] = False  # Auto-detect identity tags from image
+    face_swap: Optional[bool] = True  # Swap original face onto result
+    auto_identity: Optional[bool] = True  # Auto-detect identity tags from image
 
 
 class InpaintRequest(BaseModel):
