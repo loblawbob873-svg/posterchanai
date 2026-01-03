@@ -216,6 +216,17 @@ async def img2img(
                         elif 'white_hair' in tags_lower or 'silver_hair' in tags_lower:
                             identity_parts.append('(white hair:2.5), (silver hair:2.0)')
                             negative_parts.append('blonde hair, brown hair, black hair')
+                        # Skin tone - only if clearly indicated
+                        if 'dark_skin' in tags_lower or 'dark-skinned' in tags_lower:
+                            identity_parts.append('(dark skin:2.5), (brown skin:2.0)')
+                            negative_parts.append('pale skin, white skin')
+                        elif 'pale' in tags_lower or 'light_skin' in tags_lower:
+                            identity_parts.append('(pale skin:2.5), (white skin:2.0), (fair skin:1.5)')
+                            negative_parts.append('dark skin, brown skin, black skin')
+                        else:
+                            # Default to natural/pale for most subjects without explicit skin tag
+                            identity_parts.append('(natural skin tone:2.0)')
+                            negative_parts.append('dark skin, brown skin')
                         # Body type
                         if any(t in tags_lower for t in ['fat', 'chubby', 'plump', 'overweight']):
                             identity_parts.append('(fat:2.0), (bbw:1.5), (plus-size body:1.5)')
