@@ -1054,6 +1054,12 @@ class ChatHandler {
             }
         }
 
+        // Update denoise to current slider value for img2img
+        const mode = window.app ? window.app.getMode() : '';
+        if ((mode === 'img2img' || this.lastPayload.image_data || this.lastPayload.image_path) && window.app) {
+            this.lastPayload.denoise = window.app.getDenoiseValue();
+        }
+
         // Resend the last payload
         this.ws.send(JSON.stringify(this.lastPayload));
     }
