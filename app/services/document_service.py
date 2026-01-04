@@ -1,6 +1,9 @@
 import base64
 import io
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # Register HEIC/HEIF support for iPhone photos
 try:
@@ -75,13 +78,13 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
             result = text.strip()
             if len(result) > max_chars:
                 result = result[:max_chars] + "\n\n[Text truncated...]"
-            print(f"[OCR] Extracted {len(result)} characters from image")
+            logger.info(f"OCR extracted {len(result)} characters from image")
             return result
 
-        print("[OCR] No text found in image")
+        logger.debug("OCR found no text in image")
         return None
     except Exception as e:
-        print(f"[OCR] Extraction error: {e}")
+        logger.error(f"OCR extraction error: {e}")
         return None
 
 
@@ -106,7 +109,7 @@ def extract_pdf_text(pdf_base64: str, max_chars: int = 50000) -> Optional[str]:
 
         return full_text if full_text.strip() else None
     except Exception as e:
-        print(f"[PDF] Extraction error: {e}")
+        logger.error(f"PDF extraction error: {e}")
         return None
 
 
@@ -136,7 +139,7 @@ def extract_docx_text(docx_base64: str, max_chars: int = 50000) -> Optional[str]
 
         return full_text if full_text.strip() else None
     except Exception as e:
-        print(f"[DOCX] Extraction error: {e}")
+        logger.error(f"DOCX extraction error: {e}")
         return None
 
 
@@ -165,7 +168,7 @@ def extract_xlsx_text(xlsx_base64: str, max_chars: int = 50000) -> Optional[str]
 
         return full_text if full_text.strip() else None
     except Exception as e:
-        print(f"[XLSX] Extraction error: {e}")
+        logger.error(f"XLSX extraction error: {e}")
         return None
 
 
@@ -193,7 +196,7 @@ def extract_pptx_text(pptx_base64: str, max_chars: int = 50000) -> Optional[str]
 
         return full_text if full_text.strip() else None
     except Exception as e:
-        print(f"[PPTX] Extraction error: {e}")
+        logger.error(f"PPTX extraction error: {e}")
         return None
 
 

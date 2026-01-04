@@ -1,12 +1,15 @@
 import asyncio
 import httpx
 import json
+import logging
 import re
 import time
 import uuid
 from typing import AsyncGenerator, Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 from app.models import Setting
+
+logger = logging.getLogger(__name__)
 
 
 # Global semaphore for request limiting (shared across instances)
@@ -119,7 +122,7 @@ class OllamaService:
             data = response.json()
             return data.get("models", [])
         except Exception as e:
-            print(f"[OLLAMA] Failed to list models: {e}")
+            logger.error(f"Failed to list Ollama models: {e}")
             return []
 
     async def chat_completion(

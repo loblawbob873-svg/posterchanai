@@ -1,4 +1,5 @@
 import secrets
+import logging
 from pathlib import Path
 from typing import List
 from datetime import datetime, timedelta
@@ -6,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
+
+logger = logging.getLogger(__name__)
 from app.models import User, Setting, APIKey, VerificationToken
 from app.schemas import (
     UserLogin, UserResponse, Token, UserRegister, APIKeyCreate, APIKeyResponse, APIKeyListItem,
@@ -135,7 +138,7 @@ def register(user_data: UserRegister, request: Request, response: Response, db: 
 
         if not success:
             # Log but don't fail registration
-            print(f"Failed to send verification email: {msg}")
+            logger.error(f"Failed to send verification email: {msg}")
 
         return {
             "message": "Registration successful! Please check your email to verify your account.",

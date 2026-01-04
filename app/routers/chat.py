@@ -4,7 +4,10 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from pathlib import Path
 import json
+import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from app.database import get_db, SessionLocal
 from app.models import User, Conversation, Message
@@ -255,14 +258,14 @@ class ConnectionManager:
         if key not in self.pending_results:
             self.pending_results[key] = []
         self.pending_results[key].append(data)
-        print(f"[QUEUE] Saved pending result for user {user_id}, conv {conversation_id}")
+        logger.debug(f"Saved pending result for user {user_id}, conv {conversation_id}")
 
     def get_pending_results(self, user_id: int, conversation_id: int) -> list:
         """Get and clear pending results for a conversation"""
         key = (user_id, conversation_id)
         results = self.pending_results.pop(key, [])
         if results:
-            print(f"[QUEUE] Delivering {len(results)} pending result(s) to user {user_id}, conv {conversation_id}")
+            logger.debug(f"Delivering {len(results)} pending result(s) to user {user_id}, conv {conversation_id}")
         return results
 
     async def send_json(self, user_id: int, data: dict, conn_id: int = None, conversation_id: int = None):
@@ -331,15 +334,15 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                 try:
                     # Use receive_text to get better error info, then parse JSON
                     raw_text = await websocket.receive_text()
-                    print(f"[DEBUG] Received raw text length: {len(raw_text)}")
+                    logger.debug(f"Received raw text length: {len(raw_text)}")
                     data = json.loads(raw_text)
                 except json.JSONDecodeError as json_err:
-                    print(f"[DEBUG] JSON parse failed: {json_err}")
+                    logger.debug(f"JSON parse failed: {json_err}")
                     continue
                 except Exception as recv_err:
-                    print(f"[DEBUG] Failed to receive: {type(recv_err).__name__}: {recv_err}")
+                    logger.debug(f"Failed to receive: {type(recv_err).__name__}: {recv_err}")
                     raise
-                print(f"[DEBUG] Received: type={data.get('type')}, content={data.get('content', '')[:50] if data.get('content') else ''}, has_image={data.get('image_data') is not None}")
+                logger.debug(f"Received: type={data.get('type')}, content={data.get('content', '')[:50] if data.get('content') else ''}, has_image={data.get('image_data') is not None}")
 
                 if data.get("type") == "stop":
                     manager.set_stop(user.id, True)
@@ -361,9 +364,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             loaded_image = storage_service.load_image_as_base64(image_path)
                             if loaded_image:
                                 image_data = loaded_image
-                                print(f"[DEBUG] Loaded image from path: {image_path}")
+                                logger.debug(f"Loaded image from path: {image_path}")
                         except Exception as e:
-                            print(f"[DEBUG] Failed to load image from path: {e}")
+                            logger.debug(f"Failed to load image from path: {e}")
 
                     # Extract text from PDF if provided
                     if pdf_data:
@@ -412,10 +415,10 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         try:
                             # Check if already stopped before starting
                             if manager.should_stop(user.id, conn_id):
-                                print(f"[DEBUG] Command cancelled before start")
+                                logger.debug("Command cancelled before start")
                                 continue
 
-                            print(f"[DEBUG] Executing command: {command} with arg: {arg[:50] if arg else ''}, has_image: {image_data is not None}")
+                            logger.debug(f"Executing command: {command} with arg: {arg[:50] if arg else ''}, has_image: {image_data is not None}")
                             last_prompt = manager.last_image_prompts.get(user.id)
 
                             # Create stop check function for long-running commands
@@ -432,15 +435,13 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                             # Check if stopped during execution
                             if manager.should_stop(user.id, conn_id):
-                                print(f"[DEBUG] Command stopped during execution")
+                                logger.debug("Command stopped during execution")
                                 manager.set_stop(user.id, False)
                                 continue
 
-                            print(f"[DEBUG] Command result type: {result.get('type')}")
+                            logger.debug(f"Command result type: {result.get('type')}")
                         except Exception as cmd_err:
-                            print(f"[DEBUG] Command execution failed: {type(cmd_err).__name__}: {cmd_err}")
-                            import traceback
-                            traceback.print_exc()
+                            logger.error(f"Command execution failed: {type(cmd_err).__name__}: {cmd_err}", exc_info=True)
                             result = {"type": "text", "content": f"Error: {cmd_err}"}
 
                         # Track image prompts for regen and save generated image

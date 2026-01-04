@@ -2,6 +2,7 @@ import json
 import re
 import asyncio
 import base64
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, Optional, TYPE_CHECKING
 from sqlalchemy.orm import Session
@@ -11,6 +12,8 @@ from app.services.custom_ai_service import CustomAIService
 
 if TYPE_CHECKING:
     from app.models import User
+
+logger = logging.getLogger(__name__)
 
 # Thread pool for running synchronous generators
 _stream_executor = ThreadPoolExecutor(max_workers=4)
@@ -255,17 +258,17 @@ class ChatService:
                     loop = asyncio.get_event_loop()
                     tags = await loop.run_in_executor(None, native_wd14_tag, image_bytes)
                     if tags:
-                        print(f"[WD14] Native tags: {tags[:100]}...")
+                        logger.debug(f"WD14 native tags: {tags[:100]}...")
                         return tags
                 except Exception as e:
-                    print(f"[WD14] Native tagger failed: {e}")
+                    logger.warning(f"WD14 native tagger failed: {e}")
 
             # Fall back to remote API
             image_url = self._settings.get("comfyui_url") or self._settings.get("posterchanai_url")
             if image_url:
                 import httpx
                 api_url = image_url.rstrip('/') + '/api/tag-image'
-                print(f"[WD14] Trying remote API: {api_url}")
+                logger.debug(f"WD14 trying remote API: {api_url}")
                 async with httpx.AsyncClient(timeout=60) as client:
                     response = await client.post(
                         api_url,
@@ -274,15 +277,13 @@ class ChatService:
                     if response.status_code == 200:
                         data = response.json()
                         if data.get("tags"):
-                            print(f"[WD14] Remote tags: {data['tags'][:100]}...")
+                            logger.debug(f"WD14 remote tags: {data['tags'][:100]}...")
                             return data["tags"]
 
-            print("[WD14] No tags returned")
+            logger.debug("WD14 no tags returned")
             return ""
         except Exception as e:
-            print(f"[WD14] Image analysis failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"WD14 image analysis failed: {e}", exc_info=True)
             return ""
 
 def get_chat_service(db: Session) -> ChatService:

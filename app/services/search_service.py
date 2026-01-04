@@ -1,7 +1,10 @@
 import httpx
+import logging
 from typing import Optional
 from sqlalchemy.orm import Session
 from app.models import Setting
+
+logger = logging.getLogger(__name__)
 
 
 class SearchService:
@@ -40,7 +43,7 @@ class SearchService:
                     for r in results
                 ]
             except Exception as e:
-                print(f"Search error: {e}")
+                logger.error(f"Search error: {e}")
                 return []
 
     async def image_search(self, query: str, limit: int = 10) -> list[dict]:
@@ -71,7 +74,7 @@ class SearchService:
                     if r.get("img_src") or r.get("thumbnail_src") or r.get("thumbnail")
                 ]
             except Exception as e:
-                print(f"Image search error: {e}")
+                logger.error(f"Image search error: {e}")
                 return []
 
 

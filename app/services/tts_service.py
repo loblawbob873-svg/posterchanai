@@ -2,9 +2,12 @@ import edge_tts
 import base64
 import io
 import re
+import logging
 from typing import Optional
 from sqlalchemy.orm import Session
 from app.models import Setting
+
+logger = logging.getLogger(__name__)
 
 
 class TTSService:
@@ -51,11 +54,11 @@ class TTSService:
         """Generate speech and return as base64 MP3"""
         cleaned_text = self._clean_text(text)
         if not cleaned_text:
-            print(f"TTS: No text after cleaning (original length: {len(text) if text else 0})")
+            logger.debug(f"TTS: No text after cleaning (original length: {len(text) if text else 0})")
             return None
 
         voice = voice or self.default_voice
-        print(f"TTS: Generating speech for {len(cleaned_text)} chars with voice {voice}")
+        logger.debug(f"TTS: Generating speech for {len(cleaned_text)} chars with voice {voice}")
 
         try:
             communicate = edge_tts.Communicate(
@@ -74,13 +77,13 @@ class TTSService:
             audio_data = audio_buffer.read()
 
             if not audio_data:
-                print("TTS: No audio data generated")
+                logger.warning("TTS: No audio data generated")
                 return None
 
-            print(f"TTS: Generated {len(audio_data)} bytes of audio")
+            logger.debug(f"TTS: Generated {len(audio_data)} bytes of audio")
             return base64.b64encode(audio_data).decode()
         except Exception as e:
-            print(f"TTS error: {type(e).__name__}: {e}")
+            logger.error(f"TTS error: {type(e).__name__}: {e}")
             return None
 
     @staticmethod
@@ -98,7 +101,7 @@ class TTSService:
                 for v in voices
             ]
         except Exception as e:
-            print(f"Error listing voices: {e}")
+            logger.error(f"Error listing voices: {e}")
             return []
 
 

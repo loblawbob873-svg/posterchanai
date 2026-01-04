@@ -1,10 +1,51 @@
 import os
 import shutil
 import base64
+import logging
 from pathlib import Path
 from datetime import datetime
 from sqlalchemy.orm import Session
 from app.models import Setting
+
+logger = logging.getLogger(__name__)
+
+
+def _sanitize_path_component(component: str) -> str:
+    """
+    Sanitize a path component to prevent path traversal attacks.
+    Removes or replaces dangerous characters and patterns.
+    """
+    if not component:
+        raise ValueError("Path component cannot be empty")
+
+    # Convert to string and strip whitespace
+    component = str(component).strip()
+
+    # Block path traversal patterns
+    if '..' in component or component.startswith('/') or component.startswith('\\'):
+        raise ValueError(f"Invalid path component: {component}")
+
+    # Remove any path separators
+    component = component.replace('/', '').replace('\\', '')
+
+    # Block null bytes
+    if '\x00' in component:
+        raise ValueError("Null bytes not allowed in path")
+
+    return component
+
+
+def _validate_path_within_base(file_path: Path, base_path: Path) -> bool:
+    """
+    Validate that a resolved path is within the expected base directory.
+    Prevents path traversal even if sanitization is bypassed.
+    """
+    try:
+        resolved = file_path.resolve()
+        base_resolved = base_path.resolve()
+        return str(resolved).startswith(str(base_resolved) + os.sep) or resolved == base_resolved
+    except (OSError, ValueError):
+        return False
 
 
 class StorageService:
@@ -18,13 +59,25 @@ class StorageService:
 
     def get_user_path(self, username: str) -> Path:
         """Get the upload directory for a user"""
-        user_path = Path(self.upload_path) / username
+        safe_username = _sanitize_path_component(username)
+        user_path = Path(self.upload_path) / safe_username
+
+        # Verify path is within upload directory
+        if not _validate_path_within_base(user_path, Path(self.upload_path)):
+            raise ValueError(f"Invalid username path: {username}")
+
         user_path.mkdir(parents=True, exist_ok=True)
         return user_path
 
     def get_conversation_path(self, username: str, conversation_id: int) -> Path:
         """Get the upload directory for a specific conversation"""
-        conv_path = self.get_user_path(username) / str(conversation_id)
+        safe_conv_id = _sanitize_path_component(str(conversation_id))
+        conv_path = self.get_user_path(username) / safe_conv_id
+
+        # Verify path is within upload directory
+        if not _validate_path_within_base(conv_path, Path(self.upload_path)):
+            raise ValueError(f"Invalid conversation path: {conversation_id}")
+
         conv_path.mkdir(parents=True, exist_ok=True)
         return conv_path
 
@@ -139,13 +192,27 @@ class StorageService:
                 username = unquote(parts[2])
                 conv_id = parts[3]
                 filename = unquote(parts[4]) if len(parts) > 4 else None
+
                 if filename:
-                    file_path = Path(self.upload_path) / username / conv_id / filename
+                    # Sanitize all path components to prevent traversal
+                    safe_username = _sanitize_path_component(username)
+                    safe_conv_id = _sanitize_path_component(conv_id)
+                    safe_filename = _sanitize_path_component(filename)
+
+                    file_path = Path(self.upload_path) / safe_username / safe_conv_id / safe_filename
+
+                    # Verify path is within upload directory
+                    if not _validate_path_within_base(file_path, Path(self.upload_path)):
+                        logger.warning(f"Path traversal attempt blocked: {image_url}")
+                        return None
+
                     if file_path.exists():
                         with open(file_path, 'rb') as f:
                             return base64.b64encode(f.read()).decode('utf-8')
+        except ValueError as e:
+            logger.warning(f"Invalid path component in image URL: {e}")
         except Exception as e:
-            print(f"[STORAGE] Failed to load image: {e}")
+            logger.error(f"Failed to load image: {e}")
         return None
 
 

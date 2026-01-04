@@ -4,9 +4,12 @@ import base64
 import random
 import uuid
 import re
+import logging
 from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from app.models import Setting
+
+logger = logging.getLogger(__name__)
 
 
 class ImageService:
@@ -207,7 +210,7 @@ class ImageService:
                         status = prompt_data.get("status", {})
 
                         if status.get("status_str") == "error":
-                            print(f"ComfyUI error: {status.get('messages', [])}")
+                            logger.error(f"ComfyUI error: {status.get('messages', [])}")
                             return None
 
                         outputs = prompt_data.get("outputs", {})
@@ -228,7 +231,7 @@ class ImageService:
 
                 return None
             except Exception as e:
-                print(f"Image generation error: {e}")
+                logger.error(f"Image generation error: {e}")
                 return None
 
     async def regenerate_image(self, prompt: str) -> Optional[str]:
@@ -267,11 +270,11 @@ class ImageService:
                 result = response.json()
                 uploaded_name = result.get("name")
                 if uploaded_name:
-                    print(f"Image uploaded to ComfyUI: {uploaded_name}")
+                    logger.debug(f"Image uploaded to ComfyUI: {uploaded_name}")
                     return uploaded_name
                 return None
             except Exception as e:
-                print(f"Error uploading image to ComfyUI: {e}")
+                logger.error(f"Error uploading image to ComfyUI: {e}")
                 return None
 
     def _build_img2img_workflow(self, prompt: str, model: str, uploaded_filename: str,
@@ -381,7 +384,7 @@ class ImageService:
         # Upload source image
         uploaded_filename = await self._upload_image(image_bytes)
         if not uploaded_filename:
-            print("Failed to upload source image for img2img")
+            logger.error("Failed to upload source image for img2img")
             return None
 
         # Select model based on prompt
@@ -404,7 +407,7 @@ class ImageService:
                 response.raise_for_status()
                 prompt_id = response.json()["prompt_id"]
 
-                print(f"img2img submitted, prompt_id: {prompt_id}, denoise: {denoise}")
+                logger.debug(f"img2img submitted, prompt_id: {prompt_id}, denoise: {denoise}")
 
                 # Poll for completion
                 start_time = asyncio.get_event_loop().time()
@@ -421,7 +424,7 @@ class ImageService:
                         status = prompt_data.get("status", {})
 
                         if status.get("status_str") == "error":
-                            print(f"ComfyUI img2img error: {status.get('messages', [])}")
+                            logger.error(f"ComfyUI img2img error: {status.get('messages', [])}")
                             return None
 
                         outputs = prompt_data.get("outputs", {})
@@ -442,7 +445,7 @@ class ImageService:
 
                 return None
             except Exception as e:
-                print(f"img2img generation error: {e}")
+                logger.error(f"img2img generation error: {e}")
                 return None
 
     async def generate_inpaint(self, prompt: str, image_bytes: bytes, mask_bytes: bytes,
@@ -476,10 +479,10 @@ class ImageService:
                     if data.get("image"):
                         return data["image"]
                     if data.get("error"):
-                        print(f"Inpaint error: {data['error']}")
+                        logger.error(f"Inpaint error: {data['error']}")
                 return None
         except Exception as e:
-            print(f"Inpaint error: {e}")
+            logger.error(f"Inpaint error: {e}")
             return None
 
 
