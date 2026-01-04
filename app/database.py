@@ -136,13 +136,13 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "llm_backend": "ollama",  # "native", "ipex", or "ollama"
             "llm_model_path": "/home/verita84/models/model.gguf",
             "llm_gpu_layers": "-1",  # -1 = all layers on GPU
-            "llm_n_threads": "0",  # 0 = auto-detect (cpu_count - 2)
-            "llm_n_batch": "512",  # Batch size for prompt processing
+            "llm_n_threads": "0",  # 0 = auto-detect (physical cores)
+            "llm_n_batch": "2048",  # Batch size for prompt processing (higher = faster)
             "llm_max_concurrent": "1",  # Max concurrent inferences
             # CPU optimization settings
             "llm_cpu_mode": "false",  # Force CPU-only (n_gpu_layers=0)
             "llm_use_mmap": "true",  # Memory-map model file
-            "llm_use_mlock": "false",  # Lock model in RAM (requires permissions)
+            "llm_use_mlock": "true",  # Lock model in RAM for faster inference
             # LLM health check
             "ollama_ping_enabled": "false",
             "ollama_restart_command": "sudo systemctl restart ollama",

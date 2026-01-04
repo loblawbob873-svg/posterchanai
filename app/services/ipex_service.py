@@ -79,7 +79,7 @@ class IPEXService:
         # Context and generation settings
         self.num_ctx = int(settings.get("ollama_num_ctx", "4096"))
         self.num_predict = int(settings.get("ollama_num_predict", "2048"))
-        self.n_batch = int(settings.get("llm_n_batch", "512"))  # Batch size for prompt processing
+        self.n_batch = int(settings.get("llm_n_batch", "2048"))  # Batch size for prompt processing
         self.n_gpu_layers = int(settings.get("llm_gpu_layers", "-1"))  # -1 = all layers on GPU
         self.max_concurrent = int(settings.get("llm_max_concurrent", "1"))  # Max concurrent inferences
 
@@ -87,15 +87,17 @@ class IPEXService:
         n_threads_setting = int(settings.get("llm_n_threads", "0"))
         if n_threads_setting <= 0:
             cpu_count = os.cpu_count() or 4
-            self.n_threads = max(1, cpu_count - 2)  # Leave 2 cores for system
-            logger.info(f"Auto-detected CPU threads: {self.n_threads} (from {cpu_count} cores)")
+            # Use physical cores (cpu_count // 2) for better performance
+            # SMT/hyperthreading can cause contention during inference
+            self.n_threads = max(1, cpu_count // 2)
+            logger.info(f"Auto-detected CPU threads: {self.n_threads} (physical cores from {cpu_count} logical)")
         else:
             self.n_threads = n_threads_setting
 
         # CPU optimization settings
         self.cpu_mode = settings.get("llm_cpu_mode", "false").lower() == "true"
         self.use_mmap = settings.get("llm_use_mmap", "true").lower() == "true"
-        self.use_mlock = settings.get("llm_use_mlock", "false").lower() == "true"
+        self.use_mlock = settings.get("llm_use_mlock", "true").lower() == "true"
 
         # Sampling settings
         self.temperature = float(settings.get("ollama_temperature", "0.7"))

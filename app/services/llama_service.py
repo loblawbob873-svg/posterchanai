@@ -76,16 +76,18 @@ class LlamaService:
         if n_threads_setting <= 0:
             import os
             cpu_count = os.cpu_count() or 4
-            self.n_threads = max(1, cpu_count - 2)  # Leave 2 cores for system
-            logger.info(f"Auto-detected CPU threads: {self.n_threads} (from {cpu_count} cores)")
+            # Use physical cores (cpu_count // 2) for better performance
+            # SMT/hyperthreading can cause contention during inference
+            self.n_threads = max(1, cpu_count // 2)
+            logger.info(f"Auto-detected CPU threads: {self.n_threads} (physical cores from {cpu_count} logical)")
         else:
             self.n_threads = n_threads_setting
 
         # CPU optimization settings
         self.cpu_mode = settings.get("llm_cpu_mode", "false").lower() == "true"
-        self.n_batch = int(settings.get("llm_n_batch", "512"))
+        self.n_batch = int(settings.get("llm_n_batch", "2048"))
         self.use_mmap = settings.get("llm_use_mmap", "true").lower() == "true"
-        self.use_mlock = settings.get("llm_use_mlock", "false").lower() == "true"
+        self.use_mlock = settings.get("llm_use_mlock", "true").lower() == "true"
 
         # Sampling settings
         self.temperature = float(settings.get("ollama_temperature", "0.7"))
