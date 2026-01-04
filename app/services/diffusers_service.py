@@ -467,10 +467,6 @@ class DiffusersService:
             return base64.b64encode(img_bytes).decode()
         return None
 
-    async def regenerate_image(self, prompt: str) -> Optional[str]:
-        """Regenerate image with same prompt (uses different seed)"""
-        return await self.generate_image(prompt)
-
 
 def get_diffusers_service(db: Session) -> DiffusersService:
     """Get or create the singleton DiffusersService instance"""

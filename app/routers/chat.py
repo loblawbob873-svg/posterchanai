@@ -356,7 +356,6 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     file_content = data.get("file_content")  # text file content
                     pdf_data = data.get("pdf_data")  # base64 PDF
                     document_data = data.get("document_data")  # base64 Office document
-                    denoise = data.get("denoise")  # denoise value for img2img (0.2-1.0)
 
                     # If image_path provided but no image_data, load from disk
                     if image_path and not image_data:
@@ -427,10 +426,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                             result = await command_service.execute_command(
                                 command, arg, last_prompt,
-                                image_data=image_data,
-                                file_content=file_content,
-                                stop_check=should_stop_command,
-                                denoise=denoise
+                                stop_check=should_stop_command
                             )
 
                             # Check if stopped during execution
@@ -444,7 +440,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             logger.error(f"Command execution failed: {type(cmd_err).__name__}: {cmd_err}", exc_info=True)
                             result = {"type": "text", "content": f"Error: {cmd_err}"}
 
-                        # Track image prompts for regen and save generated image
+                        # Save generated image to disk
                         generated_image_path = None
                         if result.get("type") == "generated_image" and result.get("prompt"):
                             manager.last_image_prompts[user.id] = result["prompt"]

@@ -40,9 +40,7 @@ class CommandService:
         return None, message
 
     async def execute_command(self, command: str, arg: str, last_prompt: Optional[str] = None,
-                              image_data: Optional[str] = None,
-                              stop_check: Optional[Callable[[], bool]] = None,
-                              **kwargs) -> dict:
+                              stop_check: Optional[Callable[[], bool]] = None) -> dict:
         """Execute a command and return the result"""
         if command == "search":
             return await self._search_command(arg)

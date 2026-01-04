@@ -1,7 +1,6 @@
 import json
 import re
 import asyncio
-import base64
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, Optional, TYPE_CHECKING
@@ -18,11 +17,6 @@ logger = logging.getLogger(__name__)
 # Thread pool for running synchronous generators
 _stream_executor = ThreadPoolExecutor(max_workers=4)
 
-# Try native WD14 tagger first, fall back to None if not available
-try:
-    from app.services.wd14_service import tag_image as native_wd14_tag
-except ImportError:
-    native_wd14_tag = None
 
 class ChatService:
     def __init__(self, db: Session, user: Optional["User"] = None):
@@ -241,50 +235,6 @@ class ChatService:
         except Exception as e:
             yield f"Error: {str(e)}"
 
-
-    async def analyze_image_tags(self, image_base64: str) -> str:
-        """
-        Use WD14 Tagger to analyze image and extract tags.
-        Tries native tagger first, falls back to remote API.
-        Returns comma-separated tags or empty string on failure.
-        """
-        try:
-            # Decode base64 to bytes
-            image_bytes = base64.b64decode(image_base64)
-
-            # Try native WD14 first
-            if native_wd14_tag is not None:
-                try:
-                    loop = asyncio.get_event_loop()
-                    tags = await loop.run_in_executor(None, native_wd14_tag, image_bytes)
-                    if tags:
-                        logger.debug(f"WD14 native tags: {tags[:100]}...")
-                        return tags
-                except Exception as e:
-                    logger.warning(f"WD14 native tagger failed: {e}")
-
-            # Fall back to remote API
-            image_url = self._settings.get("comfyui_url") or self._settings.get("posterchanai_url")
-            if image_url:
-                import httpx
-                api_url = image_url.rstrip('/') + '/api/tag-image'
-                logger.debug(f"WD14 trying remote API: {api_url}")
-                async with httpx.AsyncClient(timeout=60) as client:
-                    response = await client.post(
-                        api_url,
-                        json={"image": image_base64, "threshold": 0.35}
-                    )
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data.get("tags"):
-                            logger.debug(f"WD14 remote tags: {data['tags'][:100]}...")
-                            return data["tags"]
-
-            logger.debug("WD14 no tags returned")
-            return ""
-        except Exception as e:
-            logger.error(f"WD14 image analysis failed: {e}", exc_info=True)
-            return ""
 
 def get_chat_service(db: Session) -> ChatService:
     return ChatService(db)

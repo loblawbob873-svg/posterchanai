@@ -24,10 +24,6 @@ class ImageBackend(Protocol):
         """Generate image from text prompt, returns base64"""
         ...
 
-    async def regenerate_image(self, prompt: str) -> Optional[str]:
-        """Regenerate with new seed"""
-        ...
-
 
 def prepare_vram_for_image(db: Session):
     """Prepare VRAM for image generation (swap models if needed)"""

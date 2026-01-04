@@ -65,10 +65,6 @@ class NativeProxyService:
             return result["image"]
         return None
 
-    async def regenerate_image(self, prompt: str) -> Optional[str]:
-        """Regenerate with new seed - just call generate_image again"""
-        return await self.generate_image(prompt)
-
 
 def get_native_proxy_service(db: Session) -> NativeProxyService:
     return NativeProxyService(db)
