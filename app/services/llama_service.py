@@ -125,9 +125,8 @@ class LlamaService:
         try:
             from llama_cpp import Llama
 
-            # Limit context to avoid memory issues
-            safe_ctx = min(self.num_ctx, 8192)
-            logger.info(f"  Using context size: {safe_ctx}")
+            # Use admin-configured context size
+            logger.info(f"  Using context size: {self.num_ctx}")
 
             # Determine GPU layers - force 0 if CPU mode enabled
             gpu_layers = 0 if self.cpu_mode else self.n_gpu_layers
@@ -136,7 +135,7 @@ class LlamaService:
 
             self._model = Llama(
                 model_path=self.model_path,
-                n_ctx=safe_ctx,
+                n_ctx=self.num_ctx,
                 n_gpu_layers=gpu_layers,
                 n_threads=self.n_threads,
                 n_threads_batch=self.n_threads,  # Use same threads for batch processing
