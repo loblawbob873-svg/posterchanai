@@ -145,20 +145,36 @@ class APIKeysManager {
     }
 
     copyToClipboard(text, btn) {
-        navigator.clipboard.writeText(text).then(() => {
-            btn.textContent = 'Copied!';
-            setTimeout(() => btn.textContent = 'Copy', 2000);
-        }).catch(() => {
-            // Fallback for non-HTTPS
-            const textarea = document.createElement('textarea');
-            textarea.value = text;
-            document.body.appendChild(textarea);
-            textarea.select();
+        // Check if clipboard API is available (requires HTTPS or localhost)
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(() => {
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy', 2000);
+            }).catch(() => {
+                this.fallbackCopy(text, btn);
+            });
+        } else {
+            this.fallbackCopy(text, btn);
+        }
+    }
+
+    fallbackCopy(text, btn) {
+        // Fallback for non-HTTPS using execCommand
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
             document.execCommand('copy');
-            document.body.removeChild(textarea);
             btn.textContent = 'Copied!';
-            setTimeout(() => btn.textContent = 'Copy', 2000);
-        });
+        } catch (e) {
+            btn.textContent = 'Failed';
+            console.error('Copy failed:', e);
+        }
+        document.body.removeChild(textarea);
+        setTimeout(() => btn.textContent = 'Copy', 2000);
     }
 
     async toggleKey(id) {
