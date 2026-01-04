@@ -421,8 +421,20 @@ setup_python_env() {
     source "$VENV_NAME/bin/activate"
     pip install --upgrade pip -q
 
+    # Intel IPEX requires numpy<2 (compiled with numpy 1.x)
+    if [ "$BACKEND" = "intel" ]; then
+        print_step "Installing numpy<2 (required for IPEX compatibility)..."
+        pip install "numpy<2" -q
+    fi
+
     print_step "Installing Python dependencies..."
     pip install -r requirements.txt -q
+
+    # Ensure numpy<2 for Intel (requirements.txt may have overwritten it)
+    if [ "$BACKEND" = "intel" ]; then
+        pip install "numpy<2" -q
+    fi
+
     print_success "Base dependencies installed"
 }
 
