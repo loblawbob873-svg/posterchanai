@@ -129,12 +129,18 @@ class APIKeysManager {
             const response = await fetch(`/api/auth/api-keys/${keyId}`);
             if (response.ok) {
                 const data = await response.json();
-                this.copyToClipboard(data.key, btn);
+                if (data.key) {
+                    this.copyToClipboard(data.key, btn);
+                } else {
+                    alert('API key data missing from response');
+                }
             } else {
-                alert('Failed to retrieve API key');
+                const error = await response.text();
+                alert(`Failed to retrieve API key: ${response.status} ${error}`);
             }
         } catch (err) {
-            alert('Error retrieving API key');
+            console.error('API key error:', err);
+            alert(`Error retrieving API key: ${err.message}`);
         }
     }
 
