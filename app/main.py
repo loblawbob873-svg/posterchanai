@@ -5,6 +5,14 @@ from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
 import os
+import logging
+
+# Configure logging for console output
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
+    datefmt='%H:%M:%S'
+)
 
 from app.database import init_db, get_db
 from app.auth import get_current_user_optional, create_access_token
