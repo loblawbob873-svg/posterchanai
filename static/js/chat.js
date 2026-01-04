@@ -828,37 +828,41 @@ class ChatHandler {
         if (!this.streamingMessage) {
             this.streamingMessage = this.addMessage('assistant', '');
             this.fullStreamContent = '';
-            // Show first chunk immediately for instant feedback
-            const contentEl = this.streamingMessage.querySelector('.message-content');
-            this.fullStreamContent = content;
-            contentEl.innerHTML = this.formatMessage(content);
-            this.scrollToBottom();
-            return;
+            this.thinkingMode = null; // null=unknown, true=in thinking, false=not thinking
         }
 
-        // Buffer subsequent chunks and batch DOM updates with requestAnimationFrame
-        this.streamBuffer += content;
+        // Buffer content
         this.fullStreamContent += content;
 
-        if (!this.streamRafPending) {
-            this.streamRafPending = true;
-            requestAnimationFrame(() => {
-                if (this.streamingMessage && this.streamBuffer) {
-                    const contentEl = this.streamingMessage.querySelector('.message-content');
-                    contentEl.innerHTML = this.formatMessage(this.fullStreamContent);
-                    this.scrollToBottom();
-                }
-                this.streamBuffer = '';
-                this.streamRafPending = false;
-            });
+        // Strip thinking tags from display
+        let displayContent = this.stripThinkingTags(this.fullStreamContent);
+
+        // Only show content after thinking is done
+        if (displayContent) {
+            const contentEl = this.streamingMessage.querySelector('.message-content');
+            contentEl.innerHTML = this.formatMessage(displayContent);
+            this.scrollToBottom();
         }
+    }
+
+    stripThinkingTags(text) {
+        // Find the last </think> or </thinking> tag and return everything after it
+        const thinkEndMatch = text.match(/.*<\/think(?:ing)?>/is);
+        if (thinkEndMatch) {
+            return text.substring(thinkEndMatch[0].length).trim();
+        }
+        // If we see <think but no closing tag yet, hide everything
+        if (/<think/i.test(text)) {
+            return '';
+        }
+        return text;
     }
 
     handleStreamEnd() {
         if (this.streamingMessage) {
             const contentEl = this.streamingMessage.querySelector('.message-content');
-            // Use buffered content instead of reading from DOM
-            const content = this.fullStreamContent;
+            // Use buffered content instead of reading from DOM, with thinking stripped
+            const content = this.stripThinkingTags(this.fullStreamContent);
 
             // Final render with complete content
             contentEl.innerHTML = this.formatMessage(content);
