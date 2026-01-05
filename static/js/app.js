@@ -508,7 +508,7 @@ function initNewsModal() {
     });
 
     async function sendNewsRequest(url, name) {
-        const message = `List the top news headlines from ${url}. Just list the headline titles as bullet points. Do NOT include any URLs or links - only the headline text.`;
+        const message = `List the top news headlines from ${url}. Use the ARTICLE LINKS section to format each headline as a markdown link. Only use the exact URLs provided - do not modify or make up URLs.`;
 
         // Ensure we have a conversation and WebSocket connection
         if (!window.chatHandler || !window.chatHandler.ws ||

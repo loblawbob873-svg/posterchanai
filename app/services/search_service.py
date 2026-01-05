@@ -166,12 +166,35 @@ class SearchService:
                 if not main_content:
                     main_content = soup.body or soup
 
-                # Extract text
+                # Extract links with their text (for news sites)
+                base_url = url.rstrip('/')
+                links_text = []
+                for a in main_content.find_all('a', href=True):
+                    link_text = a.get_text(strip=True)
+                    href = a['href']
+                    # Skip empty, anchor-only, or very short links
+                    if not link_text or len(link_text) < 10 or href.startswith('#'):
+                        continue
+                    # Make relative URLs absolute
+                    if href.startswith('/'):
+                        href = base_url + href
+                    elif not href.startswith('http'):
+                        continue
+                    # Format as markdown link
+                    links_text.append(f"[{link_text}]({href})")
+
+                # Extract plain text as fallback
                 text = main_content.get_text(separator="\n", strip=True)
 
                 # Clean up whitespace
                 lines = [line.strip() for line in text.split("\n") if line.strip()]
                 text = "\n".join(lines)
+
+                # Prepend extracted links if we found any
+                if links_text:
+                    # Limit to first 30 links to avoid overwhelming
+                    links_section = "\n".join(links_text[:30])
+                    text = f"ARTICLE LINKS:\n{links_section}\n\nPAGE TEXT:\n{text}"
 
                 # Truncate if too long
                 if len(text) > max_length:
