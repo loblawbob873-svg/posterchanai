@@ -1474,11 +1474,30 @@ class ChatHandler {
             processed = `\x00CODEBLOCK${index}\x00`;
         }
 
+        // Process markdown links BEFORE escaping (preserve URLs)
+        const links = [];
+        processed = processed.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (match, text, url) => {
+            const index = links.length;
+            links.push({ text, url });
+            return `\x00LINK${index}\x00`;
+        });
+        processed = processed.replace(/\[([^\]]+)\]\((www\.[^)]+)\)/g, (match, text, url) => {
+            const index = links.length;
+            links.push({ text, url: 'https://' + url });
+            return `\x00LINK${index}\x00`;
+        });
+
         // Escape HTML
         let html = processed
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
+
+        // Restore markdown links as HTML
+        html = html.replace(/\x00LINK(\d+)\x00/g, (match, index) => {
+            const link = links[parseInt(index)];
+            return `<a href="${link.url}" target="_blank">${link.text}</a>`;
+        });
 
         // Bold **text**
         html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
@@ -1488,11 +1507,6 @@ class ChatHandler {
 
         // Inline code `text` (but not inside code blocks)
         html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-        // Markdown links [text](url) - handle various URL formats
-        html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
-        html = html.replace(/\[([^\]]+)\]\((www\.[^)]+)\)/g, '<a href="https://$2" target="_blank">$1</a>');
-        html = html.replace(/\[([^\]]+)\]\((\/[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
 
         // Plain URLs (not already in a link)
         html = html.replace(/(https?:\/\/[^\s<]+)(?![^<]*<\/a>)/g, '<a href="$1" target="_blank">$1</a>');
