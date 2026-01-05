@@ -72,6 +72,15 @@
                     <div id="modelStatus" class="model-status"></div>
                 </fieldset>
 
+                <fieldset>
+                    <legend>System Prompt</legend>
+                    <div class="form-group">
+                        <label for="ollama_system_prompt">Default System Prompt</label>
+                        <textarea id="ollama_system_prompt" name="ollama_system_prompt" rows="4" placeholder="You are a helpful, friendly AI assistant. When writing code, always use markdown code blocks with the language specified (```python, ```bash, etc.) for proper syntax highlighting."></textarea>
+                        <small>Leave empty to use the default prompt shown above. Supports <code>{{CURRENT_DATE}}</code> placeholder.</small>
+                    </div>
+                </fieldset>
+
                 <fieldset id="ollama-settings">
                     <legend>Ollama Connection</legend>
                     <div class="form-group">
@@ -91,10 +100,6 @@
                             <label for="ollama_max_concurrent">Max Concurrent</label>
                             <input type="number" id="ollama_max_concurrent" name="ollama_max_concurrent" value="2" min="1" max="10">
                         </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="ollama_system_prompt">System Prompt</label>
-                        <textarea id="ollama_system_prompt" name="ollama_system_prompt" rows="3" placeholder="You are a helpful AI assistant."></textarea>
                     </div>
                 </fieldset>
 
