@@ -416,13 +416,29 @@ function initNewsModal() {
     }
 
     // Load news sources from API and populate modal
+    let allSources = [];
+
     async function loadNewsSources() {
         try {
             const response = await fetch('/api/news-sources');
             if (response.ok) {
                 const data = await response.json();
+                allSources = data.sources;
                 sourcesContainer.innerHTML = '';
-                for (const source of data.sources) {
+
+                // Add "All" button first
+                if (allSources.length > 1) {
+                    const allBtn = document.createElement('button');
+                    allBtn.className = 'news-source-btn news-source-all';
+                    allBtn.textContent = 'All Sources';
+                    allBtn.addEventListener('click', () => {
+                        newsModal.style.display = 'none';
+                        sendAllNewsRequests();
+                    });
+                    sourcesContainer.appendChild(allBtn);
+                }
+
+                for (const source of allSources) {
                     const btn = document.createElement('button');
                     btn.className = 'news-source-btn';
                     btn.dataset.url = source.url;
@@ -437,6 +453,26 @@ function initNewsModal() {
         } catch (err) {
             console.error('Failed to load news sources:', err);
         }
+    }
+
+    async function sendAllNewsRequests() {
+        for (const source of allSources) {
+            sendNewsRequest(source.url, source.name);
+            // Wait for response to complete before sending next
+            await waitForResponse();
+        }
+    }
+
+    function waitForResponse() {
+        return new Promise(resolve => {
+            const checkInterval = setInterval(() => {
+                const typing = document.querySelector('.typing-indicator');
+                if (!typing || typing.style.display === 'none') {
+                    clearInterval(checkInterval);
+                    setTimeout(resolve, 500); // Small delay between requests
+                }
+            }, 500);
+        });
     }
 
     newsBtn.addEventListener('click', (e) => {

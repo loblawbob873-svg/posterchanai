@@ -1130,6 +1130,14 @@ fieldset legend {
     border-color: var(--accent);
     color: white;
 }
+.news-source-all {
+    background: var(--accent);
+    color: white;
+    font-weight: 500;
+}
+.news-source-all:hover {
+    background: var(--accent-hover, #3a8ae6);
+}
 
 /* User Settings Styles */
 .settings-section {
