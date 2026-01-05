@@ -443,9 +443,9 @@ function initNewsModal() {
                     btn.className = 'news-source-btn';
                     btn.dataset.url = source.url;
                     btn.textContent = source.name;
-                    btn.addEventListener('click', () => {
-                        sendNewsRequest(source.url, source.name);
+                    btn.addEventListener('click', async () => {
                         newsModal.style.display = 'none';
+                        await sendNewsRequest(source.url, source.name);
                     });
                     sourcesContainer.appendChild(btn);
                 }
@@ -457,7 +457,7 @@ function initNewsModal() {
 
     async function sendAllNewsRequests() {
         for (const source of allSources) {
-            sendNewsRequest(source.url, source.name);
+            await sendNewsRequest(source.url, source.name);
             // Wait for response to complete before sending next
             await waitForResponse();
         }
@@ -492,17 +492,35 @@ function initNewsModal() {
         }
     });
 
-    function sendNewsRequest(url, name) {
+    async function sendNewsRequest(url, name) {
         const message = `Summarize today's news headlines from ${url}`;
+
+        // Ensure we have a conversation and WebSocket connection
+        if (!window.chatHandler || !window.chatHandler.ws ||
+            window.chatHandler.ws.readyState !== WebSocket.OPEN) {
+            // Create a new conversation
+            await window.app.createConversation();
+            // Wait for WebSocket to connect
+            await new Promise(resolve => {
+                const checkConnection = () => {
+                    if (window.chatHandler && window.chatHandler.ws &&
+                        window.chatHandler.ws.readyState === WebSocket.OPEN) {
+                        resolve();
+                    } else {
+                        setTimeout(checkConnection, 100);
+                    }
+                };
+                checkConnection();
+            });
+        }
+
         if (window.chatHandler) {
             window.chatHandler.addMessage('user', message);
             window.chatHandler.showTypingIndicator();
-            if (window.chatHandler.ws && window.chatHandler.ws.readyState === WebSocket.OPEN) {
-                window.chatHandler.ws.send(JSON.stringify({
-                    type: 'message',
-                    content: message
-                }));
-            }
+            window.chatHandler.ws.send(JSON.stringify({
+                type: 'message',
+                content: message
+            }));
         }
     }
 }
