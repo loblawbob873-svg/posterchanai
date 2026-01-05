@@ -1482,8 +1482,11 @@ class ChatHandler {
         // Inline code `text` (but not inside code blocks)
         html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
 
-        // Links
-        html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>');
+        // Markdown links [text](url)
+        html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+
+        // Plain URLs (not already in a link)
+        html = html.replace(/(https?:\/\/[^\s<]+)(?![^<]*<\/a>)/g, '<a href="$1" target="_blank">$1</a>');
 
         // Newlines
         html = html.replace(/\n/g, '<br>');

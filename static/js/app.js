@@ -493,7 +493,7 @@ function initNewsModal() {
     });
 
     async function sendNewsRequest(url, name) {
-        const message = `Summarize today's news headlines from ${url}`;
+        const message = `Summarize today's news headlines from ${url}. For each headline, include a clickable markdown link to the source article in format [Title](url).`;
 
         // Ensure we have a conversation and WebSocket connection
         if (!window.chatHandler || !window.chatHandler.ws ||
