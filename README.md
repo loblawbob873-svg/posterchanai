@@ -36,6 +36,7 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 
 ### Search & Web
 - Web Search with AI summarization
+- **Auto URL fetching** - mention a URL in your message and the AI will read and summarize it
 - **Browser search engine integration** - use as default search engine
 - Image Search
 

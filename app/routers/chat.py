@@ -18,6 +18,7 @@ from app.services.command_service import CommandService
 from app.services.storage_service import StorageService
 from app.services.document_service import extract_pdf_text, extract_document_text, extract_image_text
 from app.services.email_service import EmailService
+from app.services.search_service import SearchService
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -328,6 +329,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
         chat_service = ChatService(db, user=user)
         command_service = CommandService(db, user=user)
         storage_service = StorageService(db)
+        search_service = SearchService(db)
 
         try:
             while True:
@@ -477,6 +479,18 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         for msg in conversation.messages[-21:-1]:
                             messages.append({"role": msg.role, "content": msg.content})
 
+                        # Detect and fetch URLs in user message
+                        url_context = ""
+                        urls = SearchService.extract_urls(content)
+                        if urls:
+                            logger.debug(f"Detected URLs in message: {urls}")
+                            fetched = await search_service.fetch_urls(urls, max_urls=3)
+                            for result in fetched:
+                                if result.get("content") and not result.get("error"):
+                                    url_context += f"\n\n---\nContent from {result['url']}:\nTitle: {result['title']}\n\n{result['content']}\n---"
+                                elif result.get("error"):
+                                    url_context += f"\n\n[Failed to fetch {result['url']}: {result['error']}]"
+
                         # Add current message with file/image content if provided
                         if image_data:
                             # Use OCR to extract text from image
@@ -504,6 +518,11 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                             messages.append({
                                 "role": "user",
                                 "content": f"Here is a file the user uploaded:\n\n```\n{file_content}\n```\n\nUser's message: {content}"
+                            })
+                        elif url_context:
+                            messages.append({
+                                "role": "user",
+                                "content": f"{content}\n\n[The following web content was fetched from URLs mentioned in the user's message:]{url_context}"
                             })
                         else:
                             messages.append({"role": "user", "content": content})
