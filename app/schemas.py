@@ -109,7 +109,7 @@ class SettingsResponse(BaseModel):
     llm_model_path: str = ""
     llm_gpu_layers: str = "-1"  # -1 = all layers on GPU
     llm_n_threads: str = "0"  # 0 = auto-detect (cpu_count - 2)
-    llm_n_batch: str = "512"  # Batch size for prompt processing
+    llm_n_batch: str = "1024"  # Batch size for prompt processing (higher = faster)
     llm_max_concurrent: str = "1"  # Max concurrent inference requests
     # CPU optimization settings
     llm_cpu_mode: str = "false"  # Force CPU-only (n_gpu_layers=0)

@@ -137,7 +137,7 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "llm_model_path": "/home/verita84/models/model.gguf",
             "llm_gpu_layers": "-1",  # -1 = all layers on GPU
             "llm_n_threads": "0",  # 0 = auto-detect (physical cores)
-            "llm_n_batch": "2048",  # Batch size for prompt processing (higher = faster)
+            "llm_n_batch": "1024",  # Batch size for prompt processing (higher = faster, try 2048+ with 16GB+ VRAM)
             "llm_max_concurrent": "1",  # Max concurrent inferences
             # CPU optimization settings
             "llm_cpu_mode": "false",  # Force CPU-only (n_gpu_layers=0)
