@@ -851,8 +851,8 @@ class ChatHandler {
         if (thinkEndMatch) {
             return text.substring(thinkEndMatch[0].length).trim();
         }
-        // If we see <think but no closing tag yet, hide everything
-        if (/<think/i.test(text)) {
+        // If we see <think (with possible leading whitespace) but no closing tag yet, hide everything
+        if (/^\s*<think/i.test(text)) {
             return '';
         }
         return text;

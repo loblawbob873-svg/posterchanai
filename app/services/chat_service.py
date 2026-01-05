@@ -184,16 +184,17 @@ class ChatService:
                     buffer += content
 
                     if thinking_mode is None:
-                        # Check if model started with <think> tag
-                        if '<think' in buffer.lower():
+                        # Check if model started with <think> tag (ignore leading whitespace)
+                        buffer_stripped = buffer.lstrip()
+                        if buffer_stripped.lower().startswith('<think'):
                             thinking_mode = True
-                        elif len(buffer) > 20:
-                            # No think tag in first 20 chars - assume no thinking
+                        elif len(buffer_stripped) > 30:
+                            # No think tag in first 30 non-whitespace chars - assume no thinking
                             thinking_mode = False
                             yield buffer
                             buffer = ""
 
-                    if thinking_mode is True:
+                    elif thinking_mode is True:
                         # In thinking mode - look for end tag
                         match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
                         if match:
@@ -235,16 +236,17 @@ class ChatService:
                                 buffer += content
 
                                 if thinking_mode is None:
-                                    # Check if model started with <think> tag
-                                    if '<think' in buffer.lower():
+                                    # Check if model started with <think> tag (ignore leading whitespace)
+                                    buffer_stripped = buffer.lstrip()
+                                    if buffer_stripped.lower().startswith('<think'):
                                         thinking_mode = True
-                                    elif len(buffer) > 20:
-                                        # No think tag in first 20 chars - assume no thinking
+                                    elif len(buffer_stripped) > 30:
+                                        # No think tag in first 30 non-whitespace chars - assume no thinking
                                         thinking_mode = False
                                         yield buffer
                                         buffer = ""
 
-                                if thinking_mode is True:
+                                elif thinking_mode is True:
                                     # In thinking mode - look for end tag
                                     match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
                                     if match:
