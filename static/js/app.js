@@ -508,7 +508,7 @@ function initNewsModal() {
     });
 
     async function sendNewsRequest(url, name) {
-        const message = `Summarize the top news headlines from ${url}. List each headline as a bullet point. Only include real URLs from the page content - do NOT make up or guess URLs.`;
+        const message = `List the top news headlines from ${url}. Just list the headline titles as bullet points. Do NOT include any URLs or links - only the headline text.`;
 
         // Ensure we have a conversation and WebSocket connection
         if (!window.chatHandler || !window.chatHandler.ws ||
