@@ -483,12 +483,14 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         url_context = ""
                         urls = SearchService.extract_urls(content)
                         if urls:
-                            logger.debug(f"Detected URLs in message: {urls}")
+                            logger.info(f"Detected URLs in message: {urls}")
                             fetched = await search_service.fetch_urls(urls, max_urls=3)
                             for result in fetched:
                                 if result.get("content") and not result.get("error"):
+                                    logger.info(f"Fetched {len(result['content'])} chars from {result['url']}")
                                     url_context += f"\n\n---\nContent from {result['url']}:\nTitle: {result['title']}\n\n{result['content']}\n---"
                                 elif result.get("error"):
+                                    logger.warning(f"Failed to fetch {result['url']}: {result['error']}")
                                     url_context += f"\n\n[Failed to fetch {result['url']}: {result['error']}]"
 
                         # Add current message with file/image content if provided
@@ -520,6 +522,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                 "content": f"Here is a file the user uploaded:\n\n```\n{file_content}\n```\n\nUser's message: {content}"
                             })
                         elif url_context:
+                            logger.info(f"Adding {len(url_context)} chars of URL context to message")
                             messages.append({
                                 "role": "user",
                                 "content": f"{content}\n\n[The following web content was fetched from URLs mentioned in the user's message:]{url_context}"

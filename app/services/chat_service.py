@@ -214,7 +214,10 @@ class ChatService:
                     if clean:
                         yield clean
             else:
-                # Fallback to SSE parsing for Ollama
+                # Fallback to SSE parsing for Ollama - with thinking tag filtering
+                buffer = ""
+                thinking_mode = None  # None=unknown, True=in thinking, False=no thinking
+
                 async for chunk in service.chat_completion_stream(
                     messages=messages,
                     temperature=self.temperature,
@@ -229,9 +232,39 @@ class ChatService:
                             data = json.loads(data_str)
                             content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                             if content:
-                                yield content
+                                buffer += content
+
+                                if thinking_mode is None:
+                                    # Check if model started with <think> tag
+                                    if '<think' in buffer.lower():
+                                        thinking_mode = True
+                                    elif len(buffer) > 20:
+                                        # No think tag in first 20 chars - assume no thinking
+                                        thinking_mode = False
+                                        yield buffer
+                                        buffer = ""
+
+                                if thinking_mode is True:
+                                    # In thinking mode - look for end tag
+                                    match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
+                                    if match:
+                                        thinking_mode = False
+                                        after_think = buffer[match.end():]
+                                        buffer = ""
+                                        if after_think.strip():
+                                            yield after_think
+                                elif thinking_mode is False:
+                                    # Not thinking - stream directly
+                                    yield content
+                                    buffer = ""
                         except json.JSONDecodeError:
                             continue
+
+                # Yield any remaining buffer
+                if buffer:
+                    clean = self.strip_thinking_tags(buffer)
+                    if clean:
+                        yield clean
         except Exception as e:
             yield f"Error: {str(e)}"
 
