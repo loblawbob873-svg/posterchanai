@@ -8,9 +8,15 @@ from app.models import Setting
 
 logger = logging.getLogger(__name__)
 
-# Regex pattern for URL detection
-URL_PATTERN = re.compile(
+# Regex patterns for URL detection
+# Match full URLs with protocol
+URL_WITH_PROTOCOL = re.compile(
     r'https?://[^\s<>"\')\]},]+[^\s<>"\')\]},.]',
+    re.IGNORECASE
+)
+# Match domain-style URLs without protocol (e.g., example.com/path)
+URL_WITHOUT_PROTOCOL = re.compile(
+    r'(?<![/@])\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+(?:com|org|net|edu|gov|io|co|info|biz|me|tv|us|uk|de|fr|jp|cn|ru|br|au|in|nl|se|no|fi|dk|pl|cz|ch|at|be|es|it|pt|ca|mx|ar|nz|za|kr|tw|hk|sg|my|th|vn|id|ph|ae|il|tr)(?:/[^\s<>"\')\]},]*)?',
     re.IGNORECASE
 )
 
@@ -87,14 +93,28 @@ class SearchService:
 
     @staticmethod
     def extract_urls(text: str) -> list[str]:
-        """Extract URLs from text"""
-        urls = URL_PATTERN.findall(text)
+        """Extract URLs from text, including those without http:// prefix"""
+        urls = []
+
+        # Find URLs with protocol
+        for url in URL_WITH_PROTOCOL.findall(text):
+            urls.append(url)
+
+        # Find URLs without protocol and add https://
+        for match in URL_WITHOUT_PROTOCOL.finditer(text):
+            url = match.group(0)
+            full_url = f"https://{url}"
+            # Don't add if we already have this URL with protocol
+            if full_url not in urls and f"http://{url}" not in urls:
+                urls.append(full_url)
+
         # Deduplicate while preserving order
         seen = set()
         unique_urls = []
         for url in urls:
-            if url not in seen:
-                seen.add(url)
+            normalized = url.lower().rstrip('/')
+            if normalized not in seen:
+                seen.add(normalized)
                 unique_urls.append(url)
         return unique_urls
 
