@@ -1450,6 +1450,9 @@ class ChatHandler {
         text = text.trim();
 
         // First, extract and preserve fenced code blocks before escaping
+        // But treat ```markdown blocks as regular text (just strip the fence)
+        text = text.replace(/```markdown\n?([\s\S]*?)```/gi, '$1');
+
         const codeBlocks = [];
         let processed = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
             const index = codeBlocks.length;
@@ -1486,8 +1489,10 @@ class ChatHandler {
         // Inline code `text` (but not inside code blocks)
         html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
 
-        // Markdown links [text](url)
+        // Markdown links [text](url) - handle various URL formats
         html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+        html = html.replace(/\[([^\]]+)\]\((www\.[^)]+)\)/g, '<a href="https://$2" target="_blank">$1</a>');
+        html = html.replace(/\[([^\]]+)\]\((\/[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
 
         // Plain URLs (not already in a link)
         html = html.replace(/(https?:\/\/[^\s<]+)(?![^<]*<\/a>)/g, '<a href="$1" target="_blank">$1</a>');
