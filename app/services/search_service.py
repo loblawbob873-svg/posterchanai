@@ -167,21 +167,49 @@ class SearchService:
                     main_content = soup.body or soup
 
                 # Extract links with their text (for news sites)
-                base_url = url.rstrip('/')
+                from urllib.parse import urlparse
+                parsed_url = urlparse(url)
+                base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
                 links_text = []
+                seen_texts = set()  # Avoid duplicate headlines
+
+                # Words that indicate navigation rather than article headlines
+                nav_patterns = ['trending', 'live updates', 'breaking', 'watch', 'listen',
+                               'subscribe', 'sign in', 'log in', 'menu', 'search', 'more']
+
                 for a in main_content.find_all('a', href=True):
-                    link_text = a.get_text(strip=True)
+                    # Use separator to prevent text mashing
+                    link_text = a.get_text(separator=' ', strip=True)
+                    # Clean up multiple spaces
+                    link_text = ' '.join(link_text.split())
                     href = a['href']
+
                     # Skip empty, anchor-only, or very short links
-                    if not link_text or len(link_text) < 10 or href.startswith('#'):
+                    if not link_text or len(link_text) < 15 or href.startswith('#'):
                         continue
+
+                    # Skip navigation-like links
+                    text_lower = link_text.lower()
+                    if any(nav in text_lower for nav in nav_patterns):
+                        continue
+
+                    # Skip if just numbers or very generic
+                    if link_text.isdigit() or text_lower in ['read more', 'click here', 'learn more']:
+                        continue
+
+                    # Skip duplicate headlines
+                    if text_lower in seen_texts:
+                        continue
+                    seen_texts.add(text_lower)
+
                     # Make relative URLs absolute
                     if href.startswith('/'):
                         href = base_url + href
                     elif not href.startswith('http'):
                         continue
+
                     # Format as markdown link
-                    links_text.append(f"[{link_text}]({href})")
+                    links_text.append(f"- [{link_text}]({href})")
 
                 # Extract plain text as fallback
                 text = main_content.get_text(separator="\n", strip=True)

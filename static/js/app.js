@@ -508,7 +508,15 @@ function initNewsModal() {
     });
 
     async function sendNewsRequest(url, name) {
-        const message = `List the top news headlines from ${url}. Use the ARTICLE LINKS section to format each headline as a markdown link. Only use the exact URLs provided - do not modify or make up URLs.`;
+        const message = `Summarize the top 10-15 news headlines from ${name} (${url}).
+
+Instructions:
+1. Look at the ARTICLE LINKS section - these are the actual headlines with their real URLs
+2. Select the most important/newsworthy headlines
+3. Format each as a bullet point where the summary IS the clickable link:
+   - [Brief 1-sentence summary of the story](url)
+4. Group by topic if appropriate (Politics, World, Tech, etc.)
+5. ONLY use URLs from the ARTICLE LINKS section - never make up or modify URLs`;
 
         // Ensure we have a conversation and WebSocket connection
         if (!window.chatHandler || !window.chatHandler.ws ||
