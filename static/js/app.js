@@ -403,8 +403,77 @@ function initTranslateModal() {
     }
 }
 
+// Initialize news modal
+function initNewsModal() {
+    const newsBtn = document.getElementById('newsBtn');
+    const newsModal = document.getElementById('newsModal');
+    const closeBtn = document.getElementById('closeNewsModal');
+    const sourcesContainer = document.querySelector('.news-sources');
+
+    if (!newsBtn || !newsModal) {
+        console.log('News modal elements not found');
+        return;
+    }
+
+    // Load news sources from API and populate modal
+    async function loadNewsSources() {
+        try {
+            const response = await fetch('/api/news-sources');
+            if (response.ok) {
+                const data = await response.json();
+                sourcesContainer.innerHTML = '';
+                for (const source of data.sources) {
+                    const btn = document.createElement('button');
+                    btn.className = 'news-source-btn';
+                    btn.dataset.url = source.url;
+                    btn.textContent = source.name;
+                    btn.addEventListener('click', () => {
+                        sendNewsRequest(source.url, source.name);
+                        newsModal.style.display = 'none';
+                    });
+                    sourcesContainer.appendChild(btn);
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load news sources:', err);
+        }
+    }
+
+    newsBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        loadNewsSources();
+        newsModal.style.display = 'flex';
+    });
+
+    closeBtn.addEventListener('click', () => {
+        newsModal.style.display = 'none';
+    });
+
+    newsModal.addEventListener('click', (e) => {
+        if (e.target === newsModal) {
+            newsModal.style.display = 'none';
+        }
+    });
+
+    function sendNewsRequest(url, name) {
+        const message = `Summarize today's news headlines from ${url}`;
+        if (window.chatHandler) {
+            window.chatHandler.addMessage('user', message);
+            window.chatHandler.showTypingIndicator();
+            if (window.chatHandler.ws && window.chatHandler.ws.readyState === WebSocket.OPEN) {
+                window.chatHandler.ws.send(JSON.stringify({
+                    type: 'message',
+                    content: message
+                }));
+            }
+        }
+    }
+}
+
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new App();
     initTranslateModal();
+    initNewsModal();
 });

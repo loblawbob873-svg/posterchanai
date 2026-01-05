@@ -90,6 +90,7 @@
             <button class="quick-btn mode-btn" data-mode="images">Images</button>
             <button class="quick-btn mode-btn" data-mode="geni">Generate</button>
             <button class="quick-btn" id="translateBtn">Translate</button>
+            <button class="quick-btn" id="newsBtn">News</button>
         </div>
 
         <!-- Input Area -->
@@ -264,6 +265,26 @@
                     <input type="file" id="translateFileInput" accept="image/*,.heic,.heif,.pdf,.txt,.md,.docx" style="display: none;">
                 </label>
                 <div id="translateFileName" class="translate-file-name"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- News Modal -->
+<div class="modal" id="newsModal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>News Summary</h2>
+            <button class="btn-icon modal-close" id="closeNewsModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="modal-info">Select a news source to get today's headlines summary.</p>
+            <div class="news-sources">
+                <button class="news-source-btn" data-url="drudgereport.com">Drudge Report</button>
+                <button class="news-source-btn" data-url="usatoday.com">USA Today</button>
+                <button class="news-source-btn" data-url="msn.com">MSN</button>
+                <button class="news-source-btn" data-url="cnn.com">CNN</button>
+                <button class="news-source-btn" data-url="foxnews.com">Fox News</button>
             </div>
         </div>
     </div>

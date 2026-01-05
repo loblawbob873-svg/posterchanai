@@ -10,7 +10,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 from app.database import get_db, SessionLocal
-from app.models import User, Conversation, Message
+from app.models import User, Conversation, Message, Setting
 from app.schemas import ConversationCreate, ConversationResponse, ConversationWithMessages, MessageResponse
 from app.auth import get_current_user, get_user_from_websocket
 from app.services.chat_service import ChatService
@@ -210,6 +210,36 @@ def email_response(
         raise HTTPException(status_code=500, detail=f"Failed to send email: {message}")
 
     return {"message": "Email sent successfully"}
+
+
+@router.get("/news-sources")
+def get_news_sources(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get configured news sources for the News modal"""
+    setting = db.query(Setting).filter(Setting.key == "news_sources").first()
+
+    # Default news sources if not configured
+    default_sources = """drudgereport.com|Drudge Report
+usatoday.com|USA Today
+msn.com|MSN
+cnn.com|CNN
+foxnews.com|Fox News"""
+
+    raw = setting.value if setting and setting.value else default_sources
+
+    sources = []
+    for line in raw.strip().split("\n"):
+        line = line.strip()
+        if "|" in line:
+            url, name = line.split("|", 1)
+            sources.append({"url": url.strip(), "name": name.strip()})
+        elif line:
+            # Just a URL without a name
+            sources.append({"url": line, "name": line})
+
+    return {"sources": sources}
 
 
 # WebSocket for real-time chat
