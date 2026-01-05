@@ -514,28 +514,44 @@ function initNewsModal() {
         if (!window.chatHandler || !window.chatHandler.ws ||
             window.chatHandler.ws.readyState !== WebSocket.OPEN) {
             // Create a new conversation
+            console.log('Creating new conversation for news request...');
             await window.app.createConversation();
-            // Wait for WebSocket to connect
-            await new Promise(resolve => {
+
+            // Wait for WebSocket to connect with timeout
+            const connected = await new Promise(resolve => {
+                let attempts = 0;
+                const maxAttempts = 50; // 5 seconds max
                 const checkConnection = () => {
+                    attempts++;
                     if (window.chatHandler && window.chatHandler.ws &&
                         window.chatHandler.ws.readyState === WebSocket.OPEN) {
-                        resolve();
+                        console.log('WebSocket connected after', attempts * 100, 'ms');
+                        resolve(true);
+                    } else if (attempts >= maxAttempts) {
+                        console.error('WebSocket connection timeout');
+                        resolve(false);
                     } else {
                         setTimeout(checkConnection, 100);
                     }
                 };
                 checkConnection();
             });
+
+            if (!connected) {
+                alert('Failed to connect. Please try again.');
+                return;
+            }
         }
 
-        if (window.chatHandler) {
+        if (window.chatHandler && window.chatHandler.ws) {
             window.chatHandler.addMessage('user', message);
             window.chatHandler.showTypingIndicator();
             window.chatHandler.ws.send(JSON.stringify({
                 type: 'message',
                 content: message
             }));
+        } else {
+            console.error('No chat handler or WebSocket available');
         }
     }
 }
