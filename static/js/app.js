@@ -419,39 +419,54 @@ function initNewsModal() {
     let allSources = [];
 
     async function loadNewsSources() {
+        // Default sources as fallback
+        const defaultSources = [
+            { url: 'drudgereport.com', name: 'Drudge Report' },
+            { url: 'usatoday.com', name: 'USA Today' },
+            { url: 'msn.com', name: 'MSN' },
+            { url: 'cnn.com', name: 'CNN' },
+            { url: 'foxnews.com', name: 'Fox News' }
+        ];
+
         try {
             const response = await fetch('/api/news-sources');
             if (response.ok) {
                 const data = await response.json();
-                allSources = data.sources;
-                sourcesContainer.innerHTML = '';
-
-                // Add "All" button first
-                if (allSources.length > 1) {
-                    const allBtn = document.createElement('button');
-                    allBtn.className = 'news-source-btn news-source-all';
-                    allBtn.textContent = 'All Sources';
-                    allBtn.addEventListener('click', () => {
-                        newsModal.style.display = 'none';
-                        sendAllNewsRequests();
-                    });
-                    sourcesContainer.appendChild(allBtn);
-                }
-
-                for (const source of allSources) {
-                    const btn = document.createElement('button');
-                    btn.className = 'news-source-btn';
-                    btn.dataset.url = source.url;
-                    btn.textContent = source.name;
-                    btn.addEventListener('click', async () => {
-                        newsModal.style.display = 'none';
-                        await sendNewsRequest(source.url, source.name);
-                    });
-                    sourcesContainer.appendChild(btn);
-                }
+                allSources = data.sources || defaultSources;
+            } else {
+                console.warn('News sources API returned', response.status, '- using defaults');
+                allSources = defaultSources;
             }
         } catch (err) {
             console.error('Failed to load news sources:', err);
+            allSources = defaultSources;
+        }
+
+        // Render buttons
+        sourcesContainer.innerHTML = '';
+
+        // Add "All" button first
+        if (allSources.length > 1) {
+            const allBtn = document.createElement('button');
+            allBtn.className = 'news-source-btn news-source-all';
+            allBtn.textContent = 'All Sources';
+            allBtn.addEventListener('click', () => {
+                newsModal.style.display = 'none';
+                sendAllNewsRequests();
+            });
+            sourcesContainer.appendChild(allBtn);
+        }
+
+        for (const source of allSources) {
+            const btn = document.createElement('button');
+            btn.className = 'news-source-btn';
+            btn.dataset.url = source.url;
+            btn.textContent = source.name;
+            btn.addEventListener('click', async () => {
+                newsModal.style.display = 'none';
+                await sendNewsRequest(source.url, source.name);
+            });
+            sourcesContainer.appendChild(btn);
         }
     }
 
