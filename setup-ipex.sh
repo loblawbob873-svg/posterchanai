@@ -8,6 +8,50 @@ cd "$SCRIPT_DIR"
 
 echo "Setting up Posterchanai with IPEX-LLM backend..."
 
+# Check for Level Zero (required for Intel GPU compute)
+if ! ldconfig -p | grep -q libze_loader; then
+    echo ""
+    echo "WARNING: Level Zero (libze_loader) not found!"
+    echo "This is required for Intel GPU acceleration with IPEX-LLM."
+    echo ""
+    if [ -f /etc/gentoo-release ]; then
+        echo "Install with: sudo emerge -av dev-libs/level-zero"
+    elif [ -f /etc/arch-release ]; then
+        echo "Install with: sudo pacman -S level-zero-loader"
+    elif [ -f /etc/debian_version ]; then
+        echo "Install with: sudo apt install level-zero"
+    else
+        echo "Please install the level-zero package for your distribution."
+    fi
+    echo ""
+    read -p "Continue anyway? [y/N]: " CONTINUE
+    if [[ ! "$CONTINUE" =~ ^[Yy] ]]; then
+        exit 1
+    fi
+fi
+
+# Check for patchelf (needed to fix executable stack on modern glibc)
+if ! command -v patchelf &>/dev/null; then
+    echo ""
+    echo "WARNING: patchelf not found!"
+    echo "This is needed to fix IPEX libraries on systems with glibc 2.41+."
+    echo ""
+    if [ -f /etc/gentoo-release ]; then
+        echo "Install with: sudo emerge -av dev-util/patchelf"
+    elif [ -f /etc/arch-release ]; then
+        echo "Install with: sudo pacman -S patchelf"
+    elif [ -f /etc/debian_version ]; then
+        echo "Install with: sudo apt install patchelf"
+    else
+        echo "Please install patchelf for your distribution."
+    fi
+    echo ""
+    read -p "Continue anyway? [y/N]: " CONTINUE
+    if [[ ! "$CONTINUE" =~ ^[Yy] ]]; then
+        exit 1
+    fi
+fi
+
 # Check for Intel oneAPI
 ONEAPI_FOUND=0
 if [ -f /opt/intel/oneapi/2025.0/oneapi-vars.sh ]; then
@@ -72,6 +116,21 @@ echo ""
 echo "Installing IPEX-LLM..."
 pip install --pre --upgrade ipex-llm[cpp]
 
+# Fix executable stack issue on modern glibc (2.41+)
+# The IPEX library requires executable stack which is blocked by default
+if command -v patchelf &>/dev/null; then
+    echo ""
+    echo "Fixing IPEX library executable stack flags..."
+    IPEX_LIB=$(find venv-ipex/lib -name "libintel-ext-pt-cpu.so" 2>/dev/null | head -1)
+    if [ -n "$IPEX_LIB" ]; then
+        patchelf --clear-execstack "$IPEX_LIB" 2>/dev/null && echo "  Fixed: $IPEX_LIB" || echo "  Warning: Could not patch $IPEX_LIB"
+    fi
+    # Also fix any other libraries that might need it
+    for lib in $(find venv-ipex/lib -name "*.so" -exec sh -c 'readelf -l "$1" 2>/dev/null | grep -q "RWE" && echo "$1"' _ {} \; 2>/dev/null); do
+        patchelf --clear-execstack "$lib" 2>/dev/null && echo "  Fixed: $lib"
+    done
+fi
+
 # Also install llama-cpp-python with SYCL support as fallback
 echo ""
 echo "Installing llama-cpp-python with Intel GPU support (fallback)..."
@@ -101,15 +160,23 @@ echo "=============================================="
 echo "TROUBLESHOOTING"
 echo "=============================================="
 echo ""
+echo "If you see 'libze_loader.so.1: cannot open shared object' error:"
+echo "  Install Level Zero: sudo emerge -av dev-libs/level-zero (Gentoo)"
+echo "                      sudo apt install level-zero (Debian/Ubuntu)"
+echo ""
 echo "If you see 'cannot enable executable stack' error:"
-echo "  This is a glibc 2.41+ security feature. The run-ipex.sh script"
-echo "  uses 'setarch -X' to work around it. If it still fails, you may need"
-echo "  to use patchelf to clear the executable stack flag on the library:"
+echo "  The installer should have fixed this automatically with patchelf."
+echo "  If it persists, manually run:"
 echo "    patchelf --clear-execstack venv-ipex/lib/python*/site-packages/intel_extension_for_pytorch/lib/libintel-ext-pt-cpu.so"
+echo ""
+echo "If you see 'libmkl_sycl_blas.so.4: cannot open' error:"
+echo "  You may have multiple oneAPI versions. Ensure oneAPI 2024.2 is installed"
+echo "  or the run script includes both library paths."
 echo ""
 echo "If you see 'NumPy 1.x cannot run in NumPy 2.x' error:"
 echo "  Run: venv-ipex/bin/pip install 'numpy<2'"
 echo ""
 echo "If IPEX-LLM falls back to CPU (standard llama-cpp-python):"
-echo "  Check that Intel oneAPI is properly installed and sourced."
-echo "  The run-ipex.sh script should handle this automatically."
+echo "  1. Check that Intel oneAPI is properly installed"
+echo "  2. Ensure dev-libs/level-zero is installed"
+echo "  3. Check journalctl -u posterchanai-ipex for specific errors"

@@ -443,6 +443,42 @@ setup_llama_cpp() {
 
     case "$BACKEND" in
         intel)
+            # Check for Level Zero (required for Intel GPU compute)
+            if ! ldconfig -p | grep -q libze_loader; then
+                print_warning "Level Zero (libze_loader) not found!"
+                echo ""
+                echo "  This is required for Intel GPU acceleration with IPEX-LLM."
+                case "$DISTRO" in
+                    gentoo) echo "  Install with: sudo emerge -av dev-libs/level-zero" ;;
+                    arch) echo "  Install with: sudo pacman -S level-zero-loader" ;;
+                    debian) echo "  Install with: sudo apt install level-zero" ;;
+                    *) echo "  Please install the level-zero package for your distribution." ;;
+                esac
+                echo ""
+                read -p "  Continue anyway? [y/N]: " CONTINUE_LZ
+                if [[ ! "$CONTINUE_LZ" =~ ^[Yy] ]]; then
+                    exit 1
+                fi
+            fi
+
+            # Check for patchelf (needed to fix executable stack on modern glibc)
+            if ! command -v patchelf &>/dev/null; then
+                print_warning "patchelf not found!"
+                echo ""
+                echo "  This is needed to fix IPEX libraries on systems with glibc 2.41+."
+                case "$DISTRO" in
+                    gentoo) echo "  Install with: sudo emerge -av dev-util/patchelf" ;;
+                    arch) echo "  Install with: sudo pacman -S patchelf" ;;
+                    debian) echo "  Install with: sudo apt install patchelf" ;;
+                    *) echo "  Please install patchelf for your distribution." ;;
+                esac
+                echo ""
+                read -p "  Continue anyway? [y/N]: " CONTINUE_PF
+                if [[ ! "$CONTINUE_PF" =~ ^[Yy] ]]; then
+                    exit 1
+                fi
+            fi
+
             # Source Intel oneAPI
             ONEAPI_PATH=""
             if [ -f /opt/intel/oneapi/2025.0/oneapi-vars.sh ]; then
@@ -489,6 +525,19 @@ STUBCODE
                     print_success "VTune stub library installed"
                 fi
                 rm -rf "$STUB_DIR"
+            fi
+
+            # Install IPEX-LLM (Intel's optimized LLM backend)
+            echo "  Installing IPEX-LLM..."
+            pip install --pre --upgrade ipex-llm[cpp] -q
+
+            # Fix executable stack issue on modern glibc (2.41+)
+            if command -v patchelf &>/dev/null; then
+                echo "  Fixing IPEX library executable stack flags..."
+                IPEX_LIB=$(find venv-ipex/lib -name "libintel-ext-pt-cpu.so" 2>/dev/null | head -1)
+                if [ -n "$IPEX_LIB" ]; then
+                    patchelf --clear-execstack "$IPEX_LIB" 2>/dev/null && print_success "Fixed executable stack on IPEX library" || true
+                fi
             fi
 
             # Install pinned llama-cpp-python version (tested working)
