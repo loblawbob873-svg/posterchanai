@@ -145,6 +145,7 @@ def parse_news_sources(raw: str) -> list:
         {"url": "npr.org/sections/news", "name": "NPR"},
         {"url": "nypost.com", "name": "NY Post"},
         {"url": "foxnews.com", "name": "Fox News"},
+        {"url": "newsweek.com", "name": "Newsweek"},
     ]
 
     if not raw or not raw.strip():
