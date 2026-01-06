@@ -281,6 +281,9 @@ class UserSettingsUpdate(BaseModel):
     # Custom Image Generation settings
     custom_image_enabled: Optional[bool] = None
     custom_image_url: Optional[str] = None
+    # Scheduled news settings
+    news_schedule_enabled: Optional[bool] = None
+    news_schedule_time: Optional[str] = None  # HH:MM format
 
 
 class UserSettingsResponse(BaseModel):
@@ -295,6 +298,9 @@ class UserSettingsResponse(BaseModel):
     # Custom Image Generation settings
     custom_image_enabled: bool = False
     custom_image_url: Optional[str] = None
+    # Scheduled news settings
+    news_schedule_enabled: bool = False
+    news_schedule_time: str = "12:00"
 
 
 class TestConnectionRequest(BaseModel):

@@ -27,6 +27,10 @@ class User(Base):
     custom_image_enabled = Column(Boolean, default=False)
     custom_image_url = Column(String(500), nullable=True)
 
+    # Scheduled news settings
+    news_schedule_enabled = Column(Boolean, default=False)
+    news_schedule_time = Column(String(5), default="12:00")  # HH:MM format, default noon
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")

@@ -50,6 +50,9 @@ async def startup():
     # Start health check if enabled
     from app.services.health_check import start_health_check
     start_health_check()
+    # Start news scheduler
+    from app.services.news_scheduler import start_scheduler
+    start_scheduler()
 
 
 @app.on_event("shutdown")
@@ -57,6 +60,9 @@ async def shutdown():
     # Stop health check
     from app.services.health_check import stop_health_check
     stop_health_check()
+    # Stop news scheduler
+    from app.services.news_scheduler import stop_scheduler
+    stop_scheduler()
 
 
 @app.get("/")

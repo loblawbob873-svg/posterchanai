@@ -393,7 +393,10 @@ def get_user_settings(current_user: User = Depends(get_current_user)):
         custom_ai_has_api_key=bool(current_user.custom_ai_api_key),
         # Custom Image Generation settings
         custom_image_enabled=current_user.custom_image_enabled or False,
-        custom_image_url=current_user.custom_image_url
+        custom_image_url=current_user.custom_image_url,
+        # Scheduled news settings
+        news_schedule_enabled=current_user.news_schedule_enabled or False,
+        news_schedule_time=current_user.news_schedule_time or "12:00"
     )
 
 
@@ -432,6 +435,21 @@ def update_user_settings(
         current_user.custom_image_enabled = settings.custom_image_enabled
     if settings.custom_image_url is not None:
         current_user.custom_image_url = settings.custom_image_url.strip() if settings.custom_image_url else None
+
+    # Update scheduled news settings
+    if settings.news_schedule_enabled is not None:
+        current_user.news_schedule_enabled = settings.news_schedule_enabled
+    if settings.news_schedule_time is not None:
+        # Validate time format (HH:MM)
+        import re
+        time_str = settings.news_schedule_time.strip()
+        if time_str and re.match(r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$', time_str):
+            current_user.news_schedule_time = time_str
+        elif time_str:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid time format. Use HH:MM (e.g., 12:00)"
+            )
 
     db.commit()
 
