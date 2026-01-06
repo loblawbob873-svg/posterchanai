@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import User, Conversation, Message
-from app.routers.news import fetch_news_from_source, parse_news_sources, get_news_sources
+from app.routers.news import fetch_news_from_source, get_user_news_sources
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +24,8 @@ async def generate_daily_news_for_user(user_id: int):
 
         logger.info(f"Generating daily news for user {user.username}")
 
-        # Get news sources
-        news_sources_raw = get_news_sources(db)
-        sources = parse_news_sources(news_sources_raw)
+        # Get news sources (user's custom sources or admin defaults)
+        sources = get_user_news_sources(user, db)
 
         if not sources:
             logger.warning(f"No news sources configured for user {user.username}")
