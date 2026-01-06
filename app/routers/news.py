@@ -186,10 +186,13 @@ async def get_sources(
 @router.get("/headlines/{source_url:path}")
 async def get_headlines(
     source_url: str,
+    conversation_id: int = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get news headlines from a source with AI summaries"""
+    from app.models import Conversation, Message
+
     sources = get_user_news_sources(current_user, db)
 
     source_name = source_url
@@ -199,6 +202,22 @@ async def get_headlines(
             break
 
     markdown = await fetch_news_from_source(source_url, source_name, db)
+
+    # Save to conversation if provided
+    if conversation_id:
+        conversation = db.query(Conversation).filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id
+        ).first()
+        if conversation:
+            message = Message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=markdown
+            )
+            db.add(message)
+            db.commit()
+
     return {"markdown": markdown}
 
 
@@ -216,3 +235,87 @@ async def get_all_headlines(
         results.append(markdown)
 
     return {"markdown": "\n\n---\n\n".join(results)}
+
+
+@router.get("/summarize")
+async def summarize_article(
+    url: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Summarize a specific article URL"""
+    import httpx
+    from bs4 import BeautifulSoup
+
+    try:
+        # Fetch the article
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            html = response.text
+
+        # Parse and extract main content
+        soup = BeautifulSoup(html, "html.parser")
+
+        # Remove scripts, styles, nav, footer, ads
+        for el in soup(["script", "style", "nav", "footer", "aside", "header", "form", "noscript"]):
+            el.decompose()
+
+        # Try to find article content in common containers
+        article = soup.find("article") or soup.find(class_=["article", "post", "content", "story", "entry"])
+        if article:
+            text = article.get_text(separator="\n", strip=True)
+        else:
+            # Fallback to body
+            body = soup.find("body")
+            text = body.get_text(separator="\n", strip=True) if body else ""
+
+        # Clean up and limit text
+        lines = [line.strip() for line in text.split("\n") if line.strip() and len(line.strip()) > 20]
+        text = "\n".join(lines[:100])  # Max 100 lines
+
+        if len(text) < 100:
+            return {"summary": "Could not extract article content."}
+
+        # Get AI service
+        from app.services.custom_ai_service import CustomAIService
+        from app.services.llm_backend import get_llm_service
+
+        if current_user.custom_ai_enabled and current_user.custom_ai_url:
+            service = CustomAIService(
+                api_type=current_user.custom_ai_type or "ollama",
+                base_url=current_user.custom_ai_url,
+                model=current_user.custom_ai_model,
+                api_key=current_user.custom_ai_api_key
+            )
+        else:
+            service = get_llm_service(db)
+
+        # Summarize with AI
+        messages = [
+            {"role": "system", "content": "Summarize this article in 2-3 paragraphs. Focus on the key facts and main points."},
+            {"role": "user", "content": text[:8000]}  # Limit context
+        ]
+
+        result = await service.chat_completion(
+            messages=messages,
+            temperature=0.3,
+            max_tokens=1024
+        )
+
+        if "error" in result:
+            return {"summary": f"AI error: {result['error']}"}
+
+        content = result["choices"][0]["message"]["content"]
+        if content:
+            from app.services.text_utils import strip_thinking_tags
+            return {"summary": strip_thinking_tags(content.strip())}
+
+        return {"summary": "Could not generate summary."}
+
+    except Exception as e:
+        logger.error(f"Article summarization failed: {e}")
+        return {"summary": f"Error: {str(e)}"}

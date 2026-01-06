@@ -522,11 +522,20 @@ function initNewsModal() {
             await waitForConnection();
         }
 
+        // Get current conversation ID
+        const conversationId = window.app.currentConversation?.id;
+
         // Show loading indicator
         window.chatHandler.showTypingIndicator();
 
         try {
-            const response = await fetch(`/api/news/headlines/${encodeURIComponent(url)}`);
+            // Include conversation_id to persist the message
+            let apiUrl = `/api/news/headlines/${encodeURIComponent(url)}`;
+            if (conversationId) {
+                apiUrl += `?conversation_id=${conversationId}`;
+            }
+
+            const response = await fetch(apiUrl);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }

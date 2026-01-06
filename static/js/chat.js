@@ -1375,7 +1375,55 @@ class ChatHandler {
         this.messagesContainer.appendChild(messageEl);
         this.scrollToBottom();
 
+        // Add summarize icons to external links in assistant messages
+        if (role === 'assistant') {
+            this.addSummarizeIcons(contentEl);
+        }
+
         return messageEl;
+    }
+
+    addSummarizeIcons(contentEl) {
+        // Find all external links (not local paths)
+        const links = contentEl.querySelectorAll('a[href^="http"]');
+        links.forEach(link => {
+            // Skip if already has summarize button
+            if (link.nextElementSibling?.classList?.contains('btn-summarize')) return;
+
+            const summarizeBtn = document.createElement('button');
+            summarizeBtn.className = 'btn-summarize';
+            summarizeBtn.innerHTML = '📄';
+            summarizeBtn.title = 'Summarize article';
+            summarizeBtn.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                await this.summarizeArticle(link.href, link.textContent);
+            };
+            link.parentNode.insertBefore(summarizeBtn, link.nextSibling);
+        });
+    }
+
+    async summarizeArticle(url, title) {
+        // Show loading
+        this.showTypingIndicator();
+
+        try {
+            const response = await fetch(`/api/news/summarize?url=${encodeURIComponent(url)}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const data = await response.json();
+            this.hideTypingIndicator();
+
+            if (data.summary) {
+                this.addMessage('assistant', `**Summary of "${title}":**\n\n${data.summary}`);
+            } else {
+                this.addMessage('assistant', `Could not summarize the article.`);
+            }
+        } catch (err) {
+            console.error('Failed to summarize:', err);
+            this.hideTypingIndicator();
+            this.addMessage('assistant', `Error summarizing article: ${err.message}`);
+        }
     }
 
     downloadImage(imageId) {

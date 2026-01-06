@@ -857,6 +857,24 @@ fieldset legend {
     background: rgba(255, 255, 255, 0.1);
 }
 
+/* Summarize button (inline with links) */
+.btn-summarize {
+    display: inline-block;
+    background: transparent;
+    border: none;
+    padding: 2px 4px;
+    margin-left: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    opacity: 0.5;
+    transition: opacity 0.2s, transform 0.2s;
+    vertical-align: middle;
+}
+.btn-summarize:hover {
+    opacity: 1;
+    transform: scale(1.2);
+}
+
 /* Retry button */
 .btn-retry {
     display: inline-block;
