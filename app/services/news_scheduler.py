@@ -31,11 +31,21 @@ async def generate_daily_news_for_user(user_id: int):
             logger.warning(f"No news sources configured for user {user.username}")
             return
 
-        # Create a new conversation titled "Daily News - [date]"
+        # Check if a conversation already exists for today
         today = datetime.now().strftime("%B %d, %Y")
+        title = f"Daily News - {today}"
+        existing = db.query(Conversation).filter(
+            Conversation.user_id == user.id,
+            Conversation.title == title
+        ).first()
+        if existing:
+            logger.info(f"Daily news already exists for user {user.username} on {today}")
+            return
+
+        # Create a new conversation titled "Daily News - [date]"
         conversation = Conversation(
             user_id=user.id,
-            title=f"Daily News - {today}"
+            title=title
         )
         db.add(conversation)
         db.flush()

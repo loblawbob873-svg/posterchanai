@@ -937,6 +937,9 @@ class ChatHandler {
                 contentEl.appendChild(regenBtn);
             }
 
+            // Add summarize icons to external links
+            this.addSummarizeIcons(contentEl);
+
             // Notify mascot
             if (window.mascotController) {
                 window.mascotController.onResponse(true);
