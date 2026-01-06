@@ -266,14 +266,14 @@ body {
     position: relative;
     display: flex;
     justify-content: center;
-    padding: 20px;
+    padding: 10px;
     background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
-    min-height: 200px;
+    min-height: 100px;
 }
 .mascot-container {
     position: relative;
-    width: 150px;
-    height: 180px;
+    width: 80px;
+    height: 100px;
 }
 .mascot-image {
     width: 100%;
