@@ -45,14 +45,29 @@ async def fetch_headlines_from_url(url: str) -> dict:
 
             links = []
             seen = set()
-            skip = ['trending', 'live updates', 'watch', 'listen', 'subscribe',
-                    'sign in', 'log in', 'menu', 'search', 'read more', 'click here']
+            skip = [
+                'trending', 'live updates', 'breaking', 'watch', 'listen',
+                'subscribe', 'sign in', 'log in', 'login', 'sign up', 'register',
+                'menu', 'search', 'more', 'read more', 'see more', 'show more',
+                'click here', 'learn more', 'advertisement', 'sponsored', 'ad:',
+                'shop ', 'buy ', 'sale', 'discount', 'coupon', 'promo',
+                'delivery', 'shipping', 'cart', 'checkout', 'order',
+                'advertise', 'contact us', 'about us', 'privacy', 'terms',
+                'cookie', 'newsletter', 'print edition', 'e-edition', 'app',
+                'facebook', 'twitter', 'instagram', 'youtube', 'tiktok',
+                'share', 'comment', 'reply', 'follow us', 'connect',
+                'great gifts', 'home delivery', 'editions',
+            ]
 
             for a in soup.find_all('a', href=True):
                 text = ' '.join(a.get_text(separator=' ', strip=True).split())
                 href = a['href']
 
-                if not text or len(text) < 15 or href.startswith('#'):
+                if not text or len(text) < 20 or href.startswith('#'):
+                    continue
+                # Skip if mostly emojis
+                clean_text = ''.join(c for c in text if not c in '🎁📱💰🔥⚡️✨')
+                if len(clean_text.strip()) < 15:
                     continue
                 if text.lower() in seen or any(s in text.lower() for s in skip):
                     continue

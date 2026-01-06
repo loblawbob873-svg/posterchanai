@@ -149,6 +149,11 @@ class ChatHandler {
         const testCustomImage = document.getElementById('testCustomImage');
         const testImageResult = document.getElementById('testImageResult');
 
+        // News Schedule elements
+        const newsScheduleEnabled = document.getElementById('newsScheduleEnabled');
+        const newsScheduleSettings = document.getElementById('newsScheduleSettings');
+        const newsScheduleTime = document.getElementById('newsScheduleTime');
+
         // Quick AI Toggle elements (in user menu)
         const aiToggleItem = document.getElementById('aiToggleItem');
         const aiToggleLabel = document.getElementById('aiToggleLabel');
@@ -237,6 +242,13 @@ class ChatHandler {
             });
         }
 
+        // Toggle news schedule settings visibility
+        if (newsScheduleEnabled && newsScheduleSettings) {
+            newsScheduleEnabled.addEventListener('change', () => {
+                newsScheduleSettings.style.display = newsScheduleEnabled.checked ? 'flex' : 'none';
+            });
+        }
+
         // Test custom AI connection
         if (testCustomAi) {
             testCustomAi.addEventListener('click', async () => {
@@ -315,6 +327,13 @@ class ChatHandler {
                             customImageSettings.style.display = data.custom_image_enabled ? 'flex' : 'none';
                         }
                         if (customImageUrl) customImageUrl.value = data.custom_image_url || '';
+
+                        // Load news schedule settings
+                        if (newsScheduleEnabled) {
+                            newsScheduleEnabled.checked = data.news_schedule_enabled || false;
+                            newsScheduleSettings.style.display = data.news_schedule_enabled ? 'flex' : 'none';
+                        }
+                        if (newsScheduleTime) newsScheduleTime.value = data.news_schedule_time || '12:00';
                     }
                 } catch (e) {
                     console.error('Failed to load settings:', e);
@@ -368,6 +387,14 @@ class ChatHandler {
                 }
                 if (customImageUrl) {
                     settingsData.custom_image_url = customImageUrl.value.trim();
+                }
+
+                // Add news schedule settings
+                if (newsScheduleEnabled) {
+                    settingsData.news_schedule_enabled = newsScheduleEnabled.checked;
+                }
+                if (newsScheduleTime) {
+                    settingsData.news_schedule_time = newsScheduleTime.value;
                 }
 
                 try {
