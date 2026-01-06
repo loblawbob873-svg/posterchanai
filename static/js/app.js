@@ -423,8 +423,7 @@ function initNewsModal() {
         const defaultSources = [
             { url: 'drudgereport.com', name: 'Drudge Report' },
             { url: 'npr.org/sections/news', name: 'NPR' },
-            { url: 'msn.com', name: 'MSN' },
-            { url: 'cnn.com', name: 'CNN' },
+            { url: 'nypost.com', name: 'NY Post' },
             { url: 'foxnews.com', name: 'Fox News' }
         ];
 
