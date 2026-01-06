@@ -175,6 +175,22 @@ class CustomAIService:
                                             }
                                             yield f"data: {json.dumps(chunk)}\n\n"
                                         buffer = after_think
+                                    # No thinking tag in first 50 chars - assume no thinking
+                                    elif len(buffer) > 50 and '<think' not in buffer.lower():
+                                        thinking_done = True
+                                        chunk = {
+                                            "id": completion_id,
+                                            "object": "chat.completion.chunk",
+                                            "created": created,
+                                            "model": model,
+                                            "choices": [{
+                                                "index": 0,
+                                                "delta": {"content": buffer},
+                                                "finish_reason": None
+                                            }]
+                                        }
+                                        yield f"data: {json.dumps(chunk)}\n\n"
+                                        buffer = ""
                                 else:
                                     chunk = {
                                         "id": completion_id,

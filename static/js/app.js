@@ -471,22 +471,28 @@ function initNewsModal() {
     }
 
     async function sendAllNewsRequests() {
+        // Process sources one at a time to avoid overloading
         for (const source of allSources) {
             await sendNewsRequest(source.url, source.name);
-            // Wait for response to complete before sending next
-            await waitForResponse();
         }
     }
 
-    function waitForResponse() {
+    function waitForConnection() {
         return new Promise(resolve => {
-            const checkInterval = setInterval(() => {
-                const typing = document.querySelector('.typing-indicator');
-                if (!typing || typing.style.display === 'none') {
-                    clearInterval(checkInterval);
-                    setTimeout(resolve, 500); // Small delay between requests
+            let attempts = 0;
+            const maxAttempts = 50;
+            const checkConnection = () => {
+                attempts++;
+                if (window.chatHandler && window.chatHandler.ws &&
+                    window.chatHandler.ws.readyState === WebSocket.OPEN) {
+                    resolve(true);
+                } else if (attempts >= maxAttempts) {
+                    resolve(false);
+                } else {
+                    setTimeout(checkConnection, 100);
                 }
-            }, 500);
+            };
+            checkConnection();
         });
     }
 
@@ -508,67 +514,38 @@ function initNewsModal() {
     });
 
     async function sendNewsRequest(url, name) {
-        const message = `Summarize the top 10-15 news headlines from ${name} (${url}).
+        // Use the /api/news/headlines endpoint with AI summarization
+        if (!window.chatHandler) return;
 
-Instructions:
-1. Look at the ARTICLE LINKS section - these are the actual headlines with their real URLs
-2. Select the most important/newsworthy headlines
-3. Format each as a bullet point where the summary IS the clickable link:
-   - [Brief 1-sentence summary of the story](url)
-4. Group by topic if appropriate (Politics, World, Tech, etc.)
-5. ONLY use URLs from the ARTICLE LINKS section - never make up or modify URLs`;
-
-        // Ensure we have a conversation and WebSocket connection
-        if (!window.chatHandler || !window.chatHandler.ws ||
-            window.chatHandler.ws.readyState !== WebSocket.OPEN) {
-            // Create a new conversation
-            console.log('Creating new conversation for news request...');
+        // Ensure we have a conversation
+        if (!window.chatHandler.ws || window.chatHandler.ws.readyState !== WebSocket.OPEN) {
             await window.app.createConversation();
-
-            // Wait for WebSocket to connect with timeout
-            const connected = await new Promise(resolve => {
-                let attempts = 0;
-                const maxAttempts = 50; // 5 seconds max
-                const checkConnection = () => {
-                    attempts++;
-                    if (window.chatHandler && window.chatHandler.ws &&
-                        window.chatHandler.ws.readyState === WebSocket.OPEN) {
-                        console.log('WebSocket connected after', attempts * 100, 'ms');
-                        resolve(true);
-                    } else if (attempts >= maxAttempts) {
-                        console.error('WebSocket connection timeout');
-                        resolve(false);
-                    } else {
-                        setTimeout(checkConnection, 100);
-                    }
-                };
-                checkConnection();
-            });
-
-            if (!connected) {
-                alert('Failed to connect. Please try again.');
-                return;
-            }
+            await waitForConnection();
         }
 
-        if (window.chatHandler && window.chatHandler.ws) {
-            // Show short message instead of full prompt to reduce clutter
-            const promptMsg = window.chatHandler.addMessage('user', `📰 ${name}`);
+        // Show loading indicator
+        window.chatHandler.showTypingIndicator();
 
-            // Set callback to delete the prompt message after response
-            window.chatHandler.onStreamEndCallback = () => {
-                if (promptMsg && promptMsg.parentNode) {
-                    promptMsg.remove();
-                }
-            };
+        try {
+            const response = await fetch(`/api/news/headlines/${encodeURIComponent(url)}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
 
-            window.chatHandler.showTypingIndicator();
-            window.chatHandler.ws.send(JSON.stringify({
-                type: 'message',
-                content: message
-            }));
-        } else {
-            console.error('No chat handler or WebSocket available');
+            const data = await response.json();
+
+            // Hide typing indicator and show results
+            window.chatHandler.hideTypingIndicator();
+
+            if (data.markdown) {
+                window.chatHandler.addMessage('assistant', data.markdown);
+            } else {
+                window.chatHandler.addMessage('assistant', `**${name}:** Could not fetch headlines`);
+            }
+        } catch (err) {
+            console.error('Failed to fetch news:', err);
+            window.chatHandler.hideTypingIndicator();
+            window.chatHandler.addMessage('assistant', `**${name}:** Failed to fetch headlines`);
         }
     }
 }

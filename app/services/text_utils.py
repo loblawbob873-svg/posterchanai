@@ -1,6 +1,5 @@
 """Shared text processing utilities."""
 import re
-from typing import List
 
 
 def strip_thinking_tags(response: str) -> str:
@@ -27,31 +26,6 @@ def strip_thinking_tags(response: str) -> str:
         if content_match:
             return rest[content_match.end():].strip()
         # No clear separator - return empty or minimal response
-        return ""
-
-    return response
-
-
-# Pre-compiled regex patterns for efficiency
-_THINKING_CLOSE_PATTERN = re.compile(r'</think(?:ing)?>', re.IGNORECASE)
-_THINKING_OPEN_PATTERN = re.compile(r'^\s*<think(?:ing)?>', re.IGNORECASE)
-
-
-def strip_thinking_tags_fast(response: str) -> str:
-    """Strip thinking tags using pre-compiled regex (faster for repeated calls)."""
-    matches = list(_THINKING_CLOSE_PATTERN.finditer(response))
-    if matches:
-        last_match = matches[-1]
-        return response[last_match.end():].strip()
-
-    # Check for unclosed opening tag
-    open_match = _THINKING_OPEN_PATTERN.search(response)
-    if open_match:
-        rest = response[open_match.end():]
-        # Try to find where actual content starts (after double newline)
-        content_match = re.search(r'\n\n+', rest)
-        if content_match:
-            return rest[content_match.end():].strip()
         return ""
 
     return response

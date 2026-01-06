@@ -3,8 +3,6 @@ OpenAI-compatible API router for LLM backend.
 Supports both native llama-cpp-python and Ollama backends.
 Provides both /v1/* and /api/* endpoints for maximum compatibility.
 """
-import time
-import uuid
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException
