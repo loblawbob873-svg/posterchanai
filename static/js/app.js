@@ -553,7 +553,15 @@ Instructions:
 
         if (window.chatHandler && window.chatHandler.ws) {
             // Show short message instead of full prompt to reduce clutter
-            window.chatHandler.addMessage('user', `📰 ${name}`);
+            const promptMsg = window.chatHandler.addMessage('user', `📰 ${name}`);
+
+            // Set callback to delete the prompt message after response
+            window.chatHandler.onStreamEndCallback = () => {
+                if (promptMsg && promptMsg.parentNode) {
+                    promptMsg.remove();
+                }
+            };
+
             window.chatHandler.showTypingIndicator();
             window.chatHandler.ws.send(JSON.stringify({
                 type: 'message',

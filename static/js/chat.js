@@ -30,6 +30,9 @@ class ChatHandler {
         this.uploadedImage = null;  // base64 image data
         this.uploadedFile = null;   // text file content
         this.uploadedPDF = null;    // base64 PDF data
+
+        // Callback for when stream ends (used by news to delete prompt)
+        this.onStreamEndCallback = null;
         this.uploadedDocument = null; // base64 office document data
 
         // Last payload for retry functionality
@@ -918,6 +921,13 @@ class ChatHandler {
             this.fullStreamContent = '';
             this.streamRafPending = false;
         }
+
+        // Call stream end callback if set (used by news to delete prompt)
+        if (this.onStreamEndCallback) {
+            this.onStreamEndCallback();
+            this.onStreamEndCallback = null;
+        }
+
         this.resetSendButton();
     }
 
