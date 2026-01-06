@@ -69,7 +69,7 @@ def init_db():
             "comfyui_anime_model": "nova3DCGXL_ilV80.safetensors",
             "comfyui_timeout": "300000",
             "searxng_url": "https://search.poster.place",
-            "tts_voice": "zh-CN-XiaoxiaoNeural",
+            "tts_voice": "en-GB-SoniaNeural",
             "tts_rate": "+5%",
             "tts_pitch": "+10Hz",
             # Ollama settings

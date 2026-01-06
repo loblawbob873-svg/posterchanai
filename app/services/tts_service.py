@@ -17,7 +17,7 @@ class TTSService:
 
     def _load_settings(self):
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
-        self.default_voice = settings.get("tts_voice", "zh-CN-XiaoxiaoNeural")
+        self.default_voice = settings.get("tts_voice", "en-GB-SoniaNeural")
         self.rate = settings.get("tts_rate", "+5%")
         self.pitch = settings.get("tts_pitch", "+10Hz")
 
