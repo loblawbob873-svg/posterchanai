@@ -711,6 +711,12 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     });
 });
 
+// Default news sources
+const DEFAULT_NEWS_SOURCES = `drudgereport.com|Drudge Report
+npr.org/sections/news|NPR
+nypost.com|NY Post
+foxnews.com|Fox News`;
+
 // Load settings
 async function loadSettings() {
     try {
@@ -728,6 +734,11 @@ async function loadSettings() {
                         el.value = value || '';
                     }
                 }
+            }
+            // Populate default news sources if empty
+            const newsEl = document.getElementById('news_sources');
+            if (newsEl && !newsEl.value.trim()) {
+                newsEl.value = DEFAULT_NEWS_SOURCES;
             }
         }
     } catch (err) {
