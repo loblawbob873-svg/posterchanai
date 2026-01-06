@@ -166,6 +166,8 @@ class SettingsResponse(BaseModel):
     imap_password: str = ""
     imap_use_ssl: str = "true"
     imap_sent_folder: str = "Sent"
+    # News sources
+    news_sources: str = ""
 
 
 # TTS schema
