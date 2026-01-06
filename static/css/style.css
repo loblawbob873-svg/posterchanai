@@ -1247,13 +1247,20 @@ fieldset legend {
 #customAiSettings input,
 #customAiSettings select,
 #customImageSettings input,
-#newsScheduleSettings input {
+#newsScheduleSettings input,
+#newsSources {
     padding: 12px 16px;
     border-radius: 8px;
     border: 1px solid var(--border-color);
     background: var(--bg-primary);
     color: var(--text-primary);
     font-size: 16px;
+}
+#newsSources {
+    width: 100%;
+    resize: vertical;
+    font-family: monospace;
+    min-height: 100px;
 }
 #customAiSettings input:focus,
 #customAiSettings select:focus,

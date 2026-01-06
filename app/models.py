@@ -30,6 +30,7 @@ class User(Base):
     # Scheduled news settings
     news_schedule_enabled = Column(Boolean, default=False)
     news_schedule_time = Column(String(5), default="12:00")  # HH:MM format, default noon
+    news_sources = Column(Text, default="")  # Custom news sources, one per line: url|name
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

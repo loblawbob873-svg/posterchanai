@@ -284,6 +284,7 @@ class UserSettingsUpdate(BaseModel):
     # Scheduled news settings
     news_schedule_enabled: Optional[bool] = None
     news_schedule_time: Optional[str] = None  # HH:MM format
+    news_sources: Optional[str] = None  # Custom sources, one per line: url|name
 
 
 class UserSettingsResponse(BaseModel):
@@ -301,6 +302,7 @@ class UserSettingsResponse(BaseModel):
     # Scheduled news settings
     news_schedule_enabled: bool = False
     news_schedule_time: str = "12:00"
+    news_sources: str = ""  # Custom sources, one per line: url|name
 
 
 class TestConnectionRequest(BaseModel):

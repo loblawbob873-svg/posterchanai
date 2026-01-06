@@ -142,7 +142,7 @@ def parse_news_sources(raw: str) -> list:
     """Parse news sources from settings"""
     default = [
         {"url": "drudgereport.com", "name": "Drudge Report"},
-        {"url": "usatoday.com", "name": "USA Today"},
+        {"url": "npr.org/sections/news", "name": "NPR"},
         {"url": "msn.com", "name": "MSN"},
         {"url": "cnn.com", "name": "CNN"},
         {"url": "foxnews.com", "name": "Fox News"},
@@ -163,6 +163,26 @@ def parse_news_sources(raw: str) -> list:
     return sources if sources else default
 
 
+def get_user_news_sources(user: User, db: Session) -> list:
+    """Get news sources - user's custom sources, or admin setting, or defaults"""
+    # First check user's custom sources
+    if user.news_sources and user.news_sources.strip():
+        return parse_news_sources(user.news_sources)
+    # Fall back to admin setting
+    admin_sources = get_news_sources(db)
+    return parse_news_sources(admin_sources)
+
+
+@router.get("/sources")
+async def get_sources(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get the list of news sources for current user"""
+    sources = get_user_news_sources(current_user, db)
+    return {"sources": sources}
+
+
 @router.get("/headlines/{source_url:path}")
 async def get_headlines(
     source_url: str,
@@ -170,8 +190,7 @@ async def get_headlines(
     current_user: User = Depends(get_current_user)
 ):
     """Get news headlines from a source with AI summaries"""
-    news_sources_raw = get_news_sources(db)
-    sources = parse_news_sources(news_sources_raw)
+    sources = get_user_news_sources(current_user, db)
 
     source_name = source_url
     for s in sources:
@@ -189,8 +208,7 @@ async def get_all_headlines(
     current_user: User = Depends(get_current_user)
 ):
     """Get headlines from all sources"""
-    news_sources_raw = get_news_sources(db)
-    sources = parse_news_sources(news_sources_raw)
+    sources = get_user_news_sources(current_user, db)
 
     results = []
     for source in sources:

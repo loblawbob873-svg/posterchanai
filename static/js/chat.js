@@ -153,6 +153,7 @@ class ChatHandler {
         const newsScheduleEnabled = document.getElementById('newsScheduleEnabled');
         const newsScheduleSettings = document.getElementById('newsScheduleSettings');
         const newsScheduleTime = document.getElementById('newsScheduleTime');
+        const newsSources = document.getElementById('newsSources');
 
         // Quick AI Toggle elements (in user menu)
         const aiToggleItem = document.getElementById('aiToggleItem');
@@ -334,6 +335,7 @@ class ChatHandler {
                             newsScheduleSettings.style.display = data.news_schedule_enabled ? 'flex' : 'none';
                         }
                         if (newsScheduleTime) newsScheduleTime.value = data.news_schedule_time || '12:00';
+                        if (newsSources) newsSources.value = data.news_sources || '';
                     }
                 } catch (e) {
                     console.error('Failed to load settings:', e);
@@ -395,6 +397,9 @@ class ChatHandler {
                 }
                 if (newsScheduleTime) {
                     settingsData.news_schedule_time = newsScheduleTime.value;
+                }
+                if (newsSources) {
+                    settingsData.news_sources = newsSources.value;
                 }
 
                 try {

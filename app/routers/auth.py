@@ -396,7 +396,8 @@ def get_user_settings(current_user: User = Depends(get_current_user)):
         custom_image_url=current_user.custom_image_url,
         # Scheduled news settings
         news_schedule_enabled=current_user.news_schedule_enabled or False,
-        news_schedule_time=current_user.news_schedule_time or "12:00"
+        news_schedule_time=current_user.news_schedule_time or "12:00",
+        news_sources=current_user.news_sources or ""
     )
 
 
@@ -450,6 +451,8 @@ def update_user_settings(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid time format. Use HH:MM (e.g., 12:00)"
             )
+    if settings.news_sources is not None:
+        current_user.news_sources = settings.news_sources
 
     db.commit()
 

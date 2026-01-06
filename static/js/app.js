@@ -422,14 +422,14 @@ function initNewsModal() {
         // Default sources as fallback
         const defaultSources = [
             { url: 'drudgereport.com', name: 'Drudge Report' },
-            { url: 'usatoday.com', name: 'USA Today' },
+            { url: 'npr.org/sections/news', name: 'NPR' },
             { url: 'msn.com', name: 'MSN' },
             { url: 'cnn.com', name: 'CNN' },
             { url: 'foxnews.com', name: 'Fox News' }
         ];
 
         try {
-            const response = await fetch('/api/news-sources');
+            const response = await fetch('/api/news/sources');
             if (response.ok) {
                 const data = await response.json();
                 allSources = data.sources || defaultSources;
