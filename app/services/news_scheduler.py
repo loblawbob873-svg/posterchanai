@@ -40,16 +40,7 @@ async def generate_daily_news_for_user(user_id: int):
         db.add(conversation)
         db.flush()
 
-        # Add system message
-        system_msg = Message(
-            conversation_id=conversation.id,
-            role="assistant",
-            content=f"**Daily News Summary for {today}**\n\nFetching headlines from all sources..."
-        )
-        db.add(system_msg)
-        db.commit()
-
-        # Fetch news from all sources
+        # Fetch news from all sources first
         results = []
         for source in sources:
             try:
@@ -59,9 +50,14 @@ async def generate_daily_news_for_user(user_id: int):
                 logger.error(f"Error fetching news from {source['name']}: {e}")
                 results.append(f"**{source['name']}:** Error fetching headlines")
 
-        # Update the message with all news
+        # Create single message with all news
         news_content = f"**Daily News Summary for {today}**\n\n" + "\n\n---\n\n".join(results)
-        system_msg.content = news_content
+        news_msg = Message(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=news_content
+        )
+        db.add(news_msg)
         db.commit()
 
         logger.info(f"Successfully generated daily news for user {user.username}")
