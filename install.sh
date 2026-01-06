@@ -138,6 +138,8 @@ show_install_instructions() {
             echo "  # Supported: RX 6000/7000 series, some RX 5000"
             echo ""
             echo "  # For Intel Arc GPU (optional):"
+            echo "  # First, disable distcc for intel-graphics-compiler (build fails with distcc):"
+            echo "  echo 'dev-util/intel-graphics-compiler no-distcc.conf' | sudo tee -a /etc/portage/package.env/intel-graphics-compiler"
             echo "  emerge -av dev-libs/intel-compute-runtime dev-libs/level-zero"
             echo "  # Install Intel oneAPI from Intel's repo or manually"
             echo "  # See: https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html"
@@ -443,6 +445,18 @@ setup_llama_cpp() {
 
     case "$BACKEND" in
         intel)
+            # Gentoo-specific: Configure package.env for intel-graphics-compiler
+            # (distcc causes build failures for this package)
+            if [ "$DISTRO" = "gentoo" ]; then
+                IGC_ENV_FILE="/etc/portage/package.env/intel-graphics-compiler"
+                if [ ! -f "$IGC_ENV_FILE" ] || ! grep -q "no-distcc.conf" "$IGC_ENV_FILE" 2>/dev/null; then
+                    print_step "Configuring Gentoo package.env for Intel graphics compiler..."
+                    sudo mkdir -p /etc/portage/package.env
+                    echo 'dev-util/intel-graphics-compiler no-distcc.conf' | sudo tee -a "$IGC_ENV_FILE" > /dev/null
+                    print_success "Added no-distcc.conf for intel-graphics-compiler"
+                fi
+            fi
+
             # Check for Level Zero (required for Intel GPU compute)
             if ! ldconfig -p | grep -q libze_loader; then
                 print_warning "Level Zero (libze_loader) not found!"
