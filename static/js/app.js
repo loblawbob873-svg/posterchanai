@@ -552,7 +552,8 @@ Instructions:
         }
 
         if (window.chatHandler && window.chatHandler.ws) {
-            window.chatHandler.addMessage('user', message);
+            // Show short message instead of full prompt to reduce clutter
+            window.chatHandler.addMessage('user', `📰 ${name}`);
             window.chatHandler.showTypingIndicator();
             window.chatHandler.ws.send(JSON.stringify({
                 type: 'message',
