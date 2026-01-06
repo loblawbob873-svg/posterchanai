@@ -280,19 +280,9 @@ async def summarize_article(
         if len(text) < 100:
             return {"summary": "Could not extract article content."}
 
-        # Get AI service
-        from app.services.custom_ai_service import CustomAIService
-        from app.services.llm_backend import get_llm_service
-
-        if current_user.custom_ai_enabled and current_user.custom_ai_url:
-            service = CustomAIService(
-                api_type=current_user.custom_ai_type or "ollama",
-                base_url=current_user.custom_ai_url,
-                model=current_user.custom_ai_model,
-                api_key=current_user.custom_ai_api_key
-            )
-        else:
-            service = get_llm_service(db)
+        # Get AI service - use inference factory (same as news headlines)
+        prepare_vram_for_llm(db)
+        service = get_inference_service(db)
 
         # Summarize with AI
         messages = [
