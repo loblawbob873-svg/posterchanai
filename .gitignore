@@ -67,3 +67,4 @@ venv-ipex/
 .secret_key
 models/
 run-*.sh
+data/
