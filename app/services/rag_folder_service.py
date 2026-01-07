@@ -69,9 +69,10 @@ class FolderIndexer:
 
             try:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
-                # Skip very large files (>1MB)
-                if len(content) > 1_000_000:
-                    logger.warning(f"Skipping large file: {file_path}")
+                # Allow larger files for logs (100MB), smaller for code (1MB)
+                max_size = 100_000_000 if file_path.suffix == '.log' else 1_000_000
+                if len(content) > max_size:
+                    logger.warning(f"Skipping large file: {file_path} ({len(content)} bytes)")
                     continue
 
                 rel_path = str(file_path.relative_to(folder_path))
@@ -116,9 +117,12 @@ class FolderIndexer:
 
             try:
                 content = file_info["content"]
-                # Skip very large files
-                if len(content) > 1_000_000:
-                    logger.warning(f"Skipping large file: {file_info['filename']}")
+                # Allow larger files for logs (100MB), smaller for code (1MB)
+                filename = file_info["filename"]
+                is_log = filename.endswith('.log')
+                max_size = 100_000_000 if is_log else 1_000_000
+                if len(content) > max_size:
+                    logger.warning(f"Skipping large file: {filename} ({len(content)} bytes)")
                     continue
 
                 chunks = self.rag_service.index_file(

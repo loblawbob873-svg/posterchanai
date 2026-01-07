@@ -482,7 +482,7 @@ foxnews.com|Fox News"></textarea>
 <script src="/static/js/apikeys.js"></script>
 <script>
 // RAG Modal functionality
-(function() {
+document.addEventListener('DOMContentLoaded', function() {
     const ragBtn = document.getElementById('ragBtn');
     const ragModal = document.getElementById('ragModal');
     const closeRagModal = document.getElementById('closeRagModal');
@@ -505,10 +505,7 @@ foxnews.com|Fox News"></textarea>
 
     // Save file patterns when changed
     if (ragUploadPatterns) {
-        ragUploadPatterns.addEventListener('change', () => {
-            localStorage.setItem('ragFilePatterns', ragUploadPatterns.value);
-        });
-        ragUploadPatterns.addEventListener('input', () => {
+        ragUploadPatterns.addEventListener('blur', () => {
             localStorage.setItem('ragFilePatterns', ragUploadPatterns.value);
         });
     }
@@ -636,7 +633,7 @@ foxnews.com|Fox News"></textarea>
     const ragUploadStatus = document.getElementById('ragUploadStatus');
 
     if (ragDropzone && ragUploadFile) {
-        ragDropzone.addEventListener('click', () => ragUploadFile.click());
+        // Note: ragDropzone is a <label> wrapping the input, so clicks automatically trigger file dialog
         ragDropzone.addEventListener('dragover', (e) => {
             e.preventDefault();
             ragDropzone.classList.add('dragover');
@@ -708,6 +705,6 @@ foxnews.com|Fox News"></textarea>
     updateRagButton();
     window.ragEnabled = ragEnabled;
     window.ragCollections = selectedCollections;
-})();
+});
 </script>
 {% endblock %}
