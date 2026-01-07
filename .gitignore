@@ -1,3 +1,8 @@
+vscode-extension/node_modules
+vscode-extension/package-lock.jsona
+vscode-extension/posterchanai-rag-sync-1.0.0.vsix
+vscode-extension/package-lock.json
+.aider.*
 # Python
 __pycache__/
 *.py[cod]
