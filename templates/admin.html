@@ -369,6 +369,11 @@
                             <small>0 = auto (use all cores)</small>
                         </div>
                     </div>
+                    <div class="form-group">
+                        <button type="button" class="btn-secondary" id="reloadEmbeddingModelBtn">Reload Embedding Model</button>
+                        <small>Apply RAG settings changes (threads, batch size)</small>
+                    </div>
+                    <div id="embeddingModelStatus" class="model-status"></div>
                 </fieldset>
             </div>
 
@@ -1347,6 +1352,33 @@ document.getElementById('reloadModelBtn').addEventListener('click', async () => 
         } else {
             statusDiv.className = 'model-status error';
             statusDiv.textContent = data.detail || 'Failed to reload model';
+        }
+    } catch (err) {
+        statusDiv.className = 'model-status error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
+
+// Reload embedding model button (for RAG)
+document.getElementById('reloadEmbeddingModelBtn').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('embeddingModelStatus');
+    statusDiv.className = 'model-status loading';
+    statusDiv.textContent = 'Reloading embedding model...';
+    statusDiv.style.display = 'block';
+
+    try {
+        const response = await fetch('/api/admin/reload-embedding-model', {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            statusDiv.className = 'model-status success';
+            statusDiv.textContent = data.message || 'Embedding model reloaded successfully!';
+        } else {
+            statusDiv.className = 'model-status error';
+            statusDiv.textContent = data.detail || 'Failed to reload embedding model';
         }
     } catch (err) {
         statusDiv.className = 'model-status error';

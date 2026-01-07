@@ -126,8 +126,15 @@ class IPEXService:
             # Unload previous model
             if self._model is not None:
                 logger.info(f"Unloading previous model: {self._model_path}")
-                del self._model
-                del self._tokenizer
+                try:
+                    del self._model
+                except AttributeError as e:
+                    # Handle incomplete model objects (e.g., sampler not initialized)
+                    logger.warning(f"Error during model cleanup (ignored): {e}")
+                try:
+                    del self._tokenizer
+                except (AttributeError, TypeError) as e:
+                    logger.warning(f"Error during tokenizer cleanup (ignored): {e}")
                 self._model = None
                 self._tokenizer = None
 
@@ -187,8 +194,22 @@ class IPEXService:
                 self._model_path = self.model_path
 
             except Exception as e:
-                logger.error(f"Failed to load model: {e}")
-                raise
+                error_msg = str(e)
+                # Provide helpful error messages for common issues
+                if "memory" in error_msg.lower() or "dnnl" in error_msg.lower() or "oneDNN" in error_msg:
+                    logger.error(f"Memory allocation failed loading model: {e}")
+                    logger.error("This usually means insufficient GPU/system memory. Try:")
+                    logger.error("  - Reducing context size (ollama_num_ctx)")
+                    logger.error("  - Reducing batch size (llm_n_batch)")
+                    logger.error("  - Using a smaller model")
+                    logger.error("  - Closing other applications")
+                    raise RuntimeError(f"Memory allocation failed: {e}. Try reducing context/batch size or using a smaller model.")
+                elif "No such file" in error_msg or "not found" in error_msg.lower():
+                    logger.error(f"Model file not found: {self.model_path}")
+                    raise FileNotFoundError(f"Model file not found: {self.model_path}")
+                else:
+                    logger.error(f"Failed to load model: {e}")
+                    raise
 
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
@@ -607,8 +628,15 @@ class IPEXService:
         """Force reload the model"""
         if self._model is not None:
             logger.info("Force reloading model...")
-            del self._model
-            del self._tokenizer
+            try:
+                del self._model
+            except AttributeError as e:
+                # Handle incomplete model objects (e.g., sampler not initialized)
+                logger.warning(f"Error during model cleanup (ignored): {e}")
+            try:
+                del self._tokenizer
+            except (AttributeError, TypeError) as e:
+                logger.warning(f"Error during tokenizer cleanup (ignored): {e}")
             self._model = None
             self._tokenizer = None
             self._model_path = None
@@ -619,8 +647,15 @@ class IPEXService:
         """Unload the model from memory"""
         if self._model is not None:
             logger.info("Unloading model from memory")
-            del self._model
-            del self._tokenizer
+            try:
+                del self._model
+            except AttributeError as e:
+                # Handle incomplete model objects (e.g., sampler not initialized)
+                logger.warning(f"Error during model cleanup (ignored): {e}")
+            try:
+                del self._tokenizer
+            except (AttributeError, TypeError) as e:
+                logger.warning(f"Error during tokenizer cleanup (ignored): {e}")
             self._model = None
             self._tokenizer = None
             self._model_path = None

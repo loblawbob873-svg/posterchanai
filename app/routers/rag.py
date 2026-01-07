@@ -361,10 +361,11 @@ async def upload_folder(
     name: str = Form(...),
     description: Optional[str] = Form(None),
     file_patterns: str = Form("*.py,*.js,*.ts,*.md,*.txt"),
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Upload and index a zip file containing code/documents."""
+    """Upload and index a zip file containing code/documents (indexing runs in background)."""
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Only zip files are supported")
 
@@ -384,77 +385,38 @@ async def upload_folder(
     uploads_dir = _get_uploads_dir()
     zip_path = uploads_dir / f"{collection.id}.zip"
 
-    # Load file size limits from settings
-    settings = {s.key: s.value for s in db.query(Setting).all()}
-    max_file_size = int(settings.get("rag_max_file_size", "1")) * 1_000_000
-    max_log_size = int(settings.get("rag_max_log_size", "100")) * 1_000_000
-
-    # Extract and index files
     try:
+        # Read and save the zip file (this is fast)
         content = await file.read()
-
-        # Save zip file for re-indexing
         zip_path.write_bytes(content)
         collection.source_path = str(zip_path.absolute())
         db.commit()
 
-        zip_buffer = io.BytesIO(content)
+        # Validate it's a valid zip file
+        try:
+            with zipfile.ZipFile(io.BytesIO(content), 'r') as zf:
+                # Just test that we can read the file list
+                zf.namelist()
+        except zipfile.BadZipFile:
+            # Cleanup on failure
+            if zip_path.exists():
+                zip_path.unlink()
+            db.delete(collection)
+            db.commit()
+            raise HTTPException(status_code=400, detail="Invalid zip file")
 
-        patterns = [p.strip() for p in file_patterns.split(",")]
-        files_to_index = []
-
-        # Directories to skip
-        skip_dirs = {
-            '.git', 'node_modules', '__pycache__', 'venv', '.venv',
-            'dist', 'build', '.next', '.nuxt', 'target', 'vendor'
-        }
-
-        with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
-            for zip_info in zip_file.infolist():
-                if zip_info.is_dir():
-                    continue
-
-                file_path = Path(zip_info.filename)
-
-                # Skip hidden files and common non-code directories
-                parts = file_path.parts
-                if any(part.startswith('.') for part in parts):
-                    continue
-                if any(part in skip_dirs for part in parts):
-                    continue
-
-                # Check if matches any pattern
-                for pattern in patterns:
-                    if fnmatch(file_path.name, pattern):
-                        try:
-                            file_content = zip_file.read(zip_info.filename).decode('utf-8', errors='ignore')
-                            # Use configurable file size limits
-                            max_size = max_log_size if file_path.suffix == '.log' else max_file_size
-                            if len(file_content) > max_size:
-                                logger.warning(f"Skipping large file {file_path}: {len(file_content)} bytes (limit: {max_size})")
-                                continue
-                            files_to_index.append({
-                                "filename": str(file_path),
-                                "content": file_content
-                            })
-                        except Exception:
-                            pass
-                        break
-
-        # Index files
-        indexer = get_folder_indexer(db, current_user.id)
-        indexer.index_uploaded_files(collection, files_to_index)
+        # Start indexing in background (non-blocking)
+        background_tasks.add_task(
+            _index_upload_task,
+            user_id=current_user.id,
+            collection_id=collection.id
+        )
 
         db.refresh(collection)
         return collection
 
-    except zipfile.BadZipFile:
-        # Cleanup on failure
-        if zip_path.exists():
-            zip_path.unlink()
-        db.delete(collection)
-        db.commit()
-        raise HTTPException(status_code=400, detail="Invalid zip file")
+    except HTTPException:
+        raise
     except Exception as e:
         # Cleanup on failure
         if zip_path.exists():

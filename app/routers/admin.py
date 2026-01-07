@@ -228,3 +228,21 @@ def get_vram_status(
     from app.services.vram_manager import get_vram_status
 
     return get_vram_status(db)
+
+
+@router.post("/reload-embedding-model")
+def reload_embedding_model(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Reload the embedding model (for RAG) with current settings."""
+    from app.services.embedding_service import reload_embedding_model as reload_embed
+
+    try:
+        reload_embed(db)
+        return {"success": True, "message": "Embedding model reloaded successfully"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reload embedding model: {str(e)}"
+        )

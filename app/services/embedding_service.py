@@ -59,7 +59,11 @@ class EmbeddingService:
                     logger.info(f"Auto-set torch threads to {cpu_count}")
 
                 logger.info(f"Loading sentence-transformers model: {self.model_name}")
-                _model = SentenceTransformer(self.model_name)
+                # Set clean_up_tokenization_spaces explicitly to avoid FutureWarning
+                _model = SentenceTransformer(
+                    self.model_name,
+                    tokenizer_kwargs={'clean_up_tokenization_spaces': True}
+                )
                 _model_name = self.model_name
                 logger.info(f"Model loaded, embedding dimension: {_model.get_sentence_embedding_dimension()}")
             except ImportError:
@@ -140,3 +144,20 @@ def unload_model():
         _model = None
         _model_name = None
         logger.info("Embedding model unloaded")
+
+
+def reload_embedding_model(db: Session):
+    """Reload the embedding model with current settings (useful after settings change)."""
+    global _model, _model_name
+
+    # Unload existing model
+    if _model is not None:
+        logger.info("Reloading embedding model...")
+        del _model
+        _model = None
+        _model_name = None
+
+    # Load fresh settings and reinitialize
+    service = EmbeddingService(db)
+    service._ensure_model_loaded()
+    logger.info("Embedding model reloaded with new settings")
