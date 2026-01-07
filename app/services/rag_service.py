@@ -520,6 +520,19 @@ class RAGService:
 
     # ----- Collection Management -----
 
+    def update_collection_document_count(self, collection_id: int):
+        """Update the document_count field to match actual RAGDocument count."""
+        doc_count = self.db.query(RAGDocument).filter(
+            RAGDocument.collection_id == collection_id
+        ).count()
+
+        collection = self.db.query(RAGCollection).filter(
+            RAGCollection.id == collection_id
+        ).first()
+
+        if collection:
+            collection.document_count = doc_count
+
     def delete_collection_documents(self, collection_id: int):
         """Delete all documents in a collection but keep the collection itself."""
         name = self._get_collection_name(collection_id)

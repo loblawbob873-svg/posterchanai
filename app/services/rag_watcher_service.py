@@ -91,7 +91,8 @@ class WatcherService:
             else:
                 logger.warning(f"No content provided for {event_type} event: {file_path}")
 
-        # Update last event timestamp
+        # Update collection document count and last event timestamp
+        self.rag_service.update_collection_document_count(watcher.collection_id)
         watcher.last_event_at = datetime.utcnow()
         self.db.commit()
 
