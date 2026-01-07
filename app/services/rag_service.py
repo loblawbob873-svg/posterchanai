@@ -261,9 +261,53 @@ class RAGService:
         """Generic chunking with overlap for any text."""
         chunks = []
 
-        # Split into paragraphs first
+        # Try splitting by double newlines first (paragraphs)
         paragraphs = content.split('\n\n')
 
+        # If we only got one big paragraph (common in log files), split by single newlines
+        if len(paragraphs) <= 1 or (len(paragraphs) > 0 and len(paragraphs[0]) > self.chunk_size * 2):
+            # Split by single newlines for log-style files
+            lines = content.split('\n')
+
+            current_chunk = ""
+            for line in lines:
+                if len(current_chunk) + len(line) + 1 < self.chunk_size:
+                    current_chunk += line + "\n"
+                else:
+                    if current_chunk.strip():
+                        chunks.append({
+                            "content": current_chunk.strip(),
+                            "metadata": {
+                                "file_path": file_path,
+                                "chunk_type": "text"
+                            }
+                        })
+                    # Start new chunk with overlap from previous lines
+                    if self.chunk_overlap > 0:
+                        overlap_lines = current_chunk.split('\n')
+                        overlap_text = ""
+                        for ol in reversed(overlap_lines):
+                            if len(overlap_text) + len(ol) < self.chunk_overlap:
+                                overlap_text = ol + "\n" + overlap_text
+                            else:
+                                break
+                        current_chunk = overlap_text + line + "\n"
+                    else:
+                        current_chunk = line + "\n"
+
+            # Add remaining content
+            if current_chunk.strip():
+                chunks.append({
+                    "content": current_chunk.strip(),
+                    "metadata": {
+                        "file_path": file_path,
+                        "chunk_type": "text"
+                    }
+                })
+
+            return chunks
+
+        # Original paragraph-based chunking for files with double newlines
         current_chunk = ""
         for para in paragraphs:
             if len(current_chunk) + len(para) < self.chunk_size:
