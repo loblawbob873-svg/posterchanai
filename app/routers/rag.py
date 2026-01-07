@@ -15,7 +15,7 @@ from app.database import get_db, SessionLocal
 from app.models import User, RAGCollection, RAGWatcher, RAGDocument, Setting
 from app.auth import get_current_user
 from app.schemas import (
-    RAGCollectionCreate, RAGCollectionResponse, RAGQueryRequest, RAGQueryResult,
+    RAGCollectionCreate, RAGCollectionUpdate, RAGCollectionResponse, RAGQueryRequest, RAGQueryResult,
     RAGWatcherCreate, RAGWatcherResponse, RAGFileEvent, RAGGitCloneRequest,
     RAGStatusResponse
 )
@@ -79,6 +79,39 @@ def get_collection(
     if not collection:
         raise HTTPException(status_code=404, detail="Collection not found")
 
+    return collection
+
+
+@router.put("/collections/{collection_id}", response_model=RAGCollectionResponse)
+def update_collection(
+    collection_id: int,
+    data: RAGCollectionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update a collection's settings."""
+    collection = db.query(RAGCollection).filter(
+        RAGCollection.id == collection_id,
+        RAGCollection.user_id == current_user.id
+    ).first()
+
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    # Update fields if provided
+    if data.name is not None:
+        collection.name = data.name
+    if data.description is not None:
+        collection.description = data.description
+    if data.source_path is not None:
+        collection.source_path = data.source_path
+    if data.git_branch is not None:
+        collection.git_branch = data.git_branch
+    if data.file_patterns is not None:
+        collection.file_patterns = data.file_patterns
+
+    db.commit()
+    db.refresh(collection)
     return collection
 
 

@@ -182,6 +182,39 @@
                     </button>
                 </fieldset>
 
+                <!-- Edit Collection Modal -->
+                <div id="ragEditModal" class="rag-wizard" style="display: none;">
+                    <div class="wizard-header">
+                        <h3>Edit Collection</h3>
+                        <button type="button" class="btn-icon" id="closeEditModal">&times;</button>
+                    </div>
+                    <div class="wizard-form">
+                        <input type="hidden" id="editCollectionId">
+                        <div class="form-group">
+                            <label>Name</label>
+                            <input type="text" id="editCollectionName">
+                        </div>
+                        <div class="form-group" id="editGitUrlGroup">
+                            <label>Git URL</label>
+                            <input type="text" id="editCollectionGitUrl">
+                        </div>
+                        <div class="form-group" id="editBranchGroup">
+                            <label>Branch</label>
+                            <input type="text" id="editCollectionBranch" placeholder="main or master">
+                        </div>
+                        <div class="form-group">
+                            <label>File Patterns</label>
+                            <input type="text" id="editCollectionPatterns">
+                            <small>Comma-separated patterns (e.g., *.py,*.js,*.ts)</small>
+                        </div>
+                        <div class="form-row" style="gap: 10px; margin-top: 15px;">
+                            <button type="button" class="btn-primary" id="saveEditCollection">Save</button>
+                            <button type="button" class="btn-secondary" id="saveAndReindex">Save & Re-index</button>
+                        </div>
+                        <div id="editStatus" class="rag-status-message"></div>
+                    </div>
+                </div>
+
                 <!-- Add Codebase Wizard (hidden by default) -->
                 <div id="ragWizard" class="rag-wizard" style="display: none;">
                     <!-- Step 1: Choose Method -->
@@ -1402,16 +1435,19 @@ async function loadRagCollections() {
             }
 
             list.innerHTML = collections.map(c => `
-                <div class="rag-collection-item" data-id="${c.id}">
+                <div class="rag-collection-item" data-id="${c.id}" data-type="${c.collection_type}" data-source="${escapeHtml(c.source_path || '')}" data-branch="${escapeHtml(c.git_branch || '')}" data-patterns="${escapeHtml(c.file_patterns || '')}">
                     <div class="rag-collection-header">
                         <span class="rag-collection-name">${escapeHtml(c.name)}</span>
                         <span class="rag-collection-type">${c.collection_type}</span>
                     </div>
                     <div class="rag-collection-stats">
                         <span>📄 ${c.document_count || 0} files</span>
-                        <span>📅 ${c.last_indexed_at ? new Date(c.last_indexed_at).toLocaleDateString() : 'Indexing...'}</span>
+                        ${c.collection_type === 'git' ? `<span>🌿 ${escapeHtml(c.git_branch || 'main')}</span>` : ''}
+                        <span>📅 ${c.last_indexed_at ? new Date(c.last_indexed_at).toLocaleDateString() : 'Not indexed'}</span>
                     </div>
+                    ${c.source_path ? `<div class="rag-collection-source" style="font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; word-break: break-all;">📎 ${escapeHtml(c.source_path)}</div>` : ''}
                     <div class="rag-collection-actions">
+                        <button class="btn-secondary" onclick="editCollection(${c.id})">Edit</button>
                         ${c.collection_type === 'watcher' ? `<button class="btn-secondary" onclick="showApiKey(${c.id})">Show API Key</button>` : ''}
                         <button class="btn-secondary" onclick="reindexCollection(${c.id})">Re-index</button>
                         <button class="btn-danger" onclick="deleteCollection(${c.id})">Delete</button>
@@ -1749,5 +1785,95 @@ async function showApiKey(collectionId) {
         alert('Error getting API key');
     }
 }
+
+// Edit collection
+function editCollection(id) {
+    const item = document.querySelector(`.rag-collection-item[data-id="${id}"]`);
+    if (!item) return;
+
+    const type = item.dataset.type;
+    const name = item.querySelector('.rag-collection-name').textContent;
+    const source = item.dataset.source;
+    const branch = item.dataset.branch;
+    const patterns = item.dataset.patterns;
+
+    document.getElementById('editCollectionId').value = id;
+    document.getElementById('editCollectionName').value = name;
+    document.getElementById('editCollectionGitUrl').value = source;
+    document.getElementById('editCollectionBranch').value = branch;
+    document.getElementById('editCollectionPatterns').value = patterns;
+
+    // Show/hide git-specific fields
+    const gitUrlGroup = document.getElementById('editGitUrlGroup');
+    const branchGroup = document.getElementById('editBranchGroup');
+    if (type === 'git') {
+        gitUrlGroup.style.display = 'block';
+        branchGroup.style.display = 'block';
+    } else {
+        gitUrlGroup.style.display = 'none';
+        branchGroup.style.display = type === 'folder' ? 'none' : 'none';
+    }
+
+    document.getElementById('editStatus').className = 'rag-status-message';
+    document.getElementById('ragEditModal').style.display = 'block';
+}
+
+document.getElementById('closeEditModal').addEventListener('click', () => {
+    document.getElementById('ragEditModal').style.display = 'none';
+});
+
+async function saveCollection(andReindex = false) {
+    const id = document.getElementById('editCollectionId').value;
+    const statusDiv = document.getElementById('editStatus');
+
+    const data = {
+        name: document.getElementById('editCollectionName').value.trim(),
+        source_path: document.getElementById('editCollectionGitUrl').value.trim(),
+        git_branch: document.getElementById('editCollectionBranch').value.trim(),
+        file_patterns: document.getElementById('editCollectionPatterns').value.trim()
+    };
+
+    statusDiv.className = 'rag-status-message loading';
+    statusDiv.textContent = 'Saving...';
+
+    try {
+        const response = await fetch(`/api/rag/collections/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        if (response.ok) {
+            if (andReindex) {
+                statusDiv.textContent = 'Saved! Starting re-index...';
+                const reindexResp = await fetch(`/api/rag/collections/${id}/reindex`, { method: 'POST' });
+                if (reindexResp.ok) {
+                    statusDiv.className = 'rag-status-message success';
+                    statusDiv.textContent = 'Saved and re-indexing started!';
+                } else {
+                    statusDiv.className = 'rag-status-message error';
+                    statusDiv.textContent = 'Saved but failed to start re-index';
+                }
+            } else {
+                statusDiv.className = 'rag-status-message success';
+                statusDiv.textContent = 'Saved successfully!';
+            }
+            loadRagCollections();
+            setTimeout(() => {
+                document.getElementById('ragEditModal').style.display = 'none';
+            }, 1500);
+        } else {
+            const err = await response.json();
+            statusDiv.className = 'rag-status-message error';
+            statusDiv.textContent = err.detail || 'Failed to save';
+        }
+    } catch (err) {
+        statusDiv.className = 'rag-status-message error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+}
+
+document.getElementById('saveEditCollection').addEventListener('click', () => saveCollection(false));
+document.getElementById('saveAndReindex').addEventListener('click', () => saveCollection(true));
 </script>
 {% endblock %}

@@ -341,6 +341,14 @@ class RAGCollectionCreate(BaseModel):
     file_patterns: Optional[str] = "*.py,*.js,*.ts,*.md,*.txt"
 
 
+class RAGCollectionUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    source_path: Optional[str] = None
+    git_branch: Optional[str] = None
+    file_patterns: Optional[str] = None
+
+
 class RAGCollectionResponse(BaseModel):
     id: int
     name: str
