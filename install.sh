@@ -403,6 +403,13 @@ setup_directories() {
         sudo chown "$(whoami)":"$(whoami)" "$MODELS_PATH"
         print_success "Created $MODELS_PATH"
     fi
+
+    # Create data directory for ChromaDB (RAG vector store)
+    DATA_PATH="$SCRIPT_DIR/data"
+    if [ ! -d "$DATA_PATH" ]; then
+        mkdir -p "$DATA_PATH/chromadb"
+        print_success "Created $DATA_PATH/chromadb (RAG vector store)"
+    fi
 }
 
 setup_python_env() {
@@ -1132,6 +1139,11 @@ print_summary() {
         echo "    • Set both Default Model and Anime Model for auto-switching"
     fi
     echo ""
+    echo -e "  ${BOLD}RAG (Codebase Indexing):${NC}"
+    echo "    • Create collections in Admin > RAG tab"
+    echo "    • Use VS Code extension for real-time sync"
+    echo "    • First query downloads ~90MB embedding model"
+    echo ""
 }
 
 # Handle --help and --packages options
@@ -1160,6 +1172,10 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "Image Backends:"
     echo "  Native           Built-in diffusers (CUDA/XPU/ROCm/CPU)"
     echo "  ComfyUI          External ComfyUI service"
+    echo ""
+    echo "RAG (Codebase Indexing):"
+    echo "  Built-in         ChromaDB + sentence-transformers"
+    echo "                   First query downloads ~90MB embedding model"
     echo ""
     exit 0
 fi

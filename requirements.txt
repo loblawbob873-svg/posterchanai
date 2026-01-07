@@ -34,3 +34,7 @@ onnxruntime>=1.16.0
 # ipex-llm[xpu]==2.2.0
 # transformers>=4.37.0
 # numpy<2  # Required for torch/IPEX compatibility
+
+# RAG (Retrieval-Augmented Generation) support
+chromadb>=0.4.0
+sentence-transformers>=2.2.0

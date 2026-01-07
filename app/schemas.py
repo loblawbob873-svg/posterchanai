@@ -168,6 +168,15 @@ class SettingsResponse(BaseModel):
     imap_sent_folder: str = "Sent"
     # News sources
     news_sources: str = ""
+    # RAG (Retrieval-Augmented Generation) settings
+    rag_enabled: str = "true"
+    rag_embedding_model: str = "all-MiniLM-L6-v2"
+    rag_chunk_size: str = "1000"
+    rag_chunk_overlap: str = "200"
+    rag_top_k: str = "5"
+    rag_min_similarity: str = "0.3"
+    rag_chromadb_path: str = "./data/chromadb"
+    rag_auto_context: str = "true"
 
 
 # TTS schema
@@ -319,3 +328,82 @@ class TestConnectionResponse(BaseModel):
     success: bool
     message: str
     models: Optional[List[str]] = None  # Available models if successful
+
+
+# RAG (Retrieval-Augmented Generation) schemas
+
+class RAGCollectionCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    collection_type: str  # "folder", "git", "watcher"
+    source_path: Optional[str] = None
+    git_branch: Optional[str] = "main"
+    file_patterns: Optional[str] = "*.py,*.js,*.ts,*.md,*.txt"
+
+
+class RAGCollectionResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    collection_type: str
+    source_path: Optional[str] = None
+    git_branch: Optional[str] = None
+    file_patterns: Optional[str] = None
+    document_count: int = 0
+    last_indexed_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RAGQueryRequest(BaseModel):
+    query: str
+    collection_ids: Optional[List[int]] = None  # None = search all user collections
+    top_k: Optional[int] = None
+
+
+class RAGQueryResult(BaseModel):
+    content: str
+    file_path: str
+    similarity: float
+    collection_name: str
+
+
+class RAGWatcherCreate(BaseModel):
+    collection_id: int
+    watch_path: str
+
+
+class RAGWatcherResponse(BaseModel):
+    id: int
+    collection_id: int
+    watch_path: str
+    api_key: str
+    is_active: bool
+    last_event_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RAGFileEvent(BaseModel):
+    """Event from VS Code file watcher"""
+    event_type: str  # "created", "modified", "deleted"
+    file_path: str
+    content: Optional[str] = None  # File content for create/modify
+
+
+class RAGGitCloneRequest(BaseModel):
+    name: str
+    git_url: str
+    branch: Optional[str] = "main"
+    file_patterns: Optional[str] = "*.py,*.js,*.ts,*.md,*.txt"
+
+
+class RAGStatusResponse(BaseModel):
+    enabled: bool
+    embedding_model: str
+    collections_count: int
+    total_documents: int

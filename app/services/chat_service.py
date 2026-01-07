@@ -14,6 +14,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# RAG context injection template
+RAG_CONTEXT_TEMPLATE = """
+
+---
+The following is relevant context from the user's indexed codebase/documents that may help answer their question:
+
+{context}
+
+---
+Use this context to provide accurate and helpful responses. If the context doesn't seem relevant to the question, you can ignore it."""
+
 # Thread pool for running synchronous generators
 _stream_executor = ThreadPoolExecutor(max_workers=4)
 
@@ -48,6 +59,61 @@ class ChatService:
             )
         return None
 
+    def _get_rag_context(self, user_message: str) -> str:
+        """Get RAG context for the user message if enabled."""
+        if not self.user:
+            return ""
+
+        # Check if RAG is enabled
+        rag_enabled = self._settings.get("rag_enabled", "true").lower() == "true"
+        auto_context = self._settings.get("rag_auto_context", "true").lower() == "true"
+
+        if not rag_enabled or not auto_context:
+            return ""
+
+        try:
+            from app.services.rag_service import get_rag_service
+            rag_service = get_rag_service(self.db, self.user.id)
+            results = rag_service.query(user_message)
+
+            if results:
+                context = rag_service.format_context(results)
+                return RAG_CONTEXT_TEMPLATE.format(context=context)
+        except Exception as e:
+            logger.warning(f"RAG query failed: {e}")
+
+        return ""
+
+    def _inject_rag_context(self, messages: list[dict], user_message: str) -> list[dict]:
+        """Inject RAG context into messages if available."""
+        rag_context = self._get_rag_context(user_message)
+        if not rag_context:
+            return messages
+
+        # Find and enhance the system message, or add one
+        enhanced_messages = []
+        system_found = False
+
+        for msg in messages:
+            if msg.get("role") == "system" and not system_found:
+                # Append RAG context to system message
+                enhanced_messages.append({
+                    "role": "system",
+                    "content": msg["content"] + rag_context
+                })
+                system_found = True
+            else:
+                enhanced_messages.append(msg)
+
+        # If no system message was found, add one with RAG context
+        if not system_found:
+            enhanced_messages.insert(0, {
+                "role": "system",
+                "content": f"You are a helpful AI assistant.{rag_context}"
+            })
+
+        return enhanced_messages
+
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
         from app.services.text_utils import strip_thinking_tags
@@ -56,6 +122,16 @@ class ChatService:
     async def chat(self, messages: list[dict]) -> str:
         """Non-streaming chat completion using inference factory or custom AI service"""
         try:
+            # Extract user message for RAG query (last user message)
+            user_message = ""
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    user_message = msg.get("content", "")
+                    break
+
+            # Inject RAG context if available
+            messages = self._inject_rag_context(messages, user_message)
+
             # Check if user has custom AI service enabled
             custom_service = self._get_custom_ai_service()
             if custom_service:
@@ -87,6 +163,16 @@ class ChatService:
     async def chat_stream(self, messages: list[dict]) -> AsyncGenerator[str, None]:
         """Streaming chat completion - uses async queue to avoid blocking event loop"""
         try:
+            # Extract user message for RAG query (last user message)
+            user_message = ""
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    user_message = msg.get("content", "")
+                    break
+
+            # Inject RAG context if available
+            messages = self._inject_rag_context(messages, user_message)
+
             # Check if user has custom AI service enabled
             custom_service = self._get_custom_ai_service()
             if custom_service:

@@ -52,6 +52,213 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 - GPU VRAM monitoring with automatic model reload when memory threshold exceeded
 - PWA support (installable on mobile/desktop)
 
+### RAG (Retrieval-Augmented Generation)
+- **Codebase indexing** - Index your project for code-aware AI responses
+- **ChromaDB vector store** - Persistent, file-based vector database
+- **Local embeddings** - Runs offline with sentence-transformers (no API costs)
+- **Code-aware chunking** - Respects function/class boundaries for Python, JS, Go, Rust, Java
+- **Three indexing methods:**
+  - Git repository cloning
+  - Zip file upload
+  - Real-time file watcher API (VS Code integration)
+- **Auto-context injection** - RAG context automatically added to chat
+
+## RAG (Retrieval-Augmented Generation)
+
+Posterchanai includes built-in RAG support for indexing and querying codebases. This enables the AI to provide contextually aware responses based on your project files.
+
+### Features
+
+- **Fully local** - Uses sentence-transformers for embeddings, no external API needed
+- **ChromaDB** - Persistent file-based vector store
+- **Code-aware chunking** - Splits code by function/class boundaries:
+  - Python: class/function definitions
+  - JavaScript/TypeScript: functions, classes, arrow functions
+  - Go: func/type definitions
+  - Rust: fn/impl/struct blocks
+  - Java/Kotlin: method definitions
+  - Markdown: header sections
+- **Incremental updates** - Only re-indexes changed files (SHA256 hash tracking)
+- **Auto-context** - Relevant code snippets automatically injected into chat
+
+### Configuration
+
+Access Admin Panel > Settings to configure RAG:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `rag_enabled` | true | Enable/disable RAG |
+| `rag_embedding_model` | all-MiniLM-L6-v2 | Sentence-transformers model (~90MB) |
+| `rag_chunk_size` | 1000 | Max characters per chunk |
+| `rag_chunk_overlap` | 200 | Overlap between chunks |
+| `rag_top_k` | 5 | Number of chunks to retrieve |
+| `rag_min_similarity` | 0.3 | Minimum similarity threshold (0-1) |
+| `rag_chromadb_path` | ./data/chromadb | Vector store location |
+| `rag_auto_context` | true | Auto-inject RAG context into chat |
+
+### Creating Collections
+
+#### Option 1: Clone a Git Repository
+
+```bash
+curl -X POST http://localhost:3051/api/rag/collections/git \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Project",
+    "git_url": "https://github.com/user/repo.git",
+    "branch": "main",
+    "file_patterns": "*.py,*.js,*.ts,*.md"
+  }'
+```
+
+Indexing runs in the background. Check status with:
+```bash
+curl http://localhost:3051/api/rag/collections/1/stats \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### Option 2: Upload a Zip File
+
+```bash
+curl -X POST http://localhost:3051/api/rag/collections/upload \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "name=My Project" \
+  -F "file=@project.zip" \
+  -F "file_patterns=*.py,*.js,*.md"
+```
+
+#### Option 3: Index a Local Folder
+
+```bash
+curl -X POST http://localhost:3051/api/rag/collections/folder \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Local Project",
+    "source_path": "/home/user/projects/myapp",
+    "file_patterns": "*.py,*.js,*.ts,*.md"
+  }'
+```
+
+#### Option 4: VS Code Extension (Recommended for Real-time Sync)
+
+Install the **Posterchanai RAG Sync** VS Code extension for seamless file synchronization:
+
+1. Build and install the extension:
+```bash
+cd vscode-extension
+npm install
+npm run package
+# Install the generated .vsix file in VS Code
+```
+
+2. In VS Code, click the "RAG Sync" status bar item
+3. Enter your server URL and create a new collection (or use existing API key)
+4. Files sync automatically as you edit!
+
+**Features:**
+- Auto-sync on file save
+- Status bar indicator
+- Configurable file patterns and ignored folders
+- Batch sync all files command
+
+See `vscode-extension/README.md` for detailed setup instructions.
+
+<details>
+<summary>Alternative: Manual Node.js Watcher Script</summary>
+
+If you prefer not to use the VS Code extension:
+
+1. Create a watcher for an existing collection:
+```bash
+curl -X POST http://localhost:3051/api/rag/watchers \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_id": 1,
+    "watch_path": "/home/user/projects/myapp"
+  }'
+```
+
+2. Save the returned `api_key`
+
+3. Create `watch.js`:
+```javascript
+const chokidar = require('chokidar');
+const fs = require('fs');
+
+const API_KEY = 'rag_your_api_key_here';
+const API_URL = 'http://localhost:3051/api/rag/watcher-event';
+
+chokidar.watch('.', {
+  ignored: /(^|[\/\\])\.|node_modules|__pycache__|\.git/,
+  persistent: true
+}).on('all', async (event, path) => {
+  if (!path.match(/\.(py|js|ts|tsx|md|txt)$/)) return;
+
+  const eventMap = { add: 'created', change: 'modified', unlink: 'deleted' };
+  const eventType = eventMap[event];
+  if (!eventType) return;
+
+  const content = eventType !== 'deleted' ? fs.readFileSync(path, 'utf8') : null;
+
+  await fetch(`${API_URL}?api_key=${API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event_type: eventType, file_path: path, content })
+  });
+});
+```
+
+4. Run: `npm install chokidar && node watch.js`
+</details>
+
+### Querying RAG
+
+RAG context is **automatically injected** into chat when `rag_auto_context` is enabled. Just ask questions about your code!
+
+For direct queries:
+```bash
+curl -X POST http://localhost:3051/api/rag/query \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "How does the authentication system work?",
+    "top_k": 5
+  }'
+```
+
+### RAG API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/rag/collections` | GET | List all collections |
+| `/api/rag/collections` | POST | Create a collection |
+| `/api/rag/collections/{id}` | GET | Get collection details |
+| `/api/rag/collections/{id}` | DELETE | Delete collection |
+| `/api/rag/collections/{id}/stats` | GET | Get collection statistics |
+| `/api/rag/collections/{id}/reindex` | POST | Re-index collection |
+| `/api/rag/collections/git` | POST | Clone and index git repo |
+| `/api/rag/collections/upload` | POST | Upload and index zip file |
+| `/api/rag/collections/folder` | POST | Index local folder |
+| `/api/rag/watchers` | GET | List file watchers |
+| `/api/rag/watchers` | POST | Create file watcher |
+| `/api/rag/watchers/{id}` | DELETE | Delete watcher |
+| `/api/rag/watcher-event` | POST | Handle file event (API key auth) |
+| `/api/rag/query` | POST | Query RAG index |
+| `/api/rag/status` | GET | Get RAG status |
+
+### Dependencies
+
+RAG requires these additional packages (included in requirements.txt):
+```
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+```
+
+The embedding model (~90MB) is downloaded automatically on first use.
+
 ## Installation
 
 ### Quick Start (Recommended)

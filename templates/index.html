@@ -91,6 +91,7 @@
             <button class="quick-btn mode-btn" data-mode="geni">Generate</button>
             <button class="quick-btn" id="translateBtn">Translate</button>
             <button class="quick-btn" id="newsBtn">News</button>
+            <button class="quick-btn" id="ragBtn" title="RAG Context">RAG</button>
         </div>
 
         <!-- Input Area -->
@@ -318,9 +319,240 @@ foxnews.com|Fox News"></textarea>
     </div>
 </div>
 
+<!-- RAG Modal -->
+<div class="modal" id="ragModal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>RAG Context</h2>
+            <button class="btn-icon modal-close" id="closeRagModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="modal-info">Select collections to include code context in your chat.</p>
+
+            <div class="rag-toggle-section">
+                <label class="toggle-row">
+                    <span>Enable RAG Context</span>
+                    <input type="checkbox" id="ragContextEnabled">
+                </label>
+            </div>
+
+            <div class="rag-collections-section" id="ragCollectionsSection">
+                <h4>Your Collections</h4>
+                <div id="ragUserCollections" class="rag-collection-checkboxes">
+                    <!-- Collections loaded here -->
+                </div>
+            </div>
+
+            <div class="rag-status-section">
+                <div class="rag-status-item">
+                    <span>Model:</span>
+                    <span id="ragStatusModel">-</span>
+                </div>
+                <div class="rag-status-item">
+                    <span>Total Documents:</span>
+                    <span id="ragStatusDocs">-</span>
+                </div>
+            </div>
+
+            <div class="rag-actions">
+                <button class="btn-primary" id="saveRagSettings">Save Settings</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.rag-toggle-section {
+    margin-bottom: 20px;
+}
+.rag-toggle-section .toggle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+.rag-collections-section h4 {
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+.rag-collection-checkboxes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+.rag-collection-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    cursor: pointer;
+}
+.rag-collection-checkbox:hover {
+    background: var(--bg-tertiary);
+}
+.rag-collection-checkbox input {
+    margin: 0;
+}
+.rag-collection-checkbox .collection-name {
+    flex: 1;
+    font-weight: 500;
+}
+.rag-collection-checkbox .collection-stats {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.rag-status-section {
+    margin: 20px 0;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+.rag-status-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+}
+.rag-actions {
+    margin-top: 15px;
+}
+.rag-empty-msg {
+    text-align: center;
+    padding: 20px;
+    color: var(--text-secondary);
+}
+#ragBtn.active {
+    background: var(--accent);
+    color: white;
+}
+</style>
+
 <script src="/static/js/mascot.js"></script>
 <script src="/static/js/tts.js"></script>
 <script src="/static/js/chat.js?v=7"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/apikeys.js"></script>
+<script>
+// RAG Modal functionality
+(function() {
+    const ragBtn = document.getElementById('ragBtn');
+    const ragModal = document.getElementById('ragModal');
+    const closeRagModal = document.getElementById('closeRagModal');
+    const ragContextEnabled = document.getElementById('ragContextEnabled');
+    const ragUserCollections = document.getElementById('ragUserCollections');
+    const ragStatusModel = document.getElementById('ragStatusModel');
+    const ragStatusDocs = document.getElementById('ragStatusDocs');
+    const saveRagSettings = document.getElementById('saveRagSettings');
+
+    // Load RAG state from localStorage (default to disabled)
+    let ragEnabled = localStorage.getItem('ragEnabled') === 'true';
+    let selectedCollections = JSON.parse(localStorage.getItem('ragSelectedCollections') || '[]');
+
+    // Update button state - only active when enabled AND has collections
+    function updateRagButton() {
+        if (ragEnabled && selectedCollections.length > 0) {
+            ragBtn.classList.add('active');
+            ragBtn.title = `RAG: ${selectedCollections.length} collection(s) active`;
+        } else {
+            ragBtn.classList.remove('active');
+            ragBtn.title = ragEnabled ? 'RAG: No collections selected' : 'RAG Context';
+        }
+    }
+
+    // Open modal
+    ragBtn.addEventListener('click', async () => {
+        ragModal.style.display = 'flex';
+        ragContextEnabled.checked = ragEnabled;
+        await loadRagCollections();
+        await loadRagStatus();
+    });
+
+    // Close modal
+    closeRagModal.addEventListener('click', () => {
+        ragModal.style.display = 'none';
+    });
+
+    ragModal.addEventListener('click', (e) => {
+        if (e.target === ragModal) {
+            ragModal.style.display = 'none';
+        }
+    });
+
+    // Load collections
+    async function loadRagCollections() {
+        try {
+            const response = await fetch('/api/rag/collections');
+            if (response.ok) {
+                const collections = await response.json();
+
+                if (collections.length === 0) {
+                    ragUserCollections.innerHTML = '<div class="rag-empty-msg">No collections yet. Create one in Admin Panel.</div>';
+                    return;
+                }
+
+                ragUserCollections.innerHTML = collections.map(c => `
+                    <label class="rag-collection-checkbox">
+                        <input type="checkbox" value="${c.id}" ${selectedCollections.includes(c.id) ? 'checked' : ''}>
+                        <span class="collection-name">${escapeHtml(c.name)}</span>
+                        <span class="collection-stats">${c.document_count || 0} docs</span>
+                    </label>
+                `).join('');
+            }
+        } catch (err) {
+            console.error('Failed to load RAG collections:', err);
+            ragUserCollections.innerHTML = '<div class="rag-empty-msg">Failed to load collections</div>';
+        }
+    }
+
+    // Load RAG status
+    async function loadRagStatus() {
+        try {
+            const response = await fetch('/api/rag/status');
+            if (response.ok) {
+                const data = await response.json();
+                ragStatusModel.textContent = data.model_name || 'Not loaded';
+                ragStatusDocs.textContent = data.total_documents || 0;
+            }
+        } catch (err) {
+            console.error('Failed to load RAG status:', err);
+        }
+    }
+
+    // Save settings
+    saveRagSettings.addEventListener('click', () => {
+        ragEnabled = ragContextEnabled.checked;
+        localStorage.setItem('ragEnabled', ragEnabled);
+
+        // Get selected collections
+        const checkboxes = ragUserCollections.querySelectorAll('input[type="checkbox"]:checked');
+        selectedCollections = Array.from(checkboxes).map(cb => parseInt(cb.value));
+        localStorage.setItem('ragSelectedCollections', JSON.stringify(selectedCollections));
+
+        updateRagButton();
+        ragModal.style.display = 'none';
+
+        // Update global state for chat.js to use
+        window.ragEnabled = ragEnabled;
+        window.ragCollections = selectedCollections;
+    });
+
+    // Helper
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Initialize
+    updateRagButton();
+    window.ragEnabled = ragEnabled;
+    window.ragCollections = selectedCollections;
+})();
+</script>
 {% endblock %}

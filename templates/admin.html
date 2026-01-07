@@ -15,6 +15,7 @@
     <div class="admin-tabs">
         <button class="tab-btn active" data-tab="ai">AI Settings</button>
         <button class="tab-btn" data-tab="image">Image Generation</button>
+        <button class="tab-btn" data-tab="rag">RAG</button>
         <button class="tab-btn" data-tab="services">Services</button>
         <button class="tab-btn" data-tab="site">Site Settings</button>
         <button class="tab-btn" data-tab="users">Users</button>
@@ -164,6 +165,154 @@
                     <div class="form-group">
                         <label for="ollama_stop">Stop Sequences (comma-separated)</label>
                         <input type="text" id="ollama_stop" name="ollama_stop" placeholder="</s>, [INST]">
+                    </div>
+                </fieldset>
+            </div>
+
+            <!-- RAG Tab -->
+            <div class="tab-content" id="tab-rag">
+                <!-- Your Codebases -->
+                <fieldset>
+                    <legend>Your Codebases</legend>
+                    <div id="ragCollectionList" class="rag-collection-list">
+                        <!-- Collections loaded here -->
+                    </div>
+                    <button type="button" class="btn-primary" id="addCodebaseBtn" style="margin-top: 15px;">
+                        + Add Codebase
+                    </button>
+                </fieldset>
+
+                <!-- Add Codebase Wizard (hidden by default) -->
+                <div id="ragWizard" class="rag-wizard" style="display: none;">
+                    <!-- Step 1: Choose Method -->
+                    <div id="wizardStep1" class="wizard-step">
+                        <div class="wizard-header">
+                            <h3>Add Codebase</h3>
+                            <button type="button" class="btn-icon" id="closeWizard">&times;</button>
+                        </div>
+                        <p>Choose how to add your code:</p>
+                        <div class="wizard-options">
+                            <button type="button" class="wizard-option" data-method="git">
+                                <span class="wizard-icon">🔗</span>
+                                <span class="wizard-label">Git Repository</span>
+                                <span class="wizard-desc">Clone from GitHub, GitLab, etc.</span>
+                            </button>
+                            <button type="button" class="wizard-option" data-method="upload">
+                                <span class="wizard-icon">📦</span>
+                                <span class="wizard-label">Upload Zip</span>
+                                <span class="wizard-desc">Upload a zip file of your code</span>
+                            </button>
+                            <button type="button" class="wizard-option" data-method="vscode">
+                                <span class="wizard-icon">💻</span>
+                                <span class="wizard-label">VS Code Extension</span>
+                                <span class="wizard-desc">Real-time sync as you code</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Configure (changes based on method) -->
+                    <div id="wizardStep2" class="wizard-step" style="display: none;">
+                        <div class="wizard-header">
+                            <button type="button" class="btn-secondary btn-small" id="wizardBack">← Back</button>
+                            <h3 id="wizardStep2Title">Configure</h3>
+                            <span></span>
+                        </div>
+
+                        <!-- Git Form -->
+                        <div id="wizardGitForm" class="wizard-form" style="display: none;">
+                            <div class="form-group">
+                                <label>Repository URL</label>
+                                <input type="text" id="wizardGitUrl" placeholder="https://github.com/user/repo.git">
+                            </div>
+                            <div class="form-group">
+                                <label>Branch</label>
+                                <input type="text" id="wizardGitBranch" value="main" placeholder="main">
+                            </div>
+                            <div class="form-group">
+                                <label>Name (optional)</label>
+                                <input type="text" id="wizardGitName" placeholder="Auto-detected from URL">
+                            </div>
+                            <div class="form-group">
+                                <label>File Types</label>
+                                <input type="text" id="wizardGitPatterns" value="*.py,*.js,*.ts,*.go,*.rs,*.md">
+                                <small>Comma-separated patterns</small>
+                            </div>
+                            <button type="button" class="btn-primary" id="wizardGitSubmit">Clone & Index</button>
+                        </div>
+
+                        <!-- Upload Form -->
+                        <div id="wizardUploadForm" class="wizard-form" style="display: none;">
+                            <div class="form-group">
+                                <label>Codebase Name</label>
+                                <input type="text" id="wizardUploadName" placeholder="My Project">
+                            </div>
+                            <div class="form-group">
+                                <label>File Types</label>
+                                <input type="text" id="wizardUploadPatterns" value="*.py,*.js,*.ts,*.go,*.rs,*.md">
+                            </div>
+                            <div class="form-group">
+                                <label class="upload-dropzone" id="wizardDropzone">
+                                    <input type="file" id="wizardUploadFile" accept=".zip" style="display: none;">
+                                    <span class="dropzone-icon">📁</span>
+                                    <span class="dropzone-text">Click or drag zip file here</span>
+                                    <span class="dropzone-filename" id="wizardFileName"></span>
+                                </label>
+                            </div>
+                            <button type="button" class="btn-primary" id="wizardUploadSubmit" disabled>Upload & Index</button>
+                        </div>
+
+                        <!-- VS Code Form -->
+                        <div id="wizardVscodeForm" class="wizard-form" style="display: none;">
+                            <div class="form-group">
+                                <label>Collection Name</label>
+                                <input type="text" id="wizardVscodeName" placeholder="My Project">
+                            </div>
+                            <div class="form-group">
+                                <label>File Types</label>
+                                <input type="text" id="wizardVscodePatterns" value="*.py,*.js,*.ts,*.go,*.rs,*.md">
+                            </div>
+                            <button type="button" class="btn-primary" id="wizardVscodeSubmit">Create & Get API Key</button>
+                        </div>
+
+                        <div id="wizardStatus" class="rag-status-message"></div>
+                    </div>
+
+                    <!-- Step 3: Success -->
+                    <div id="wizardStep3" class="wizard-step" style="display: none;">
+                        <div class="wizard-header">
+                            <h3>Success!</h3>
+                            <span></span>
+                        </div>
+                        <div id="wizardSuccessContent" class="wizard-success">
+                            <!-- Filled dynamically -->
+                        </div>
+                        <button type="button" class="btn-primary" id="wizardDone">Done</button>
+                    </div>
+                </div>
+
+                <!-- RAG Settings -->
+                <fieldset>
+                    <legend>Settings</legend>
+                    <div class="form-group">
+                        <label for="rag_enabled">
+                            <input type="checkbox" id="rag_enabled" name="rag_enabled" checked> Enable RAG
+                        </label>
+                        <small>Inject relevant code context into chat</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="rag_auto_context">
+                            <input type="checkbox" id="rag_auto_context" name="rag_auto_context" checked> Auto-inject Context
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="rag_top_k">Results</label>
+                            <input type="number" id="rag_top_k" name="rag_top_k" value="5" min="1" max="20">
+                        </div>
+                        <div class="form-group">
+                            <label for="rag_min_similarity">Min Similarity</label>
+                            <input type="number" id="rag_min_similarity" name="rag_min_similarity" value="0.3" min="0" max="1" step="0.05">
+                        </div>
                     </div>
                 </fieldset>
             </div>
@@ -697,6 +846,203 @@ newsweek.com|Newsweek"></textarea>
 .vram-info p:last-child {
     margin-bottom: 0;
 }
+/* RAG styles */
+.rag-collection-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.rag-collection-item {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 15px;
+}
+.rag-collection-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.rag-collection-name {
+    font-weight: 600;
+    font-size: 16px;
+}
+.rag-collection-type {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--accent);
+    color: white;
+}
+.rag-collection-stats {
+    display: flex;
+    gap: 20px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+.rag-collection-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.rag-collection-actions button {
+    font-size: 12px;
+    padding: 4px 10px;
+}
+.rag-status-message {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 6px;
+    display: none;
+}
+.rag-status-message.success {
+    display: block;
+    background: rgba(39, 174, 96, 0.2);
+    border: 1px solid #27ae60;
+    color: #27ae60;
+}
+.rag-status-message.error {
+    display: block;
+    background: rgba(231, 76, 60, 0.2);
+    border: 1px solid #e74c3c;
+    color: #e74c3c;
+}
+.rag-status-message.loading {
+    display: block;
+    background: rgba(74, 158, 255, 0.2);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+}
+.rag-empty {
+    text-align: center;
+    padding: 30px;
+    color: var(--text-secondary);
+}
+/* Wizard styles */
+.rag-wizard {
+    background: var(--bg-secondary);
+    border: 2px solid var(--accent);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+.wizard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+.wizard-header h3 {
+    margin: 0;
+}
+.wizard-options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.wizard-option {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 15px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.2s;
+}
+.wizard-option:hover {
+    border-color: var(--accent);
+    background: var(--bg-tertiary);
+}
+.wizard-icon {
+    font-size: 24px;
+}
+.wizard-label {
+    font-weight: 600;
+    display: block;
+}
+.wizard-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+.wizard-form {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+.upload-dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+    border: 2px dashed var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.upload-dropzone:hover {
+    border-color: var(--accent);
+    background: var(--bg-tertiary);
+}
+.upload-dropzone.dragover {
+    border-color: var(--accent);
+    background: rgba(74, 158, 255, 0.1);
+}
+.dropzone-icon {
+    font-size: 32px;
+    margin-bottom: 10px;
+}
+.dropzone-text {
+    color: var(--text-secondary);
+}
+.dropzone-filename {
+    margin-top: 10px;
+    font-weight: 600;
+    color: var(--accent);
+}
+.wizard-success {
+    background: var(--bg-primary);
+    padding: 20px;
+    border-radius: 6px;
+    margin-bottom: 15px;
+}
+.wizard-success h4 {
+    margin: 0 0 10px 0;
+}
+.wizard-success .api-key-box {
+    background: var(--bg-secondary);
+    padding: 12px;
+    border-radius: 4px;
+    font-family: monospace;
+    margin: 10px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.wizard-success .api-key-box code {
+    word-break: break-all;
+}
+.wizard-success .instructions {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border);
+}
+.wizard-success .instructions ol {
+    margin: 10px 0;
+    padding-left: 20px;
+}
+.wizard-success .instructions li {
+    margin: 8px 0;
+}
+.btn-small {
+    font-size: 12px;
+    padding: 4px 10px;
+}
 </style>
 
 <script>
@@ -1034,6 +1380,374 @@ setTimeout(() => {
     updateBackendUI();
     updateImageBackendUI();
     refreshImageQueue();
+    loadRagCollections();
 }, 500);
+
+// === RAG Management ===
+
+let currentWizardMethod = null;
+let uploadedFile = null;
+
+// Load collections
+async function loadRagCollections() {
+    try {
+        const response = await fetch('/api/rag/collections');
+        if (response.ok) {
+            const collections = await response.json();
+            const list = document.getElementById('ragCollectionList');
+
+            if (collections.length === 0) {
+                list.innerHTML = '<div class="rag-empty">No codebases indexed yet.<br>Click "Add Codebase" to get started.</div>';
+                return;
+            }
+
+            list.innerHTML = collections.map(c => `
+                <div class="rag-collection-item" data-id="${c.id}">
+                    <div class="rag-collection-header">
+                        <span class="rag-collection-name">${escapeHtml(c.name)}</span>
+                        <span class="rag-collection-type">${c.collection_type}</span>
+                    </div>
+                    <div class="rag-collection-stats">
+                        <span>📄 ${c.document_count || 0} files</span>
+                        <span>📅 ${c.last_indexed_at ? new Date(c.last_indexed_at).toLocaleDateString() : 'Indexing...'}</span>
+                    </div>
+                    <div class="rag-collection-actions">
+                        ${c.collection_type === 'watcher' ? `<button class="btn-secondary" onclick="showApiKey(${c.id})">Show API Key</button>` : ''}
+                        <button class="btn-secondary" onclick="reindexCollection(${c.id})">Re-index</button>
+                        <button class="btn-danger" onclick="deleteCollection(${c.id})">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+    } catch (err) {
+        console.error('Failed to load RAG collections:', err);
+    }
+}
+
+// Wizard controls
+document.getElementById('addCodebaseBtn').addEventListener('click', () => {
+    document.getElementById('ragWizard').style.display = 'block';
+    document.getElementById('wizardStep1').style.display = 'block';
+    document.getElementById('wizardStep2').style.display = 'none';
+    document.getElementById('wizardStep3').style.display = 'none';
+    document.getElementById('addCodebaseBtn').style.display = 'none';
+});
+
+document.getElementById('closeWizard').addEventListener('click', closeWizard);
+document.getElementById('wizardBack').addEventListener('click', () => {
+    document.getElementById('wizardStep1').style.display = 'block';
+    document.getElementById('wizardStep2').style.display = 'none';
+    hideAllForms();
+});
+document.getElementById('wizardDone').addEventListener('click', () => {
+    closeWizard();
+    loadRagCollections();
+});
+
+function closeWizard() {
+    document.getElementById('ragWizard').style.display = 'none';
+    document.getElementById('addCodebaseBtn').style.display = 'block';
+    hideAllForms();
+    clearWizardForms();
+}
+
+function hideAllForms() {
+    document.getElementById('wizardGitForm').style.display = 'none';
+    document.getElementById('wizardUploadForm').style.display = 'none';
+    document.getElementById('wizardVscodeForm').style.display = 'none';
+}
+
+function clearWizardForms() {
+    document.getElementById('wizardGitUrl').value = '';
+    document.getElementById('wizardGitBranch').value = 'main';
+    document.getElementById('wizardGitName').value = '';
+    document.getElementById('wizardUploadName').value = '';
+    document.getElementById('wizardVscodeName').value = '';
+    document.getElementById('wizardFileName').textContent = '';
+    document.getElementById('wizardStatus').className = 'rag-status-message';
+    uploadedFile = null;
+}
+
+// Method selection
+document.querySelectorAll('.wizard-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+        currentWizardMethod = btn.dataset.method;
+        document.getElementById('wizardStep1').style.display = 'none';
+        document.getElementById('wizardStep2').style.display = 'block';
+        hideAllForms();
+
+        if (currentWizardMethod === 'git') {
+            document.getElementById('wizardStep2Title').textContent = 'Clone Git Repository';
+            document.getElementById('wizardGitForm').style.display = 'flex';
+        } else if (currentWizardMethod === 'upload') {
+            document.getElementById('wizardStep2Title').textContent = 'Upload Zip File';
+            document.getElementById('wizardUploadForm').style.display = 'flex';
+        } else if (currentWizardMethod === 'vscode') {
+            document.getElementById('wizardStep2Title').textContent = 'VS Code Extension';
+            document.getElementById('wizardVscodeForm').style.display = 'flex';
+        }
+    });
+});
+
+// File upload handling
+const dropzone = document.getElementById('wizardDropzone');
+const fileInput = document.getElementById('wizardUploadFile');
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFileSelect(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => {
+    if (fileInput.files.length) handleFileSelect(fileInput.files[0]);
+});
+
+function handleFileSelect(file) {
+    if (!file.name.endsWith('.zip')) {
+        alert('Please select a .zip file');
+        return;
+    }
+    uploadedFile = file;
+    document.getElementById('wizardFileName').textContent = file.name;
+    document.getElementById('wizardUploadSubmit').disabled = false;
+}
+
+// Submit handlers
+document.getElementById('wizardGitSubmit').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('wizardStatus');
+    const gitUrl = document.getElementById('wizardGitUrl').value.trim();
+    const branch = document.getElementById('wizardGitBranch').value.trim() || 'main';
+    const name = document.getElementById('wizardGitName').value.trim() || gitUrl.split('/').pop().replace('.git', '');
+    const patterns = document.getElementById('wizardGitPatterns').value.trim();
+
+    if (!gitUrl) {
+        statusDiv.className = 'rag-status-message error';
+        statusDiv.textContent = 'Please enter a repository URL';
+        return;
+    }
+
+    statusDiv.className = 'rag-status-message loading';
+    statusDiv.textContent = 'Cloning repository...';
+
+    try {
+        const response = await fetch('/api/rag/collections/git', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, git_url: gitUrl, branch, file_patterns: patterns })
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            showSuccess('git', data);
+        } else {
+            statusDiv.className = 'rag-status-message error';
+            statusDiv.textContent = data.detail || 'Failed to clone repository';
+        }
+    } catch (err) {
+        statusDiv.className = 'rag-status-message error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
+
+document.getElementById('wizardUploadSubmit').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('wizardStatus');
+    const name = document.getElementById('wizardUploadName').value.trim();
+    const patterns = document.getElementById('wizardUploadPatterns').value.trim();
+
+    if (!name) {
+        statusDiv.className = 'rag-status-message error';
+        statusDiv.textContent = 'Please enter a name';
+        return;
+    }
+    if (!uploadedFile) {
+        statusDiv.className = 'rag-status-message error';
+        statusDiv.textContent = 'Please select a zip file';
+        return;
+    }
+
+    statusDiv.className = 'rag-status-message loading';
+    statusDiv.textContent = 'Uploading and indexing...';
+
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('file', uploadedFile);
+    formData.append('file_patterns', patterns);
+
+    try {
+        const response = await fetch('/api/rag/collections/upload', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            showSuccess('upload', data);
+        } else {
+            statusDiv.className = 'rag-status-message error';
+            statusDiv.textContent = data.detail || 'Failed to upload';
+        }
+    } catch (err) {
+        statusDiv.className = 'rag-status-message error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
+
+document.getElementById('wizardVscodeSubmit').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('wizardStatus');
+    const name = document.getElementById('wizardVscodeName').value.trim();
+    const patterns = document.getElementById('wizardVscodePatterns').value.trim();
+
+    if (!name) {
+        statusDiv.className = 'rag-status-message error';
+        statusDiv.textContent = 'Please enter a name';
+        return;
+    }
+
+    statusDiv.className = 'rag-status-message loading';
+    statusDiv.textContent = 'Creating collection...';
+
+    try {
+        // Create collection
+        const colResponse = await fetch('/api/rag/collections', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, collection_type: 'watcher', file_patterns: patterns })
+        });
+        const colData = await colResponse.json();
+
+        if (!colResponse.ok) {
+            statusDiv.className = 'rag-status-message error';
+            statusDiv.textContent = colData.detail || 'Failed to create collection';
+            return;
+        }
+
+        // Create watcher
+        const watchResponse = await fetch('/api/rag/watchers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ collection_id: colData.id })
+        });
+        const watchData = await watchResponse.json();
+
+        if (watchResponse.ok) {
+            showSuccess('vscode', { ...colData, api_key: watchData.api_key });
+        } else {
+            statusDiv.className = 'rag-status-message error';
+            statusDiv.textContent = watchData.detail || 'Failed to create watcher';
+        }
+    } catch (err) {
+        statusDiv.className = 'rag-status-message error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
+
+function showSuccess(method, data) {
+    document.getElementById('wizardStep2').style.display = 'none';
+    document.getElementById('wizardStep3').style.display = 'block';
+
+    let content = '';
+    if (method === 'git') {
+        content = `
+            <h4>Repository Cloned!</h4>
+            <p>"${escapeHtml(data.name)}" is being indexed in the background.</p>
+            <p>This may take a few minutes for large repositories.</p>
+        `;
+    } else if (method === 'upload') {
+        content = `
+            <h4>Files Uploaded!</h4>
+            <p>"${escapeHtml(data.name)}" is being indexed.</p>
+        `;
+    } else if (method === 'vscode') {
+        content = `
+            <h4>Ready for VS Code!</h4>
+            <p>Use this API key in the VS Code extension:</p>
+            <div class="api-key-box">
+                <code id="successApiKey">${data.api_key}</code>
+                <button class="btn-secondary btn-small" onclick="copyApiKey()">Copy</button>
+            </div>
+            <div class="instructions">
+                <strong>Setup Instructions:</strong>
+                <ol>
+                    <li>Install the Posterchanai RAG Sync extension in VS Code</li>
+                    <li>Click the "RAG Sync" button in the status bar</li>
+                    <li>Enter this server URL: <code>${window.location.origin}</code></li>
+                    <li>Paste the API key above</li>
+                    <li>Your code will sync automatically as you work!</li>
+                </ol>
+            </div>
+        `;
+    }
+    document.getElementById('wizardSuccessContent').innerHTML = content;
+}
+
+function copyApiKey() {
+    const key = document.getElementById('successApiKey').textContent;
+    navigator.clipboard.writeText(key).then(() => {
+        alert('API key copied!');
+    });
+}
+
+// Collection actions
+async function deleteCollection(id) {
+    if (!confirm('Delete this codebase and all indexed files?')) return;
+    try {
+        const response = await fetch(`/api/rag/collections/${id}`, { method: 'DELETE' });
+        if (response.ok) {
+            loadRagCollections();
+        } else {
+            alert('Failed to delete');
+        }
+    } catch (err) {
+        alert('Error deleting');
+    }
+}
+
+async function reindexCollection(id) {
+    try {
+        const response = await fetch(`/api/rag/collections/${id}/reindex`, { method: 'POST' });
+        if (response.ok) {
+            alert('Re-indexing started');
+            loadRagCollections();
+        } else {
+            alert('Failed to re-index');
+        }
+    } catch (err) {
+        alert('Error');
+    }
+}
+
+async function showApiKey(collectionId) {
+    try {
+        const response = await fetch('/api/rag/watchers');
+        if (response.ok) {
+            const watchers = await response.json();
+            const watcher = watchers.find(w => w.collection_id === collectionId);
+            if (watcher) {
+                const key = watcher.api_key;
+                if (confirm(`API Key:\n\n${key}\n\nCopy to clipboard?`)) {
+                    navigator.clipboard.writeText(key);
+                }
+            } else {
+                alert('No watcher found. Creating one...');
+                const createResp = await fetch('/api/rag/watchers', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ collection_id: collectionId })
+                });
+                if (createResp.ok) {
+                    const data = await createResp.json();
+                    if (confirm(`New API Key:\n\n${data.api_key}\n\nCopy to clipboard?`)) {
+                        navigator.clipboard.writeText(data.api_key);
+                    }
+                }
+            }
+        }
+    } catch (err) {
+        alert('Error getting API key');
+    }
+}
 </script>
 {% endblock %}

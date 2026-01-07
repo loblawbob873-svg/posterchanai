@@ -94,3 +94,57 @@ class VerificationToken(Base):
     expires_at = Column(DateTime, nullable=False)
 
     user = relationship("User", backref="verification_tokens")
+
+
+# RAG (Retrieval-Augmented Generation) Models
+
+class RAGCollection(Base):
+    """A RAG collection for storing indexed documents/code"""
+    __tablename__ = "rag_collections"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    collection_type = Column(String(20), nullable=False)  # "folder", "git", "watcher"
+    source_path = Column(String(500), nullable=True)  # Local path or git URL
+    git_branch = Column(String(100), default="main")
+    file_patterns = Column(Text, default="*.py,*.js,*.ts,*.md,*.txt")  # Comma-separated globs
+    last_indexed_at = Column(DateTime, nullable=True)
+    document_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", backref="rag_collections")
+    documents = relationship("RAGDocument", back_populates="collection", cascade="all, delete-orphan")
+    watchers = relationship("RAGWatcher", back_populates="collection", cascade="all, delete-orphan")
+
+
+class RAGDocument(Base):
+    """Tracks indexed documents for incremental updates"""
+    __tablename__ = "rag_documents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    collection_id = Column(Integer, ForeignKey("rag_collections.id", ondelete="CASCADE"), nullable=False)
+    file_path = Column(String(500), nullable=False)
+    file_hash = Column(String(64), nullable=False)  # SHA256 for change detection
+    chunk_count = Column(Integer, default=0)
+    indexed_at = Column(DateTime, default=datetime.utcnow)
+
+    collection = relationship("RAGCollection", back_populates="documents")
+
+
+class RAGWatcher(Base):
+    """File watcher configurations for VS Code integration"""
+    __tablename__ = "rag_watchers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    collection_id = Column(Integer, ForeignKey("rag_collections.id", ondelete="CASCADE"), nullable=False)
+    watch_path = Column(String(500), nullable=False)
+    api_key = Column(String(64), unique=True, nullable=False, index=True)
+    is_active = Column(Boolean, default=True)
+    last_event_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", backref="rag_watchers")
+    collection = relationship("RAGCollection", back_populates="watchers")

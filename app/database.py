@@ -166,6 +166,15 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "imap_password": "",
             "imap_use_ssl": "true",
             "imap_sent_folder": "Sent",
+            # RAG (Retrieval-Augmented Generation) settings
+            "rag_enabled": "true",
+            "rag_embedding_model": "all-MiniLM-L6-v2",
+            "rag_chunk_size": "1000",
+            "rag_chunk_overlap": "200",
+            "rag_top_k": "5",
+            "rag_min_similarity": "0.3",
+            "rag_chromadb_path": "./data/chromadb",
+            "rag_auto_context": "true",
         }
 
         for key, value in default_settings.items():
