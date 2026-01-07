@@ -130,6 +130,15 @@ def delete_collection(
     if not collection:
         raise HTTPException(status_code=404, detail="Collection not found")
 
+    # Clean up uploaded zip file if it exists
+    if collection.collection_type == "upload" and collection.source_path:
+        zip_path = Path(collection.source_path)
+        if zip_path.exists():
+            try:
+                zip_path.unlink()
+            except Exception as e:
+                logger.warning(f"Failed to delete upload file {zip_path}: {e}")
+
     rag_service = get_rag_service(db, current_user.id)
     rag_service.delete_collection(collection_id)
 
@@ -335,6 +344,16 @@ async def reindex_collection(
             user_id=current_user.id,
             collection_id=collection_id
         )
+    elif collection.collection_type == "upload" and collection.source_path:
+        # Re-index uploaded zip file
+        zip_path = Path(collection.source_path)
+        if not zip_path.exists():
+            raise HTTPException(status_code=400, detail="Upload file not found, cannot re-index")
+        background_tasks.add_task(
+            _index_upload_task,
+            user_id=current_user.id,
+            collection_id=collection_id
+        )
     else:
         raise HTTPException(status_code=400, detail="Collection type does not support re-indexing")
 
@@ -355,7 +374,83 @@ def _index_folder_task(user_id: int, collection_id: int):
         db.close()
 
 
+def _index_upload_task(user_id: int, collection_id: int):
+    """Background task to re-index an uploaded zip file."""
+    from datetime import datetime
+
+    db = SessionLocal()
+    try:
+        collection = db.query(RAGCollection).filter(RAGCollection.id == collection_id).first()
+        if not collection or not collection.source_path:
+            return
+
+        zip_path = Path(collection.source_path)
+        if not zip_path.exists():
+            logger.error(f"Upload file not found for collection {collection_id}: {zip_path}")
+            return
+
+        # Clear existing documents for this collection
+        rag_service = get_rag_service(db, user_id)
+        rag_service.delete_collection_documents(collection_id)
+
+        # Re-read and index the zip file
+        file_patterns = collection.file_patterns or "*.py,*.js,*.ts,*.md,*.txt"
+        patterns = [p.strip() for p in file_patterns.split(",")]
+
+        skip_dirs = {
+            '.git', 'node_modules', '__pycache__', 'venv', '.venv',
+            'dist', 'build', '.next', '.nuxt', 'target', 'vendor'
+        }
+
+        files_to_index = []
+        with zipfile.ZipFile(zip_path, 'r') as zip_file:
+            for zip_info in zip_file.infolist():
+                if zip_info.is_dir():
+                    continue
+
+                file_path = Path(zip_info.filename)
+
+                # Skip hidden files and common non-code directories
+                parts = file_path.parts
+                if any(part.startswith('.') for part in parts):
+                    continue
+                if any(part in skip_dirs for part in parts):
+                    continue
+
+                # Check if matches any pattern
+                for pattern in patterns:
+                    if fnmatch(file_path.name, pattern):
+                        try:
+                            file_content = zip_file.read(zip_info.filename).decode('utf-8', errors='ignore')
+                            if len(file_content) > 1_000_000:
+                                continue
+                            files_to_index.append({
+                                "filename": str(file_path),
+                                "content": file_content
+                            })
+                        except Exception:
+                            pass
+                        break
+
+        # Index files
+        indexer = get_folder_indexer(db, user_id)
+        indexer.index_uploaded_files(collection, files_to_index)
+
+        logger.info(f"Re-indexed {len(files_to_index)} files for upload collection {collection_id}")
+    except Exception as e:
+        logger.error(f"Upload re-indexing failed for collection {collection_id}: {e}")
+    finally:
+        db.close()
+
+
 # ----- Folder Upload Indexing -----
+
+def _get_uploads_dir() -> Path:
+    """Get or create the uploads directory for RAG zip files."""
+    uploads_dir = Path("./data/rag_uploads")
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    return uploads_dir
+
 
 @router.post("/collections/upload", response_model=RAGCollectionResponse)
 async def upload_folder(
@@ -370,21 +465,31 @@ async def upload_folder(
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Only zip files are supported")
 
-    # Create collection
+    # Create collection first to get an ID
     collection = RAGCollection(
         user_id=current_user.id,
         name=name,
         description=description,
-        collection_type="folder",
+        collection_type="upload",
         file_patterns=file_patterns
     )
     db.add(collection)
     db.commit()
     db.refresh(collection)
 
+    # Save the zip file for re-indexing later
+    uploads_dir = _get_uploads_dir()
+    zip_path = uploads_dir / f"{collection.id}.zip"
+
     # Extract and index files
     try:
         content = await file.read()
+
+        # Save zip file for re-indexing
+        zip_path.write_bytes(content)
+        collection.source_path = str(zip_path.absolute())
+        db.commit()
+
         zip_buffer = io.BytesIO(content)
 
         patterns = [p.strip() for p in file_patterns.split(",")]
@@ -435,11 +540,15 @@ async def upload_folder(
 
     except zipfile.BadZipFile:
         # Cleanup on failure
+        if zip_path.exists():
+            zip_path.unlink()
         db.delete(collection)
         db.commit()
         raise HTTPException(status_code=400, detail="Invalid zip file")
     except Exception as e:
         # Cleanup on failure
+        if zip_path.exists():
+            zip_path.unlink()
         db.delete(collection)
         db.commit()
         raise HTTPException(status_code=500, detail=f"Failed to process upload: {str(e)}")

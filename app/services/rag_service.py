@@ -476,6 +476,27 @@ class RAGService:
 
     # ----- Collection Management -----
 
+    def delete_collection_documents(self, collection_id: int):
+        """Delete all documents in a collection but keep the collection itself."""
+        name = self._get_collection_name(collection_id)
+        try:
+            self.client.delete_collection(name)
+        except Exception:
+            pass  # Collection may not exist
+
+        # Delete documents from database but keep the collection
+        self.db.query(RAGDocument).filter(
+            RAGDocument.collection_id == collection_id
+        ).delete()
+
+        # Reset document count
+        collection = self.db.query(RAGCollection).filter(
+            RAGCollection.id == collection_id
+        ).first()
+        if collection:
+            collection.document_count = 0
+        self.db.commit()
+
     def delete_collection(self, collection_id: int):
         """Delete a collection and all its data."""
         name = self._get_collection_name(collection_id)

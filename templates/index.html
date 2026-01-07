@@ -249,32 +249,6 @@ foxnews.com|Fox News"></textarea>
                 </div>
             </div>
 
-            <!-- RAG / Code Context Section -->
-            <div class="settings-section">
-                <h3>Code Context (RAG)</h3>
-                <p class="modal-info">Upload code or documents to give the AI context about your projects.</p>
-
-                <div id="ragCollectionsList" class="rag-user-list">
-                    <!-- Collections loaded here -->
-                </div>
-
-                <div class="rag-upload-section" style="margin-top: 15px;">
-                    <div class="settings-form">
-                        <label for="ragUploadName">Collection Name</label>
-                        <input type="text" id="ragUploadName" placeholder="My Project">
-                        <label for="ragUploadPatterns">File Types</label>
-                        <input type="text" id="ragUploadPatterns" value="*.py,*.js,*.ts,*.md,*.txt">
-                        <label class="upload-dropzone" id="ragDropzone" style="margin-top: 10px;">
-                            <input type="file" id="ragUploadFile" accept=".zip" style="display: none;">
-                            <span class="dropzone-text">Click or drag zip file here</span>
-                            <span class="dropzone-filename" id="ragFileName"></span>
-                        </label>
-                        <button class="btn-primary" id="ragUploadBtn" disabled style="margin-top: 10px;">Upload & Index</button>
-                        <div id="ragUploadStatus" class="settings-status"></div>
-                    </div>
-                </div>
-            </div>
-
             <div class="settings-section save-section">
                 <button class="btn-primary" id="saveUserSettings">Save All Settings</button>
                 <div id="settingsStatus" class="settings-status"></div>
@@ -369,6 +343,24 @@ foxnews.com|Fox News"></textarea>
                 </div>
             </div>
 
+            <!-- Upload Section -->
+            <div class="rag-upload-section">
+                <h4>Upload New Collection</h4>
+                <div class="settings-form">
+                    <label for="ragUploadName">Collection Name</label>
+                    <input type="text" id="ragUploadName" placeholder="My Project">
+                    <label for="ragUploadPatterns">File Types</label>
+                    <input type="text" id="ragUploadPatterns" value="*.py,*.js,*.ts,*.md,*.txt">
+                    <label class="upload-dropzone" id="ragDropzone" style="margin-top: 10px;">
+                        <input type="file" id="ragUploadFile" accept=".zip" style="display: none;">
+                        <span class="dropzone-text">Click or drag zip file here</span>
+                        <span class="dropzone-filename" id="ragFileName"></span>
+                    </label>
+                    <button class="btn-primary" id="ragUploadBtn" disabled style="margin-top: 10px;">Upload & Index</button>
+                    <div id="ragUploadStatus" class="settings-status"></div>
+                </div>
+            </div>
+
             <div class="rag-status-section">
                 <div class="rag-status-item">
                     <span>Model:</span>
@@ -457,11 +449,35 @@ foxnews.com|Fox News"></textarea>
     background: var(--accent);
     color: white;
 }
+.rag-upload-section {
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border-color);
+}
+.rag-upload-section h4 {
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+.rag-collection-checkbox .btn-delete-collection {
+    padding: 2px 8px;
+    font-size: 11px;
+    background: transparent;
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 8px;
+}
+.rag-collection-checkbox .btn-delete-collection:hover {
+    background: var(--danger);
+    color: white;
+}
 </style>
 
 <script src="/static/js/mascot.js"></script>
 <script src="/static/js/tts.js"></script>
-<script src="/static/js/chat.js?v=7"></script>
+<script src="/static/js/chat.js?v=8"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/apikeys.js"></script>
 <script>
@@ -475,10 +491,27 @@ foxnews.com|Fox News"></textarea>
     const ragStatusModel = document.getElementById('ragStatusModel');
     const ragStatusDocs = document.getElementById('ragStatusDocs');
     const saveRagSettings = document.getElementById('saveRagSettings');
+    const ragUploadPatterns = document.getElementById('ragUploadPatterns');
 
     // Load RAG state from localStorage (default to disabled)
     let ragEnabled = localStorage.getItem('ragEnabled') === 'true';
     let selectedCollections = JSON.parse(localStorage.getItem('ragSelectedCollections') || '[]');
+
+    // Load file patterns from localStorage
+    const savedPatterns = localStorage.getItem('ragFilePatterns');
+    if (savedPatterns && ragUploadPatterns) {
+        ragUploadPatterns.value = savedPatterns;
+    }
+
+    // Save file patterns when changed
+    if (ragUploadPatterns) {
+        ragUploadPatterns.addEventListener('change', () => {
+            localStorage.setItem('ragFilePatterns', ragUploadPatterns.value);
+        });
+        ragUploadPatterns.addEventListener('input', () => {
+            localStorage.setItem('ragFilePatterns', ragUploadPatterns.value);
+        });
+    }
 
     // Update button state - only active when enabled AND has collections
     function updateRagButton() {
@@ -518,7 +551,7 @@ foxnews.com|Fox News"></textarea>
                 const collections = await response.json();
 
                 if (collections.length === 0) {
-                    ragUserCollections.innerHTML = '<div class="rag-empty-msg">No collections yet. Create one in Admin Panel.</div>';
+                    ragUserCollections.innerHTML = '<div class="rag-empty-msg">No collections yet. Upload a zip file below to get started.</div>';
                     return;
                 }
 
@@ -527,8 +560,34 @@ foxnews.com|Fox News"></textarea>
                         <input type="checkbox" value="${c.id}" ${selectedCollections.includes(c.id) ? 'checked' : ''}>
                         <span class="collection-name">${escapeHtml(c.name)}</span>
                         <span class="collection-stats">${c.document_count || 0} docs</span>
+                        <button type="button" class="btn-delete-collection" data-id="${c.id}" title="Delete collection">×</button>
                     </label>
                 `).join('');
+
+                // Add delete handlers
+                ragUserCollections.querySelectorAll('.btn-delete-collection').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const id = btn.dataset.id;
+                        if (confirm('Delete this collection? This cannot be undone.')) {
+                            try {
+                                const resp = await fetch(`/api/rag/collections/${id}`, { method: 'DELETE' });
+                                if (resp.ok) {
+                                    // Remove from selected collections
+                                    selectedCollections = selectedCollections.filter(cid => cid !== parseInt(id));
+                                    localStorage.setItem('ragSelectedCollections', JSON.stringify(selectedCollections));
+                                    await loadRagCollections();
+                                    updateRagButton();
+                                } else {
+                                    alert('Failed to delete collection');
+                                }
+                            } catch (err) {
+                                alert('Error deleting collection');
+                            }
+                        }
+                    });
+                });
             }
         } catch (err) {
             console.error('Failed to load RAG collections:', err);
@@ -567,6 +626,76 @@ foxnews.com|Fox News"></textarea>
         window.ragEnabled = ragEnabled;
         window.ragCollections = selectedCollections;
     });
+
+    // Upload handling
+    const ragDropzone = document.getElementById('ragDropzone');
+    const ragUploadFile = document.getElementById('ragUploadFile');
+    const ragFileName = document.getElementById('ragFileName');
+    const ragUploadBtn = document.getElementById('ragUploadBtn');
+    const ragUploadName = document.getElementById('ragUploadName');
+    const ragUploadStatus = document.getElementById('ragUploadStatus');
+
+    if (ragDropzone && ragUploadFile) {
+        ragDropzone.addEventListener('click', () => ragUploadFile.click());
+        ragDropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            ragDropzone.classList.add('dragover');
+        });
+        ragDropzone.addEventListener('dragleave', () => ragDropzone.classList.remove('dragover'));
+        ragDropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            ragDropzone.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) {
+                ragUploadFile.files = e.dataTransfer.files;
+                ragFileName.textContent = e.dataTransfer.files[0].name;
+                ragUploadBtn.disabled = !ragUploadName.value.trim();
+            }
+        });
+        ragUploadFile.addEventListener('change', () => {
+            if (ragUploadFile.files.length > 0) {
+                ragFileName.textContent = ragUploadFile.files[0].name;
+                ragUploadBtn.disabled = !ragUploadName.value.trim();
+            }
+        });
+        ragUploadName.addEventListener('input', () => {
+            ragUploadBtn.disabled = !ragUploadName.value.trim() || !ragUploadFile.files.length;
+        });
+        ragUploadBtn.addEventListener('click', async () => {
+            if (!ragUploadFile.files.length || !ragUploadName.value.trim()) return;
+
+            ragUploadStatus.textContent = 'Uploading...';
+            ragUploadStatus.className = 'settings-status';
+            ragUploadBtn.disabled = true;
+
+            const formData = new FormData();
+            formData.append('name', ragUploadName.value.trim());
+            formData.append('file_patterns', ragUploadPatterns.value.trim());
+            formData.append('file', ragUploadFile.files[0]);
+
+            try {
+                const response = await fetch('/api/rag/collections/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (response.ok) {
+                    ragUploadStatus.textContent = 'Uploaded! Indexing in background...';
+                    ragUploadStatus.className = 'settings-status success';
+                    ragUploadName.value = '';
+                    ragFileName.textContent = '';
+                    ragUploadFile.value = '';
+                    await loadRagCollections();
+                } else {
+                    const err = await response.json();
+                    ragUploadStatus.textContent = err.detail || 'Upload failed';
+                    ragUploadStatus.className = 'settings-status error';
+                }
+            } catch (e) {
+                ragUploadStatus.textContent = 'Upload failed';
+                ragUploadStatus.className = 'settings-status error';
+            }
+            ragUploadBtn.disabled = false;
+        });
+    }
 
     // Helper
     function escapeHtml(text) {
