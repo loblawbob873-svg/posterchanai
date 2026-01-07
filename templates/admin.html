@@ -357,6 +357,18 @@
                             <input type="number" id="rag_max_log_size" name="rag_max_log_size" value="100" min="1" max="500">
                         </div>
                     </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="rag_embedding_batch_size">Embedding Batch Size</label>
+                            <input type="number" id="rag_embedding_batch_size" name="rag_embedding_batch_size" value="64" min="1" max="512">
+                            <small>Chunks per batch (higher = faster, more RAM)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="rag_num_threads">CPU Threads</label>
+                            <input type="number" id="rag_num_threads" name="rag_num_threads" value="0" min="0" max="128">
+                            <small>0 = auto (use all cores)</small>
+                        </div>
+                    </div>
                 </fieldset>
             </div>
 

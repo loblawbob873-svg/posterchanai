@@ -3,12 +3,20 @@ Embedding Service - Local sentence-transformers for RAG.
 Provides text embeddings using HuggingFace sentence-transformers.
 No external API dependencies - fully self-contained.
 """
+import os
 import logging
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from app.models import Setting
 
 logger = logging.getLogger(__name__)
+
+# Set threading for CPU parallelism before importing torch
+# These environment variables must be set before torch is imported
+_num_threads = os.environ.get("RAG_NUM_THREADS", "")
+if _num_threads:
+    os.environ.setdefault("OMP_NUM_THREADS", _num_threads)
+    os.environ.setdefault("MKL_NUM_THREADS", _num_threads)
 
 # Singleton model instance (shared across all service instances)
 _model = None
@@ -26,6 +34,8 @@ class EmbeddingService:
         """Load embedding settings from database."""
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
         self.model_name = settings.get("rag_embedding_model", "all-MiniLM-L6-v2")
+        self.batch_size = int(settings.get("rag_embedding_batch_size", "64"))
+        self.num_threads = int(settings.get("rag_num_threads", "0"))  # 0 = auto
 
     def _ensure_model_loaded(self):
         """Lazy load the model on first use."""
@@ -34,7 +44,20 @@ class EmbeddingService:
         # Check if we need to load/reload the model
         if _model is None or _model_name != self.model_name:
             try:
+                import torch
                 from sentence_transformers import SentenceTransformer
+
+                # Set thread count for CPU parallelism
+                if self.num_threads > 0:
+                    torch.set_num_threads(self.num_threads)
+                    logger.info(f"Set torch threads to {self.num_threads}")
+                else:
+                    # Auto-detect: use all available cores
+                    import multiprocessing
+                    cpu_count = multiprocessing.cpu_count()
+                    torch.set_num_threads(cpu_count)
+                    logger.info(f"Auto-set torch threads to {cpu_count}")
+
                 logger.info(f"Loading sentence-transformers model: {self.model_name}")
                 _model = SentenceTransformer(self.model_name)
                 _model_name = self.model_name
@@ -62,7 +85,15 @@ class EmbeddingService:
         self._ensure_model_loaded()
 
         try:
-            embeddings = _model.encode(texts, convert_to_numpy=True)
+            # Use batch_size for efficient processing
+            # show_progress_bar for large batches (>1000 texts)
+            show_progress = len(texts) > 1000
+            embeddings = _model.encode(
+                texts,
+                convert_to_numpy=True,
+                batch_size=self.batch_size,
+                show_progress_bar=show_progress
+            )
             return embeddings.tolist()
         except Exception as e:
             logger.error(f"Embedding generation failed: {e}")

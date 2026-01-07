@@ -177,6 +177,8 @@ class SettingsResponse(BaseModel):
     rag_min_similarity: str = "0.3"
     rag_max_file_size: str = "1"
     rag_max_log_size: str = "100"
+    rag_embedding_batch_size: str = "64"
+    rag_num_threads: str = "0"
     rag_chromadb_path: str = "./data/chromadb"
     rag_auto_context: str = "true"
 
