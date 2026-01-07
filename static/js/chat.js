@@ -343,7 +343,121 @@ class ChatHandler {
                 settingsModal.style.display = 'flex';
                 // Close the user menu
                 document.getElementById('userMenu').classList.remove('active');
+                // Load RAG collections
+                this.loadRagCollections();
             });
+
+            // RAG upload handling
+            this.loadRagCollections = async () => {
+                const listEl = document.getElementById('ragCollectionsList');
+                if (!listEl) return;
+                try {
+                    const response = await fetch('/api/rag/collections');
+                    if (response.ok) {
+                        const collections = await response.json();
+                        if (collections.length === 0) {
+                            listEl.innerHTML = '<p style="color: var(--text-secondary); font-size: 14px;">No collections yet. Upload a zip file to get started.</p>';
+                        } else {
+                            listEl.innerHTML = collections.map(c => `
+                                <div class="rag-user-item" data-id="${c.id}">
+                                    <div class="rag-user-item-info">
+                                        <div class="rag-user-item-name">${this.escapeHtml(c.name)}</div>
+                                        <div class="rag-user-item-meta">${c.document_count} files • ${c.collection_type}</div>
+                                    </div>
+                                    <button class="btn-danger btn-small" onclick="window.chatHandler.deleteRagCollection(${c.id})">Delete</button>
+                                </div>
+                            `).join('');
+                        }
+                    }
+                } catch (e) {
+                    console.error('Failed to load RAG collections:', e);
+                }
+            };
+
+            this.deleteRagCollection = async (id) => {
+                if (!confirm('Delete this collection? This cannot be undone.')) return;
+                try {
+                    const response = await fetch(`/api/rag/collections/${id}`, { method: 'DELETE' });
+                    if (response.ok) {
+                        this.loadRagCollections();
+                    } else {
+                        alert('Failed to delete collection');
+                    }
+                } catch (e) {
+                    alert('Error deleting collection');
+                }
+            };
+
+            // File upload handling
+            const ragDropzone = document.getElementById('ragDropzone');
+            const ragUploadFile = document.getElementById('ragUploadFile');
+            const ragFileName = document.getElementById('ragFileName');
+            const ragUploadBtn = document.getElementById('ragUploadBtn');
+            const ragUploadName = document.getElementById('ragUploadName');
+            const ragUploadPatterns = document.getElementById('ragUploadPatterns');
+            const ragUploadStatus = document.getElementById('ragUploadStatus');
+
+            if (ragDropzone && ragUploadFile) {
+                ragDropzone.addEventListener('click', () => ragUploadFile.click());
+                ragDropzone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    ragDropzone.classList.add('dragover');
+                });
+                ragDropzone.addEventListener('dragleave', () => ragDropzone.classList.remove('dragover'));
+                ragDropzone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    ragDropzone.classList.remove('dragover');
+                    if (e.dataTransfer.files.length > 0) {
+                        ragUploadFile.files = e.dataTransfer.files;
+                        ragFileName.textContent = e.dataTransfer.files[0].name;
+                        ragUploadBtn.disabled = !ragUploadName.value.trim();
+                    }
+                });
+                ragUploadFile.addEventListener('change', () => {
+                    if (ragUploadFile.files.length > 0) {
+                        ragFileName.textContent = ragUploadFile.files[0].name;
+                        ragUploadBtn.disabled = !ragUploadName.value.trim();
+                    }
+                });
+                ragUploadName.addEventListener('input', () => {
+                    ragUploadBtn.disabled = !ragUploadName.value.trim() || !ragUploadFile.files.length;
+                });
+                ragUploadBtn.addEventListener('click', async () => {
+                    if (!ragUploadFile.files.length || !ragUploadName.value.trim()) return;
+
+                    ragUploadStatus.textContent = 'Uploading...';
+                    ragUploadStatus.className = 'settings-status';
+                    ragUploadBtn.disabled = true;
+
+                    const formData = new FormData();
+                    formData.append('name', ragUploadName.value.trim());
+                    formData.append('file_patterns', ragUploadPatterns.value.trim());
+                    formData.append('file', ragUploadFile.files[0]);
+
+                    try {
+                        const response = await fetch('/api/rag/collections/upload', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        if (response.ok) {
+                            ragUploadStatus.textContent = 'Uploaded! Indexing in background...';
+                            ragUploadStatus.className = 'settings-status success';
+                            ragUploadName.value = '';
+                            ragFileName.textContent = '';
+                            ragUploadFile.value = '';
+                            this.loadRagCollections();
+                        } else {
+                            const err = await response.json();
+                            ragUploadStatus.textContent = err.detail || 'Upload failed';
+                            ragUploadStatus.className = 'settings-status error';
+                        }
+                    } catch (e) {
+                        ragUploadStatus.textContent = 'Upload failed';
+                        ragUploadStatus.className = 'settings-status error';
+                    }
+                    ragUploadBtn.disabled = false;
+                });
+            }
 
             closeBtn.addEventListener('click', () => {
                 settingsModal.style.display = 'none';

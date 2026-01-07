@@ -61,26 +61,39 @@ class ChatService:
 
     def _get_rag_context(self, user_message: str) -> str:
         """Get RAG context for the user message if enabled."""
+        def log(msg):
+            with open("/tmp/rag_debug.log", "a") as f:
+                f.write(f"{msg}\n")
+
         if not self.user:
+            log("[RAG] No user, skipping RAG")
             return ""
 
         # Check if RAG is enabled
         rag_enabled = self._settings.get("rag_enabled", "true").lower() == "true"
         auto_context = self._settings.get("rag_auto_context", "true").lower() == "true"
 
+        log(f"[RAG] user={self.user.id}, enabled={rag_enabled}, auto={auto_context}")
+
         if not rag_enabled or not auto_context:
             return ""
 
         try:
             from app.services.rag_service import get_rag_service
+            log(f"[RAG] Getting RAG service...")
             rag_service = get_rag_service(self.db, self.user.id)
+            log(f"[RAG] Querying: {user_message[:100]}...")
             results = rag_service.query(user_message)
+            log(f"[RAG] Query returned {len(results)} results")
 
             if results:
                 context = rag_service.format_context(results)
+                log(f"[RAG] Injecting {len(context)} chars of context")
                 return RAG_CONTEXT_TEMPLATE.format(context=context)
         except Exception as e:
-            logger.warning(f"RAG query failed: {e}")
+            log(f"[RAG] ERROR: {e}")
+            import traceback
+            log(traceback.format_exc())
 
         return ""
 
@@ -90,20 +103,24 @@ class ChatService:
         if not rag_context:
             return messages
 
-        # Find and enhance the system message, or add one
+        # Find and enhance the system message - put RAG context BEFORE the persona
         enhanced_messages = []
         system_found = False
 
         for msg in messages:
             if msg.get("role") == "system" and not system_found:
-                # Append RAG context to system message
+                # Put RAG context at the START so model sees it first
                 enhanced_messages.append({
                     "role": "system",
-                    "content": msg["content"] + rag_context
+                    "content": rag_context + "\n\n" + msg["content"]
                 })
                 system_found = True
             else:
                 enhanced_messages.append(msg)
+
+        # Log what we're sending
+        with open("/tmp/rag_debug.log", "a") as f:
+            f.write(f"[INJECT] System message length: {len(enhanced_messages[0]['content']) if enhanced_messages else 0}\n")
 
         # If no system message was found, add one with RAG context
         if not system_found:
@@ -162,6 +179,8 @@ class ChatService:
 
     async def chat_stream(self, messages: list[dict]) -> AsyncGenerator[str, None]:
         """Streaming chat completion - uses async queue to avoid blocking event loop"""
+        with open("/tmp/rag_debug.log", "a") as f:
+            f.write(f"[STREAM] chat_stream called, user={self.user.id if self.user else None}\n")
         try:
             # Extract user message for RAG query (last user message)
             user_message = ""
@@ -169,6 +188,9 @@ class ChatService:
                 if msg.get("role") == "user":
                     user_message = msg.get("content", "")
                     break
+
+            with open("/tmp/rag_debug.log", "a") as f:
+                f.write(f"[STREAM] user_message={user_message[:50]}...\n")
 
             # Inject RAG context if available
             messages = self._inject_rag_context(messages, user_message)

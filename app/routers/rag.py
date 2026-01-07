@@ -155,6 +155,111 @@ def get_collection_stats(
     return rag_service.get_collection_stats(collection_id)
 
 
+# ----- Zip Upload Indexing -----
+
+@router.post("/collections/upload", response_model=RAGCollectionResponse)
+async def upload_zip_collection(
+    background_tasks: BackgroundTasks,
+    name: str = Form(...),
+    file_patterns: str = Form("*.py,*.js,*.ts,*.md,*.txt"),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Upload a zip file and index its contents."""
+    if not file.filename.endswith('.zip'):
+        raise HTTPException(status_code=400, detail="Only zip files are supported")
+
+    # Create collection
+    collection = RAGCollection(
+        user_id=current_user.id,
+        name=name,
+        collection_type="upload",
+        file_patterns=file_patterns,
+        source_path=file.filename
+    )
+    db.add(collection)
+    db.commit()
+    db.refresh(collection)
+
+    # Read zip content
+    zip_content = await file.read()
+
+    # Index in background
+    background_tasks.add_task(
+        _index_zip_task,
+        collection.id,
+        current_user.id,
+        zip_content,
+        file_patterns
+    )
+
+    return collection
+
+
+def _index_zip_task(collection_id: int, user_id: int, zip_content: bytes, file_patterns: str):
+    """Background task to index a zip file."""
+    import tempfile
+    import shutil
+    from datetime import datetime
+
+    db = SessionLocal()
+    try:
+        collection = db.query(RAGCollection).filter(RAGCollection.id == collection_id).first()
+        if not collection:
+            return
+
+        rag_service = get_rag_service(db, user_id)
+        patterns = [p.strip() for p in file_patterns.split(',')]
+
+        # Extract zip to temp directory
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zf:
+                zf.extractall(tmpdir)
+
+            # Index files matching patterns
+            indexed_count = 0
+            tmppath = Path(tmpdir)
+
+            for filepath in tmppath.rglob('*'):
+                if not filepath.is_file():
+                    continue
+
+                # Check if file matches any pattern
+                rel_path = filepath.relative_to(tmppath)
+                if not any(fnmatch(filepath.name, p) for p in patterns):
+                    continue
+
+                # Skip hidden files and common non-code directories
+                if any(part.startswith('.') for part in rel_path.parts):
+                    continue
+                if any(part in ['node_modules', '__pycache__', 'venv', '.git'] for part in rel_path.parts):
+                    continue
+
+                try:
+                    content = filepath.read_text(encoding='utf-8', errors='ignore')
+                    if content.strip():
+                        chunks = rag_service.index_document(
+                            collection_id=collection_id,
+                            file_path=str(rel_path),
+                            content=content
+                        )
+                        indexed_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to index {rel_path}: {e}")
+
+            # Update collection
+            collection.document_count = indexed_count
+            collection.last_indexed_at = datetime.utcnow()
+            db.commit()
+
+            logger.info(f"Indexed {indexed_count} files for collection {collection_id}")
+    except Exception as e:
+        logger.error(f"Failed to index zip collection {collection_id}: {e}")
+    finally:
+        db.close()
+
+
 # ----- Git Repository Indexing -----
 
 @router.post("/collections/git", response_model=RAGCollectionResponse)

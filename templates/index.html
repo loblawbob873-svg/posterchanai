@@ -249,6 +249,32 @@ foxnews.com|Fox News"></textarea>
                 </div>
             </div>
 
+            <!-- RAG / Code Context Section -->
+            <div class="settings-section">
+                <h3>Code Context (RAG)</h3>
+                <p class="modal-info">Upload code or documents to give the AI context about your projects.</p>
+
+                <div id="ragCollectionsList" class="rag-user-list">
+                    <!-- Collections loaded here -->
+                </div>
+
+                <div class="rag-upload-section" style="margin-top: 15px;">
+                    <div class="settings-form">
+                        <label for="ragUploadName">Collection Name</label>
+                        <input type="text" id="ragUploadName" placeholder="My Project">
+                        <label for="ragUploadPatterns">File Types</label>
+                        <input type="text" id="ragUploadPatterns" value="*.py,*.js,*.ts,*.md,*.txt">
+                        <label class="upload-dropzone" id="ragDropzone" style="margin-top: 10px;">
+                            <input type="file" id="ragUploadFile" accept=".zip" style="display: none;">
+                            <span class="dropzone-text">Click or drag zip file here</span>
+                            <span class="dropzone-filename" id="ragFileName"></span>
+                        </label>
+                        <button class="btn-primary" id="ragUploadBtn" disabled style="margin-top: 10px;">Upload & Index</button>
+                        <div id="ragUploadStatus" class="settings-status"></div>
+                    </div>
+                </div>
+            </div>
+
             <div class="settings-section save-section">
                 <button class="btn-primary" id="saveUserSettings">Save All Settings</button>
                 <div id="settingsStatus" class="settings-status"></div>
