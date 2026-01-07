@@ -175,6 +175,8 @@ class SettingsResponse(BaseModel):
     rag_chunk_overlap: str = "200"
     rag_top_k: str = "5"
     rag_min_similarity: str = "0.3"
+    rag_max_file_size: str = "1"
+    rag_max_log_size: str = "100"
     rag_chromadb_path: str = "./data/chromadb"
     rag_auto_context: str = "true"
 

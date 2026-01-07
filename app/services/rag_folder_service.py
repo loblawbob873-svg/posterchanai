@@ -29,6 +29,9 @@ class FolderIndexer:
         """Load settings from database."""
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
         self.upload_path = settings.get("upload_path", "/var/lib/posterchanai")
+        # File size limits in bytes (stored as MB in settings)
+        self.max_file_size = int(settings.get("rag_max_file_size", "1")) * 1_000_000
+        self.max_log_size = int(settings.get("rag_max_log_size", "100")) * 1_000_000
 
     def get_upload_folder(self, collection_id: int) -> Path:
         """Get the upload folder path for a collection."""
@@ -69,10 +72,10 @@ class FolderIndexer:
 
             try:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
-                # Allow larger files for logs (100MB), smaller for code (1MB)
-                max_size = 100_000_000 if file_path.suffix == '.log' else 1_000_000
+                # Use configurable file size limits
+                max_size = self.max_log_size if file_path.suffix == '.log' else self.max_file_size
                 if len(content) > max_size:
-                    logger.warning(f"Skipping large file: {file_path} ({len(content)} bytes)")
+                    logger.warning(f"Skipping large file: {file_path} ({len(content)} bytes, limit: {max_size})")
                     continue
 
                 rel_path = str(file_path.relative_to(folder_path))
@@ -117,12 +120,12 @@ class FolderIndexer:
 
             try:
                 content = file_info["content"]
-                # Allow larger files for logs (100MB), smaller for code (1MB)
+                # Use configurable file size limits
                 filename = file_info["filename"]
                 is_log = filename.endswith('.log')
-                max_size = 100_000_000 if is_log else 1_000_000
+                max_size = self.max_log_size if is_log else self.max_file_size
                 if len(content) > max_size:
-                    logger.warning(f"Skipping large file: {filename} ({len(content)} bytes)")
+                    logger.warning(f"Skipping large file: {filename} ({len(content)} bytes, limit: {max_size})")
                     continue
 
                 chunks = self.rag_service.index_file(

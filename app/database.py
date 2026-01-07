@@ -173,6 +173,8 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "rag_chunk_overlap": "200",
             "rag_top_k": "5",
             "rag_min_similarity": "0.3",
+            "rag_max_file_size": "1",
+            "rag_max_log_size": "100",
             "rag_chromadb_path": "./data/chromadb",
             "rag_auto_context": "true",
         }

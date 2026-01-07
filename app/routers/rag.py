@@ -284,6 +284,11 @@ def _index_upload_task(user_id: int, collection_id: int):
             logger.error(f"Upload file not found for collection {collection_id}: {zip_path}")
             return
 
+        # Load file size limits from settings
+        settings = {s.key: s.value for s in db.query(Setting).all()}
+        max_file_size = int(settings.get("rag_max_file_size", "1")) * 1_000_000
+        max_log_size = int(settings.get("rag_max_log_size", "100")) * 1_000_000
+
         # Clear existing documents for this collection
         rag_service = get_rag_service(db, user_id)
         rag_service.delete_collection_documents(collection_id)
@@ -317,10 +322,10 @@ def _index_upload_task(user_id: int, collection_id: int):
                     if fnmatch(file_path.name, pattern):
                         try:
                             file_content = zip_file.read(zip_info.filename).decode('utf-8', errors='ignore')
-                            # Allow larger files for logs (100MB), smaller for code (1MB)
-                            max_size = 100_000_000 if file_path.suffix == '.log' else 1_000_000
+                            # Use configurable file size limits
+                            max_size = max_log_size if file_path.suffix == '.log' else max_file_size
                             if len(file_content) > max_size:
-                                logger.warning(f"Skipping large file {file_path}: {len(file_content)} bytes")
+                                logger.warning(f"Skipping large file {file_path}: {len(file_content)} bytes (limit: {max_size})")
                                 continue
                             files_to_index.append({
                                 "filename": str(file_path),
@@ -379,6 +384,11 @@ async def upload_folder(
     uploads_dir = _get_uploads_dir()
     zip_path = uploads_dir / f"{collection.id}.zip"
 
+    # Load file size limits from settings
+    settings = {s.key: s.value for s in db.query(Setting).all()}
+    max_file_size = int(settings.get("rag_max_file_size", "1")) * 1_000_000
+    max_log_size = int(settings.get("rag_max_log_size", "100")) * 1_000_000
+
     # Extract and index files
     try:
         content = await file.read()
@@ -418,10 +428,10 @@ async def upload_folder(
                     if fnmatch(file_path.name, pattern):
                         try:
                             file_content = zip_file.read(zip_info.filename).decode('utf-8', errors='ignore')
-                            # Allow larger files for logs (100MB), smaller for code (1MB)
-                            max_size = 100_000_000 if file_path.suffix == '.log' else 1_000_000
+                            # Use configurable file size limits
+                            max_size = max_log_size if file_path.suffix == '.log' else max_file_size
                             if len(file_content) > max_size:
-                                logger.warning(f"Skipping large file {file_path}: {len(file_content)} bytes")
+                                logger.warning(f"Skipping large file {file_path}: {len(file_content)} bytes (limit: {max_size})")
                                 continue
                             files_to_index.append({
                                 "filename": str(file_path),
