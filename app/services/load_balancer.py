@@ -5,10 +5,21 @@ import asyncio
 import httpx
 import json
 import logging
+import time
 from itertools import cycle
 from typing import AsyncGenerator, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Also log to a dedicated file for easier troubleshooting
+def _log_lb(msg: str, level: str = "info"):
+    """Log to both standard logger and dedicated load balancer log file"""
+    getattr(logger, level)(msg)
+    try:
+        with open("/tmp/loadbalancer.log", "a") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [{level.upper()}] {msg}\n")
+    except Exception:
+        pass
 
 # Global round-robin state
 _server_cycle: Optional[cycle] = None
@@ -23,8 +34,10 @@ async def _get_next_server(servers: List[str]) -> str:
         if _server_cycle is None or _server_list != servers:
             _server_list = servers.copy()
             _server_cycle = cycle(servers)
-            logger.info(f"Load balancer initialized with {len(servers)} server(s)")
-        return next(_server_cycle)
+            _log_lb(f"Load balancer initialized with {len(servers)} server(s): {servers}")
+        server = next(_server_cycle)
+        _log_lb(f"Selected server: {server}")
+        return server
 
 
 def parse_server_urls(urls_string: str) -> List[str]:
@@ -64,7 +77,8 @@ class LoadBalancer:
             raise ValueError("No servers configured for load balancing")
 
         server = await _get_next_server(self.servers)
-        logger.info(f"Load balancing request to: {server}")
+        start_time = time.time()
+        _log_lb(f"STREAM REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
@@ -80,21 +94,30 @@ class LoadBalancer:
                         "max_tokens": max_tokens
                     }
                 ) as response:
+                    _log_lb(f"STREAM RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
                     response.raise_for_status()
 
+                    chunk_count = 0
                     async for line in response.aiter_lines():
                         line = line.strip()
                         if not line:
                             continue
-                        # Pass through SSE data
                         if line.startswith("data: "):
+                            chunk_count += 1
                             yield line
 
+                    _log_lb(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={time.time()-start_time:.2f}s")
+
             except httpx.HTTPStatusError as e:
-                logger.error(f"Load balancer error from {server}: {e}")
+                error_body = ""
+                try:
+                    error_body = e.response.text[:500]
+                except Exception:
+                    pass
+                _log_lb(f"STREAM ERROR from {server} | status={e.response.status_code} | body={error_body}", "error")
                 yield f'data: {{"error": {{"message": "Server {server} returned {e.response.status_code}"}}}}'
             except Exception as e:
-                logger.error(f"Load balancer error: {e}")
+                _log_lb(f"STREAM EXCEPTION | server={server} | error={str(e)}", "error")
                 yield f'data: {{"error": {{"message": "{str(e)}"}}}}'
 
     async def chat(
@@ -111,7 +134,8 @@ class LoadBalancer:
             raise ValueError("No servers configured for load balancing")
 
         server = await _get_next_server(self.servers)
-        logger.info(f"Load balancing request to: {server}")
+        start_time = time.time()
+        _log_lb(f"CHAT REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
@@ -126,10 +150,20 @@ class LoadBalancer:
                         "max_tokens": max_tokens
                     }
                 )
+                _log_lb(f"CHAT RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
                 response.raise_for_status()
-                return response.json()
+                result = response.json()
+                _log_lb(f"CHAT COMPLETE from {server} | total_time={time.time()-start_time:.2f}s")
+                return result
 
             except httpx.HTTPStatusError as e:
+                error_body = ""
+                try:
+                    error_body = e.response.text[:500]
+                except Exception:
+                    pass
+                _log_lb(f"CHAT ERROR from {server} | status={e.response.status_code} | body={error_body}", "error")
                 return {"error": {"message": f"Server {server} returned {e.response.status_code}"}}
             except Exception as e:
+                _log_lb(f"CHAT EXCEPTION | server={server} | error={str(e)}", "error")
                 return {"error": {"message": str(e)}}
