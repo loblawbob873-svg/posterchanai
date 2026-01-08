@@ -44,10 +44,11 @@ def parse_server_urls(urls_string: str) -> List[str]:
 class LoadBalancer:
     """Simple round-robin load balancer for posterchanai servers"""
 
-    def __init__(self, servers: List[str], timeout: float = 120.0, api_key: Optional[str] = None):
+    def __init__(self, servers: List[str], timeout: float = 120.0, api_key: Optional[str] = None, model: str = "default"):
         self.servers = servers
         self.timeout = timeout
         self.api_key = api_key
+        self.model = model
 
     def _get_headers(self) -> dict:
         """Get headers for requests, including auth if API key is set"""
@@ -80,6 +81,7 @@ class LoadBalancer:
                     f"{server}/v1/chat/completions",
                     headers=self._get_headers(),
                     json={
+                        "model": self.model,
                         "messages": messages,
                         "stream": True,
                         "temperature": temperature,
@@ -126,6 +128,7 @@ class LoadBalancer:
                     f"{server}/v1/chat/completions",
                     headers=self._get_headers(),
                     json={
+                        "model": self.model,
                         "messages": messages,
                         "stream": False,
                         "temperature": temperature,
