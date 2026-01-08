@@ -87,7 +87,8 @@ class OllamaService:
 
         self.default_model = settings.get("ollama_model", "llama3")
         self.timeout = int(settings.get("ollama_timeout", "120000")) / 1000
-        self.max_concurrent = int(settings.get("ollama_max_concurrent", "2"))
+        # Max concurrent = number of hosts (1 request per host)
+        self.max_concurrent = len(self.hosts)
         self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
 
         # Advanced model settings

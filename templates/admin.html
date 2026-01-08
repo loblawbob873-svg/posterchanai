@@ -97,16 +97,9 @@
                         <label for="ollama_model">Default Model</label>
                         <input type="text" id="ollama_model" name="ollama_model" placeholder="llama3">
                     </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="ollama_timeout">Timeout (ms)</label>
-                            <input type="number" id="ollama_timeout" name="ollama_timeout" value="120000">
-                        </div>
-                        <div class="form-group">
-                            <label for="ollama_max_concurrent">Max Concurrent</label>
-                            <input type="number" id="ollama_max_concurrent" name="ollama_max_concurrent" value="1" min="1" max="20">
-                            <small>Total concurrent requests across all hosts</small>
-                        </div>
+                    <div class="form-group">
+                        <label for="ollama_timeout">Timeout (ms)</label>
+                        <input type="number" id="ollama_timeout" name="ollama_timeout" value="120000">
                     </div>
                 </fieldset>
 

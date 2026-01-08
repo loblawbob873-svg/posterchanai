@@ -120,7 +120,6 @@ class SettingsResponse(BaseModel):
     ollama_extra_urls: str = ""  # Additional URLs for load balancing (comma-separated)
     ollama_model: str = "richardyoung/qwen3-14b-abliterated:Q5_K_M"
     ollama_timeout: str = "120000"
-    ollama_max_concurrent: str = "2"  # Max concurrent requests across all hosts
     ollama_system_prompt: str = ""
     # Advanced model settings
     ollama_temperature: str = "0.2"
