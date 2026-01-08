@@ -22,7 +22,7 @@
     </div>
 
     <div class="admin-content">
-        <form id="settingsForm" class="settings-form">
+        <form id="settingsForm" class="settings-form" novalidate>
             <!-- AI Settings Tab -->
             <div class="tab-content active" id="tab-ai">
                 <fieldset>
@@ -466,6 +466,11 @@
                             <label for="image_default_height">Default Height</label>
                             <input type="number" id="image_default_height" name="image_default_height" value="1024" min="256" max="2048" step="64">
                         </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="image_idle_timeout">Idle Timeout (seconds)</label>
+                        <input type="number" id="image_idle_timeout" name="image_idle_timeout" value="120" min="0" max="3600">
+                        <small>Unload model after this many seconds idle. 0 = never unload.</small>
                     </div>
                     <div class="form-group">
                         <button type="button" id="reloadImageModelBtn" class="btn-secondary">Reload Model</button>
