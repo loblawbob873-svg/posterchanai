@@ -66,20 +66,28 @@ async def generate_image_with_load_balancing(
     Generate image with load balancing support.
     Alternates between local and remote servers if load balancing is configured.
     Remote requests run in parallel; local requests are serialized via lock.
+    If vram_mode is 'llm_only', always uses remote servers.
     Returns base64 encoded image or None.
     """
     from app.services.locks import image_generation_lock
 
     settings = {s.key: s.value for s in db.query(Setting).all()}
     image_server_urls = settings.get("image_server_urls", "")
+    vram_mode = settings.get("vram_mode", "shared")
     servers = parse_image_server_urls(image_server_urls)
 
+    # If vram_mode is llm_only, always use remote servers (no local image generation)
+    force_remote = vram_mode == "llm_only"
+
     # Check if we should use remote server
-    if servers and await should_use_remote_image(len(servers)):
+    if servers and (force_remote or await should_use_remote_image(len(servers))):
         # Use remote server - NO LOCK, allows parallel requests to different servers
         timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
         load_balancer = ImageLoadBalancer(servers, timeout=timeout)
-        logger.info("Using remote server for image generation (parallel allowed)")
+        if force_remote:
+            logger.info("Using remote server for image generation (vram_mode=llm_only)")
+        else:
+            logger.info("Using remote server for image generation (parallel allowed)")
         return await load_balancer.generate_image(
             prompt=prompt,
             negative_prompt=negative_prompt,
