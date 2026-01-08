@@ -465,9 +465,11 @@ class DiffusersService:
         )
 
         # If idle timeout is 0, unload immediately to free VRAM
+        logger.info(f"Post-generation: idle_timeout={self._idle_timeout}, pipe_loaded={self._pipe is not None}")
         if self._idle_timeout == 0:
             logger.info("Immediate unload (idle_timeout=0)")
             self.unload_model()
+            logger.info(f"After unload: pipe_loaded={self._pipe is not None}")
 
         if img_bytes:
             return base64.b64encode(img_bytes).decode()
