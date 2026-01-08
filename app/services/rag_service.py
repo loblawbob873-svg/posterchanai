@@ -37,6 +37,10 @@ class RAGService:
         self.chunk_overlap = int(settings.get("rag_chunk_overlap", "200"))
         self.top_k = int(settings.get("rag_top_k", "5"))
         self.min_similarity = float(settings.get("rag_min_similarity", "0.3"))
+        # Context and chunk size limits
+        self.max_context_chars = int(settings.get("rag_max_context_chars", "32000"))
+        self.max_chunk_display = int(settings.get("rag_max_chunk_display", "8000"))
+        self.max_chunk_index = int(settings.get("rag_max_chunk_index", "10000"))
 
     def _ensure_chroma_client(self):
         """Get or create ChromaDB client."""
@@ -379,14 +383,13 @@ class RAGService:
             return 0
 
         # Enforce maximum chunk size to prevent massive chunks from being stored
-        max_chunk_size = 10000  # 10k chars max per chunk
         filtered_chunks = []
         for chunk in chunks:
-            if len(chunk["content"]) > max_chunk_size:
+            if len(chunk["content"]) > self.max_chunk_index:
                 # Split oversized chunk into smaller pieces
                 content_text = chunk["content"]
-                for i in range(0, len(content_text), max_chunk_size):
-                    piece = content_text[i:i + max_chunk_size]
+                for i in range(0, len(content_text), self.max_chunk_index):
+                    piece = content_text[i:i + self.max_chunk_index]
                     if piece.strip():
                         filtered_chunks.append({
                             "content": piece,
@@ -518,19 +521,23 @@ class RAGService:
         all_results.sort(key=lambda x: x["similarity"], reverse=True)
         return all_results[:top_k]
 
-    def format_context(self, results: List[Dict[str, Any]], max_context_chars: int = 32000) -> str:
+    def format_context(self, results: List[Dict[str, Any]], max_context_chars: int = None) -> str:
         """Format query results as context for the LLM.
 
         Args:
             results: Query results from RAG
-            max_context_chars: Maximum total characters for context (default 32k to fit in most context windows)
+            max_context_chars: Maximum total characters for context (uses setting if not specified)
         """
         if not results:
             return ""
 
+        # Use instance settings if not overridden
+        if max_context_chars is None:
+            max_context_chars = self.max_context_chars
+        max_chunk_chars = self.max_chunk_display
+
         context_parts = ["## Relevant Code/Documentation Context\n"]
         total_chars = len(context_parts[0])
-        max_chunk_chars = 8000  # Max chars per individual chunk to prevent single massive chunks
 
         for i, result in enumerate(results, 1):
             file_path = result['file_path']
