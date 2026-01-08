@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models import Setting
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.custom_ai_service import CustomAIService
+from app.services.load_balancer import LoadBalancer, parse_server_urls
 
 if TYPE_CHECKING:
     from app.models import User
@@ -57,6 +58,15 @@ class ChatService:
                 model=self.user.custom_ai_model or "default",
                 api_key=self.user.custom_ai_api_key
             )
+        return None
+
+    def _get_load_balancer(self) -> Optional[LoadBalancer]:
+        """Get load balancer if chat servers are configured"""
+        chat_server_urls = self._settings.get("chat_server_urls", "")
+        servers = parse_server_urls(chat_server_urls)
+        if servers:
+            timeout = int(self._settings.get("ollama_timeout", "120000")) / 1000
+            return LoadBalancer(servers, timeout=timeout)
         return None
 
     def _get_rag_context(self, user_message: str) -> str:
@@ -149,6 +159,20 @@ class ChatService:
             # Inject RAG context if available
             messages = self._inject_rag_context(messages, user_message)
 
+            # Check for site-wide load balancer first
+            load_balancer = self._get_load_balancer()
+            if load_balancer:
+                result = await load_balancer.chat(
+                    messages=messages,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.num_predict
+                )
+                if "error" in result:
+                    return f"Error: {result['error'].get('message', 'Unknown error')}"
+                content = result["choices"][0]["message"]["content"]
+                return self.strip_thinking_tags(content)
+
             # Check if user has custom AI service enabled
             custom_service = self._get_custom_ai_service()
             if custom_service:
@@ -194,6 +218,55 @@ class ChatService:
 
             # Inject RAG context if available
             messages = self._inject_rag_context(messages, user_message)
+
+            # Check for site-wide load balancer first
+            load_balancer = self._get_load_balancer()
+            if load_balancer:
+                # Stream from load-balanced server with thinking tag filtering
+                buffer = ""
+                thinking_done = False
+
+                async for chunk in load_balancer.chat_stream(
+                    messages=messages,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.num_predict
+                ):
+                    if chunk.startswith("data: "):
+                        data_str = chunk[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(data_str)
+                            if "error" in data:
+                                yield f"Error: {data['error'].get('message', 'Unknown error')}"
+                                return
+                            content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if content:
+                                buffer += content
+
+                                if not thinking_done:
+                                    match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
+                                    if match:
+                                        thinking_done = True
+                                        after_think = buffer[match.end():]
+                                        buffer = ""
+                                        if after_think.strip():
+                                            yield after_think
+                                    elif len(buffer) > 50 and '<think' not in buffer.lower():
+                                        thinking_done = True
+                                        yield buffer
+                                        buffer = ""
+                                else:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+
+                if buffer:
+                    clean = self.strip_thinking_tags(buffer)
+                    if clean:
+                        yield clean
+                return
 
             # Check if user has custom AI service enabled
             custom_service = self._get_custom_ai_service()

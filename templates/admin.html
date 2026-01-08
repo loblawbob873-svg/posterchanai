@@ -685,6 +685,15 @@
             <!-- Site Settings Tab -->
             <div class="tab-content" id="tab-site">
                 <fieldset>
+                    <legend>Load Balancing</legend>
+                    <div class="form-group">
+                        <label for="chat_server_urls">Chat Server URLs</label>
+                        <input type="text" id="chat_server_urls" name="chat_server_urls" placeholder="http://server1:3051, http://server2:3051">
+                        <small>Comma-separated posterchanai servers for round-robin load balancing. Leave empty to use local backend.</small>
+                    </div>
+                </fieldset>
+
+                <fieldset>
                     <legend>Registration</legend>
                     <div class="form-group">
                         <label for="allow_registration">

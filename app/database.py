@@ -134,6 +134,8 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "openai_api_key": "",
             # Registration settings
             "allow_registration": "false",
+            # Load balancing - proxy chat to external posterchanai servers
+            "chat_server_urls": "",  # Comma-separated URLs (empty = use local backend)
             # Native LLM settings
             "llm_backend": "ollama",  # "native", "ipex", or "ollama"
             "llm_model_path": "/home/verita84/models/model.gguf",
