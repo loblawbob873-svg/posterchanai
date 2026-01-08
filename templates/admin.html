@@ -89,11 +89,6 @@
                         <input type="url" id="ollama_url" name="ollama_url" placeholder="http://localhost:11434">
                     </div>
                     <div class="form-group">
-                        <label for="ollama_extra_urls">Additional URLs (Load Balancing)</label>
-                        <input type="text" id="ollama_extra_urls" name="ollama_extra_urls" placeholder="http://host2:3051, http://host3:3051">
-                        <small>Comma-separated list of additional hosts for round-robin load balancing</small>
-                    </div>
-                    <div class="form-group">
                         <label for="ollama_api_format">API Format</label>
                         <select id="ollama_api_format" name="ollama_api_format">
                             <option value="ollama">Ollama (/api/chat)</option>
@@ -690,6 +685,11 @@
                         <label for="chat_server_urls">Chat Server URLs</label>
                         <input type="text" id="chat_server_urls" name="chat_server_urls" placeholder="http://server1:3051, http://server2:3051">
                         <small>Comma-separated posterchanai servers for round-robin load balancing. Leave empty to use local backend.</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="chat_server_api_key">Server API Key</label>
+                        <input type="password" id="chat_server_api_key" name="chat_server_api_key" placeholder="API key for authentication">
+                        <small>API key for authenticating with load-balanced servers (all servers must use the same key)</small>
                     </div>
                 </fieldset>
 

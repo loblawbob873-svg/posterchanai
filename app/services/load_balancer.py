@@ -42,9 +42,17 @@ def parse_server_urls(urls_string: str) -> List[str]:
 class LoadBalancer:
     """Simple round-robin load balancer for posterchanai servers"""
 
-    def __init__(self, servers: List[str], timeout: float = 120.0):
+    def __init__(self, servers: List[str], timeout: float = 120.0, api_key: Optional[str] = None):
         self.servers = servers
         self.timeout = timeout
+        self.api_key = api_key
+
+    def _get_headers(self) -> dict:
+        """Get headers for requests, including auth if API key is set"""
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
     async def chat_stream(
         self,
@@ -68,6 +76,7 @@ class LoadBalancer:
                 async with client.stream(
                     "POST",
                     f"{server}/v1/chat/completions",
+                    headers=self._get_headers(),
                     json={
                         "messages": messages,
                         "stream": True,
@@ -113,6 +122,7 @@ class LoadBalancer:
             try:
                 response = await client.post(
                     f"{server}/v1/chat/completions",
+                    headers=self._get_headers(),
                     json={
                         "messages": messages,
                         "stream": False,

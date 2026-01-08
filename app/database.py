@@ -74,7 +74,6 @@ def init_db():
             "tts_pitch": "+10Hz",
             # Ollama settings
             "ollama_url": "http://localhost:11434",
-            "ollama_extra_urls": "",  # Additional URLs for load balancing (comma-separated)
             "ollama_api_format": "ollama",  # "ollama" for /api/chat, "openai" for /v1/chat/completions
             "ollama_model": "richardyoung/qwen3-14b-abliterated:Q5_K_M",
             "ollama_timeout": "120000",
@@ -136,6 +135,7 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "allow_registration": "false",
             # Load balancing - proxy chat to external posterchanai servers
             "chat_server_urls": "",  # Comma-separated URLs (empty = use local backend)
+            "chat_server_api_key": "",  # API key for load-balanced servers
             # Native LLM settings
             "llm_backend": "ollama",  # "native", "ipex", or "ollama"
             "llm_model_path": "/home/verita84/models/model.gguf",

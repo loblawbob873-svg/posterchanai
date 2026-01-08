@@ -117,7 +117,6 @@ class SettingsResponse(BaseModel):
     llm_use_mlock: str = "false"  # Lock model in RAM
     # Ollama settings (also used for native backend sampling parameters)
     ollama_url: str = "http://localhost:11434"
-    ollama_extra_urls: str = ""  # Additional URLs for load balancing (comma-separated)
     ollama_api_format: str = "ollama"  # "ollama" for /api/chat, "openai" for /v1/chat/completions
     ollama_model: str = "richardyoung/qwen3-14b-abliterated:Q5_K_M"
     ollama_timeout: str = "120000"
@@ -142,6 +141,7 @@ class SettingsResponse(BaseModel):
     allow_registration: str = "false"
     # Load balancing - proxy chat to external posterchanai servers
     chat_server_urls: str = ""  # Comma-separated list of posterchanai server URLs for load balancing
+    chat_server_api_key: str = ""  # API key for authenticating with load-balanced servers
     # Ollama health check
     ollama_ping_enabled: str = "false"
     ollama_restart_command: str = "sudo systemctl restart ollama"

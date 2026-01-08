@@ -66,7 +66,8 @@ class ChatService:
         servers = parse_server_urls(chat_server_urls)
         if servers:
             timeout = int(self._settings.get("ollama_timeout", "120000")) / 1000
-            return LoadBalancer(servers, timeout=timeout)
+            api_key = self._settings.get("chat_server_api_key", "")
+            return LoadBalancer(servers, timeout=timeout, api_key=api_key if api_key else None)
         return None
 
     def _get_rag_context(self, user_message: str) -> str:

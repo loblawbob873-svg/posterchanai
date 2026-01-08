@@ -5,7 +5,6 @@ import logging
 import re
 import time
 import uuid
-from itertools import cycle
 from typing import AsyncGenerator, Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 from app.models import Setting
@@ -17,11 +16,6 @@ logger = logging.getLogger(__name__)
 _request_semaphore: Optional[asyncio.Semaphore] = None
 _semaphore_limit: int = 2
 _semaphore_lock = asyncio.Lock()
-
-# Global round-robin host selector
-_host_cycle: Optional[cycle] = None
-_host_list: List[str] = []
-_host_cycle_lock = asyncio.Lock()
 
 # Global HTTP client pool for connection reuse (performance optimization)
 _http_client: Optional[httpx.AsyncClient] = None
@@ -50,18 +44,6 @@ async def _get_http_client(timeout: float = 120) -> httpx.AsyncClient:
         return _http_client
 
 
-async def _get_next_host(hosts: List[str]) -> str:
-    """Get next host using round-robin load balancing (async-safe)"""
-    global _host_cycle, _host_list
-    async with _host_cycle_lock:
-        # Recreate cycle if host list changed
-        if _host_cycle is None or _host_list != hosts:
-            _host_list = hosts.copy()
-            _host_cycle = cycle(hosts)
-            logger.info(f"Load balancer initialized with {len(hosts)} host(s): {hosts}")
-        return next(_host_cycle)
-
-
 class OllamaService:
     def __init__(self, db: Session):
         self.db = db
@@ -71,24 +53,11 @@ class OllamaService:
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
 
         # Ollama connection settings
-        primary_url = settings.get("ollama_url", "http://localhost:11434").rstrip('/')
-        extra_urls = settings.get("ollama_extra_urls", "")
-
-        # Build list of all hosts for load balancing
-        self.hosts = [primary_url]
-        if extra_urls.strip():
-            for url in extra_urls.split(','):
-                url = url.strip().rstrip('/')
-                if url and url not in self.hosts:
-                    self.hosts.append(url)
-
-        # Keep ollama_url for backwards compatibility (uses first host)
-        self.ollama_url = primary_url
+        self.ollama_url = settings.get("ollama_url", "http://localhost:11434").rstrip('/')
 
         self.default_model = settings.get("ollama_model", "llama3")
         self.timeout = int(settings.get("ollama_timeout", "120000")) / 1000
-        # Max concurrent = number of hosts (1 request per host)
-        self.max_concurrent = len(self.hosts)
+        self.max_concurrent = int(settings.get("ollama_max_concurrent", "1"))
         self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
         # API format: "ollama" for /api/chat, "openai" for /v1/chat/completions
         self.api_format = settings.get("ollama_api_format", "ollama")
@@ -179,8 +148,7 @@ class OllamaService:
         semaphore = await _get_semaphore(self.max_concurrent)
 
         async with semaphore:
-            # Get next host using round-robin
-            host = await _get_next_host(self.hosts)
+            host = self.ollama_url
             client = await _get_http_client(timeout=self.timeout)
             try:
                 if self.api_format == "openai":
@@ -284,8 +252,7 @@ class OllamaService:
         semaphore = await _get_semaphore(self.max_concurrent)
 
         async with semaphore:
-            # Get next host using round-robin
-            host = await _get_next_host(self.hosts)
+            host = self.ollama_url
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 try:
                     if self.api_format == "openai":
@@ -463,8 +430,7 @@ class OllamaService:
         semaphore = await _get_semaphore(self.max_concurrent)
 
         async with semaphore:
-            # Get next host using round-robin
-            host = await _get_next_host(self.hosts)
+            host = self.ollama_url
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 try:
                     payload = {
