@@ -681,6 +681,9 @@ STUBCODE
 
         cpu)
             echo "  Building CPU-only version..."
+            # Disable GGML_NATIVE to avoid Intel SVML dependency (libsvml.so)
+            # Use AVX/AVX2 for good CPU performance without Intel-specific libraries
+            export CMAKE_ARGS="-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON"
             pip install llama-cpp-python --force-reinstall --no-cache-dir -q
             ;;
 
