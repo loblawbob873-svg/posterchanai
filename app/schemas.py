@@ -213,6 +213,9 @@ class ChatMessage(BaseModel):
     role: str
     content: str
 
+    class Config:
+        extra = "ignore"  # Ignore extra fields like image_path
+
 
 class ChatCompletionRequest(BaseModel):
     model: str
