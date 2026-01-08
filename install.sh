@@ -846,6 +846,10 @@ setup_xpu_image_instance() {
     # Install all posterchanai requirements
     echo "  Installing posterchanai requirements..."
     pip install -r "$SCRIPT_DIR/requirements.txt" -q
+
+    # Install image generation requirements for XPU instance
+    echo "  Installing image generation requirements..."
+    pip install -r "$SCRIPT_DIR/requirements-image.txt" -q
     deactivate
 
     # Run setup script

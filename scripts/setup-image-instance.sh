@@ -13,6 +13,8 @@ echo "Setting up image-only instance..."
 if [ -d "$VENV_XPU" ]; then
     echo "Installing posterchanai requirements in venv-xpu..."
     "$VENV_XPU/bin/pip" install -r "$POSTERCHANAI_DIR/requirements.txt" -q 2>/dev/null || true
+    echo "Installing image generation requirements..."
+    "$VENV_XPU/bin/pip" install -r "$POSTERCHANAI_DIR/requirements-image.txt" -q 2>/dev/null || true
 else
     echo "WARNING: venv-xpu not found. Run the installer first or create venv-xpu manually."
 fi
