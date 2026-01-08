@@ -378,6 +378,27 @@ class RAGService:
         if not chunks:
             return 0
 
+        # Enforce maximum chunk size to prevent massive chunks from being stored
+        max_chunk_size = 10000  # 10k chars max per chunk
+        filtered_chunks = []
+        for chunk in chunks:
+            if len(chunk["content"]) > max_chunk_size:
+                # Split oversized chunk into smaller pieces
+                content_text = chunk["content"]
+                for i in range(0, len(content_text), max_chunk_size):
+                    piece = content_text[i:i + max_chunk_size]
+                    if piece.strip():
+                        filtered_chunks.append({
+                            "content": piece,
+                            "metadata": chunk["metadata"].copy()
+                        })
+            else:
+                filtered_chunks.append(chunk)
+        chunks = filtered_chunks
+
+        if not chunks:
+            return 0
+
         # Generate embeddings
         embedding_service = get_embedding_service(self.db)
         texts = [c["content"] for c in chunks]
@@ -497,24 +518,55 @@ class RAGService:
         all_results.sort(key=lambda x: x["similarity"], reverse=True)
         return all_results[:top_k]
 
-    def format_context(self, results: List[Dict[str, Any]]) -> str:
-        """Format query results as context for the LLM."""
+    def format_context(self, results: List[Dict[str, Any]], max_context_chars: int = 32000) -> str:
+        """Format query results as context for the LLM.
+
+        Args:
+            results: Query results from RAG
+            max_context_chars: Maximum total characters for context (default 32k to fit in most context windows)
+        """
         if not results:
             return ""
 
         context_parts = ["## Relevant Code/Documentation Context\n"]
+        total_chars = len(context_parts[0])
+        max_chunk_chars = 8000  # Max chars per individual chunk to prevent single massive chunks
 
         for i, result in enumerate(results, 1):
             file_path = result['file_path']
             lang = result.get('metadata', {}).get('language', '')
-            context_parts.append(f"### Source {i}: `{file_path}`")
-            context_parts.append(f"Collection: {result['collection_name']} | Relevance: {result['similarity']:.0%}")
+            content = result['content']
+
+            # Truncate individual chunks that are too large
+            if len(content) > max_chunk_chars:
+                content = content[:max_chunk_chars] + "\n... [truncated - chunk too large]"
+
+            header = f"### Source {i}: `{file_path}`\n"
+            header += f"Collection: {result['collection_name']} | Relevance: {result['similarity']:.0%}\n"
 
             # Add code block with language hint
             if lang:
-                context_parts.append(f"```{lang}\n{result['content']}\n```\n")
+                chunk_text = f"{header}```{lang}\n{content}\n```\n\n"
             else:
-                context_parts.append(f"```\n{result['content']}\n```\n")
+                chunk_text = f"{header}```\n{content}\n```\n\n"
+
+            # Check if adding this chunk would exceed max context
+            if total_chars + len(chunk_text) > max_context_chars:
+                if i == 1:
+                    # At least include first result (truncated)
+                    remaining = max_context_chars - total_chars - 100
+                    if remaining > 500:
+                        truncated_content = content[:remaining] + "\n... [truncated to fit context]"
+                        if lang:
+                            chunk_text = f"{header}```{lang}\n{truncated_content}\n```\n\n"
+                        else:
+                            chunk_text = f"{header}```\n{truncated_content}\n```\n\n"
+                        context_parts.append(chunk_text)
+                context_parts.append(f"\n[{len(results) - i + 1} more results omitted to fit context window]")
+                break
+
+            context_parts.append(chunk_text)
+            total_chars += len(chunk_text)
 
         return "\n".join(context_parts)
 
