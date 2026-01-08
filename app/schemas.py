@@ -118,6 +118,7 @@ class SettingsResponse(BaseModel):
     # Ollama settings (also used for native backend sampling parameters)
     ollama_url: str = "http://localhost:11434"
     ollama_extra_urls: str = ""  # Additional URLs for load balancing (comma-separated)
+    ollama_api_format: str = "ollama"  # "ollama" for /api/chat, "openai" for /v1/chat/completions
     ollama_model: str = "richardyoung/qwen3-14b-abliterated:Q5_K_M"
     ollama_timeout: str = "120000"
     ollama_system_prompt: str = ""

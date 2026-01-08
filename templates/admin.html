@@ -90,8 +90,16 @@
                     </div>
                     <div class="form-group">
                         <label for="ollama_extra_urls">Additional URLs (Load Balancing)</label>
-                        <input type="text" id="ollama_extra_urls" name="ollama_extra_urls" placeholder="http://host2:11434, http://host3:11434">
-                        <small>Comma-separated list of additional Ollama hosts for round-robin load balancing</small>
+                        <input type="text" id="ollama_extra_urls" name="ollama_extra_urls" placeholder="http://host2:3051, http://host3:3051">
+                        <small>Comma-separated list of additional hosts for round-robin load balancing</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="ollama_api_format">API Format</label>
+                        <select id="ollama_api_format" name="ollama_api_format">
+                            <option value="ollama">Ollama (/api/chat)</option>
+                            <option value="openai">OpenAI (/v1/chat/completions)</option>
+                        </select>
+                        <small>Use "OpenAI" for posterchanai servers or any OpenAI-compatible API</small>
                     </div>
                     <div class="form-group">
                         <label for="ollama_model">Default Model</label>
