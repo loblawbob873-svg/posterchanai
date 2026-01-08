@@ -141,6 +141,8 @@ class SettingsResponse(BaseModel):
     allow_registration: str = "false"
     # Load balancing - proxy chat to external posterchanai servers
     chat_server_urls: str = ""  # Comma-separated list of posterchanai server URLs for load balancing
+    # Load balancing - proxy image generation to external posterchanai servers
+    image_server_urls: str = ""  # Comma-separated list of posterchanai server URLs for image load balancing
     # Ollama health check
     ollama_ping_enabled: str = "false"
     ollama_restart_command: str = "sudo systemctl restart ollama"

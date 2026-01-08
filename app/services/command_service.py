@@ -2,7 +2,7 @@ import logging
 from typing import Optional, Tuple, Callable, TYPE_CHECKING
 from sqlalchemy.orm import Session
 from app.services.search_service import SearchService
-from app.services.image_factory import get_image_backend, get_image_backend_for_user, prepare_vram_for_image
+from app.services.image_factory import generate_image_for_user
 from app.services.chat_service import ChatService
 from app.services.locks import image_generation_lock
 
@@ -23,8 +23,6 @@ class CommandService:
         self.db = db
         self.user = user
         self.search_service = SearchService(db)
-        # Use user's custom ComfyUI if enabled, otherwise use default
-        self.image_service = get_image_backend_for_user(db, user)
         self.chat_service = ChatService(db, user=user)
 
     def parse_command(self, message: str) -> Tuple[Optional[str], str]:
@@ -100,15 +98,17 @@ class CommandService:
 
         # Use lock to prevent concurrent image generation
         async with image_generation_lock:
-            # Prepare VRAM for image generation (swap models if needed)
-            prepare_vram_for_image(self.db)
-
             if stop_check and stop_check():
                 return {"type": "text", "content": "Generation cancelled."}
 
-            image_data = await self.image_service.generate_image(prompt)
+            # Generate image with load balancing support
+            image_data = await generate_image_for_user(
+                db=self.db,
+                user=self.user,
+                prompt=prompt,
+            )
             if not image_data:
-                return {"type": "text", "content": "Failed to generate image. Please try again or check if ComfyUI is configured."}
+                return {"type": "text", "content": "Failed to generate image. Please try again or check image generation settings."}
 
             return {
                 "type": "generated_image",

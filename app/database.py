@@ -3,7 +3,9 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./posterchanai.db")
+# Support custom database file via POSTERCHANAI_DB env var
+_db_file = os.getenv("POSTERCHANAI_DB", "posterchanai.db")
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///./{_db_file}")
 
 engine = create_engine(
     DATABASE_URL,
@@ -135,6 +137,8 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "allow_registration": "false",
             # Load balancing - proxy chat to external posterchanai servers
             "chat_server_urls": "",  # Comma-separated URLs (empty = use local backend)
+            # Load balancing - proxy image generation to external posterchanai servers
+            "image_server_urls": "",  # Comma-separated URLs (empty = use local backend)
             # Native LLM settings
             "llm_backend": "ollama",  # "native", "ipex", or "ollama"
             "llm_model_path": "/home/verita84/models/model.gguf",

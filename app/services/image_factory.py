@@ -3,12 +3,18 @@ Image Generation Factory
 Selects between native diffusers and ComfyUI backends based on settings.
 Integrates with VRAM manager for model swapping on shared GPU.
 Supports user-specific custom ComfyUI endpoints.
+Supports load balancing across multiple posterchanai servers.
 """
 import logging
 from typing import Optional, Protocol, runtime_checkable, TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from app.models import Setting
+from app.services.image_load_balancer import (
+    ImageLoadBalancer,
+    parse_image_server_urls,
+    should_use_remote_image,
+)
 
 if TYPE_CHECKING:
     from app.models import User
@@ -29,6 +35,69 @@ def prepare_vram_for_image(db: Session):
     """Prepare VRAM for image generation (swap models if needed)"""
     from app.services.vram_manager import prepare_for_image
     prepare_for_image(db)
+
+
+def get_image_load_balancer(db: Session) -> Optional[ImageLoadBalancer]:
+    """
+    Get the image load balancer if configured.
+    Returns None if no remote servers are configured.
+    """
+    settings = {s.key: s.value for s in db.query(Setting).all()}
+    image_server_urls = settings.get("image_server_urls", "")
+    servers = parse_image_server_urls(image_server_urls)
+
+    if servers:
+        timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
+        logger.debug(f"Image load balancer available with {len(servers)} server(s)")
+        return ImageLoadBalancer(servers, timeout=timeout)
+    return None
+
+
+async def generate_image_with_load_balancing(
+    db: Session,
+    prompt: str,
+    negative_prompt: str = "",
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    steps: Optional[int] = None,
+    cfg: Optional[float] = None,
+) -> Optional[str]:
+    """
+    Generate image with load balancing support.
+    Alternates between local and remote servers if load balancing is configured.
+    Returns base64 encoded image or None.
+    """
+    settings = {s.key: s.value for s in db.query(Setting).all()}
+    image_server_urls = settings.get("image_server_urls", "")
+    servers = parse_image_server_urls(image_server_urls)
+
+    # Check if we should use remote server
+    if servers and await should_use_remote_image(len(servers)):
+        # Use remote server
+        timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
+        load_balancer = ImageLoadBalancer(servers, timeout=timeout)
+        logger.info("Using remote server for image generation")
+        return await load_balancer.generate_image(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            width=width,
+            height=height,
+            steps=steps,
+            cfg=cfg,
+        )
+
+    # Use local backend
+    logger.info("Using local backend for image generation")
+    prepare_vram_for_image(db)
+    backend = get_image_backend(db)
+    return await backend.generate_image(
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        width=width,
+        height=height,
+        steps=steps,
+        cfg=cfg,
+    )
 
 
 def get_image_backend(db: Session) -> ImageBackend:
@@ -114,3 +183,48 @@ def get_image_backend_for_user(db: Session, user: Optional["User"] = None) -> Im
 
     # Use default server backend
     return get_image_backend(db)
+
+
+async def generate_image_for_user(
+    db: Session,
+    user: Optional["User"],
+    prompt: str,
+    negative_prompt: str = "",
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    steps: Optional[int] = None,
+    cfg: Optional[float] = None,
+) -> Optional[str]:
+    """
+    Generate image for a specific user with load balancing support.
+    - If user has custom image generation, uses their endpoint
+    - Otherwise uses load balancing if configured
+    - Falls back to local backend
+    Returns base64 encoded image or None.
+    """
+    # Check if user has custom image generation enabled - bypass load balancing
+    if (user and
+        user.custom_image_enabled and
+        user.custom_image_url):
+        logger.info(f"Using user's custom image endpoint: {user.custom_image_url}")
+        prepare_vram_for_image(db)
+        backend = get_image_backend_for_user(db, user)
+        return await backend.generate_image(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            width=width,
+            height=height,
+            steps=steps,
+            cfg=cfg,
+        )
+
+    # Use load balancing (will alternate between local and remote)
+    return await generate_image_with_load_balancing(
+        db=db,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        width=width,
+        height=height,
+        steps=steps,
+        cfg=cfg,
+    )

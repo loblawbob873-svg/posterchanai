@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.auth import get_current_user_optional
-from app.services.image_factory import get_image_backend, prepare_vram_for_image
+from app.services.image_factory import generate_image_with_load_balancing
 from app.services.locks import image_generation_lock
 
 router = APIRouter(prefix="/api", tags=["image"])
@@ -92,18 +92,15 @@ async def generate_image(
     Returns base64 encoded image.
     Supports JWT auth or API key auth (X-API-Key header or Bearer token).
     Uses a lock to ensure sequential processing (one image at a time).
+    Supports load balancing across multiple posterchanai servers.
     """
     async with image_generation_lock:
         try:
             logger.info(f"[IMAGE-API] Generating image: {request.prompt[:50]}...")
-            # Prepare VRAM for image generation
-            prepare_vram_for_image(db)
 
-            # Get image backend (native or comfyui)
-            backend = get_image_backend(db)
-
-            # Generate image
-            result = await backend.generate_image(
+            # Generate image with load balancing support
+            result = await generate_image_with_load_balancing(
+                db=db,
                 prompt=request.prompt,
                 negative_prompt=request.negative_prompt or "",
                 width=request.width,

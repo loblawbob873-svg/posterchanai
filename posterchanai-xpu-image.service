@@ -1,0 +1,20 @@
+[Unit]
+Description=Posterchanai Image Generation Service (Intel XPU)
+After=network.target
+
+[Service]
+Type=simple
+User=verita84
+WorkingDirectory=/home/verita84/posterchanai
+Environment="LD_LIBRARY_PATH=/home/verita84/posterchanai/venv-xpu/lib/python3.13/site-packages/torch/lib"
+Environment="SYCL_CACHE_PERSISTENT=1"
+Environment="ZES_ENABLE_SYSMAN=1"
+# Use separate database and port for image-only instance
+Environment="POSTERCHANAI_DB=posterchanai-image.db"
+Environment="POSTERCHANAI_PORT=3052"
+ExecStart=/home/verita84/posterchanai/venv-xpu/bin/python run.py --port 3052
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

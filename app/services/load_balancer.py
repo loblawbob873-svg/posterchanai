@@ -63,19 +63,24 @@ async def _get_next_server(servers: List[str]) -> str:
         return server
 
 
-def parse_server_urls(urls_string: str, exclude_local: bool = True) -> List[str]:
+def parse_server_urls(urls_string: str, exclude_self: bool = True, current_port: int = 3051) -> List[str]:
     """Parse comma-separated server URLs into a list.
 
-    If exclude_local is True, automatically removes URLs pointing to this server.
+    If exclude_self is True, removes URLs pointing to THIS instance (same host AND port).
+    URLs on different ports (like localhost:3052) are kept.
     """
+    import os
     import socket
 
     if not urls_string or not urls_string.strip():
         return []
 
-    # Get local IPs to exclude
+    # Get current port from env or default
+    current_port = int(os.environ.get("POSTERCHANAI_PORT", str(current_port)))
+
+    # Get local IPs
     local_ips = {'127.0.0.1', 'localhost', '0.0.0.0'}
-    if exclude_local:
+    if exclude_self:
         try:
             hostname = socket.gethostname()
             local_ips.add(hostname)
@@ -96,15 +101,20 @@ def parse_server_urls(urls_string: str, exclude_local: bool = True) -> List[str]
             _log_lb(f"Skipping invalid URL (missing protocol): {url}", "warning")
             continue
 
-        # Check if URL points to local server
-        if exclude_local:
+        # Check if URL points to THIS instance (same host AND same port)
+        if exclude_self:
             try:
                 from urllib.parse import urlparse
                 parsed = urlparse(url)
                 host = parsed.hostname
-                if host in local_ips:
-                    _log_lb(f"Skipping local server URL: {url} (use only remote servers)", "warning")
+                port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+
+                # Only skip if SAME host AND SAME port (i.e., pointing to ourselves)
+                if host in local_ips and port == current_port:
+                    _log_lb(f"Skipping self URL: {url} (same host and port)", "warning")
                     continue
+                elif host in local_ips:
+                    _log_lb(f"Allowing local URL on different port: {url}")
             except Exception:
                 pass
 

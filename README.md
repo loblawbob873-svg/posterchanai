@@ -480,6 +480,45 @@ gpu_type: intel
 - Health checks only monitor the local model type
 - Sequential image generation prevents GPU overload on the image server
 
+#### Load Balancing
+
+Posterchanai supports load balancing for both chat and image generation across multiple servers.
+
+**Admin > Site Settings > Load Balancing:**
+- `Chat Server URLs` - Comma-separated list of posterchanai servers for chat
+- `Image Server URLs` - Comma-separated list of posterchanai servers for images
+
+Requests alternate between the local server and configured remote servers. Local URLs on different ports (e.g., `localhost:3052`) are supported for dual-instance setups.
+
+#### Intel Arc Dual-Instance Setup
+
+Intel Arc GPUs can run both LLM (via IPEX-LLM) and image generation (via PyTorch XPU), but they require different Python environments. The solution is to run two instances:
+
+| Instance | Port | Environment | Purpose |
+|----------|------|-------------|---------|
+| Main (IPEX-LLM) | 3051 | venv-ipex | Chat/LLM |
+| Image (XPU) | 3052 | venv-xpu | Image generation |
+
+**Setup:**
+```bash
+# Run the setup script
+./scripts/setup-image-instance.sh
+
+# Install and start the image service
+cp posterchanai-xpu-image.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now posterchanai-xpu-image
+```
+
+**Configure main instance (Admin > Site Settings):**
+- Image Server URLs: `http://localhost:3052`
+
+**How it works:**
+- Main instance handles chat on Intel Arc via IPEX-LLM
+- Image instance handles image generation on Intel Arc via PyTorch XPU
+- Separate databases prevent conflicts
+- Main instance forwards all image requests to port 3052
+
 ### Image Generation REST API
 
 Posterchanai provides REST endpoints for external integrations (e.g., Sharkey/Misskey).

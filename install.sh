@@ -803,6 +803,72 @@ setup_image_deps() {
     print_success "Image generation dependencies installed"
 }
 
+setup_xpu_image_instance() {
+    # Only offer for Intel Arc systems using IPEX-LLM for chat
+    if [ "$BACKEND" != "intel" ] || [ "$IMAGE_BACKEND" != "native" ]; then
+        return
+    fi
+
+    echo ""
+    print_step "Intel Arc Dual-Instance Setup"
+    echo ""
+    echo "  You're using IPEX-LLM for chat on Intel Arc."
+    echo "  For image generation, you can run a separate instance using PyTorch XPU."
+    echo ""
+    echo "  This sets up:"
+    echo "    - Port 3051: Chat (IPEX-LLM) - current instance"
+    echo "    - Port 3052: Images (PyTorch XPU) - separate instance"
+    echo ""
+    read -p "Set up XPU image generation instance? [y/N]: " SETUP_XPU_IMAGE
+    SETUP_XPU_IMAGE=${SETUP_XPU_IMAGE:-N}
+
+    if [[ ! "$SETUP_XPU_IMAGE" =~ ^[Yy] ]]; then
+        print_warning "Skipping XPU image instance setup"
+        echo "  You can set this up later with: ./scripts/setup-image-instance.sh"
+        return
+    fi
+
+    print_step "Setting up XPU image instance..."
+
+    # Create venv-xpu
+    if [ ! -d "$SCRIPT_DIR/venv-xpu" ]; then
+        echo "  Creating venv-xpu..."
+        python3 -m venv "$SCRIPT_DIR/venv-xpu"
+    fi
+
+    # Install PyTorch XPU
+    echo "  Installing PyTorch XPU (this may take a few minutes)..."
+    source "$SCRIPT_DIR/venv-xpu/bin/activate"
+    pip install --upgrade pip -q
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/test/xpu -q
+    pip install diffusers transformers accelerate safetensors -q
+    pip install fastapi uvicorn sqlalchemy python-jose passlib bcrypt python-multipart httpx aiofiles pillow pydantic edge-tts -q
+    deactivate
+
+    # Run setup script
+    chmod +x "$SCRIPT_DIR/scripts/setup-image-instance.sh"
+    "$SCRIPT_DIR/scripts/setup-image-instance.sh"
+
+    # Install systemd service for XPU image instance
+    if [ -d "$HOME/.config/systemd/user" ]; then
+        cp "$SCRIPT_DIR/posterchanai-xpu-image.service" "$HOME/.config/systemd/user/"
+        systemctl --user daemon-reload
+        echo ""
+        print_success "XPU image instance installed!"
+        echo ""
+        echo "  To enable and start:"
+        echo "    systemctl --user enable posterchanai-xpu-image"
+        echo "    systemctl --user start posterchanai-xpu-image"
+        echo ""
+        echo "  Then configure the main instance (Admin > Site Settings > Load Balancing):"
+        echo "    Image Server URLs: http://localhost:3052"
+        XPU_IMAGE_INSTALLED="1"
+    else
+        print_warning "User systemd not available, manual setup required"
+        echo "  See: $SCRIPT_DIR/posterchanai-xpu-image.service"
+    fi
+}
+
 setup_systemd() {
     # Set SERVICE_NAME early so print_summary can use it even if systemd is skipped
     SERVICE_NAME="posterchanai"
@@ -1206,6 +1272,9 @@ fi
 
 # Install image generation dependencies if selected
 setup_image_deps
+
+# Offer XPU image instance for Intel Arc users
+setup_xpu_image_instance
 
 setup_systemd
 
