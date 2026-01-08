@@ -5,6 +5,17 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POSTERCHANAI_DIR="$(dirname "$SCRIPT_DIR")"
 IMAGE_DB="$POSTERCHANAI_DIR/posterchanai-image.db"
+VENV_XPU="$POSTERCHANAI_DIR/venv-xpu"
+
+echo "Setting up image-only instance..."
+
+# Check/create venv-xpu and install dependencies
+if [ -d "$VENV_XPU" ]; then
+    echo "Installing posterchanai requirements in venv-xpu..."
+    "$VENV_XPU/bin/pip" install -r "$POSTERCHANAI_DIR/requirements.txt" -q 2>/dev/null || true
+else
+    echo "WARNING: venv-xpu not found. Run the installer first or create venv-xpu manually."
+fi
 
 echo "Setting up image-only instance database..."
 

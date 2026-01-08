@@ -842,7 +842,10 @@ setup_xpu_image_instance() {
     pip install --upgrade pip -q
     pip install torch torchvision --index-url https://download.pytorch.org/whl/test/xpu -q
     pip install diffusers transformers accelerate safetensors -q
-    pip install fastapi uvicorn sqlalchemy python-jose passlib bcrypt python-multipart httpx aiofiles pillow pydantic edge-tts -q
+
+    # Install all posterchanai requirements
+    echo "  Installing posterchanai requirements..."
+    pip install -r "$SCRIPT_DIR/requirements.txt" -q
     deactivate
 
     # Run setup script
