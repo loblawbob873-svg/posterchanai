@@ -40,17 +40,53 @@ async def _get_next_server(servers: List[str]) -> str:
         return server
 
 
-def parse_server_urls(urls_string: str) -> List[str]:
-    """Parse comma-separated server URLs into a list"""
+def parse_server_urls(urls_string: str, exclude_local: bool = True) -> List[str]:
+    """Parse comma-separated server URLs into a list.
+
+    If exclude_local is True, automatically removes URLs pointing to this server.
+    """
+    import socket
+
     if not urls_string or not urls_string.strip():
         return []
+
+    # Get local IPs to exclude
+    local_ips = {'127.0.0.1', 'localhost', '0.0.0.0'}
+    if exclude_local:
+        try:
+            hostname = socket.gethostname()
+            local_ips.add(hostname)
+            local_ips.add(socket.gethostbyname(hostname))
+            # Also get all local IPs
+            for info in socket.getaddrinfo(hostname, None):
+                local_ips.add(info[4][0])
+        except Exception:
+            pass
+
     servers = []
     for url in urls_string.split(','):
         url = url.strip().rstrip('/')
-        if url and (url.startswith('http://') or url.startswith('https://')):
-            servers.append(url)
-        elif url:
-            logger.warning(f"Skipping invalid URL (missing protocol): {url}")
+        if not url:
+            continue
+
+        if not (url.startswith('http://') or url.startswith('https://')):
+            _log_lb(f"Skipping invalid URL (missing protocol): {url}", "warning")
+            continue
+
+        # Check if URL points to local server
+        if exclude_local:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(url)
+                host = parsed.hostname
+                if host in local_ips:
+                    _log_lb(f"Skipping local server URL: {url} (use only remote servers)", "warning")
+                    continue
+            except Exception:
+                pass
+
+        servers.append(url)
+
     return servers
 
 

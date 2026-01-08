@@ -682,9 +682,9 @@
                 <fieldset>
                     <legend>Load Balancing</legend>
                     <div class="form-group">
-                        <label for="chat_server_urls">Chat Server URLs</label>
-                        <input type="text" id="chat_server_urls" name="chat_server_urls" placeholder="http://server1:3051, http://server2:3051">
-                        <small>Comma-separated posterchanai servers for round-robin load balancing. Leave empty to use local backend.</small>
+                        <label for="chat_server_urls">Remote Server URLs</label>
+                        <input type="text" id="chat_server_urls" name="chat_server_urls" placeholder="http://192.168.0.85:3051">
+                        <small><strong>⚠️ Only include OTHER servers, not this one!</strong> Requests will alternate between this server and the remote servers listed here. Leave empty to use only this server.</small>
                     </div>
                 </fieldset>
 
