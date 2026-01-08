@@ -1,0 +1,16 @@
+[Unit]
+Description=Posterchanai CPU-only Image Instance
+After=network.target
+
+[Service]
+Type=simple
+User=verita84
+WorkingDirectory=/home/verita84/posterchanai
+Environment="POSTERCHANAI_DB=posterchanai-cpu.db"
+Environment="POSTERCHANAI_PORT=3053"
+ExecStart=/home/verita84/posterchanai/venv/bin/python run.py --port 3053
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
