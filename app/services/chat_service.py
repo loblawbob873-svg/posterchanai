@@ -63,10 +63,16 @@ class ChatService:
     def _get_load_balancer(self) -> Optional[LoadBalancer]:
         """Get load balancer if chat servers are configured"""
         chat_server_urls = self._settings.get("chat_server_urls", "")
+        with open("/tmp/loadbalancer.log", "a") as f:
+            f.write(f"[DEBUG] _get_load_balancer called, chat_server_urls={chat_server_urls}\n")
         servers = parse_server_urls(chat_server_urls)
+        with open("/tmp/loadbalancer.log", "a") as f:
+            f.write(f"[DEBUG] parsed servers={servers}\n")
         if servers:
             timeout = int(self._settings.get("ollama_timeout", "120000")) / 1000
             model = self._settings.get("ollama_model", "default")
+            with open("/tmp/loadbalancer.log", "a") as f:
+                f.write(f"[DEBUG] Creating LoadBalancer with {len(servers)} servers, model={model}\n")
             return LoadBalancer(servers, timeout=timeout, model=model)
         return None
 

@@ -137,10 +137,59 @@ async def root_list_models(
 
 async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
     """Handle chat completions request"""
-    service = get_inference_service(db)
+    from app.models import Setting
+    from app.services.load_balancer import LoadBalancer, parse_server_urls
+
+    # Check for load balancer first
+    settings = {s.key: s.value for s in db.query(Setting).all()}
+    chat_server_urls = settings.get("chat_server_urls", "")
+    servers = parse_server_urls(chat_server_urls)
 
     # Convert messages to dict format
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
+
+    # Build kwargs
+    temperature = request.temperature if request.temperature is not None else float(settings.get("ollama_temperature", "0.7"))
+    top_p = request.top_p if request.top_p is not None else float(settings.get("ollama_top_p", "0.9"))
+    max_tokens = request.max_tokens if request.max_tokens is not None else int(settings.get("ollama_num_predict", "2048"))
+
+    # Use load balancer if configured
+    if servers:
+        timeout = int(settings.get("ollama_timeout", "120000")) / 1000
+        model = settings.get("ollama_model", "default")
+        load_balancer = LoadBalancer(servers, timeout=timeout, model=model)
+
+        if request.stream:
+            return StreamingResponse(
+                load_balancer.chat_stream(
+                    messages=messages,
+                    temperature=temperature,
+                    top_p=top_p,
+                    max_tokens=max_tokens
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                }
+            )
+        else:
+            result = await load_balancer.chat(
+                messages=messages,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens
+            )
+            if "error" in result:
+                raise HTTPException(
+                    status_code=500,
+                    detail=result["error"].get("message", "Unknown error")
+                )
+            return result
+
+    # Fall back to local inference service
+    service = get_inference_service(db)
 
     # Build kwargs from request
     kwargs = {}
