@@ -34,8 +34,10 @@ def parse_server_urls(urls_string: str) -> List[str]:
     servers = []
     for url in urls_string.split(','):
         url = url.strip().rstrip('/')
-        if url:
+        if url and (url.startswith('http://') or url.startswith('https://')):
             servers.append(url)
+        elif url:
+            logger.warning(f"Skipping invalid URL (missing protocol): {url}")
     return servers
 
 
