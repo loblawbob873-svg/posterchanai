@@ -96,7 +96,12 @@ async def summarize_with_ai(links: list, db: Session) -> str:
         service = get_inference_service(db)
 
         messages = [
-            {"role": "system", "content": "Summarize each headline in 1 sentence. Keep the markdown link format. Output as a bullet list. No extra text."},
+            {"role": "system", "content": """Summarize each news headline in 1 sentence.
+IMPORTANT: You MUST preserve the exact markdown link format [title](url) for each item.
+Output as a bullet list starting with "- ".
+Example input: [Biden announces new policy](https://example.com/article)
+Example output: - [Biden unveils initiative affecting millions](https://example.com/article)
+No extra text or commentary."""},
             {"role": "user", "content": "\n".join(links)}
         ]
 
