@@ -153,40 +153,45 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
     top_p = request.top_p if request.top_p is not None else float(settings.get("ollama_top_p", "0.9"))
     max_tokens = request.max_tokens if request.max_tokens is not None else int(settings.get("ollama_num_predict", "2048"))
 
-    # Use load balancer if configured
+    # Use load balancer if configured (alternates between local and remote)
     if servers:
-        timeout = int(settings.get("ollama_timeout", "120000")) / 1000
-        model = settings.get("ollama_model", "default")
-        load_balancer = LoadBalancer(servers, timeout=timeout, model=model)
+        from app.services.load_balancer import should_use_remote
 
-        if request.stream:
-            return StreamingResponse(
-                load_balancer.chat_stream(
+        if await should_use_remote(len(servers)):
+            # This request goes to a remote server
+            timeout = int(settings.get("ollama_timeout", "120000")) / 1000
+            model = settings.get("ollama_model", "default")
+            load_balancer = LoadBalancer(servers, timeout=timeout, model=model)
+
+            if request.stream:
+                return StreamingResponse(
+                    load_balancer.chat_stream(
+                        messages=messages,
+                        temperature=temperature,
+                        top_p=top_p,
+                        max_tokens=max_tokens
+                    ),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                    }
+                )
+            else:
+                result = await load_balancer.chat(
                     messages=messages,
                     temperature=temperature,
                     top_p=top_p,
                     max_tokens=max_tokens
-                ),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                }
-            )
-        else:
-            result = await load_balancer.chat(
-                messages=messages,
-                temperature=temperature,
-                top_p=top_p,
-                max_tokens=max_tokens
-            )
-            if "error" in result:
-                raise HTTPException(
-                    status_code=500,
-                    detail=result["error"].get("message", "Unknown error")
                 )
-            return result
+                if "error" in result:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=result["error"].get("message", "Unknown error")
+                    )
+                return result
+        # else: fall through to local processing
 
     # Fall back to local inference service
     service = get_inference_service(db)

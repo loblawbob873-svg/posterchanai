@@ -26,6 +26,29 @@ _server_cycle: Optional[cycle] = None
 _server_list: List[str] = []
 _cycle_lock = asyncio.Lock()
 
+# Counter for local vs remote decision (for fair distribution including local server)
+_request_counter: int = 0
+_counter_lock = asyncio.Lock()
+
+
+async def should_use_remote(num_remote_servers: int) -> bool:
+    """
+    Decide if this request should go to a remote server or stay local.
+    Distributes requests evenly: with 1 remote server, alternates 50/50.
+    With 2 remote servers, goes remote 2/3 of the time, local 1/3.
+    """
+    global _request_counter
+    async with _counter_lock:
+        _request_counter += 1
+        count = _request_counter
+
+    # Total slots = local (1) + remote servers
+    total_slots = 1 + num_remote_servers
+    use_remote = (count % total_slots) != 0  # Slot 0 = local, others = remote
+
+    _log_lb(f"Request #{count}: {'REMOTE' if use_remote else 'LOCAL'} (total_slots={total_slots})")
+    return use_remote
+
 
 async def _get_next_server(servers: List[str]) -> str:
     """Get next server using round-robin (async-safe)"""
