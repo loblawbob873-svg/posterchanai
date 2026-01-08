@@ -117,9 +117,10 @@ class SettingsResponse(BaseModel):
     llm_use_mlock: str = "false"  # Lock model in RAM
     # Ollama settings (also used for native backend sampling parameters)
     ollama_url: str = "http://localhost:11434"
+    ollama_extra_urls: str = ""  # Additional URLs for load balancing (comma-separated)
     ollama_model: str = "richardyoung/qwen3-14b-abliterated:Q5_K_M"
     ollama_timeout: str = "120000"
-    ollama_max_concurrent: str = "1"
+    ollama_max_concurrent: str = "2"  # Max concurrent requests across all hosts
     ollama_system_prompt: str = ""
     # Advanced model settings
     ollama_temperature: str = "0.2"

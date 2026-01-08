@@ -74,6 +74,7 @@ def init_db():
             "tts_pitch": "+10Hz",
             # Ollama settings
             "ollama_url": "http://localhost:11434",
+            "ollama_extra_urls": "",  # Additional URLs for load balancing (comma-separated)
             "ollama_model": "richardyoung/qwen3-14b-abliterated:Q5_K_M",
             "ollama_timeout": "120000",
             "ollama_max_concurrent": "1",

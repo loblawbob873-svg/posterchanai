@@ -5,6 +5,7 @@ import logging
 import re
 import time
 import uuid
+from itertools import cycle
 from typing import AsyncGenerator, Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 from app.models import Setting
@@ -16,6 +17,11 @@ logger = logging.getLogger(__name__)
 _request_semaphore: Optional[asyncio.Semaphore] = None
 _semaphore_limit: int = 2
 _semaphore_lock = asyncio.Lock()
+
+# Global round-robin host selector
+_host_cycle: Optional[cycle] = None
+_host_list: List[str] = []
+_host_cycle_lock = asyncio.Lock()
 
 # Global HTTP client pool for connection reuse (performance optimization)
 _http_client: Optional[httpx.AsyncClient] = None
@@ -39,9 +45,21 @@ async def _get_http_client(timeout: float = 120) -> httpx.AsyncClient:
         if _http_client is None or _http_client.is_closed:
             _http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(timeout, connect=10.0),
-                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+                limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
             )
         return _http_client
+
+
+async def _get_next_host(hosts: List[str]) -> str:
+    """Get next host using round-robin load balancing (async-safe)"""
+    global _host_cycle, _host_list
+    async with _host_cycle_lock:
+        # Recreate cycle if host list changed
+        if _host_cycle is None or _host_list != hosts:
+            _host_list = hosts.copy()
+            _host_cycle = cycle(hosts)
+            logger.info(f"Load balancer initialized with {len(hosts)} host(s): {hosts}")
+        return next(_host_cycle)
 
 
 class OllamaService:
@@ -53,7 +71,20 @@ class OllamaService:
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
 
         # Ollama connection settings
-        self.ollama_url = settings.get("ollama_url", "http://localhost:11434")
+        primary_url = settings.get("ollama_url", "http://localhost:11434").rstrip('/')
+        extra_urls = settings.get("ollama_extra_urls", "")
+
+        # Build list of all hosts for load balancing
+        self.hosts = [primary_url]
+        if extra_urls.strip():
+            for url in extra_urls.split(','):
+                url = url.strip().rstrip('/')
+                if url and url not in self.hosts:
+                    self.hosts.append(url)
+
+        # Keep ollama_url for backwards compatibility (uses first host)
+        self.ollama_url = primary_url
+
         self.default_model = settings.get("ollama_model", "llama3")
         self.timeout = int(settings.get("ollama_timeout", "120000")) / 1000
         self.max_concurrent = int(settings.get("ollama_max_concurrent", "2"))
@@ -135,6 +166,7 @@ class OllamaService:
         """
         Non-streaming chat completion.
         Returns OpenAI-compatible response format.
+        Uses round-robin load balancing across configured hosts.
         """
         model = model or self.default_model
         options = self.get_model_options(**kwargs)
@@ -143,11 +175,13 @@ class OllamaService:
         semaphore = await _get_semaphore(self.max_concurrent)
 
         async with semaphore:
+            # Get next host using round-robin
+            host = await _get_next_host(self.hosts)
             client = await _get_http_client(timeout=self.timeout)
             try:
                 # Use Ollama's native API to ensure options are respected
                 response = await client.post(
-                    f"{self.ollama_url}/api/chat",
+                    f"{host}/api/chat",
                     json={
                         "model": model,
                         "messages": messages,
@@ -208,6 +242,7 @@ class OllamaService:
         """
         Streaming chat completion.
         Yields SSE-formatted chunks compatible with OpenAI API.
+        Uses round-robin load balancing across configured hosts.
         """
         model = model or self.default_model
         options = self.get_model_options(**kwargs)
@@ -220,11 +255,13 @@ class OllamaService:
         semaphore = await _get_semaphore(self.max_concurrent)
 
         async with semaphore:
+            # Get next host using round-robin
+            host = await _get_next_host(self.hosts)
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 try:
                     async with client.stream(
                         "POST",
-                        f"{self.ollama_url}/api/chat",
+                        f"{host}/api/chat",
                         json={
                             "model": model,
                             "messages": messages,
@@ -319,6 +356,7 @@ class OllamaService:
     ) -> Dict[str, Any]:
         """
         Legacy generate endpoint (Ollama native format).
+        Uses round-robin load balancing across configured hosts.
         """
         model = model or self.default_model
         options = self.get_model_options(**kwargs)
@@ -326,6 +364,8 @@ class OllamaService:
         semaphore = await _get_semaphore(self.max_concurrent)
 
         async with semaphore:
+            # Get next host using round-robin
+            host = await _get_next_host(self.hosts)
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 try:
                     payload = {
@@ -339,7 +379,7 @@ class OllamaService:
                         payload["system"] = system
 
                     response = await client.post(
-                        f"{self.ollama_url}/api/generate",
+                        f"{host}/api/generate",
                         json=payload
                     )
                     response.raise_for_status()
