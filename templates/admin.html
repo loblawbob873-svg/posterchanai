@@ -470,7 +470,14 @@
                     <div class="form-group">
                         <label for="image_idle_timeout">Idle Timeout (seconds)</label>
                         <input type="number" id="image_idle_timeout" name="image_idle_timeout" value="120" min="0" max="3600">
-                        <small>Unload model after this many seconds idle. 0 = never unload.</small>
+                        <small>Unload model after this many seconds idle. 0 = unload immediately after each generation.</small>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="image_subprocess_mode" name="image_subprocess_mode">
+                            <span>Subprocess Mode (Intel XPU)</span>
+                        </label>
+                        <small>Run each image in separate process for guaranteed VRAM release. Recommended when sharing Intel GPU with LLM.</small>
                     </div>
                     <div class="form-group">
                         <button type="button" id="reloadImageModelBtn" class="btn-secondary">Reload Model</button>

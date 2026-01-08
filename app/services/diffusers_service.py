@@ -145,6 +145,10 @@ class DiffusersService:
         # Backend setting
         self.backend = settings.get("image_backend", "comfyui")  # "native" or "comfyui"
 
+        # Subprocess mode - run each image in separate process for guaranteed VRAM release
+        # Recommended for Intel XPU when sharing GPU with LLM
+        self._subprocess_mode = settings.get("image_subprocess_mode", "false").lower() == "true"
+
     def _is_anime_prompt(self, prompt: str) -> bool:
         """Check if prompt is for anime-style image"""
         anime_keywords = [
@@ -296,7 +300,22 @@ class DiffusersService:
 
             try:
                 import torch
-                if torch.cuda.is_available():
+                logger.info(f"Cleanup check: cuda={torch.cuda.is_available()}, xpu={hasattr(torch, 'xpu') and torch.xpu.is_available()}, device={self._device}")
+
+                # Check XPU first since that's what we're using
+                if hasattr(torch, "xpu") and torch.xpu.is_available():
+                    logger.info("Clearing Intel XPU memory...")
+                    torch.xpu.synchronize()
+                    torch.xpu.empty_cache()
+                    # Additional XPU cleanup attempts
+                    try:
+                        torch.xpu.reset_peak_memory_stats()
+                    except Exception:
+                        pass
+                    gc.collect()
+                    torch.xpu.empty_cache()
+                    logger.info("Intel XPU memory cache cleared")
+                elif torch.cuda.is_available():
                     # Works for both NVIDIA CUDA and AMD ROCm
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
@@ -309,10 +328,8 @@ class DiffusersService:
                         except Exception:
                             pass
                         logger.debug("Cleared ROCm HIP memory cache")
-                elif hasattr(torch, "xpu") and torch.xpu.is_available():
-                    torch.xpu.empty_cache()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Error during GPU memory cleanup: {e}")
 
             # Additional gc pass after CUDA cleanup
             gc.collect()
@@ -448,6 +465,95 @@ class DiffusersService:
                 pass
             return None
 
+    def _generate_subprocess(
+        self,
+        prompt: str,
+        negative_prompt: str = "",
+        width: int = None,
+        height: int = None,
+        steps: int = None,
+        cfg: float = None,
+        seed: int = None,
+    ) -> Optional[str]:
+        """
+        Generate image using subprocess for guaranteed VRAM release.
+        Returns base64 encoded image or None.
+        """
+        import subprocess
+        import json
+        import os
+
+        # Select model based on prompt
+        target_model = self._get_model_for_prompt(prompt)
+
+        # Use defaults if not specified
+        width = width or self.default_width
+        height = height or self.default_height
+        steps = steps or self.default_steps
+        cfg = cfg or self.default_cfg
+
+        # Build config
+        config = {
+            "model_path": target_model,
+            "model_type": self.model_type,
+            "prompt": self._truncate_prompt(prompt),
+            "negative_prompt": negative_prompt or "bad quality, blurry, distorted, ugly, deformed, low resolution",
+            "width": width,
+            "height": height,
+            "steps": steps,
+            "cfg": cfg,
+            "seed": seed,
+            "device": self._device,
+        }
+
+        script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "scripts", "generate_image_subprocess.py")
+        python_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "venv-xpu", "bin", "python")
+
+        # Fall back to current Python if venv-xpu doesn't exist
+        if not os.path.exists(python_path):
+            import sys
+            python_path = sys.executable
+
+        logger.info(f"Subprocess generation: {prompt[:50]}... (device={self._device})")
+
+        try:
+            result = subprocess.run(
+                [python_path, script_path, json.dumps(config)],
+                capture_output=True,
+                text=True,
+                timeout=600,  # 10 minute timeout
+                cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            )
+
+            if result.returncode != 0:
+                logger.error(f"Subprocess failed (exit={result.returncode}): {result.stderr[:500] if result.stderr else 'no stderr'}")
+                return None
+
+            # Log stderr warnings but don't fail on them
+            if result.stderr:
+                logger.debug(f"Subprocess stderr (warnings): {result.stderr[:200]}")
+
+            # Parse output
+            try:
+                output = json.loads(result.stdout.strip())
+            except json.JSONDecodeError:
+                logger.error(f"Invalid subprocess output: {result.stdout[:200]}")
+                return None
+
+            if "error" in output:
+                logger.error(f"Subprocess error: {output['error']}")
+                return None
+
+            logger.info(f"Subprocess generation complete (seed={output.get('seed')})")
+            return output.get("image")
+
+        except subprocess.TimeoutExpired:
+            logger.error("Subprocess generation timed out")
+            return None
+        except Exception as e:
+            logger.error(f"Subprocess error: {e}")
+            return None
+
     async def generate_image(self, prompt: str, negative_prompt: str = "",
                             width: int = None, height: int = None,
                             steps: int = None, cfg: float = None,
@@ -455,10 +561,20 @@ class DiffusersService:
         """
         Generate image from prompt.
         Returns base64 encoded image or None.
+        If subprocess_mode is enabled, runs in separate process for guaranteed VRAM release.
         If image_idle_timeout is 0, unloads model immediately after generation.
         """
         loop = asyncio.get_event_loop()
 
+        # Use subprocess mode for guaranteed VRAM release (recommended for Intel XPU)
+        if self._subprocess_mode:
+            logger.info("Using subprocess mode for image generation")
+            return await loop.run_in_executor(
+                _executor,
+                lambda: self._generate_subprocess(prompt, negative_prompt, width, height, steps, cfg, seed)
+            )
+
+        # Standard in-process generation
         img_bytes = await loop.run_in_executor(
             _executor,
             lambda: self._generate_sync(prompt, negative_prompt, width, height, steps, cfg, seed)
