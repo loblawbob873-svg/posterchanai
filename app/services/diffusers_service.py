@@ -455,6 +455,7 @@ class DiffusersService:
         """
         Generate image from prompt.
         Returns base64 encoded image or None.
+        If image_idle_timeout is 0, unloads model immediately after generation.
         """
         loop = asyncio.get_event_loop()
 
@@ -462,6 +463,11 @@ class DiffusersService:
             _executor,
             lambda: self._generate_sync(prompt, negative_prompt, width, height, steps, cfg, seed)
         )
+
+        # If idle timeout is 0, unload immediately to free VRAM
+        if self._idle_timeout == 0:
+            logger.info("Immediate unload (idle_timeout=0)")
+            self.unload_model()
 
         if img_bytes:
             return base64.b64encode(img_bytes).decode()
