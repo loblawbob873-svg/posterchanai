@@ -65,18 +65,21 @@ async def generate_image_with_load_balancing(
     """
     Generate image with load balancing support.
     Alternates between local and remote servers if load balancing is configured.
+    Remote requests run in parallel; local requests are serialized via lock.
     Returns base64 encoded image or None.
     """
+    from app.services.locks import image_generation_lock
+
     settings = {s.key: s.value for s in db.query(Setting).all()}
     image_server_urls = settings.get("image_server_urls", "")
     servers = parse_image_server_urls(image_server_urls)
 
     # Check if we should use remote server
     if servers and await should_use_remote_image(len(servers)):
-        # Use remote server
+        # Use remote server - NO LOCK, allows parallel requests to different servers
         timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
         load_balancer = ImageLoadBalancer(servers, timeout=timeout)
-        logger.info("Using remote server for image generation")
+        logger.info("Using remote server for image generation (parallel allowed)")
         return await load_balancer.generate_image(
             prompt=prompt,
             negative_prompt=negative_prompt,
@@ -86,18 +89,19 @@ async def generate_image_with_load_balancing(
             cfg=cfg,
         )
 
-    # Use local backend
-    logger.info("Using local backend for image generation")
-    prepare_vram_for_image(db)
-    backend = get_image_backend(db)
-    return await backend.generate_image(
-        prompt=prompt,
-        negative_prompt=negative_prompt,
-        width=width,
-        height=height,
-        steps=steps,
-        cfg=cfg,
-    )
+    # Use local backend - WITH LOCK to prevent GPU overload
+    logger.info("Using local backend for image generation (serialized)")
+    async with image_generation_lock:
+        prepare_vram_for_image(db)
+        backend = get_image_backend(db)
+        return await backend.generate_image(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            width=width,
+            height=height,
+            steps=steps,
+            cfg=cfg,
+        )
 
 
 def get_image_backend(db: Session) -> ImageBackend:

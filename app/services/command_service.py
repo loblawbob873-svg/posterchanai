@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.services.search_service import SearchService
 from app.services.image_factory import generate_image_for_user
 from app.services.chat_service import ChatService
-from app.services.locks import image_generation_lock
+# Lock now handled inside image_factory for fine-grained control
 
 if TYPE_CHECKING:
     from app.models import User
@@ -96,26 +96,27 @@ class CommandService:
         if stop_check and stop_check():
             return {"type": "text", "content": "Generation cancelled."}
 
-        # Use lock to prevent concurrent image generation
-        async with image_generation_lock:
-            if stop_check and stop_check():
-                return {"type": "text", "content": "Generation cancelled."}
+        # Generate image with load balancing support
+        # Lock is handled inside image_factory for local generation only
+        # Remote requests (load balanced or custom user endpoint) run in parallel
+        image_data = await generate_image_for_user(
+            db=self.db,
+            user=self.user,
+            prompt=prompt,
+        )
 
-            # Generate image with load balancing support
-            image_data = await generate_image_for_user(
-                db=self.db,
-                user=self.user,
-                prompt=prompt,
-            )
-            if not image_data:
-                return {"type": "text", "content": "Failed to generate image. Please try again or check image generation settings."}
+        if stop_check and stop_check():
+            return {"type": "text", "content": "Generation cancelled."}
 
-            return {
-                "type": "generated_image",
-                "content": f"Generated image for: {prompt}",
-                "image": image_data,
-                "prompt": prompt
-            }
+        if not image_data:
+            return {"type": "text", "content": "Failed to generate image. Please try again or check image generation settings."}
+
+        return {
+            "type": "generated_image",
+            "content": f"Generated image for: {prompt}",
+            "image": image_data,
+            "prompt": prompt
+        }
 
 
 def get_command_service(db: Session) -> CommandService:

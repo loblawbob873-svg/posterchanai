@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.auth import get_current_user_optional
 from app.services.image_factory import generate_image_with_load_balancing
-from app.services.locks import image_generation_lock
+# Lock moved to image_factory.py for fine-grained control (local only)
 
 router = APIRouter(prefix="/api", tags=["image"])
 
@@ -91,31 +91,31 @@ async def generate_image(
     Generate an image from a text prompt.
     Returns base64 encoded image.
     Supports JWT auth or API key auth (X-API-Key header or Bearer token).
-    Uses a lock to ensure sequential processing (one image at a time).
     Supports load balancing across multiple posterchanai servers.
+    Remote requests run in parallel; local requests are serialized.
     """
-    async with image_generation_lock:
-        try:
-            logger.info(f"[IMAGE-API] Generating image: {request.prompt[:50]}...")
+    try:
+        logger.info(f"[IMAGE-API] Generating image: {request.prompt[:50]}...")
 
-            # Generate image with load balancing support
-            result = await generate_image_with_load_balancing(
-                db=db,
-                prompt=request.prompt,
-                negative_prompt=request.negative_prompt or "",
-                width=request.width,
-                height=request.height,
-                steps=request.steps,
-                cfg=request.cfg
-            )
+        # Generate image with load balancing support
+        # Lock is handled inside for local generation only
+        result = await generate_image_with_load_balancing(
+            db=db,
+            prompt=request.prompt,
+            negative_prompt=request.negative_prompt or "",
+            width=request.width,
+            height=request.height,
+            steps=request.steps,
+            cfg=request.cfg
+        )
 
-            if result:
-                logger.info(f"[IMAGE-API] Image generated successfully")
-                return ImageResponse(image=result)
-            else:
-                logger.info(f"[IMAGE-API] Image generation failed (no result)")
-                return ImageResponse(error="Image generation failed")
+        if result:
+            logger.info(f"[IMAGE-API] Image generated successfully")
+            return ImageResponse(image=result)
+        else:
+            logger.info(f"[IMAGE-API] Image generation failed (no result)")
+            return ImageResponse(error="Image generation failed")
 
-        except Exception as e:
-            logger.info(f"[IMAGE-API] Image generation error: {e}")
-            return ImageResponse(error=str(e))
+    except Exception as e:
+        logger.info(f"[IMAGE-API] Image generation error: {e}")
+        return ImageResponse(error=str(e))
