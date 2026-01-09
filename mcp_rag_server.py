@@ -66,10 +66,14 @@ from mcp.types import Tool, TextContent
 
 # Import existing RAG infrastructure
 from app.database import SessionLocal
-from app.models import RAGCollection
+from app.models import RAGCollection, RAGDocument
 from app.services.rag_service import get_rag_service, get_cache_stats as get_rag_cache_stats
 from app.services.rag_folder_service import get_folder_indexer
 from app.services.embedding_service import get_embedding_service, get_cache_stats as get_embed_cache_stats
+
+# Document chunk cache - stores all indexed content in RAM
+_document_cache = {}  # collection_id -> {doc_id -> {content, metadata}}
+_document_cache_loaded = False
 
 # IMPORTANT: Use stderr for logging in stdio mode to avoid corrupting JSON-RPC stream
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
@@ -82,37 +86,99 @@ DEFAULT_USER_ID = int(os.environ.get("RAG_USER_ID", "1"))
 _warmup_complete = False
 
 
-def warmup_model():
-    """Pre-load the embedding model and warm up caches."""
-    global _warmup_complete
+def warmup_model(load_documents: bool = True):
+    """
+    Pre-load the embedding model and warm up all caches.
+
+    Args:
+        load_documents: If True, also load all document chunks into RAM
+    """
+    global _warmup_complete, _document_cache, _document_cache_loaded
     if _warmup_complete:
         logger.info("[WARMUP] Already warmed up, skipping")
         return {"status": "already_warm"}
 
-    logger.info("[WARMUP] Pre-loading embedding model...")
+    logger.info("[WARMUP] Starting full cache warmup...")
     start = time.time()
+    stats = {
+        "collections_loaded": 0,
+        "documents_cached": 0,
+        "chunks_cached": 0,
+        "embeddings_precomputed": 0,
+    }
 
     db = SessionLocal()
     try:
-        # Load embedding service (triggers model load)
+        # 1. Load embedding service and model
+        logger.info("[WARMUP] Step 1/4: Loading embedding model...")
         embed_svc = get_embedding_service(db)
         embed_svc._ensure_model_loaded()
-
-        # Do a test embedding to fully initialize
         _ = embed_svc.embed_single("warmup test query", use_cache=False)
 
-        # Initialize RAG service (loads settings, ChromaDB client)
+        # 2. Initialize RAG service
+        logger.info("[WARMUP] Step 2/4: Initializing RAG service...")
         rag_svc = get_rag_service(db, DEFAULT_USER_ID)
+
+        # 3. Pre-load all ChromaDB collections into memory
+        logger.info("[WARMUP] Step 3/4: Loading ChromaDB collections...")
+        collections = db.query(RAGCollection).filter(
+            RAGCollection.user_id == DEFAULT_USER_ID
+        ).all()
+
+        # Get a reference embedding for dummy queries
+        ref_embedding = embed_svc.embed_single("test", use_cache=True)
+
+        for col in collections:
+            try:
+                chroma_col = rag_svc._get_or_create_chroma_collection(col.id)
+                # Force ChromaDB to load index into memory with a dummy query
+                chroma_col.query(query_embeddings=[ref_embedding], n_results=1)
+                stats["collections_loaded"] += 1
+                logger.info(f"[WARMUP] Loaded collection: {col.name} ({col.document_count} docs)")
+            except Exception as e:
+                logger.warning(f"[WARMUP] Failed to load collection {col.name}: {e}")
+
+        # 4. Cache all document chunks in RAM (optional but recommended)
+        if load_documents:
+            logger.info("[WARMUP] Step 4/4: Caching document chunks in RAM...")
+            for col in collections:
+                try:
+                    chroma_col = rag_svc._get_or_create_chroma_collection(col.id)
+
+                    # Get all documents from ChromaDB
+                    all_data = chroma_col.get(
+                        include=["documents", "metadatas", "embeddings"]
+                    )
+
+                    if all_data and all_data.get("ids"):
+                        _document_cache[col.id] = {}
+                        for i, doc_id in enumerate(all_data["ids"]):
+                            _document_cache[col.id][doc_id] = {
+                                "content": all_data["documents"][i] if all_data["documents"] else None,
+                                "metadata": all_data["metadatas"][i] if all_data["metadatas"] else {},
+                                "embedding": all_data["embeddings"][i] if all_data.get("embeddings") else None,
+                            }
+                            stats["chunks_cached"] += 1
+
+                        stats["documents_cached"] += len(all_data["ids"])
+                        logger.info(f"[WARMUP] Cached {len(all_data['ids'])} chunks from {col.name}")
+                except Exception as e:
+                    logger.warning(f"[WARMUP] Failed to cache documents for {col.name}: {e}")
+
+            _document_cache_loaded = True
 
         elapsed = time.time() - start
         _warmup_complete = True
+
         logger.info(f"[WARMUP] Complete in {elapsed:.2f}s")
+        logger.info(f"[WARMUP] Stats: {stats}")
 
         return {
             "status": "ok",
             "elapsed_seconds": round(elapsed, 2),
             "embedding_model": embed_svc.model_name,
-            "embedding_dimension": embed_svc.dimension
+            "embedding_dimension": embed_svc.dimension,
+            **stats
         }
     except Exception as e:
         logger.error(f"[WARMUP] Failed: {e}")
@@ -126,10 +192,19 @@ def get_status():
     embed_stats = get_embed_cache_stats()
     rag_stats = get_rag_cache_stats()
 
+    # Calculate document cache size
+    doc_cache_chunks = sum(len(docs) for docs in _document_cache.values())
+    doc_cache_collections = len(_document_cache)
+
     return {
         "warmup_complete": _warmup_complete,
         "mcp_query_cache_size": len(_query_cache),
         "mcp_query_cache_max": _QUERY_CACHE_MAX,
+        "document_cache": {
+            "loaded": _document_cache_loaded,
+            "collections": doc_cache_collections,
+            "chunks": doc_cache_chunks,
+        },
         "embedding_cache": embed_stats,
         "rag_cache": rag_stats
     }
@@ -516,7 +591,8 @@ if __name__ == "__main__":
     parser.add_argument("--sse", action="store_true", help="Run as SSE/HTTP server")
     parser.add_argument("--host", default="0.0.0.0", help="Host for SSE mode")
     parser.add_argument("--port", type=int, default=8808, help="Port for SSE mode")
-    parser.add_argument("--warmup", action="store_true", help="Pre-load embedding model on startup")
+    parser.add_argument("--warmup", action="store_true", help="Pre-load embedding model and cache all data")
+    parser.add_argument("--no-docs", action="store_true", help="Skip loading documents into RAM (lighter warmup)")
     parser.add_argument("--workers", type=int, default=2, help="Max worker threads (default: 2)")
     args = parser.parse_args()
 
@@ -528,8 +604,9 @@ if __name__ == "__main__":
 
     # Warmup if requested
     if args.warmup:
-        logger.info("Warming up model on startup...")
-        warmup_model()
+        load_docs = not args.no_docs
+        logger.info(f"Warming up (load_documents={load_docs})...")
+        warmup_model(load_documents=load_docs)
 
     if args.sse:
         main_sse(args.host, args.port)

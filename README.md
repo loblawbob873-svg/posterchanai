@@ -289,7 +289,8 @@ python mcp_rag_server.py --warmup
 |------|---------|-------------|
 | `--sse` | false | Run as SSE/HTTP server (vs stdio) |
 | `--port` | 8808 | Port for SSE mode |
-| `--warmup` | false | Pre-load embedding model on startup |
+| `--warmup` | false | Pre-load model + cache all RAG data in RAM |
+| `--no-docs` | false | Skip document caching (lighter warmup) |
 | `--workers` | 2 | Max worker threads for queries |
 
 **HTTP Endpoints (SSE mode):**
