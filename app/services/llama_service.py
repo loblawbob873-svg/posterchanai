@@ -251,9 +251,47 @@ class LlamaService:
         from app.services.text_utils import strip_thinking_tags
         return strip_thinking_tags(response)
 
+    def _prepare_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Prepare messages for inference - adds /no_think flag if thinking is disabled"""
+        if not self.disable_thinking:
+            return messages
+
+        logger.info("Disable thinking is ON - adding /no_think to user message")
+
+        # Make a deep copy to avoid modifying original
+        import copy
+        messages = copy.deepcopy(messages)
+
+        # Find last user message and append /no_think
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                content = messages[i].get("content", "")
+                # Handle multimodal content (list of text/image parts)
+                if isinstance(content, list):
+                    # Find the text part and append /no_think
+                    for j, part in enumerate(content):
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text = part.get("text", "")
+                            if "/no_think" not in text.lower():
+                                messages[i]["content"][j]["text"] = text + " /no_think"
+                                logger.info("Added /no_think to multimodal message")
+                            break
+                    else:
+                        # No text part found, add one
+                        messages[i]["content"].append({"type": "text", "text": "/no_think"})
+                        logger.info("Added /no_think as new text part")
+                elif isinstance(content, str):
+                    if "/no_think" not in content.lower():
+                        messages[i]["content"] = content + " /no_think"
+                        logger.info("Added /no_think to text message")
+                break
+
+        return messages
+
     def _sync_chat_completion(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
         """Synchronous chat completion (runs in thread pool)"""
         self._ensure_model_loaded()
+        messages = self._prepare_messages(messages)
 
         params = self._get_sampling_params(**kwargs)
 
@@ -317,6 +355,7 @@ class LlamaService:
         Uses async queue to avoid blocking the event loop.
         """
         self._ensure_model_loaded()
+        messages = self._prepare_messages(messages)
 
         params = self._get_sampling_params(**kwargs)
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
@@ -402,6 +441,7 @@ class LlamaService:
         For internal use by web UI - more efficient than parsing SSE.
         """
         self._ensure_model_loaded()
+        messages = self._prepare_messages(messages)
         params = self._get_sampling_params(**kwargs)
 
         with _get_inference_semaphore(self.max_concurrent):
