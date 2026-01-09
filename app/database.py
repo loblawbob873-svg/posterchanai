@@ -150,6 +150,7 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "llm_cpu_mode": "false",  # Force CPU-only (n_gpu_layers=0)
             "llm_use_mmap": "true",  # Memory-map model file
             "llm_use_mlock": "true",  # Lock model in RAM for faster inference
+            "llm_disable_thinking": "false",  # Append /no_think to prompts (for DeepSeek R1, etc.)
             # LLM health check
             "ollama_ping_enabled": "false",
             "ollama_restart_command": "sudo systemctl restart ollama",
