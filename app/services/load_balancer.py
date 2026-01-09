@@ -210,6 +210,11 @@ def parse_server_urls(urls_string: str, exclude_self: bool = True, current_port:
     return servers
 
 
+class NoHealthyServersError(Exception):
+    """Raised when no healthy remote servers are available"""
+    pass
+
+
 def mark_server_unhealthy(server: str):
     """Mark a server as unhealthy (call after a failed request)"""
     global _server_health
@@ -253,8 +258,8 @@ class LoadBalancer:
         # Get a healthy server
         server = await get_healthy_server(self.servers, self.api_key)
         if not server:
-            _log_lb("No healthy servers, using first server as fallback", "warning")
-            server = self.servers[0]
+            _log_lb("No healthy remote servers - signaling to use local", "warning")
+            raise NoHealthyServersError("No healthy remote servers available")
 
         start_time = time.time()
         _log_lb(f"STREAM REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
@@ -318,8 +323,8 @@ class LoadBalancer:
         # Get a healthy server
         server = await get_healthy_server(self.servers, self.api_key)
         if not server:
-            _log_lb("No healthy servers, using first server as fallback", "warning")
-            server = self.servers[0]
+            _log_lb("No healthy remote servers - signaling to use local", "warning")
+            raise NoHealthyServersError("No healthy remote servers available")
 
         start_time = time.time()
         _log_lb(f"CHAT REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")

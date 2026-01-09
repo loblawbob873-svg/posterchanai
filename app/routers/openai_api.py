@@ -155,7 +155,7 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
 
     # Use load balancer if configured (alternates between local and remote)
     if servers:
-        from app.services.load_balancer import should_use_remote
+        from app.services.load_balancer import should_use_remote, NoHealthyServersError
 
         if await should_use_remote(len(servers)):
             # This request goes to a remote server
@@ -163,34 +163,38 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
             model = settings.get("ollama_model", "default")
             load_balancer = LoadBalancer(servers, timeout=timeout, model=model)
 
-            if request.stream:
-                return StreamingResponse(
-                    load_balancer.chat_stream(
+            try:
+                if request.stream:
+                    return StreamingResponse(
+                        load_balancer.chat_stream(
+                            messages=messages,
+                            temperature=temperature,
+                            top_p=top_p,
+                            max_tokens=max_tokens
+                        ),
+                        media_type="text/event-stream",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "Connection": "keep-alive",
+                            "X-Accel-Buffering": "no",
+                        }
+                    )
+                else:
+                    result = await load_balancer.chat(
                         messages=messages,
                         temperature=temperature,
                         top_p=top_p,
                         max_tokens=max_tokens
-                    ),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no",
-                    }
-                )
-            else:
-                result = await load_balancer.chat(
-                    messages=messages,
-                    temperature=temperature,
-                    top_p=top_p,
-                    max_tokens=max_tokens
-                )
-                if "error" in result:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=result["error"].get("message", "Unknown error")
                     )
-                return result
+                    if "error" in result:
+                        raise HTTPException(
+                            status_code=500,
+                            detail=result["error"].get("message", "Unknown error")
+                        )
+                    return result
+            except NoHealthyServersError:
+                # No healthy remote servers, fall through to local processing
+                logger.info("No healthy remote servers, processing locally")
         # else: fall through to local processing
 
     # Fall back to local inference service
