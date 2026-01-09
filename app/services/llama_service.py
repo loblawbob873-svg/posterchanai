@@ -420,8 +420,6 @@ class LlamaService:
 
         with _get_inference_semaphore(self.max_concurrent):
             try:
-                logger.info(f"Starting stream_chat_content inference...")
-                token_count = 0
                 for chunk in self._model.create_chat_completion(
                     messages=messages,
                     stream=True,
@@ -431,16 +429,11 @@ class LlamaService:
                         delta = chunk["choices"][0].get("delta", {})
                         content = delta.get("content", "")
                         if content:
-                            token_count += 1
-                            if token_count <= 3:
-                                logger.info(f"Token {token_count}: {repr(content[:50])}")
                             yield content
 
                         finish_reason = chunk["choices"][0].get("finish_reason")
                         if finish_reason:
-                            logger.info(f"Finished after {token_count} tokens, reason: {finish_reason}")
                             break
-                logger.info(f"Stream completed with {token_count} tokens")
             except Exception as e:
                 logger.error(f"Stream content error: {e}")
                 yield f"Error: {e}"

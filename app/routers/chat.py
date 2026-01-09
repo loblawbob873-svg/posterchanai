@@ -564,6 +564,9 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                         full_response = ""
                         buffer = ""
                         in_thinking = False
+                        THINK_OPEN = "<think>"
+                        THINK_CLOSE = "</think>"
+                        BUFFER_MARGIN = len(THINK_CLOSE)  # Keep enough chars to detect split tags
 
                         async for chunk in chat_service.chat_stream(messages):
                             # Check if user requested stop OR switched to another chat
@@ -576,12 +579,12 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                             while True:
                                 if not in_thinking:
                                     # Look for start of thinking tag
-                                    think_start = buffer.find("<think>")
+                                    think_start = buffer.find(THINK_OPEN)
                                     if think_start == -1:
-                                        # No thinking tag, send buffered content (keep last 10 chars in case tag is split)
-                                        if len(buffer) > 10:
-                                            to_send = buffer[:-10]
-                                            buffer = buffer[-10:]
+                                        # No thinking tag, send buffered content (keep margin in case tag is split)
+                                        if len(buffer) > BUFFER_MARGIN:
+                                            to_send = buffer[:-BUFFER_MARGIN]
+                                            buffer = buffer[-BUFFER_MARGIN:]
                                             if to_send:
                                                 await manager.send_json(user.id, {
                                                     "type": "stream",
@@ -595,19 +598,19 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                                 "type": "stream",
                                                 "content": buffer[:think_start]
                                             }, conn_id)
-                                        buffer = buffer[think_start + 7:]  # Skip "<think>"
+                                        buffer = buffer[think_start + len(THINK_OPEN):]
                                         in_thinking = True
                                 else:
                                     # In thinking mode, look for end tag
-                                    think_end = buffer.find("</think>")
+                                    think_end = buffer.find(THINK_CLOSE)
                                     if think_end == -1:
-                                        # Still in thinking, discard buffered thinking content but keep last 10 chars
-                                        if len(buffer) > 10:
-                                            buffer = buffer[-10:]
+                                        # Still in thinking, discard buffered thinking content but keep margin
+                                        if len(buffer) > BUFFER_MARGIN:
+                                            buffer = buffer[-BUFFER_MARGIN:]
                                         break
                                     else:
                                         # Found </think>, exit thinking mode
-                                        buffer = buffer[think_end + 8:]  # Skip "</think>"
+                                        buffer = buffer[think_end + len(THINK_CLOSE):]
                                         in_thinking = False
 
                         # Send any remaining buffered content
