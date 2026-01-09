@@ -255,15 +255,11 @@ class IPEXService:
             return response[last_match.end():].strip()
 
         # If no closing tag, check if response starts with opening tag (unclosed thinking)
-        # In this case, the model only generated thinking content - return empty or a fallback
-        if re.match(r'^<think(?:ing)?>', response.strip(), re.IGNORECASE):
-            # Remove the thinking block entirely since it's incomplete
-            # Try to extract any content after the thinking
-            stripped = re.sub(r'^<think(?:ing)?>\s*.*$', '', response.strip(), flags=re.IGNORECASE | re.DOTALL)
-            if stripped.strip():
-                return stripped.strip()
-            # Model only produced thinking - regenerate would be ideal but return placeholder
-            return "I apologize, but I wasn't able to generate a proper response. Please try again."
+        if re.match(r'^\s*<think(?:ing)?>', response, re.IGNORECASE):
+            # Extract content after the opening tag
+            rest = re.sub(r'^\s*<think(?:ing)?>', '', response, count=1, flags=re.IGNORECASE)
+            # Return the thinking content (better than nothing)
+            return rest.strip() if rest.strip() else "I apologize, I wasn't able to generate a proper response. Please try again."
 
         return response
 

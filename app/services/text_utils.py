@@ -25,7 +25,8 @@ def strip_thinking_tags(response: str) -> str:
         content_match = re.search(r'\n\n+', rest)
         if content_match:
             return rest[content_match.end():].strip()
-        # No clear separator - return empty or minimal response
-        return ""
+        # No clear separator - return the thinking content without the tag
+        # (better than nothing for debugging/transparency)
+        return rest.strip() if rest.strip() else "I apologize, I wasn't able to generate a proper response. Please try again."
 
     return response
