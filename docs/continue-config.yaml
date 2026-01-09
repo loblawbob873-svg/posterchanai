@@ -1,0 +1,45 @@
+# Continue.dev Configuration for Posterchanai
+# Copy this to ~/.continue/config.yaml
+#
+# This config is optimized for smaller context windows (5k-8k tokens)
+# by limiting context providers and output size.
+
+name: Local Assistant
+version: 1.0.0
+schema: v1
+
+models:
+  - name: PosterChan AI
+    provider: openai
+    model: your-model-name.gguf
+    apiBase: https://your-server.com/v1
+    apiKey: your-api-key-here
+    env:
+      useLegacyCompletionsEndpoint: false
+    defaultCompletionOptions:
+      contextLength: 8000
+      maxTokens: 512
+    roles:
+      - chat
+      - edit
+
+# Minimal context providers for small context windows
+# Add more providers if you have larger context (16k+)
+context:
+  - provider: code
+  - provider: diff
+
+# Optional: Add MCP server for RAG codebase search
+# mcpServers:
+#   - name: posterchanai-rag
+#     url: http://your-server:8808/sse
+
+# For larger context windows (16k+), you can enable more providers:
+# context:
+#   - provider: code
+#   - provider: docs
+#   - provider: diff
+#   - provider: terminal
+#   - provider: problems
+#   - provider: folder
+#   - provider: codebase

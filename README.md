@@ -310,12 +310,94 @@ mcpServers:
 |------|-------------|
 | `search_codebase` | Search indexed code for relevant snippets |
 | `list_collections` | List all RAG collections |
+| `reindex_collection` | Re-index a collection after code changes |
+
+#### REST Endpoint for Git Hooks
+
+The MCP server also exposes a REST endpoint for triggering reindex from git hooks:
+
+```bash
+curl -X POST "http://localhost:8808/reindex" \
+  -H "Content-Type: application/json" \
+  -d '{"collection_id": 2}'
+```
+
+**Git post-merge hook** (`.git/hooks/post-merge`):
+```bash
+#!/bin/bash
+curl -s -X POST "http://localhost:8808/reindex" \
+  -H "Content-Type: application/json" \
+  -d '{"collection_id": 2}' &
+echo "RAG re-index triggered"
+```
 
 #### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RAG_USER_ID` | 1 | User ID for RAG queries |
+
+### Continue.dev Configuration
+
+Continue.dev is an AI coding assistant that integrates with VS Code. Here's an optimized configuration for use with Posterchanai.
+
+**Copy `docs/continue-config.yaml` to `~/.continue/config.yaml`** and update the API settings.
+
+**Sample config for small context windows (5k-8k tokens):**
+
+```yaml
+name: Local Assistant
+version: 1.0.0
+schema: v1
+
+models:
+  - name: PosterChan AI
+    provider: openai
+    model: your-model-name.gguf
+    apiBase: https://your-server.com/v1
+    apiKey: your-api-key-here
+    env:
+      useLegacyCompletionsEndpoint: false
+    defaultCompletionOptions:
+      contextLength: 8000
+      maxTokens: 512
+    roles:
+      - chat
+      - edit
+
+context:
+  - provider: code
+  - provider: diff
+```
+
+**Key settings for limited context:**
+- `contextLength`: Set to match your model's context window
+- `maxTokens`: Smaller output leaves more room for input context
+- Minimal context providers (code + diff only) to avoid exceeding context limit
+
+**For larger context windows (16k+)**, you can enable more providers:
+```yaml
+context:
+  - provider: code
+  - provider: docs
+  - provider: diff
+  - provider: terminal
+  - provider: problems
+  - provider: folder
+  - provider: codebase
+```
+
+**Use `@codebase` manually** to search RAG when needed, rather than loading it automatically.
+
+### Qwen3 Thinking Mode
+
+Qwen3 models have a "thinking" mode that can cause infinite loops. Posterchanai includes a setting to disable this:
+
+```sql
+INSERT INTO settings (key, value) VALUES ('llm_disable_thinking', 'true');
+```
+
+This adds `<think>` as a stop sequence, preventing the model from entering thinking mode.
 
 ## Installation
 
