@@ -560,16 +560,61 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                         else:
                             messages.append({"role": "user", "content": content})
 
-                        # Stream response
+                        # Stream response with thinking tag filtering
                         full_response = ""
+                        buffer = ""
+                        in_thinking = False
+
                         async for chunk in chat_service.chat_stream(messages):
                             # Check if user requested stop OR switched to another chat
                             if manager.should_stop(user.id, conn_id):
                                 break
                             full_response += chunk
+                            buffer += chunk
+
+                            # Filter out thinking content in real-time
+                            while True:
+                                if not in_thinking:
+                                    # Look for start of thinking tag
+                                    think_start = buffer.find("<think>")
+                                    if think_start == -1:
+                                        # No thinking tag, send buffered content (keep last 10 chars in case tag is split)
+                                        if len(buffer) > 10:
+                                            to_send = buffer[:-10]
+                                            buffer = buffer[-10:]
+                                            if to_send:
+                                                await manager.send_json(user.id, {
+                                                    "type": "stream",
+                                                    "content": to_send
+                                                }, conn_id)
+                                        break
+                                    else:
+                                        # Found <think>, send content before it and enter thinking mode
+                                        if think_start > 0:
+                                            await manager.send_json(user.id, {
+                                                "type": "stream",
+                                                "content": buffer[:think_start]
+                                            }, conn_id)
+                                        buffer = buffer[think_start + 7:]  # Skip "<think>"
+                                        in_thinking = True
+                                else:
+                                    # In thinking mode, look for end tag
+                                    think_end = buffer.find("</think>")
+                                    if think_end == -1:
+                                        # Still in thinking, discard buffered thinking content but keep last 10 chars
+                                        if len(buffer) > 10:
+                                            buffer = buffer[-10:]
+                                        break
+                                    else:
+                                        # Found </think>, exit thinking mode
+                                        buffer = buffer[think_end + 8:]  # Skip "</think>"
+                                        in_thinking = False
+
+                        # Send any remaining buffered content
+                        if buffer and not in_thinking:
                             await manager.send_json(user.id, {
                                 "type": "stream",
-                                "content": chunk
+                                "content": buffer
                             }, conn_id)
 
                         # Save assistant response
