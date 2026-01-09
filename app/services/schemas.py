@@ -110,6 +110,7 @@ class SettingsResponse(BaseModel):
     llm_n_threads: str = "4"
     llm_n_batch: str = "1024"  # Batch size for prompt processing (higher = faster)
     llm_max_concurrent: str = "1"  # Max concurrent inference requests
+    llm_idle_timeout: str = "0"  # Seconds before unloading LLM model (0=disabled)
     # Ollama settings (also used for native backend sampling parameters)
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "richardyoung/qwen3-14b-abliterated:Q5_K_M"

@@ -42,6 +42,34 @@ _request_counter_lock = threading.Lock()
 _pending_requests = 0
 _current_request: Optional[str] = None
 
+# Idle timeout tracking
+_last_used: float = 0
+_idle_check_thread: Optional[threading.Thread] = None
+_idle_check_stop = threading.Event()
+
+
+def _start_idle_check():
+    """Start the background idle check thread"""
+    global _idle_check_thread
+    if _idle_check_thread is not None and _idle_check_thread.is_alive():
+        return
+    _idle_check_stop.clear()
+    _idle_check_thread = threading.Thread(target=_idle_check_loop, daemon=True)
+    _idle_check_thread.start()
+    logger.info("IPEX idle check thread started")
+
+
+def _idle_check_loop():
+    """Background loop to check for idle timeout and unload model"""
+    global _ipex_instance, _last_used
+    while not _idle_check_stop.wait(30):  # Check every 30 seconds
+        if _ipex_instance is not None and _ipex_instance._model is not None:
+            idle_time = time.time() - _last_used
+            timeout = _ipex_instance._idle_timeout
+            if timeout > 0 and idle_time > timeout:
+                logger.info(f"IPEX model idle for {idle_time:.0f}s (>{timeout}s), unloading to free VRAM")
+                _ipex_instance.unload_model()
+
 
 def _get_inference_semaphore(max_concurrent: int = 1) -> threading.Semaphore:
     """Get or create inference semaphore with specified concurrency"""
@@ -67,6 +95,7 @@ class IPEXService:
         self._model_path: Optional[str] = None
         self._is_gguf: bool = False
         self._load_settings()
+        _start_idle_check()
 
     def _load_settings(self):
         """Load settings from database"""
@@ -110,6 +139,9 @@ class IPEXService:
 
         # Disable thinking mode (for Qwen3 and similar models)
         self.disable_thinking = settings.get("llm_disable_thinking", "false").lower() == "true"
+
+        # Idle timeout for automatic unloading (0 = disabled)
+        self._idle_timeout = int(settings.get("llm_idle_timeout", "0"))
 
         # Inference timeout (seconds) - prevents hung requests
         self.inference_timeout = int(settings.get("ollama_timeout", "120000")) // 1000  # Convert ms to seconds
@@ -347,6 +379,9 @@ class IPEXService:
             )
             elapsed = time.time() - start_time
             logger.info(f"[REQ-{request_id}] Completed in {elapsed:.1f}s (pending: {_pending_requests - 1})")
+            # Update last used time for idle timeout
+            global _last_used
+            _last_used = time.time()
         except asyncio.TimeoutError:
             elapsed = time.time() - start_time
             logger.error(f"[REQ-{request_id}] Timed out after {elapsed:.1f}s")
@@ -497,6 +532,9 @@ class IPEXService:
                         f"data: {json.dumps(error_chunk)}\n\n"
                     )
                 finally:
+                    # Update last used time for idle timeout
+                    global _last_used
+                    _last_used = time.time()
                     loop.call_soon_threadsafe(queue.put_nowait, None)
 
         _executor.submit(run_streaming)
@@ -634,6 +672,9 @@ class IPEXService:
                 _current_request = None
                 with _request_counter_lock:
                     _pending_requests -= 1
+                # Update last used time for idle timeout
+                global _last_used
+                _last_used = time.time()
 
     async def list_models(self) -> List[Dict[str, Any]]:
         """List available models"""

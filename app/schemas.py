@@ -115,6 +115,7 @@ class SettingsResponse(BaseModel):
     llm_cpu_mode: str = "false"  # Force CPU-only (n_gpu_layers=0)
     llm_use_mmap: str = "true"  # Memory-map model file
     llm_use_mlock: str = "false"  # Lock model in RAM
+    llm_idle_timeout: str = "0"  # Seconds before unloading LLM model (0=disabled)
     # Ollama settings (also used for native backend sampling parameters)
     ollama_url: str = "http://localhost:11434"
     ollama_api_format: str = "ollama"  # "ollama" for /api/chat, "openai" for /v1/chat/completions

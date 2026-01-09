@@ -1123,6 +1123,90 @@ EOF
     fi
 }
 
+setup_mcp_server() {
+    print_step "MCP Server Setup (optional)"
+    echo ""
+    echo "  The MCP (Model Context Protocol) server exposes RAG search to IDEs:"
+    echo "    • Continue.dev - VS Code AI assistant"
+    echo "    • Claude Desktop - Anthropic's desktop app"
+    echo "    • Other MCP-compatible tools"
+    echo ""
+    read -p "Install MCP server as systemd service? [y/N]: " INSTALL_MCP
+    INSTALL_MCP=${INSTALL_MCP:-N}
+
+    if [[ ! "$INSTALL_MCP" =~ ^[Yy] ]]; then
+        print_warning "Skipping MCP server setup"
+        echo "  You can run it manually: python mcp_rag_server.py"
+        return
+    fi
+
+    MCP_SERVICE_NAME="posterchanai-mcp"
+
+    # Determine which venv to use (same as main service)
+    MCP_VENV_PATH="$SCRIPT_DIR/venv"
+    [ "$BACKEND" = "intel" ] && MCP_VENV_PATH="$SCRIPT_DIR/venv-ipex"
+
+    # Create run script for MCP server
+    MCP_RUN_SCRIPT="$SCRIPT_DIR/run-mcp.sh"
+    cat > "$MCP_RUN_SCRIPT" << SCRIPT
+#!/bin/bash
+# MCP RAG Server wrapper script
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+cd "\$SCRIPT_DIR"
+exec "$MCP_VENV_PATH/bin/python" mcp_rag_server.py "\$@"
+SCRIPT
+    chmod +x "$MCP_RUN_SCRIPT"
+
+    # Create systemd service for MCP server
+    sudo tee /etc/systemd/system/$MCP_SERVICE_NAME.service > /dev/null << EOF
+[Unit]
+Description=Posterchanai MCP RAG Server
+After=network.target $SERVICE_NAME.service
+Requires=$SERVICE_NAME.service
+
+[Service]
+Type=simple
+User=$(whoami)
+WorkingDirectory=$SCRIPT_DIR
+Environment="PATH=$MCP_VENV_PATH/bin:/usr/local/bin:/usr/bin"
+Environment="VIRTUAL_ENV=$MCP_VENV_PATH"
+ExecStart=$MCP_RUN_SCRIPT --sse --port 3053
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    print_success "Created systemd service: $MCP_SERVICE_NAME"
+
+    read -p "Enable and start MCP server now? [Y/n]: " START_MCP
+    START_MCP=${START_MCP:-Y}
+
+    if [[ "$START_MCP" =~ ^[Yy] ]]; then
+        sudo systemctl enable $MCP_SERVICE_NAME
+        sudo systemctl start $MCP_SERVICE_NAME
+        sleep 2
+        if systemctl is-active --quiet $MCP_SERVICE_NAME; then
+            print_success "MCP server started on port 3053"
+        else
+            print_error "MCP server failed to start. Check: sudo journalctl -u $MCP_SERVICE_NAME -n 50"
+        fi
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Configure in Continue.dev (~/.continue/config.yaml):${NC}"
+    echo ""
+    echo "    mcpServers:"
+    echo "      - name: posterchanai-rag"
+    echo "        transport:"
+    echo "          type: sse"
+    echo "          url: http://localhost:3053/sse"
+    echo ""
+    MCP_INSTALLED="1"
+}
+
 download_model() {
     print_step "Download a model?"
     echo ""
@@ -1220,6 +1304,22 @@ print_summary() {
     echo "    • Use VS Code extension for real-time sync"
     echo "    • First query downloads ~90MB embedding model"
     echo ""
+
+    # Show MCP server info if installed
+    if [ "${MCP_INSTALLED:-}" = "1" ]; then
+        echo -e "  ${BOLD}MCP Server:${NC}"
+        echo "    Service: posterchanai-mcp (port 3053)"
+        echo "    Start:   sudo systemctl start posterchanai-mcp"
+        echo "    Logs:    sudo journalctl -u posterchanai-mcp -f"
+        echo ""
+        echo "    Configure in Continue.dev (~/.continue/config.yaml):"
+        echo "      mcpServers:"
+        echo "        - name: posterchanai-rag"
+        echo "          transport:"
+        echo "            type: sse"
+        echo "            url: http://localhost:3053/sse"
+        echo ""
+    fi
 }
 
 # Handle --help and --packages options
@@ -1252,6 +1352,10 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "RAG (Codebase Indexing):"
     echo "  Built-in         ChromaDB + sentence-transformers"
     echo "                   First query downloads ~90MB embedding model"
+    echo ""
+    echo "MCP Server (IDE Integration):"
+    echo "  Optional         Exposes RAG to Continue.dev, Claude Desktop"
+    echo "                   Runs on port 3053 (SSE transport)"
     echo ""
     exit 0
 fi
@@ -1287,6 +1391,7 @@ setup_image_deps
 setup_xpu_image_instance
 
 setup_systemd
+setup_mcp_server
 
 # Only offer model download if installing local LLM
 if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "ollama" ]; then

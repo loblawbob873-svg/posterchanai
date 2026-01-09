@@ -32,6 +32,34 @@ _executor = ThreadPoolExecutor(max_workers=8)  # More workers to match concurren
 _inference_semaphore: Optional[threading.Semaphore] = None
 _current_max_concurrent = 1
 
+# Idle timeout tracking
+_last_used: float = 0
+_idle_check_thread: Optional[threading.Thread] = None
+_idle_check_stop = threading.Event()
+
+
+def _start_idle_check():
+    """Start the background idle check thread"""
+    global _idle_check_thread
+    if _idle_check_thread is not None and _idle_check_thread.is_alive():
+        return
+    _idle_check_stop.clear()
+    _idle_check_thread = threading.Thread(target=_idle_check_loop, daemon=True)
+    _idle_check_thread.start()
+    logger.info("LLM idle check thread started")
+
+
+def _idle_check_loop():
+    """Background loop to check for idle timeout and unload model"""
+    global _llama_instance, _last_used
+    while not _idle_check_stop.wait(30):  # Check every 30 seconds
+        if _llama_instance is not None and _llama_instance._model is not None:
+            idle_time = time.time() - _last_used
+            timeout = _llama_instance._idle_timeout
+            if timeout > 0 and idle_time > timeout:
+                logger.info(f"LLM idle for {idle_time:.0f}s (>{timeout}s), unloading to free VRAM")
+                _llama_instance.unload_model()
+
 
 def _get_inference_semaphore(max_concurrent: int = 1) -> threading.Semaphore:
     """Get or create inference semaphore with specified concurrency"""
@@ -54,6 +82,7 @@ class LlamaService:
         self._model = None
         self._model_path: Optional[str] = None
         self._load_settings()
+        _start_idle_check()
 
     def _load_settings(self):
         """Load settings from database"""
@@ -107,6 +136,9 @@ class LlamaService:
 
         # Disable thinking mode (for Qwen3 and similar models)
         self.disable_thinking = settings.get("llm_disable_thinking", "false").lower() == "true"
+
+        # Idle timeout for automatic unloading (0 = disabled)
+        self._idle_timeout = int(settings.get("llm_idle_timeout", "0"))
 
         # System prompt
         self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
@@ -235,6 +267,10 @@ class LlamaService:
                 content = self.strip_thinking_tags(content)
                 result["choices"][0]["message"]["content"] = content
 
+                # Update last used time for idle timeout
+                global _last_used
+                _last_used = time.time()
+
                 return result
 
             except Exception as e:
@@ -339,6 +375,9 @@ class LlamaService:
                         f"data: {json.dumps(error_chunk)}\n\n"
                     )
                 finally:
+                    # Update last used time for idle timeout
+                    global _last_used
+                    _last_used = time.time()
                     loop.call_soon_threadsafe(queue.put_nowait, None)
 
         # Start streaming in background thread
@@ -382,6 +421,10 @@ class LlamaService:
             except Exception as e:
                 logger.error(f"Stream content error: {e}")
                 yield f"Error: {e}"
+            finally:
+                # Update last used time for idle timeout
+                global _last_used
+                _last_used = time.time()
 
     async def list_models(self) -> List[Dict[str, Any]]:
         """List available models (returns the loaded model)"""
