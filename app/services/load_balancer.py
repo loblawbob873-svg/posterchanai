@@ -1,5 +1,6 @@
 """
 Load Balancer Service - Round-robin load balancing across posterchanai servers.
+With health checking to avoid sending requests to unhealthy/slow servers.
 """
 import asyncio
 import httpx
@@ -7,7 +8,7 @@ import json
 import logging
 import time
 from itertools import cycle
-from typing import AsyncGenerator, List, Optional
+from typing import AsyncGenerator, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,92 @@ _cycle_lock = asyncio.Lock()
 _request_counter: int = 0
 _counter_lock = asyncio.Lock()
 
+# Server health tracking
+_server_health: Dict[str, Tuple[bool, float]] = {}  # server -> (is_healthy, last_check_time)
+_health_lock = asyncio.Lock()
+HEALTH_CHECK_INTERVAL = 30  # Re-check unhealthy servers after 30 seconds
+HEALTH_CHECK_TIMEOUT = 3.0  # Quick timeout for health checks
+
+
+async def check_server_health(server: str, api_key: Optional[str] = None) -> bool:
+    """
+    Quick health check - verify server responds to /v1/models within timeout.
+    Returns True if healthy, False otherwise.
+    """
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=HEALTH_CHECK_TIMEOUT) as client:
+            response = await client.get(f"{server}/v1/models", headers=headers)
+            if response.status_code == 200:
+                return True
+            _log_lb(f"Health check failed for {server}: status {response.status_code}", "warning")
+            return False
+    except Exception as e:
+        _log_lb(f"Health check failed for {server}: {str(e)[:100]}", "warning")
+        return False
+
+
+async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) -> Optional[str]:
+    """
+    Get next healthy server using round-robin.
+    Skips unhealthy servers, re-checks them after HEALTH_CHECK_INTERVAL.
+    Returns None if no healthy servers available.
+    """
+    global _server_cycle, _server_list, _server_health
+
+    if not servers:
+        return None
+
+    current_time = time.time()
+
+    async with _cycle_lock:
+        # Reset cycle if server list changed
+        if _server_cycle is None or _server_list != servers:
+            _server_list = servers.copy()
+            _server_cycle = cycle(servers)
+            _log_lb(f"Load balancer initialized with {len(servers)} server(s): {servers}")
+
+    # Try each server in round-robin order
+    tried = set()
+    while len(tried) < len(servers):
+        async with _cycle_lock:
+            server = next(_server_cycle)
+
+        if server in tried:
+            continue
+        tried.add(server)
+
+        # Check cached health status
+        async with _health_lock:
+            if server in _server_health:
+                is_healthy, last_check = _server_health[server]
+
+                # If healthy, use it
+                if is_healthy:
+                    _log_lb(f"Selected healthy server: {server}")
+                    return server
+
+                # If unhealthy but check is stale, re-check
+                if current_time - last_check < HEALTH_CHECK_INTERVAL:
+                    _log_lb(f"Skipping unhealthy server: {server} (checked {current_time - last_check:.0f}s ago)")
+                    continue
+
+        # Do health check
+        _log_lb(f"Health checking {server}...")
+        is_healthy = await check_server_health(server, api_key)
+
+        async with _health_lock:
+            _server_health[server] = (is_healthy, current_time)
+
+        if is_healthy:
+            _log_lb(f"Server {server} is healthy")
+            return server
+        else:
+            _log_lb(f"Server {server} marked unhealthy", "warning")
+
+    _log_lb("No healthy remote servers available", "warning")
+    return None
+
 
 async def should_use_remote(num_remote_servers: int) -> bool:
     """
@@ -51,7 +138,7 @@ async def should_use_remote(num_remote_servers: int) -> bool:
 
 
 async def _get_next_server(servers: List[str]) -> str:
-    """Get next server using round-robin (async-safe)"""
+    """Get next server using round-robin (async-safe) - legacy, use get_healthy_server instead"""
     global _server_cycle, _server_list
     async with _cycle_lock:
         if _server_cycle is None or _server_list != servers:
@@ -123,8 +210,24 @@ def parse_server_urls(urls_string: str, exclude_self: bool = True, current_port:
     return servers
 
 
+def mark_server_unhealthy(server: str):
+    """Mark a server as unhealthy (call after a failed request)"""
+    global _server_health
+    # Use sync version for non-async contexts
+    _server_health[server] = (False, time.time())
+    _log_lb(f"Marked server unhealthy: {server}", "warning")
+
+
+async def mark_server_unhealthy_async(server: str):
+    """Mark a server as unhealthy (async version)"""
+    global _server_health
+    async with _health_lock:
+        _server_health[server] = (False, time.time())
+    _log_lb(f"Marked server unhealthy: {server}", "warning")
+
+
 class LoadBalancer:
-    """Simple round-robin load balancer for posterchanai servers"""
+    """Simple round-robin load balancer for posterchanai servers with health checking"""
 
     def __init__(self, servers: List[str], timeout: float = 120.0, model: str = "default", api_key: Optional[str] = None):
         self.servers = servers
@@ -147,7 +250,12 @@ class LoadBalancer:
         if not self.servers:
             raise ValueError("No servers configured for load balancing")
 
-        server = await _get_next_server(self.servers)
+        # Get a healthy server
+        server = await get_healthy_server(self.servers, self.api_key)
+        if not server:
+            _log_lb("No healthy servers, using first server as fallback", "warning")
+            server = self.servers[0]
+
         start_time = time.time()
         _log_lb(f"STREAM REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
 
@@ -187,9 +295,11 @@ class LoadBalancer:
                 except Exception:
                     pass
                 _log_lb(f"STREAM ERROR from {server} | status={e.response.status_code} | body={error_body}", "error")
+                await mark_server_unhealthy_async(server)
                 yield f'data: {{"error": {{"message": "Server {server} returned {e.response.status_code}"}}}}'
             except Exception as e:
                 _log_lb(f"STREAM EXCEPTION | server={server} | error={str(e)}", "error")
+                await mark_server_unhealthy_async(server)
                 yield f'data: {{"error": {{"message": "{str(e)}"}}}}'
 
     async def chat(
@@ -205,7 +315,12 @@ class LoadBalancer:
         if not self.servers:
             raise ValueError("No servers configured for load balancing")
 
-        server = await _get_next_server(self.servers)
+        # Get a healthy server
+        server = await get_healthy_server(self.servers, self.api_key)
+        if not server:
+            _log_lb("No healthy servers, using first server as fallback", "warning")
+            server = self.servers[0]
+
         start_time = time.time()
         _log_lb(f"CHAT REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
 
@@ -236,7 +351,9 @@ class LoadBalancer:
                 except Exception:
                     pass
                 _log_lb(f"CHAT ERROR from {server} | status={e.response.status_code} | body={error_body}", "error")
+                await mark_server_unhealthy_async(server)
                 return {"error": {"message": f"Server {server} returned {e.response.status_code}"}}
             except Exception as e:
                 _log_lb(f"CHAT EXCEPTION | server={server} | error={str(e)}", "error")
+                await mark_server_unhealthy_async(server)
                 return {"error": {"message": str(e)}}

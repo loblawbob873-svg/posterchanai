@@ -65,6 +65,11 @@
                             <input type="number" id="llm_max_concurrent" name="llm_max_concurrent" value="1" min="1" max="4">
                             <small>Parallel requests</small>
                         </div>
+                        <div class="form-group">
+                            <label for="llm_idle_timeout">Idle Timeout (seconds)</label>
+                            <input type="number" id="llm_idle_timeout" name="llm_idle_timeout" value="0" min="0" max="3600">
+                            <small>Auto-unload after idle (0=disabled)</small>
+                        </div>
                     </div>
                     <div class="form-group">
                         <button type="button" class="btn-secondary" id="reloadModelBtn">Reload Model</button>
