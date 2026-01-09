@@ -337,6 +337,66 @@ echo "RAG re-index triggered"
 |----------|---------|-------------|
 | `RAG_USER_ID` | 1 | User ID for RAG queries |
 
+### Distributed RAG (Remote RAG API)
+
+For load-balanced setups with multiple posterchanai servers, you can configure remote nodes to query a central RAG server instead of maintaining their own RAG index.
+
+**Architecture:**
+```
+Request → Remote Node (192.168.0.85)
+              ↓
+           Query http://192.168.0.1:9999/search
+              ↓
+           Inject RAG context into prompt
+              ↓
+           Run local inference
+```
+
+**Setup:**
+
+1. **On the main server (192.168.0.1)** - Start the MCP RAG server:
+   ```bash
+   source venv-ipex/bin/activate
+   nohup python mcp_rag_server.py --sse --port 9999 > /tmp/mcp_rag_server.log 2>&1 &
+   ```
+
+2. **On remote nodes (192.168.0.85, etc.)** - Configure the RAG API URL:
+   - Go to Admin > RAG > Settings
+   - Set **Remote RAG API URL** to `http://192.168.0.1:9999`
+   - Save settings
+
+3. **On the main server** - Leave **Remote RAG API URL** empty (uses local RAG)
+
+**How it works:**
+- When a remote node receives a chat request, it queries the central RAG server via HTTP
+- The RAG server returns relevant code snippets
+- The remote node injects the context into the prompt and runs inference locally
+- No need to maintain RAG indexes on every node
+
+**REST API Endpoint:**
+
+The MCP RAG server exposes a `/search` endpoint for remote queries:
+
+```bash
+curl -X POST http://192.168.0.1:9999/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "how does authentication work", "top_k": 3}'
+```
+
+Response:
+```json
+{
+  "results": [
+    {
+      "content": "def verify_api_key(...)...",
+      "file_path": "app/routers/openai_api.py",
+      "similarity": 0.72,
+      "collection_name": "posterchanai"
+    }
+  ]
+}
+```
+
 ### Continue.dev Configuration
 
 Continue.dev is an AI coding assistant that integrates with VS Code. Here's an optimized configuration for use with Posterchanai.
