@@ -561,28 +561,9 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                             messages.append({"role": "user", "content": content})
 
                         # Stream response with thinking tag filtering
-                        # Supports multiple tag variants used by different models
-                        THINKING_TAGS = [
-                            ("<think>", "</think>"),
-                            ("<thinking>", "</thinking>"),
-                            ("<thought>", "</thought>"),
-                            ("<reasoning>", "</reasoning>"),
-                            ("<internal_thought>", "</internal_thought>"),
-                            ("<internal-thought>", "</internal-thought>"),
-                        ]
+                        # Import from central location for consistency
+                        from app.services.text_utils import find_thinking_open
                         BUFFER_MARGIN = 20  # Enough for longest closing tag
-
-                        def find_thinking_open(text):
-                            """Find earliest thinking tag opening, return (position, tag_pair) or (-1, None)"""
-                            text_lower = text.lower()
-                            earliest_pos = -1
-                            found_pair = None
-                            for open_tag, close_tag in THINKING_TAGS:
-                                pos = text_lower.find(open_tag)
-                                if pos != -1 and (earliest_pos == -1 or pos < earliest_pos):
-                                    earliest_pos = pos
-                                    found_pair = (open_tag, close_tag)
-                            return earliest_pos, found_pair
 
                         full_response = ""
                         buffer = ""

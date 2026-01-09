@@ -1,6 +1,45 @@
 """Shared text processing utilities."""
 import re
 
+# Thinking tag definitions - single source of truth for all tag variants
+# Used by streaming filters in chat.py, chat_service.py, and strip_thinking_tags()
+THINKING_TAGS = [
+    ("<think>", "</think>"),
+    ("<thinking>", "</thinking>"),
+    ("<thought>", "</thought>"),
+    ("<reasoning>", "</reasoning>"),
+    ("<internal_thought>", "</internal_thought>"),
+    ("<internal-thought>", "</internal-thought>"),
+]
+
+# Prefixes for detecting opening tags (covers all variants above)
+THINKING_OPEN_PREFIXES = ('<think', '<thought', '<reasoning', '<internal')
+
+# Compiled regex for detecting closing tags
+THINKING_CLOSE_PATTERN = re.compile(
+    r'</(?:think(?:ing)?|thought|reasoning|internal[_-]?thought)>',
+    re.IGNORECASE
+)
+
+
+def has_thinking_open(text: str) -> bool:
+    """Check if text contains any thinking tag opening"""
+    lower = text.lower()
+    return any(prefix in lower for prefix in THINKING_OPEN_PREFIXES)
+
+
+def find_thinking_open(text: str):
+    """Find earliest thinking tag opening, return (position, tag_pair) or (-1, None)"""
+    text_lower = text.lower()
+    earliest_pos = -1
+    found_pair = None
+    for open_tag, close_tag in THINKING_TAGS:
+        pos = text_lower.find(open_tag)
+        if pos != -1 and (earliest_pos == -1 or pos < earliest_pos):
+            earliest_pos = pos
+            found_pair = (open_tag, close_tag)
+    return earliest_pos, found_pair
+
 
 def strip_thinking_tags(response: str) -> str:
     """Strip thinking tags from AI response (used by Qwen and other reasoning models).

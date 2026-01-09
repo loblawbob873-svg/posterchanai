@@ -190,17 +190,8 @@ class ChatService:
 
     async def chat_stream(self, messages: list[dict]) -> AsyncGenerator[str, None]:
         """Streaming chat completion - uses async queue to avoid blocking event loop"""
-        # Regex patterns for thinking tag detection (matches all variants)
-        THINKING_CLOSE_PATTERN = re.compile(
-            r'</(?:think(?:ing)?|thought|reasoning|internal[_-]?thought)>',
-            re.IGNORECASE
-        )
-        THINKING_OPEN_PREFIXES = ('<think', '<thought', '<reasoning', '<internal')
-
-        def has_thinking_open(text: str) -> bool:
-            """Check if text contains any thinking tag opening"""
-            lower = text.lower()
-            return any(prefix in lower for prefix in THINKING_OPEN_PREFIXES)
+        # Import thinking tag utilities from central location
+        from app.services.text_utils import THINKING_CLOSE_PATTERN, THINKING_OPEN_PREFIXES, has_thinking_open
 
         try:
             # Extract user message for RAG query (last user message)
