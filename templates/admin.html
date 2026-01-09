@@ -421,6 +421,27 @@
                 </fieldset>
 
                 <fieldset>
+                    <legend>ChromaDB HNSW Tuning (Advanced)</legend>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="rag_hnsw_ef_search">Search EF</label>
+                            <input type="number" id="rag_hnsw_ef_search" name="rag_hnsw_ef_search" value="100" min="10" max="500">
+                            <small>Query accuracy (higher = slower, better results)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="rag_hnsw_ef_construction">Construction EF</label>
+                            <input type="number" id="rag_hnsw_ef_construction" name="rag_hnsw_ef_construction" value="200" min="50" max="1000">
+                            <small>Index quality (higher = slower builds)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="rag_hnsw_m">M (connections)</label>
+                            <input type="number" id="rag_hnsw_m" name="rag_hnsw_m" value="16" min="4" max="64">
+                            <small>Graph connectivity (16 is good default)</small>
+                        </div>
+                    </div>
+                </fieldset>
+
+                <fieldset>
                     <legend>Context Limits</legend>
                     <div class="form-row">
                         <div class="form-group">

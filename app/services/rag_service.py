@@ -76,6 +76,11 @@ class RAGService:
         self.query_cache_ttl = int(settings.get("rag_query_cache_ttl", "600"))
         self.embedding_cache_max = int(settings.get("rag_embedding_cache_max", "250000"))
 
+        # ChromaDB HNSW tuning parameters
+        self.hnsw_ef_search = int(settings.get("rag_hnsw_ef_search", "100"))
+        self.hnsw_ef_construction = int(settings.get("rag_hnsw_ef_construction", "200"))
+        self.hnsw_m = int(settings.get("rag_hnsw_m", "16"))
+
     def _ensure_chroma_client(self):
         """Get or create ChromaDB client."""
         global _chroma_client
@@ -102,7 +107,7 @@ class RAGService:
         return f"user_{self.user_id}_collection_{collection_id}"
 
     def _get_or_create_chroma_collection(self, collection_id: int):
-        """Get or create a ChromaDB collection with caching."""
+        """Get or create a ChromaDB collection with caching and HNSW tuning."""
         global _chroma_collection_cache
 
         cache_key = f"{self.user_id}_{collection_id}"
@@ -112,7 +117,12 @@ class RAGService:
         name = self._get_collection_name(collection_id)
         collection = self.client.get_or_create_collection(
             name=name,
-            metadata={"hnsw:space": "cosine"}
+            metadata={
+                "hnsw:space": "cosine",
+                "hnsw:construction_ef": self.hnsw_ef_construction,
+                "hnsw:search_ef": self.hnsw_ef_search,
+                "hnsw:M": self.hnsw_m,
+            }
         )
 
         _chroma_collection_cache[cache_key] = collection

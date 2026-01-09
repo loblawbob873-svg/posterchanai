@@ -194,6 +194,10 @@ class SettingsResponse(BaseModel):
     rag_embedding_cache_max: str = "250000"  # Max cached embeddings
     rag_query_cache_max: str = "100000"      # Max cached query results
     rag_query_cache_ttl: str = "600"         # Query cache TTL in seconds
+    # ChromaDB HNSW tuning
+    rag_hnsw_ef_search: str = "100"          # Query-time accuracy
+    rag_hnsw_ef_construction: str = "200"    # Index build quality
+    rag_hnsw_m: str = "16"                   # Max connections per node
 
 
 # TTS schema

@@ -5,13 +5,15 @@ Exposes the existing RAG service to MCP clients like Continue.dev, Claude Deskto
 
 Usage:
     python mcp_rag_server.py
+    python mcp_rag_server.py --warmup  # Pre-load model on startup
+    python mcp_rag_server.py --sse --port 8808
 
 Configure in Continue.dev config.json:
 {
   "mcpServers": {
     "posterchanai-rag": {
       "command": "python",
-      "args": ["/home/verita84/posterchanai/mcp_rag_server.py"]
+      "args": ["/home/verita84/posterchanai/mcp_rag_server.py", "--warmup"]
     }
   }
 }
@@ -23,9 +25,13 @@ import logging
 import time
 import hashlib
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Bounded thread pool for embedding operations (prevents CPU overload)
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rag_worker")
 
 # Query result cache with TTL - large cache for aggressive RAM usage
 _query_cache = OrderedDict()
@@ -61,8 +67,9 @@ from mcp.types import Tool, TextContent
 # Import existing RAG infrastructure
 from app.database import SessionLocal
 from app.models import RAGCollection
-from app.services.rag_service import get_rag_service
+from app.services.rag_service import get_rag_service, get_cache_stats as get_rag_cache_stats
 from app.services.rag_folder_service import get_folder_indexer
+from app.services.embedding_service import get_embedding_service, get_cache_stats as get_embed_cache_stats
 
 # IMPORTANT: Use stderr for logging in stdio mode to avoid corrupting JSON-RPC stream
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
@@ -70,6 +77,62 @@ logger = logging.getLogger(__name__)
 
 # User ID from environment or default
 DEFAULT_USER_ID = int(os.environ.get("RAG_USER_ID", "1"))
+
+# Warmup state
+_warmup_complete = False
+
+
+def warmup_model():
+    """Pre-load the embedding model and warm up caches."""
+    global _warmup_complete
+    if _warmup_complete:
+        logger.info("[WARMUP] Already warmed up, skipping")
+        return {"status": "already_warm"}
+
+    logger.info("[WARMUP] Pre-loading embedding model...")
+    start = time.time()
+
+    db = SessionLocal()
+    try:
+        # Load embedding service (triggers model load)
+        embed_svc = get_embedding_service(db)
+        embed_svc._ensure_model_loaded()
+
+        # Do a test embedding to fully initialize
+        _ = embed_svc.embed_single("warmup test query", use_cache=False)
+
+        # Initialize RAG service (loads settings, ChromaDB client)
+        rag_svc = get_rag_service(db, DEFAULT_USER_ID)
+
+        elapsed = time.time() - start
+        _warmup_complete = True
+        logger.info(f"[WARMUP] Complete in {elapsed:.2f}s")
+
+        return {
+            "status": "ok",
+            "elapsed_seconds": round(elapsed, 2),
+            "embedding_model": embed_svc.model_name,
+            "embedding_dimension": embed_svc.dimension
+        }
+    except Exception as e:
+        logger.error(f"[WARMUP] Failed: {e}")
+        return {"status": "error", "error": str(e)}
+    finally:
+        db.close()
+
+
+def get_status():
+    """Get server status and cache statistics."""
+    embed_stats = get_embed_cache_stats()
+    rag_stats = get_rag_cache_stats()
+
+    return {
+        "warmup_complete": _warmup_complete,
+        "mcp_query_cache_size": len(_query_cache),
+        "mcp_query_cache_max": _QUERY_CACHE_MAX,
+        "embedding_cache": embed_stats,
+        "rag_cache": rag_stats
+    }
 
 app = Server("posterchanai-rag")
 
@@ -146,9 +209,9 @@ async def search_codebase(query: str, top_k: int = 2):
     if not query:
         return [TextContent(type="text", text="Error: query is required")]
 
-    # Run blocking DB/embedding operations in thread pool
+    # Run blocking DB/embedding operations in bounded thread pool
     loop = asyncio.get_event_loop()
-    results = await loop.run_in_executor(None, _sync_search, query, top_k)
+    results = await loop.run_in_executor(_executor, _sync_search, query, top_k)
 
     if isinstance(results, str):  # Error message
         return [TextContent(type="text", text=results)]
@@ -212,14 +275,14 @@ def _sync_search(query: str, top_k: int):
 async def list_collections():
     """List all RAG collections."""
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _sync_list_collections)
+    result = await loop.run_in_executor(_executor, _sync_list_collections)
     return [TextContent(type="text", text=result)]
 
 
 async def reindex_collection(collection_id: int = 2):
     """Trigger re-indexing of a collection."""
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _sync_reindex_collection, collection_id)
+    result = await loop.run_in_executor(_executor, _sync_reindex_collection, collection_id)
     return [TextContent(type="text", text=result)]
 
 
@@ -334,7 +397,7 @@ def main_sse(host: str = "0.0.0.0", port: int = 8808):
                 collection_id = 2
 
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, _sync_reindex_collection, collection_id)
+            result = await loop.run_in_executor(_executor, _sync_reindex_collection, collection_id)
 
             response_body = json.dumps({"status": "ok", "message": result}).encode()
             await send({
@@ -385,13 +448,42 @@ def main_sse(host: str = "0.0.0.0", port: int = 8808):
                 return
 
             loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(None, _sync_search, query, top_k)
+            results = await loop.run_in_executor(_executor, _sync_search, query, top_k)
 
             if isinstance(results, str):  # Error message
                 response_body = json.dumps({"error": results, "results": []}).encode()
             else:
                 response_body = json.dumps({"results": results or []}).encode()
 
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [[b"content-type", b"application/json"]],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": response_body,
+            })
+
+        elif path == "/status" and method == "GET":
+            # Status endpoint - cache stats and health
+            status = get_status()
+            response_body = json.dumps(status).encode()
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [[b"content-type", b"application/json"]],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": response_body,
+            })
+
+        elif path == "/warmup" and method == "POST":
+            # Warmup endpoint - pre-load model
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(_executor, warmup_model)
+            response_body = json.dumps(result).encode()
             await send({
                 "type": "http.response.start",
                 "status": 200,
@@ -424,7 +516,19 @@ if __name__ == "__main__":
     parser.add_argument("--sse", action="store_true", help="Run as SSE/HTTP server")
     parser.add_argument("--host", default="0.0.0.0", help="Host for SSE mode")
     parser.add_argument("--port", type=int, default=8808, help="Port for SSE mode")
+    parser.add_argument("--warmup", action="store_true", help="Pre-load embedding model on startup")
+    parser.add_argument("--workers", type=int, default=2, help="Max worker threads (default: 2)")
     args = parser.parse_args()
+
+    # Update executor if custom worker count
+    if args.workers != 2:
+        _executor = ThreadPoolExecutor(max_workers=args.workers, thread_name_prefix="rag_worker")
+        logger.info(f"Using {args.workers} worker threads")
+
+    # Warmup if requested
+    if args.warmup:
+        logger.info("Warming up model on startup...")
+        warmup_model()
 
     if args.sse:
         main_sse(args.host, args.port)

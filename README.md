@@ -98,6 +98,9 @@ Access Admin Panel > Settings to configure RAG:
 | `rag_embedding_cache_max` | 250000 | Max cached embeddings (~375MB RAM) |
 | `rag_query_cache_max` | 100000 | Max cached query results |
 | `rag_query_cache_ttl` | 600 | Query cache TTL in seconds |
+| `rag_hnsw_ef_search` | 100 | HNSW query accuracy (10-500) |
+| `rag_hnsw_ef_construction` | 200 | HNSW index build quality (50-1000) |
+| `rag_hnsw_m` | 16 | HNSW graph connectivity (4-64) |
 
 ### Creating Collections
 
@@ -272,14 +275,31 @@ Posterchanai includes an MCP server that exposes RAG functionality to MCP-compat
 **Option 1: SSE/HTTP mode (for remote access)**
 ```bash
 source venv-ipex/bin/activate
-python mcp_rag_server.py --sse --port 8808
+python mcp_rag_server.py --sse --port 8808 --warmup
 ```
 
 **Option 2: Stdio mode (for local use)**
 ```bash
 source venv-ipex/bin/activate
-python mcp_rag_server.py
+python mcp_rag_server.py --warmup
 ```
+
+**MCP Server Flags:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--sse` | false | Run as SSE/HTTP server (vs stdio) |
+| `--port` | 8808 | Port for SSE mode |
+| `--warmup` | false | Pre-load embedding model on startup |
+| `--workers` | 2 | Max worker threads for queries |
+
+**HTTP Endpoints (SSE mode):**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/sse` | GET | SSE connection for MCP clients |
+| `/search` | POST | Query RAG index |
+| `/reindex` | POST | Trigger collection re-index |
+| `/status` | GET | Cache stats and health |
+| `/warmup` | POST | Pre-load embedding model |
 
 **Option 3: Systemd service**
 ```bash

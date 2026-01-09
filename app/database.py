@@ -1,16 +1,33 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import QueuePool, StaticPool
 import os
 
 # Support custom database file via POSTERCHANAI_DB env var
 _db_file = os.getenv("POSTERCHANAI_DB", "posterchanai.db")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///./{_db_file}")
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
-)
+# Connection pool configuration
+if "sqlite" in DATABASE_URL:
+    # SQLite: use StaticPool for better concurrency with check_same_thread=False
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,  # Reuse single connection
+        pool_pre_ping=True,    # Verify connection health
+    )
+else:
+    # PostgreSQL/MySQL: use QueuePool with connection recycling
+    engine = create_engine(
+        DATABASE_URL,
+        poolclass=QueuePool,
+        pool_size=5,           # Base pool size
+        max_overflow=10,       # Allow up to 15 total connections
+        pool_pre_ping=True,    # Verify connection health
+        pool_recycle=3600,     # Recycle connections after 1 hour
+    )
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -190,6 +207,10 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "rag_query_cache_max": "100000",
             "rag_query_cache_ttl": "600",
             "rag_embedding_cache_max": "250000",
+            # ChromaDB HNSW tuning (advanced performance)
+            "rag_hnsw_ef_search": "100",       # Query-time accuracy (higher = slower but better)
+            "rag_hnsw_ef_construction": "200", # Index build quality (higher = slower builds)
+            "rag_hnsw_m": "16",                # Max connections per node (16 is good default)
         }
 
         for key, value in default_settings.items():
