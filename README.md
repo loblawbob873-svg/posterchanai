@@ -103,6 +103,35 @@ Access Admin Panel > Settings to configure RAG:
 | `rag_hnsw_ef_construction` | 200 | HNSW index build quality (50-1000) |
 | `rag_hnsw_m` | 16 | HNSW graph connectivity (4-64) |
 
+### Performance Tuning
+
+RAG includes aggressive RAM caching for fast queries:
+
+**Auto-warmup on startup:**
+- Embedding model pre-loaded (~200-400MB)
+- ChromaDB indexes loaded into memory
+- All document chunks cached
+- Controlled by `rag_auto_warmup` setting
+
+**Cache layers:**
+| Cache | Default Size | RAM Usage |
+|-------|--------------|-----------|
+| Embedding cache | 250,000 entries | ~375 MB |
+| Query results cache | 100,000 entries | ~100 MB |
+| Settings cache | 1 hour TTL | <1 KB |
+| ChromaDB collections | Permanent | Varies |
+
+**For maximum performance:**
+```bash
+# Admin UI settings:
+rag_embedding_cache_max = 500000   # ~750MB RAM
+rag_query_cache_max = 200000       # More cached results
+rag_query_cache_ttl = 1800         # 30 min TTL
+rag_hnsw_ef_search = 200           # Better accuracy
+```
+
+**Clear caches:** Admin UI > RAG > "Clear RAG Caches" button
+
 ### Creating Collections
 
 #### Option 1: Clone a Git Repository

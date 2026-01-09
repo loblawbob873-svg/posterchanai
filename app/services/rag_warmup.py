@@ -77,8 +77,6 @@ def warmup_rag_cache(user_id: int = 1, load_documents: bool = True):
         # 3. Cache document chunks if enabled
         if load_documents:
             logger.info("[RAG WARMUP] Step 3/3: Caching document chunks...")
-            from app.services.rag_service import _query_results_cache
-
             for col in collections:
                 try:
                     chroma_col = rag_svc._get_or_create_chroma_collection(col.id)
