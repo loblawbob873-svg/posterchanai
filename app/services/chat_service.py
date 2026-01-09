@@ -357,10 +357,7 @@ class ChatService:
                 # Start streaming in background thread
                 _stream_executor.submit(run_streaming)
 
-                # Process queue with think tag filtering
-                buffer = ""
-                thinking_mode = None  # None=unknown, True=in thinking, False=no thinking
-
+                # Stream content directly (thinking tags will be stripped on save)
                 while True:
                     content = await queue.get()
                     if content is None:
@@ -370,39 +367,7 @@ class ChatService:
                         yield content
                         return
 
-                    buffer += content
-
-                    if thinking_mode is None:
-                        # Check if model started with <think> tag (ignore leading whitespace)
-                        buffer_stripped = buffer.lstrip()
-                        if buffer_stripped.lower().startswith('<think'):
-                            thinking_mode = True
-                        elif len(buffer_stripped) > 30:
-                            # No think tag in first 30 non-whitespace chars - assume no thinking
-                            thinking_mode = False
-                            yield buffer
-                            buffer = ""
-
-                    elif thinking_mode is True:
-                        # In thinking mode - look for end tag
-                        match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
-                        if match:
-                            thinking_mode = False
-                            after_think = buffer[match.end():]
-                            buffer = ""
-                            if after_think.strip():
-                                yield after_think
-                    elif thinking_mode is False:
-                        # Not thinking - stream directly
-                        yield content
-                        buffer = ""
-
-                # Yield any remaining buffer
-                if buffer:
-                    # Strip think tags if present
-                    clean = self.strip_thinking_tags(buffer)
-                    if clean:
-                        yield clean
+                    yield content
             else:
                 # Fallback to SSE parsing for Ollama - with thinking tag filtering
                 buffer = ""
