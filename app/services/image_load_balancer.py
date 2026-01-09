@@ -10,16 +10,6 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Also log to a dedicated file for easier troubleshooting
-def _log_img_lb(msg: str, level: str = "info"):
-    """Log to both standard logger and dedicated image load balancer log file"""
-    getattr(logger, level)(msg)
-    try:
-        with open("/tmp/image_loadbalancer.log", "a") as f:
-            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [{level.upper()}] {msg}\n")
-    except Exception:
-        pass
-
 # Global round-robin state for image servers
 _image_server_cycle: Optional[cycle] = None
 _image_server_list: List[str] = []
@@ -45,7 +35,7 @@ async def should_use_remote_image(num_remote_servers: int) -> bool:
     total_slots = 1 + num_remote_servers
     use_remote = (count % total_slots) != 0  # Slot 0 = local, others = remote
 
-    _log_img_lb(f"Image Request #{count}: {'REMOTE' if use_remote else 'LOCAL'} (total_slots={total_slots})")
+    logger.info(f"Image Request #{count}: {'REMOTE' if use_remote else 'LOCAL'} (total_slots={total_slots})")
     return use_remote
 
 
@@ -56,9 +46,9 @@ async def _get_next_image_server(servers: List[str]) -> str:
         if _image_server_cycle is None or _image_server_list != servers:
             _image_server_list = servers.copy()
             _image_server_cycle = cycle(servers)
-            _log_img_lb(f"Image load balancer initialized with {len(servers)} server(s): {servers}")
+            logger.info(f"Image load balancer initialized with {len(servers)} server(s): {servers}")
         server = next(_image_server_cycle)
-        _log_img_lb(f"Selected image server: {server}")
+        logger.info(f"Selected image server: {server}")
         return server
 
 
@@ -97,7 +87,7 @@ def parse_image_server_urls(urls_string: str, exclude_self: bool = True, current
             continue
 
         if not (url.startswith('http://') or url.startswith('https://')):
-            _log_img_lb(f"Skipping invalid URL (missing protocol): {url}", "warning")
+            logger.warning(f"Skipping invalid URL (missing protocol): {url}")
             continue
 
         # Check if URL points to THIS instance (same host AND same port)
@@ -110,10 +100,10 @@ def parse_image_server_urls(urls_string: str, exclude_self: bool = True, current
 
                 # Only skip if SAME host AND SAME port (i.e., pointing to ourselves)
                 if host in local_ips and port == current_port:
-                    _log_img_lb(f"Skipping self URL: {url} (same host and port)", "warning")
+                    logger.debug(f"Skipping self URL: {url} (same host and port)")
                     continue
                 elif host in local_ips:
-                    _log_img_lb(f"Allowing local URL on different port: {url}")
+                    logger.info(f"Allowing local URL on different port: {url}")
             except Exception:
                 pass
 
@@ -147,7 +137,7 @@ class ImageLoadBalancer:
 
         server = await _get_next_image_server(self.servers)
         start_time = time.time()
-        _log_img_lb(f"IMAGE REQUEST to {server} | prompt={prompt[:50]}...")
+        logger.info(f"IMAGE REQUEST to {server} | prompt={prompt[:50]}...")
 
         # Build request payload
         payload = {
@@ -169,21 +159,21 @@ class ImageLoadBalancer:
                     f"{server}/api/generate-image",
                     json=payload
                 )
-                _log_img_lb(f"IMAGE RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
+                logger.info(f"IMAGE RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
                 response.raise_for_status()
 
                 result = response.json()
 
                 if result.get("error"):
-                    _log_img_lb(f"IMAGE ERROR from {server} | error={result['error']}", "error")
+                    logger.error(f"IMAGE ERROR from {server} | error={result['error']}")
                     return None
 
                 image_data = result.get("image")
                 if image_data:
-                    _log_img_lb(f"IMAGE COMPLETE from {server} | total_time={time.time()-start_time:.2f}s")
+                    logger.info(f"IMAGE COMPLETE from {server} | total_time={time.time()-start_time:.2f}s")
                     return image_data
                 else:
-                    _log_img_lb(f"IMAGE ERROR from {server} | no image in response", "error")
+                    logger.error(f"IMAGE ERROR from {server} | no image in response")
                     return None
 
             except httpx.HTTPStatusError as e:
@@ -192,8 +182,8 @@ class ImageLoadBalancer:
                     error_body = e.response.text[:500]
                 except Exception:
                     pass
-                _log_img_lb(f"IMAGE ERROR from {server} | status={e.response.status_code} | body={error_body}", "error")
+                logger.error(f"IMAGE ERROR from {server} | status={e.response.status_code} | body={error_body}")
                 return None
             except Exception as e:
-                _log_img_lb(f"IMAGE EXCEPTION | server={server} | error={str(e)}", "error")
+                logger.error(f"IMAGE EXCEPTION | server={server} | error={str(e)}")
                 return None

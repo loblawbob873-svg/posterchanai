@@ -12,16 +12,6 @@ from typing import AsyncGenerator, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Also log to a dedicated file for easier troubleshooting
-def _log_lb(msg: str, level: str = "info"):
-    """Log to both standard logger and dedicated load balancer log file"""
-    getattr(logger, level)(msg)
-    try:
-        with open("/tmp/loadbalancer.log", "a") as f:
-            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [{level.upper()}] {msg}\n")
-    except Exception:
-        pass
-
 # Global round-robin state
 _server_cycle: Optional[cycle] = None
 _server_list: List[str] = []
@@ -49,10 +39,10 @@ async def check_server_health(server: str, api_key: Optional[str] = None) -> boo
             response = await client.get(f"{server}/v1/models", headers=headers)
             if response.status_code == 200:
                 return True
-            _log_lb(f"Health check failed for {server}: status {response.status_code}", "warning")
+            logger.warning(f"Health check failed for {server}: status {response.status_code}")
             return False
     except Exception as e:
-        _log_lb(f"Health check failed for {server}: {str(e)[:100]}", "warning")
+        logger.warning(f"Health check failed for {server}: {str(e)[:100]}")
         return False
 
 
@@ -74,7 +64,7 @@ async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) 
         if _server_cycle is None or _server_list != servers:
             _server_list = servers.copy()
             _server_cycle = cycle(servers)
-            _log_lb(f"Load balancer initialized with {len(servers)} server(s): {servers}")
+            logger.info(f"Load balancer initialized with {len(servers)} server(s): {servers}")
 
     # Try each server in round-robin order
     tried = set()
@@ -93,28 +83,28 @@ async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) 
 
                 # If healthy, use it
                 if is_healthy:
-                    _log_lb(f"Selected healthy server: {server}")
+                    logger.info(f"Selected healthy server: {server}")
                     return server
 
                 # If unhealthy but check is stale, re-check
                 if current_time - last_check < HEALTH_CHECK_INTERVAL:
-                    _log_lb(f"Skipping unhealthy server: {server} (checked {current_time - last_check:.0f}s ago)")
+                    logger.info(f"Skipping unhealthy server: {server} (checked {current_time - last_check:.0f}s ago)")
                     continue
 
         # Do health check
-        _log_lb(f"Health checking {server}...")
+        logger.info(f"Health checking {server}...")
         is_healthy = await check_server_health(server, api_key)
 
         async with _health_lock:
             _server_health[server] = (is_healthy, current_time)
 
         if is_healthy:
-            _log_lb(f"Server {server} is healthy")
+            logger.info(f"Server {server} is healthy")
             return server
         else:
-            _log_lb(f"Server {server} marked unhealthy", "warning")
+            logger.warning(f"Server {server} marked unhealthy")
 
-    _log_lb("No healthy remote servers available", "warning")
+    logger.warning("No healthy remote servers available")
     return None
 
 
@@ -133,7 +123,7 @@ async def should_use_remote(num_remote_servers: int) -> bool:
     total_slots = 1 + num_remote_servers
     use_remote = (count % total_slots) != 0  # Slot 0 = local, others = remote
 
-    _log_lb(f"Request #{count}: {'REMOTE' if use_remote else 'LOCAL'} (total_slots={total_slots})")
+    logger.info(f"Request #{count}: {'REMOTE' if use_remote else 'LOCAL'} (total_slots={total_slots})")
     return use_remote
 
 
@@ -144,9 +134,9 @@ async def _get_next_server(servers: List[str]) -> str:
         if _server_cycle is None or _server_list != servers:
             _server_list = servers.copy()
             _server_cycle = cycle(servers)
-            _log_lb(f"Load balancer initialized with {len(servers)} server(s): {servers}")
+            logger.info(f"Load balancer initialized with {len(servers)} server(s): {servers}")
         server = next(_server_cycle)
-        _log_lb(f"Selected server: {server}")
+        logger.info(f"Selected server: {server}")
         return server
 
 
@@ -185,7 +175,7 @@ def parse_server_urls(urls_string: str, exclude_self: bool = True, current_port:
             continue
 
         if not (url.startswith('http://') or url.startswith('https://')):
-            _log_lb(f"Skipping invalid URL (missing protocol): {url}", "warning")
+            logger.warning(f"Skipping invalid URL (missing protocol): {url}")
             continue
 
         # Check if URL points to THIS instance (same host AND same port)
@@ -198,10 +188,10 @@ def parse_server_urls(urls_string: str, exclude_self: bool = True, current_port:
 
                 # Only skip if SAME host AND SAME port (i.e., pointing to ourselves)
                 if host in local_ips and port == current_port:
-                    _log_lb(f"Skipping self URL: {url} (same host and port)", "warning")
+                    logger.debug(f"Skipping self URL: {url} (same host and port)")
                     continue
                 elif host in local_ips:
-                    _log_lb(f"Allowing local URL on different port: {url}")
+                    logger.info(f"Allowing local URL on different port: {url}")
             except Exception:
                 pass
 
@@ -220,7 +210,7 @@ def mark_server_unhealthy(server: str):
     global _server_health
     # Use sync version for non-async contexts
     _server_health[server] = (False, time.time())
-    _log_lb(f"Marked server unhealthy: {server}", "warning")
+    logger.warning(f"Marked server unhealthy: {server}")
 
 
 async def mark_server_unhealthy_async(server: str):
@@ -228,7 +218,7 @@ async def mark_server_unhealthy_async(server: str):
     global _server_health
     async with _health_lock:
         _server_health[server] = (False, time.time())
-    _log_lb(f"Marked server unhealthy: {server}", "warning")
+    logger.warning(f"Marked server unhealthy: {server}")
 
 
 class LoadBalancer:
@@ -258,11 +248,11 @@ class LoadBalancer:
         # Get a healthy server
         server = await get_healthy_server(self.servers, self.api_key)
         if not server:
-            _log_lb("No healthy remote servers - signaling to use local", "warning")
+            logger.warning("No healthy remote servers - signaling to use local")
             raise NoHealthyServersError("No healthy remote servers available")
 
         start_time = time.time()
-        _log_lb(f"STREAM REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
+        logger.info(f"STREAM REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
@@ -279,7 +269,7 @@ class LoadBalancer:
                         "max_tokens": max_tokens
                     }
                 ) as response:
-                    _log_lb(f"STREAM RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
+                    logger.info(f"STREAM RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
                     response.raise_for_status()
 
                     chunk_count = 0
@@ -291,7 +281,7 @@ class LoadBalancer:
                             chunk_count += 1
                             yield line
 
-                    _log_lb(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={time.time()-start_time:.2f}s")
+                    logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={time.time()-start_time:.2f}s")
 
             except httpx.HTTPStatusError as e:
                 error_body = ""
@@ -299,11 +289,11 @@ class LoadBalancer:
                     error_body = e.response.text[:500]
                 except Exception:
                     pass
-                _log_lb(f"STREAM ERROR from {server} | status={e.response.status_code} | body={error_body}", "error")
+                logger.error(f"STREAM ERROR from {server} | status={e.response.status_code} | body={error_body}")
                 await mark_server_unhealthy_async(server)
                 yield f'data: {{"error": {{"message": "Server {server} returned {e.response.status_code}"}}}}'
             except Exception as e:
-                _log_lb(f"STREAM EXCEPTION | server={server} | error={str(e)}", "error")
+                logger.error(f"STREAM EXCEPTION | server={server} | error={str(e)}")
                 await mark_server_unhealthy_async(server)
                 yield f'data: {{"error": {{"message": "{str(e)}"}}}}'
 
@@ -323,11 +313,11 @@ class LoadBalancer:
         # Get a healthy server
         server = await get_healthy_server(self.servers, self.api_key)
         if not server:
-            _log_lb("No healthy remote servers - signaling to use local", "warning")
+            logger.warning("No healthy remote servers - signaling to use local")
             raise NoHealthyServersError("No healthy remote servers available")
 
         start_time = time.time()
-        _log_lb(f"CHAT REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
+        logger.info(f"CHAT REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
@@ -343,10 +333,10 @@ class LoadBalancer:
                         "max_tokens": max_tokens
                     }
                 )
-                _log_lb(f"CHAT RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
+                logger.info(f"CHAT RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
                 response.raise_for_status()
                 result = response.json()
-                _log_lb(f"CHAT COMPLETE from {server} | total_time={time.time()-start_time:.2f}s")
+                logger.info(f"CHAT COMPLETE from {server} | total_time={time.time()-start_time:.2f}s")
                 return result
 
             except httpx.HTTPStatusError as e:
@@ -355,10 +345,10 @@ class LoadBalancer:
                     error_body = e.response.text[:500]
                 except Exception:
                     pass
-                _log_lb(f"CHAT ERROR from {server} | status={e.response.status_code} | body={error_body}", "error")
+                logger.error(f"CHAT ERROR from {server} | status={e.response.status_code} | body={error_body}")
                 await mark_server_unhealthy_async(server)
                 return {"error": {"message": f"Server {server} returned {e.response.status_code}"}}
             except Exception as e:
-                _log_lb(f"CHAT EXCEPTION | server={server} | error={str(e)}", "error")
+                logger.error(f"CHAT EXCEPTION | server={server} | error={str(e)}")
                 await mark_server_unhealthy_async(server)
                 return {"error": {"message": str(e)}}
