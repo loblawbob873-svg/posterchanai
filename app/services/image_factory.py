@@ -99,10 +99,29 @@ async def generate_image_with_load_balancing(
 
     # Use local backend - WITH LOCK to prevent GPU overload
     logger.info("Using local backend for image generation (serialized)")
-    async with image_generation_lock:
-        prepare_vram_for_image(db)
-        backend = get_image_backend(db)
-        return await backend.generate_image(
+    result = None
+    try:
+        async with image_generation_lock:
+            prepare_vram_for_image(db)
+            backend = get_image_backend(db)
+            result = await backend.generate_image(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                steps=steps,
+                cfg=cfg,
+            )
+    except Exception as e:
+        logger.error(f"Local image generation failed with exception: {e}")
+        result = None
+
+    # Fallback to remote if local failed and remote servers are available
+    if result is None and servers:
+        logger.warning("Local image generation failed, falling back to remote server")
+        timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
+        load_balancer = ImageLoadBalancer(servers, timeout=timeout)
+        return await load_balancer.generate_image(
             prompt=prompt,
             negative_prompt=negative_prompt,
             width=width,
@@ -110,6 +129,8 @@ async def generate_image_with_load_balancing(
             steps=steps,
             cfg=cfg,
         )
+
+    return result
 
 
 def get_image_backend(db: Session) -> ImageBackend:

@@ -514,12 +514,14 @@
                         <select id="vram_mode" name="vram_mode">
                             <option value="shared">Shared (Swap LLM/Image models)</option>
                             <option value="dedicated">Dedicated (Keep both loaded)</option>
+                            <option value="llm_only">LLM Only (No local image generation)</option>
                         </select>
-                        <small>Shared: Single GPU - unload one model to load the other. Dedicated: Multiple GPUs or high VRAM - keep both loaded.</small>
+                        <small>Shared: Single GPU - unload one model to load the other. Dedicated: Multiple GPUs or high VRAM - keep both loaded. LLM Only: Always use remote servers for image generation.</small>
                     </div>
                     <div id="vramModeInfo" class="vram-info">
                         <p><strong>Shared Mode:</strong> When you generate an image, the LLM is unloaded first. When you chat, the image model is unloaded first. Best for single GPU with limited VRAM.</p>
                         <p><strong>Dedicated Mode:</strong> Both models stay loaded at all times. Use this if you have multiple GPUs or sufficient VRAM (24GB+) for both models.</p>
+                        <p><strong>LLM Only Mode:</strong> This node only handles LLM requests. All image generation is forwarded to remote servers configured in Image Server URLs. Use this for dedicated LLM nodes in a multi-server setup.</p>
                     </div>
                 </fieldset>
 
