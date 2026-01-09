@@ -110,7 +110,7 @@ async def call_tool(name: str, arguments: dict):
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
 
-async def search_codebase(query: str, top_k: int = 5):
+async def search_codebase(query: str, top_k: int = 2):
     """Search the indexed codebase using existing RAG service."""
     if not query:
         return [TextContent(type="text", text="Error: query is required")]
@@ -131,11 +131,17 @@ async def search_codebase(query: str, top_k: int = 5):
     # Format results
     output = f"## Found {len(results)} relevant code snippets\n\n"
 
+    MAX_CHUNK_CHARS = 250  # Limit per chunk to avoid context overflow
+
     for i, result in enumerate(results, 1):
         file_path = result.get("file_path", "unknown")
         similarity = result.get("similarity", 0)
         content = result.get("content", "")
         collection = result.get("collection_name", "")
+
+        # Truncate long chunks
+        if len(content) > MAX_CHUNK_CHARS:
+            content = content[:MAX_CHUNK_CHARS] + "\n... [truncated]"
 
         # Detect language from file extension
         ext = os.path.splitext(file_path)[1].lstrip('.')
@@ -248,47 +254,71 @@ async def main_stdio():
 def main_sse(host: str = "0.0.0.0", port: int = 8808):
     """Run the MCP server over SSE/HTTP (for network use)."""
     from mcp.server.sse import SseServerTransport
-    from starlette.applications import Starlette
-    from starlette.responses import Response, JSONResponse
-    from starlette.routing import Route
     import uvicorn
+    import json
 
     sse = SseServerTransport("/messages/")
 
-    async def handle_reindex(request):
-        """Simple REST endpoint for git hooks to trigger reindex."""
-        try:
-            body = await request.json()
-            collection_id = body.get("collection_id", 2)
-        except Exception:
-            collection_id = 2
+    async def asgi_app(scope, receive, send):
+        """Pure ASGI app for MCP SSE server."""
+        if scope["type"] != "http":
+            return
 
-        # Run sync function in thread pool
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, _sync_reindex_collection, collection_id)
-        return JSONResponse({"status": "ok", "message": result})
+        path = scope["path"]
+        method = scope["method"]
 
-    async def handle_sse(request):
-        async with sse.connect_sse(
-            request.scope, request.receive, request._send
-        ) as streams:
-            await app.run(streams[0], streams[1], app.create_initialization_options())
-        return Response()
+        if path == "/sse" and method == "GET":
+            # SSE connection endpoint
+            async with sse.connect_sse(scope, receive, send) as streams:
+                await app.run(streams[0], streams[1], app.create_initialization_options())
 
-    async def handle_messages(request):
-        await sse.handle_post_message(request.scope, request.receive, request._send)
-        return Response()
+        elif path.startswith("/messages/") and method == "POST":
+            # Message endpoint
+            await sse.handle_post_message(scope, receive, send)
 
-    starlette_app = Starlette(
-        routes=[
-            Route("/sse", endpoint=handle_sse),
-            Route("/messages/", endpoint=handle_messages, methods=["POST"]),
-            Route("/reindex", endpoint=handle_reindex, methods=["POST"]),
-        ]
-    )
+        elif path == "/reindex" and method == "POST":
+            # Reindex endpoint - read JSON body
+            body = b""
+            while True:
+                message = await receive()
+                body += message.get("body", b"")
+                if not message.get("more_body", False):
+                    break
+
+            try:
+                data = json.loads(body) if body else {}
+                collection_id = data.get("collection_id", 2)
+            except Exception:
+                collection_id = 2
+
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, _sync_reindex_collection, collection_id)
+
+            response_body = json.dumps({"status": "ok", "message": result}).encode()
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [[b"content-type", b"application/json"]],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": response_body,
+            })
+
+        else:
+            # 404 Not Found
+            await send({
+                "type": "http.response.start",
+                "status": 404,
+                "headers": [[b"content-type", b"text/plain"]],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": b"Not Found",
+            })
 
     logger.info(f"Starting Posterchanai RAG MCP Server (SSE) on http://{host}:{port}")
-    uvicorn.run(starlette_app, host=host, port=port)
+    uvicorn.run(asgi_app, host=host, port=port)
 
 
 if __name__ == "__main__":

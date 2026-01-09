@@ -166,6 +166,9 @@ class FolderIndexer:
                     continue
                 if any(part in skip_dirs for part in parts):
                     continue
+                # Skip venv-* directories (venv-ipex, venv-xpu, etc.)
+                if any(part.startswith('venv') for part in parts):
+                    continue
 
                 for pattern in patterns:
                     if fnmatch(file_path.name, pattern):
