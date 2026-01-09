@@ -1271,6 +1271,32 @@ download_model() {
     fi
 }
 
+configure_database_settings() {
+    print_step "Configuring database settings..."
+
+    # Determine the correct llm_backend value based on BACKEND selection
+    local DB_LLM_BACKEND="ollama"
+    case "$BACKEND" in
+        intel) DB_LLM_BACKEND="ipex" ;;
+        nvidia|amd|cpu) DB_LLM_BACKEND="native" ;;
+        ollama) DB_LLM_BACKEND="ollama" ;;
+    esac
+
+    # Initialize database if it doesn't exist (runs the app briefly to create tables)
+    if [ ! -f "posterchanai.db" ]; then
+        print_step "Initializing database..."
+        local VENV_PATH="venv"
+        [ "$BACKEND" = "intel" ] && VENV_PATH="venv-ipex"
+        "$VENV_PATH/bin/python" -c "from app.database import init_db; init_db()" 2>/dev/null || true
+    fi
+
+    # Update llm_backend setting
+    if [ -f "posterchanai.db" ]; then
+        sqlite3 posterchanai.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('llm_backend', '$DB_LLM_BACKEND');" 2>/dev/null
+        print_success "LLM backend set to: $DB_LLM_BACKEND"
+    fi
+}
+
 print_summary() {
     echo ""
     echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
@@ -1419,5 +1445,8 @@ setup_mcp_server
 if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "ollama" ]; then
     download_model
 fi
+
+# Configure database settings based on selected backend
+configure_database_settings
 
 print_summary

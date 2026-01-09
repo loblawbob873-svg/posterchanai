@@ -4,12 +4,15 @@ Supports both native llama-cpp-python and Ollama backends.
 Provides both /v1/* and /api/* endpoints for maximum compatibility.
 """
 import json
+import logging
 import re
 from datetime import datetime
 from typing import Optional, AsyncGenerator
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.database import get_db
 from app.models import Setting, APIKey, User
@@ -56,7 +59,7 @@ async def filter_thinking_stream(stream: AsyncGenerator[str, None]) -> AsyncGene
                 if clean and clean != "I apologize, I wasn't able to generate a proper response. Please try again.":
                     # Re-emit as SSE chunk
                     yield f"data: {json.dumps({'choices': [{'delta': {'content': clean}}]})}\n\n"
-            yield chunk
+            yield "data: [DONE]\n\n"
             continue
 
         try:
@@ -263,9 +266,12 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
             except NoHealthyServersError:
                 # No healthy remote servers, fall through to local processing
                 logger.info("No healthy remote servers, processing locally")
-        # else: fall through to local processing
+        else:
+            # should_use_remote returned False, use local
+            logger.info("Load balancer: using LOCAL inference")
 
     # Fall back to local inference service
+    logger.info("Processing with local inference service")
     service = get_inference_service(db)
 
     # Build kwargs from request

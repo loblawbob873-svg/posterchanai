@@ -116,8 +116,8 @@ async def should_use_remote(num_remote_servers: int) -> bool:
     """
     global _request_counter
     async with _counter_lock:
-        _request_counter += 1
         count = _request_counter
+        _request_counter += 1
 
     # Total slots = local (1) + remote servers
     total_slots = 1 + num_remote_servers
@@ -279,7 +279,8 @@ class LoadBalancer:
                             continue
                         if line.startswith("data: "):
                             chunk_count += 1
-                            yield line
+                            # Ensure proper SSE format with \n\n
+                            yield line + "\n\n" if not line.endswith("\n\n") else line
 
                     logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={time.time()-start_time:.2f}s")
 
@@ -291,11 +292,11 @@ class LoadBalancer:
                     pass
                 logger.error(f"STREAM ERROR from {server} | status={e.response.status_code} | body={error_body}")
                 await mark_server_unhealthy_async(server)
-                yield f'data: {{"error": {{"message": "Server {server} returned {e.response.status_code}"}}}}'
+                yield f'data: {{"error": {{"message": "Server {server} returned {e.response.status_code}"}}}}\n\n'
             except Exception as e:
                 logger.error(f"STREAM EXCEPTION | server={server} | error={str(e)}")
                 await mark_server_unhealthy_async(server)
-                yield f'data: {{"error": {{"message": "{str(e)}"}}}}'
+                yield f'data: {{"error": {{"message": "{str(e)}"}}}}\n\n'
 
     async def chat(
         self,

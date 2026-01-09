@@ -34,7 +34,8 @@ from app.models import RAGCollection
 from app.services.rag_service import get_rag_service
 from app.services.rag_folder_service import get_folder_indexer
 
-logging.basicConfig(level=logging.INFO)
+# IMPORTANT: Use stderr for logging in stdio mode to avoid corrupting JSON-RPC stream
+logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
 
 # User ID from environment or default
