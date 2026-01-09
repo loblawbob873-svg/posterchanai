@@ -24,6 +24,122 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 
+# Track if we've already checked/setup the oneAPI environment
+_oneapi_checked = False
+_oneapi_available = False
+
+
+def _check_and_setup_oneapi():
+    """
+    Check if Intel oneAPI environment is available and try to auto-configure if not.
+    This helps when the service is started without sourcing setvars.sh.
+    """
+    global _oneapi_checked, _oneapi_available
+
+    if _oneapi_checked:
+        return _oneapi_available
+
+    _oneapi_checked = True
+
+    # Check if oneAPI libraries are already in LD_LIBRARY_PATH
+    ld_path = os.environ.get("LD_LIBRARY_PATH", "")
+    if "/opt/intel/oneapi" in ld_path or "/intel/oneapi" in ld_path:
+        logger.info("Intel oneAPI environment detected in LD_LIBRARY_PATH")
+        _oneapi_available = True
+        return True
+
+    # Try to find and configure oneAPI automatically
+    oneapi_roots = [
+        "/opt/intel/oneapi/2025.0",
+        "/opt/intel/oneapi/2024.2",
+        "/opt/intel/oneapi",
+        os.path.expanduser("~/intel/oneapi"),
+    ]
+
+    oneapi_root = None
+    for root in oneapi_roots:
+        if os.path.isdir(root) and os.path.isdir(os.path.join(root, "lib")):
+            oneapi_root = root
+            break
+
+    if oneapi_root is None:
+        logger.warning("=" * 60)
+        logger.warning("Intel oneAPI NOT FOUND!")
+        logger.warning("IPEX-LLM requires Intel oneAPI for GPU acceleration.")
+        logger.warning("Install oneAPI or start the service with: ./run-ipex.sh")
+        logger.warning("=" * 60)
+        _oneapi_available = False
+        return False
+
+    # Auto-configure the environment
+    logger.warning("=" * 60)
+    logger.warning("Intel oneAPI found but environment not configured!")
+    logger.warning(f"Auto-configuring from: {oneapi_root}")
+    logger.warning("For best results, start with: ./run-ipex.sh")
+    logger.warning("=" * 60)
+
+    # Set LD_LIBRARY_PATH
+    lib_paths = [
+        os.path.join(oneapi_root, "lib"),
+        os.path.join(oneapi_root, "compiler", "lib"),
+        os.path.join(oneapi_root, "mkl", "lib"),
+    ]
+
+    existing_ld_path = os.environ.get("LD_LIBRARY_PATH", "")
+    new_paths = [p for p in lib_paths if os.path.isdir(p)]
+    if new_paths:
+        os.environ["LD_LIBRARY_PATH"] = ":".join(new_paths + [existing_ld_path] if existing_ld_path else new_paths)
+        logger.info(f"Updated LD_LIBRARY_PATH with oneAPI libraries")
+
+    # Set other Intel environment variables
+    os.environ["ONEAPI_ROOT"] = oneapi_root
+
+    # OCL_ICD_FILENAMES for OpenCL
+    ocl_path = os.path.join(oneapi_root, "lib", "libintelocl.so")
+    if os.path.exists(ocl_path):
+        os.environ["OCL_ICD_FILENAMES"] = ocl_path
+
+    # IPEX-LLM optimizations
+    os.environ.setdefault("ENABLE_SDP_FUSION", "1")
+    os.environ.setdefault("SYCL_CACHE_PERSISTENT", "1")
+    os.environ.setdefault("BIGDL_LLM_XMX_DISABLED", "1")
+    os.environ.setdefault("ZES_ENABLE_SYSMAN", "1")
+
+    _oneapi_available = True
+    return True
+
+
+def check_xpu_available() -> tuple[bool, str]:
+    """
+    Check if Intel XPU (GPU) is available for acceleration.
+    Returns (is_available, message).
+    """
+    # First ensure oneAPI environment is set up
+    _check_and_setup_oneapi()
+
+    try:
+        import torch
+        if hasattr(torch, 'xpu') and torch.xpu.is_available():
+            device_count = torch.xpu.device_count()
+            return True, f"XPU available with {device_count} device(s)"
+    except Exception as e:
+        pass
+
+    # Check if we can at least load llama.cpp with SYCL support
+    try:
+        from ipex_llm.llama_cpp import Llama
+        return True, "IPEX-LLM llama.cpp backend available"
+    except ImportError as e:
+        error_msg = str(e)
+        if "libsvml.so" in error_msg or "cannot open shared object" in error_msg:
+            return False, f"Intel oneAPI libraries not loaded. Start with ./run-ipex.sh or source oneAPI environment first."
+        elif "intel_extension_for_pytorch" in error_msg:
+            return False, f"intel_extension_for_pytorch not installed. Run setup-ipex.sh or use venv-ipex."
+        return False, f"IPEX-LLM not available: {e}"
+    except Exception as e:
+        return False, f"Error checking IPEX-LLM: {e}"
+
+
 # Global model instance (singleton)
 _ipex_instance: Optional["IPEXService"] = None
 # Use more workers to match max concurrency
@@ -154,6 +270,9 @@ class IPEXService:
             if self._model is not None and self._model_path == self.model_path:
                 return
 
+            # Check and setup oneAPI environment before loading
+            _check_and_setup_oneapi()
+
             # Unload previous model
             if self._model is not None:
                 logger.info(f"Unloading previous model: {self._model_path}")
@@ -180,12 +299,39 @@ class IPEXService:
                 # Check if GGUF model - use llama.cpp backend
                 if self.model_path.endswith('.gguf'):
                     # Try ipex_llm.llama_cpp first, fall back to regular llama_cpp
+                    Llama = None
+                    ipex_error = None
                     try:
                         from ipex_llm.llama_cpp import Llama
-                        logger.info("Using IPEX-LLM llama.cpp backend")
+                        logger.info("Using IPEX-LLM llama.cpp backend (Intel GPU accelerated)")
                     except ImportError as e:
-                        logger.warning(f"IPEX-LLM llama.cpp not available ({e}), using standard llama-cpp-python")
-                        from llama_cpp import Llama
+                        ipex_error = str(e)
+                        logger.warning(f"IPEX-LLM llama.cpp not available: {e}")
+
+                    # If IPEX failed, try standard llama_cpp
+                    if Llama is None:
+                        try:
+                            from llama_cpp import Llama
+                            logger.info("Using standard llama-cpp-python (CPU mode)")
+                            # Force CPU mode since IPEX isn't available
+                            if gpu_layers != 0:
+                                logger.warning("Forcing CPU mode (gpu_layers=0) since IPEX-LLM is not available")
+                                gpu_layers = 0
+                        except ImportError as e:
+                            # Both failed - provide helpful error
+                            error_parts = []
+                            if ipex_error:
+                                if "libsvml.so" in ipex_error or "cannot open shared object" in ipex_error:
+                                    error_parts.append("Intel oneAPI environment not loaded")
+                                elif "intel_extension_for_pytorch" in ipex_error:
+                                    error_parts.append("intel_extension_for_pytorch not installed")
+                                else:
+                                    error_parts.append(f"IPEX error: {ipex_error}")
+                            error_parts.append(f"llama-cpp-python error: {e}")
+                            raise ImportError(
+                                f"No LLM backend available. {' | '.join(error_parts)}. "
+                                f"Start with ./run-ipex.sh or install llama-cpp-python."
+                            )
 
                     self._model = Llama(
                         model_path=self.model_path,

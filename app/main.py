@@ -48,6 +48,29 @@ app.include_router(rag.router)
 @app.on_event("startup")
 async def startup():
     init_db()
+
+    # Check LLM backend configuration
+    from app.database import SessionLocal
+    from app.models import Setting
+    db = SessionLocal()
+    try:
+        backend = db.query(Setting).filter(Setting.key == "llm_backend").first()
+        backend_type = backend.value if backend else "ollama"
+
+        if backend_type == "ipex":
+            # Verify IPEX environment is properly configured
+            from app.services.ipex_service import check_xpu_available
+            xpu_ok, xpu_msg = check_xpu_available()
+            if xpu_ok:
+                logging.info(f"IPEX backend: {xpu_msg}")
+            else:
+                logging.warning("=" * 60)
+                logging.warning(f"IPEX BACKEND WARNING: {xpu_msg}")
+                logging.warning("GPU acceleration may not work. Start with ./run-ipex.sh")
+                logging.warning("=" * 60)
+    finally:
+        db.close()
+
     # Start health check if enabled
     from app.services.health_check import start_health_check
     start_health_check()
