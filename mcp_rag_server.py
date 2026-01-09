@@ -98,6 +98,17 @@ def warmup_model(load_documents: bool = True):
         logger.info("[WARMUP] Already warmed up, skipping")
         return {"status": "already_warm"}
 
+    # Check if RAG is enabled before warming up
+    from app.models import Setting
+    db = SessionLocal()
+    try:
+        rag_enabled = db.query(Setting).filter(Setting.key == "rag_enabled").first()
+        if not rag_enabled or rag_enabled.value != "true":
+            logger.info("[WARMUP] RAG is disabled, skipping warmup")
+            return {"status": "disabled", "reason": "rag_disabled"}
+    finally:
+        db.close()
+
     logger.info("[WARMUP] Starting full cache warmup...")
     start = time.time()
     stats = {

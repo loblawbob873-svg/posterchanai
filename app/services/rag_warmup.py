@@ -39,11 +39,17 @@ def warmup_rag_cache(user_id: int = 1, load_documents: bool = True):
 
     db = SessionLocal()
     try:
+        # Check if RAG is enabled
+        rag_enabled = db.query(Setting).filter(Setting.key == "rag_enabled").first()
+        if not rag_enabled or rag_enabled.value != "true":
+            logger.info("[RAG WARMUP] RAG is disabled, skipping warmup")
+            return {"status": "disabled", "reason": "rag_disabled"}
+
         # Check if warmup is enabled
         auto_warmup = db.query(Setting).filter(Setting.key == "rag_auto_warmup").first()
         if auto_warmup and auto_warmup.value == "false":
             logger.info("[RAG WARMUP] Disabled by setting, skipping")
-            return {"status": "disabled"}
+            return {"status": "disabled", "reason": "warmup_disabled"}
 
         # 1. Load embedding service and model
         logger.info("[RAG WARMUP] Step 1/3: Loading embedding model...")
