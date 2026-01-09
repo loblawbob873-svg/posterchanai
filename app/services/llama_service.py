@@ -234,14 +234,6 @@ class LlamaService:
         if isinstance(stop, str):
             stop = [stop]
 
-        # Add thinking stop sequences if disabled (for Qwen3 and similar)
-        # DISABLED: DeepSeek R1 may still output <think> despite /no_think
-        # if self.disable_thinking:
-        #     thinking_stops = ["<think>", "<thinking>"]
-        #     for ts in thinking_stops:
-        #         if ts not in stop:
-        #             stop.append(ts)
-
         if stop:
             params["stop"] = stop
 
@@ -253,13 +245,11 @@ class LlamaService:
         return strip_thinking_tags(response)
 
     def _prepare_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Prepare messages for inference - adds /no_think flag if thinking is disabled.
+        """Prepare messages for inference.
 
-        NOTE: /no_think only works for Qwen3 models. DeepSeek R1 Distill ignores it.
-        For DeepSeek, we let it think and strip the tags from output instead.
+        NOTE: /no_think injection is disabled. DeepSeek R1 Distill ignores it
+        and treats it as literal text. We rely on strip_thinking_tags instead.
         """
-        # Disabled: DeepSeek R1 Distill doesn't support /no_think - it treats it as literal text
-        # For now, just return messages as-is and rely on strip_thinking_tags for output
         return messages
 
     def _sync_chat_completion(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:

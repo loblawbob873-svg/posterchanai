@@ -3,7 +3,6 @@ IPEX-LLM Service for Intel Arc GPU acceleration.
 Uses Intel's optimized LLM inference for maximum performance on Arc GPUs.
 """
 import asyncio
-import copy
 import json
 import logging
 import os
@@ -254,40 +253,11 @@ class IPEXService:
         return strip_thinking_tags(response)
 
     def _prepare_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Prepare messages for inference - adds /no_think flag if thinking is disabled"""
-        if not self.disable_thinking:
-            return messages
+        """Prepare messages for inference.
 
-        logger.info("Disable thinking is ON - adding /no_think to user message")
-
-        # Make a deep copy to avoid modifying original
-        messages = copy.deepcopy(messages)
-
-        # Find last user message and append /no_think
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i].get("role") == "user":
-                content = messages[i].get("content", "")
-                # Handle multimodal content (list of text/image parts)
-                if isinstance(content, list):
-                    # Find the text part and append /no_think
-                    for j, part in enumerate(content):
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            text = part.get("text", "")
-                            if "/no_think" not in text.lower():
-                                messages[i]["content"][j]["text"] = text + " /no_think"
-                                logger.info(f"Added /no_think to multimodal message")
-                            break
-                    else:
-                        # No text part found, add one
-                        messages[i]["content"].append({"type": "text", "text": "/no_think"})
-                        logger.info(f"Added /no_think as new text part")
-                elif isinstance(content, str):
-                    if "/no_think" not in content.lower():
-                        # Put /no_think at the BEGINNING for DeepSeek R1
-                        messages[i]["content"] = "/no_think " + content
-                        logger.info(f"Added /no_think to text message (at beginning)")
-                break
-
+        NOTE: /no_think injection is disabled. DeepSeek R1 Distill ignores it
+        and treats it as literal text. We rely on strip_thinking_tags instead.
+        """
         return messages
 
     def _generate_response(self, messages: List[Dict[str, Any]], **kwargs) -> str:
