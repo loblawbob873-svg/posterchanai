@@ -108,6 +108,9 @@ class IPEXService:
         # System prompt
         self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
 
+        # Disable thinking mode (for Qwen3 and similar models)
+        self.disable_thinking = settings.get("llm_disable_thinking", "false").lower() == "true"
+
         # Inference timeout (seconds) - prevents hung requests
         self.inference_timeout = int(settings.get("ollama_timeout", "120000")) // 1000  # Convert ms to seconds
 
@@ -228,6 +231,13 @@ class IPEXService:
             max_retries = 2
             last_error = None
 
+            # Build stop sequences
+            stop = list(kwargs.get("stop", []) or [])
+            if self.disable_thinking:
+                for ts in ["<think>", "<thinking>"]:
+                    if ts not in stop:
+                        stop.append(ts)
+
             for attempt in range(max_retries + 1):
                 try:
                     response = self._model.create_chat_completion(
@@ -237,6 +247,7 @@ class IPEXService:
                         top_p=kwargs.get("top_p", self.top_p),
                         top_k=kwargs.get("top_k", self.top_k),
                         repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                        stop=stop if stop else None,
                     )
                     content = response["choices"][0]["message"]["content"]
                     return self.strip_thinking_tags(content)
@@ -385,6 +396,13 @@ class IPEXService:
         queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
+        # Build stop sequences
+        stop = list(kwargs.get("stop", []) or [])
+        if self.disable_thinking:
+            for ts in ["<think>", "<thinking>"]:
+                if ts not in stop:
+                    stop.append(ts)
+
         def run_streaming():
             """Run generation in thread, put tokens in queue"""
             with _get_inference_semaphore(self.max_concurrent):
@@ -398,6 +416,7 @@ class IPEXService:
                             top_p=kwargs.get("top_p", self.top_p),
                             top_k=kwargs.get("top_k", self.top_k),
                             repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                            stop=stop if stop else None,
                             stream=True,
                         ):
                             delta = chunk.get("choices", [{}])[0].get("delta", {})
@@ -517,6 +536,13 @@ class IPEXService:
             logger.info(f"[STREAM-{request_id}] Processing started")
             try:
                 if self._is_gguf:
+                    # Build stop sequences
+                    stop = list(kwargs.get("stop", []) or [])
+                    if self.disable_thinking:
+                        for ts in ["<think>", "<thinking>"]:
+                            if ts not in stop:
+                                stop.append(ts)
+
                     # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()
                     try:
@@ -527,6 +553,7 @@ class IPEXService:
                             top_p=kwargs.get("top_p", self.top_p),
                             top_k=kwargs.get("top_k", self.top_k),
                             repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                            stop=stop if stop else None,
                             stream=True,
                         ):
                             # Check for timeout between tokens

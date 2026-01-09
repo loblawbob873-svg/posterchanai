@@ -105,6 +105,9 @@ class LlamaService:
         # Stop sequences
         self.stop_sequences = [s.strip() for s in settings.get("ollama_stop", "").split(",") if s.strip()]
 
+        # Disable thinking mode (for Qwen3 and similar models)
+        self.disable_thinking = settings.get("llm_disable_thinking", "false").lower() == "true"
+
         # System prompt
         self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
 
@@ -193,9 +196,19 @@ class LlamaService:
             params["seed"] = self.seed
 
         # Add stop sequences
-        stop = overrides.get("stop", self.stop_sequences)
+        stop = list(overrides.get("stop", self.stop_sequences) or [])
+        if isinstance(stop, str):
+            stop = [stop]
+
+        # Add thinking stop sequences if disabled (for Qwen3 and similar)
+        if self.disable_thinking:
+            thinking_stops = ["<think>", "<thinking>"]
+            for ts in thinking_stops:
+                if ts not in stop:
+                    stop.append(ts)
+
         if stop:
-            params["stop"] = stop if isinstance(stop, list) else [stop]
+            params["stop"] = stop
 
         return params
 
