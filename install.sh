@@ -1211,20 +1211,42 @@ download_model() {
     print_step "Download a model?"
     echo ""
     echo "  Recommended models for local inference:"
-    echo "  • Qwen3-8B-abliterated (5.9GB) - Fast, uncensored, good quality"
-    echo "  • Qwen2.5-7B-Instruct (7GB) - Fast, good quality"
-    echo "  • Mistral-7B-Instruct (7GB) - Great all-rounder"
+    echo "  1. Qwen3-1.7B-abliterated (1.4GB) - Lightweight, fast, good for low-end hardware"
+    echo "  2. Qwen3-8B-abliterated (5.9GB) - Fast, uncensored, good quality (recommended)"
+    echo "  3. Qwen2.5-7B-Instruct (7GB) - Fast, good quality"
     echo ""
 
-    read -p "Download a starter model? [y/N]: " DOWNLOAD_MODEL
+    read -p "Download a starter model? [1/2/3/n]: " DOWNLOAD_MODEL
 
-    if [[ "$DOWNLOAD_MODEL" =~ ^[Yy] ]]; then
-        MODELS_PATH="/var/lib/posterchanai/models"
-        echo ""
-        echo "  Downloading Qwen3-8B-abliterated Q5_K_M..."
+    MODELS_PATH="/var/lib/posterchanai/models"
+    MODEL_URL=""
+    MODEL_FILE=""
 
-        MODEL_URL="https://huggingface.co/DevQuasar/huihui-ai.Qwen3-8B-abliterated-GGUF/resolve/main/huihui-ai.Qwen3-8B-abliterated.Q5_K_M.gguf"
-        MODEL_FILE="$MODELS_PATH/Qwen3-8B-abliterated-Q5_K_M.gguf"
+    case "$DOWNLOAD_MODEL" in
+        1)
+            echo ""
+            echo "  Downloading Qwen3-1.7B-abliterated Q6_K..."
+            MODEL_URL="https://huggingface.co/mradermacher/Qwen3-1.7B-abliterated-GGUF/resolve/main/Qwen3-1.7B-abliterated.Q6_K.gguf"
+            MODEL_FILE="$MODELS_PATH/Qwen3-1.7B-abliterated.Q6_K.gguf"
+            ;;
+        2|[Yy]|[Yy][Ee][Ss])
+            echo ""
+            echo "  Downloading Qwen3-8B-abliterated Q5_K_M..."
+            MODEL_URL="https://huggingface.co/DevQuasar/huihui-ai.Qwen3-8B-abliterated-GGUF/resolve/main/huihui-ai.Qwen3-8B-abliterated.Q5_K_M.gguf"
+            MODEL_FILE="$MODELS_PATH/Qwen3-8B-abliterated-Q5_K_M.gguf"
+            ;;
+        3)
+            echo ""
+            echo "  Downloading Qwen2.5-7B-Instruct Q5_K_M..."
+            MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q5_k_m.gguf"
+            MODEL_FILE="$MODELS_PATH/Qwen2.5-7B-Instruct-Q5_K_M.gguf"
+            ;;
+        *)
+            return
+            ;;
+    esac
+
+    if [ -n "$MODEL_URL" ]; then
 
         DOWNLOAD_OK=0
         if command -v wget &>/dev/null; then
