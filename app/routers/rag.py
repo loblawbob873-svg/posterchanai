@@ -255,6 +255,48 @@ async def reindex_collection(
     return {"message": "Re-indexing started"}
 
 
+@router.post("/collections/{collection_id}/pull")
+async def pull_collection(
+    collection_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Pull latest changes from git and re-index (git collections only)."""
+    collection = db.query(RAGCollection).filter(
+        RAGCollection.id == collection_id,
+        RAGCollection.user_id == current_user.id
+    ).first()
+
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    if collection.collection_type != "git":
+        raise HTTPException(status_code=400, detail="Pull is only available for git collections")
+
+    background_tasks.add_task(
+        _pull_git_repository_task,
+        user_id=current_user.id,
+        collection_id=collection_id
+    )
+
+    return {"message": "Pull & re-index started"}
+
+
+def _pull_git_repository_task(user_id: int, collection_id: int):
+    """Background task to pull and re-index git repository."""
+    db = SessionLocal()
+    try:
+        collection = db.query(RAGCollection).filter(RAGCollection.id == collection_id).first()
+        if collection:
+            indexer = get_git_indexer(db, user_id)
+            indexer.pull_and_index(collection)
+    except Exception as e:
+        logger.error(f"Git pull failed for collection {collection_id}: {e}")
+    finally:
+        db.close()
+
+
 def _index_folder_task(user_id: int, collection_id: int):
     """Background task to index folder."""
     db = SessionLocal()

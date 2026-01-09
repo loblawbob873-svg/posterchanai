@@ -1650,6 +1650,7 @@ async function loadRagCollections() {
                     <div class="rag-collection-actions">
                         <button class="btn-secondary" onclick="editCollection(${c.id})">Edit</button>
                         ${c.collection_type === 'watcher' ? `<button class="btn-secondary" onclick="showApiKey(${c.id})">Show API Key</button>` : ''}
+                        ${c.collection_type === 'git' ? `<button class="btn-secondary" onclick="pullCollection(${c.id})">Pull & Re-index</button>` : ''}
                         <button class="btn-secondary" onclick="reindexCollection(${c.id})">Re-index</button>
                         <button class="btn-danger" onclick="deleteCollection(${c.id})">Delete</button>
                     </div>
@@ -1953,6 +1954,21 @@ async function reindexCollection(id) {
         }
     } catch (err) {
         alert('Error');
+    }
+}
+
+async function pullCollection(id) {
+    try {
+        const response = await fetch(`/api/rag/collections/${id}/pull`, { method: 'POST' });
+        if (response.ok) {
+            alert('Pull & re-index started');
+            loadRagCollections();
+        } else {
+            const data = await response.json();
+            alert(data.detail || 'Failed to pull');
+        }
+    } catch (err) {
+        alert('Error pulling repository');
     }
 }
 
