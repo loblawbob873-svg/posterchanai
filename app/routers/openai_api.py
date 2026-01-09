@@ -29,14 +29,14 @@ from app.services.inference_factory import get_inference_service
 from app.services.text_utils import strip_thinking_tags
 
 
-async def inject_rag_context(messages: list, db: Session, user_id: int = 1, top_k: int = 3) -> list:
+async def inject_rag_context(messages: list, db: Session, user_id: int = 1, top_k: int = 3, rag_api_url: str = None) -> list:
     """
     Query RAG for relevant context based on the last user message and inject it into the conversation.
     Returns modified messages list with RAG context prepended to system prompt.
+
+    If rag_api_url is provided, queries the remote RAG API instead of local RAG.
     """
     try:
-        from app.services.rag_service import get_rag_service
-
         # Find the last user message to use as query
         user_query = None
         for msg in reversed(messages):
@@ -47,9 +47,16 @@ async def inject_rag_context(messages: list, db: Session, user_id: int = 1, top_
         if not user_query:
             return messages
 
-        # Query RAG
-        rag_service = get_rag_service(db, user_id=user_id)
-        results = rag_service.query(user_query, top_k=top_k)
+        # Query RAG (remote or local)
+        results = None
+        if rag_api_url:
+            # Query remote RAG API
+            results = await _query_remote_rag(rag_api_url, user_query, top_k)
+        else:
+            # Use local RAG
+            from app.services.rag_service import get_rag_service
+            rag_service = get_rag_service(db, user_id=user_id)
+            results = rag_service.query(user_query, top_k=top_k)
 
         if not results:
             return messages
@@ -69,12 +76,36 @@ async def inject_rag_context(messages: list, db: Session, user_id: int = 1, top_
         else:
             new_messages.insert(0, {"role": "system", "content": f"Use this context to help answer questions:{rag_context}"})
 
-        logger.info(f"Injected RAG context from {len(results)} results")
+        source = "remote" if rag_api_url else "local"
+        logger.info(f"Injected RAG context from {len(results)} results ({source})")
         return new_messages
 
     except Exception as e:
         logger.warning(f"RAG injection failed: {e}")
         return messages
+
+
+async def _query_remote_rag(rag_api_url: str, query: str, top_k: int) -> list:
+    """Query a remote RAG API server."""
+    import httpx
+
+    try:
+        # Ensure URL ends with /search
+        url = rag_api_url.rstrip('/')
+        if not url.endswith('/search'):
+            url = f"{url}/search"
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                url,
+                json={"query": query, "top_k": top_k}
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("results", [])
+    except Exception as e:
+        logger.warning(f"Remote RAG query failed: {e}")
+        return []
 
 
 router = APIRouter(tags=["OpenAI API"])
@@ -263,8 +294,9 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
 
     # Inject RAG context if enabled
     rag_enabled = settings.get("api_rag_enabled", "true").lower() == "true"
+    rag_api_url = settings.get("rag_api_url", "").strip() or None
     if rag_enabled:
-        messages = await inject_rag_context(messages, db, user_id=1, top_k=3)
+        messages = await inject_rag_context(messages, db, user_id=1, top_k=3, rag_api_url=rag_api_url)
 
     # Build kwargs
     temperature = request.temperature if request.temperature is not None else float(settings.get("ollama_temperature", "0.7"))

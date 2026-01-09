@@ -306,6 +306,61 @@ def main_sse(host: str = "0.0.0.0", port: int = 8808):
                 "body": response_body,
             })
 
+        elif path == "/search" and method == "POST":
+            # HTTP search endpoint for remote nodes
+            body = b""
+            while True:
+                message = await receive()
+                body += message.get("body", b"")
+                if not message.get("more_body", False):
+                    break
+
+            try:
+                data = json.loads(body) if body else {}
+                query = data.get("query", "")
+                top_k = data.get("top_k", 3)
+            except Exception:
+                await send({
+                    "type": "http.response.start",
+                    "status": 400,
+                    "headers": [[b"content-type", b"application/json"]],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": json.dumps({"error": "Invalid JSON body"}).encode(),
+                })
+                return
+
+            if not query:
+                await send({
+                    "type": "http.response.start",
+                    "status": 400,
+                    "headers": [[b"content-type", b"application/json"]],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": json.dumps({"error": "query is required"}).encode(),
+                })
+                return
+
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(None, _sync_search, query, top_k)
+
+            if isinstance(results, str):  # Error message
+                response_body = json.dumps({"error": results, "results": []}).encode()
+            else:
+                response_body = json.dumps({"results": results or []}).encode()
+
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [[b"content-type", b"application/json"]],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": response_body,
+            })
+
         else:
             # 404 Not Found
             await send({
