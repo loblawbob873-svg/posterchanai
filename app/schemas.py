@@ -189,6 +189,7 @@ class SettingsResponse(BaseModel):
     rag_max_context_chars: str = "32000"  # Max total context injected into prompt
     rag_max_chunk_display: str = "8000"   # Max chars per chunk when displaying
     rag_max_chunk_index: str = "10000"    # Max chunk size during indexing
+    rag_api_url: str = ""  # Remote RAG API URL for distributed setups
 
 
 # TTS schema
