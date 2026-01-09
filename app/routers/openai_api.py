@@ -29,6 +29,54 @@ from app.services.inference_factory import get_inference_service
 from app.services.text_utils import strip_thinking_tags
 
 
+async def inject_rag_context(messages: list, db: Session, user_id: int = 1, top_k: int = 3) -> list:
+    """
+    Query RAG for relevant context based on the last user message and inject it into the conversation.
+    Returns modified messages list with RAG context prepended to system prompt.
+    """
+    try:
+        from app.services.rag_service import get_rag_service
+
+        # Find the last user message to use as query
+        user_query = None
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                user_query = msg.get("content", "")
+                break
+
+        if not user_query:
+            return messages
+
+        # Query RAG
+        rag_service = get_rag_service(db, user_id=user_id)
+        results = rag_service.query(user_query, top_k=top_k)
+
+        if not results:
+            return messages
+
+        # Format RAG context
+        rag_context = "\n\n## Relevant Code Context (from RAG):\n"
+        for r in results:
+            file_path = r.get("file_path", "unknown")
+            content = r.get("content", "")[:500]  # Limit content length
+            similarity = r.get("similarity", 0)
+            rag_context += f"\n### {file_path} ({similarity:.0%} match):\n```\n{content}\n```\n"
+
+        # Inject into system message or create one
+        new_messages = messages.copy()
+        if new_messages and new_messages[0].get("role") == "system":
+            new_messages[0]["content"] = new_messages[0]["content"] + rag_context
+        else:
+            new_messages.insert(0, {"role": "system", "content": f"Use this context to help answer questions:{rag_context}"})
+
+        logger.info(f"Injected RAG context from {len(results)} results")
+        return new_messages
+
+    except Exception as e:
+        logger.warning(f"RAG injection failed: {e}")
+        return messages
+
+
 router = APIRouter(tags=["OpenAI API"])
 
 
@@ -212,6 +260,11 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
 
     # Convert messages to dict format
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
+
+    # Inject RAG context if enabled
+    rag_enabled = settings.get("api_rag_enabled", "true").lower() == "true"
+    if rag_enabled:
+        messages = await inject_rag_context(messages, db, user_id=1, top_k=3)
 
     # Build kwargs
     temperature = request.temperature if request.temperature is not None else float(settings.get("ollama_temperature", "0.7"))
