@@ -246,3 +246,30 @@ def reload_embedding_model(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to reload embedding model: {str(e)}"
         )
+
+
+@router.post("/clear-rag-cache")
+def clear_rag_cache(
+    admin: User = Depends(get_admin_user)
+):
+    """Clear all RAG caches to free memory."""
+    from app.services.rag_service import clear_all_caches as clear_rag
+    from app.services.embedding_service import clear_embedding_cache, get_cache_stats
+
+    try:
+        # Get stats before clearing
+        embed_stats = get_cache_stats()
+
+        # Clear both caches
+        clear_embedding_cache()
+        clear_rag()
+
+        return {
+            "success": True,
+            "message": f"Caches cleared. Freed {embed_stats['embedding_cache_size']} embedding entries."
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear RAG caches: {str(e)}"
+        )

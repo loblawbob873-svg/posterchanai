@@ -4,8 +4,11 @@ Provides text embeddings using HuggingFace sentence-transformers.
 No external API dependencies - fully self-contained.
 """
 import os
+import time
 import logging
-from typing import List, Optional
+import hashlib
+from functools import lru_cache
+from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 from app.models import Setting
 
@@ -22,6 +25,16 @@ if _num_threads:
 _model = None
 _model_name = None
 
+# Global settings cache to avoid repeated DB queries
+_settings_cache = {}
+_settings_cache_time = 0
+_SETTINGS_TTL = 3600  # 1 hour (settings rarely change)
+
+# LRU cache for embeddings - LARGE cache for aggressive RAM usage
+# Each embedding is ~1.5KB (384 floats * 4 bytes), so 250k entries ≈ 375MB
+_embedding_cache = {}
+_EMBEDDING_CACHE_MAX = 250000  # 250k cached embeddings (default)
+
 
 class EmbeddingService:
     """Local sentence-transformers embedding service."""
@@ -31,11 +44,21 @@ class EmbeddingService:
         self._load_settings()
 
     def _load_settings(self):
-        """Load embedding settings from database."""
-        settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        """Load embedding settings from database with caching."""
+        global _settings_cache, _settings_cache_time
+
+        current_time = time.time()
+        if _settings_cache and (current_time - _settings_cache_time) < _SETTINGS_TTL:
+            settings = _settings_cache
+        else:
+            settings = {s.key: s.value for s in self.db.query(Setting).all()}
+            _settings_cache = settings
+            _settings_cache_time = current_time
+
         self.model_name = settings.get("rag_embedding_model", "all-MiniLM-L6-v2")
         self.batch_size = int(settings.get("rag_embedding_batch_size", "64"))
         self.num_threads = int(settings.get("rag_num_threads", "0"))  # 0 = auto
+        self.embedding_cache_max = int(settings.get("rag_embedding_cache_max", "250000"))
 
     def _ensure_model_loaded(self):
         """Lazy load the model on first use."""
@@ -121,16 +144,41 @@ class EmbeddingService:
             logger.error(f"[EMBED] Embedding generation failed: {e}")
             raise
 
-    def embed_single(self, text: str) -> List[float]:
+    def embed_single(self, text: str, use_cache: bool = True) -> List[float]:
         """
-        Generate embedding for a single text.
+        Generate embedding for a single text with caching.
 
         Args:
             text: String to embed
+            use_cache: Whether to use the embedding cache (default True)
 
         Returns:
             Embedding vector as list of floats
         """
+        global _embedding_cache
+
+        if use_cache:
+            # Create cache key from text hash + model name
+            cache_key = hashlib.md5(f"{text}:{self.model_name}".encode()).hexdigest()
+
+            if cache_key in _embedding_cache:
+                logger.debug(f"[EMBED] Cache hit for query")
+                return _embedding_cache[cache_key]
+
+            # Generate embedding
+            embedding = self.embed([text])[0]
+
+            # Add to cache (with size limit from settings)
+            cache_max = self.embedding_cache_max
+            if len(_embedding_cache) >= cache_max:
+                # Remove oldest entries (first 10%)
+                keys_to_remove = list(_embedding_cache.keys())[:cache_max // 10]
+                for k in keys_to_remove:
+                    del _embedding_cache[k]
+
+            _embedding_cache[cache_key] = embedding
+            return embedding
+
         return self.embed([text])[0]
 
     @property
@@ -166,7 +214,7 @@ def unload_model():
 
 def reload_embedding_model(db: Session):
     """Reload the embedding model with current settings (useful after settings change)."""
-    global _model, _model_name
+    global _model, _model_name, _settings_cache, _settings_cache_time, _embedding_cache
 
     # Unload existing model
     if _model is not None:
@@ -175,7 +223,31 @@ def reload_embedding_model(db: Session):
         _model = None
         _model_name = None
 
+    # Clear caches
+    _settings_cache = {}
+    _settings_cache_time = 0
+    _embedding_cache = {}
+
     # Load fresh settings and reinitialize
     service = EmbeddingService(db)
     service._ensure_model_loaded()
     logger.info("Embedding model reloaded with new settings")
+
+
+def clear_embedding_cache():
+    """Clear the embedding cache."""
+    global _embedding_cache
+    _embedding_cache = {}
+    logger.info("Embedding cache cleared")
+
+
+def get_cache_stats() -> dict:
+    """Get embedding cache statistics."""
+    # Get max from settings if available
+    cache_max = _settings_cache.get("rag_embedding_cache_max", "50000") if _settings_cache else "50000"
+    return {
+        "embedding_cache_size": len(_embedding_cache),
+        "embedding_cache_max": int(cache_max),
+        "settings_cache_age_seconds": time.time() - _settings_cache_time if _settings_cache_time else None,
+        "settings_ttl": _SETTINGS_TTL
+    }

@@ -4,11 +4,13 @@ Handles document indexing, code-aware chunking, and retrieval.
 """
 import os
 import re
+import time
 import hashlib
 import logging
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy.orm import Session
 
 from app.models import Setting, RAGCollection, RAGDocument
@@ -18,6 +20,24 @@ logger = logging.getLogger(__name__)
 
 # Singleton ChromaDB client
 _chroma_client = None
+
+# Global settings cache for RAG service
+_rag_settings_cache = {}
+_rag_settings_cache_time = 0
+_RAG_SETTINGS_TTL = 3600  # 1 hour (settings rarely change)
+
+# Collection metadata cache (collection_id -> {name, count, last_check})
+_collection_cache = {}
+_COLLECTION_CACHE_TTL = 3600  # 1 hour
+
+# ChromaDB collection object cache (avoid recreating collection handles)
+_chroma_collection_cache = {}
+
+# Full query results cache - caches entire search results
+# Key: hash(user_id, query, top_k, collection_ids)
+_query_results_cache = {}
+_QUERY_RESULTS_CACHE_MAX = 100000  # 100k cached queries (default)
+_QUERY_RESULTS_TTL = 600  # 10 minutes for query results
 
 
 class RAGService:
@@ -30,8 +50,17 @@ class RAGService:
         self._ensure_chroma_client()
 
     def _load_settings(self):
-        """Load RAG settings from database."""
-        settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        """Load RAG settings from database with caching."""
+        global _rag_settings_cache, _rag_settings_cache_time
+
+        current_time = time.time()
+        if _rag_settings_cache and (current_time - _rag_settings_cache_time) < _RAG_SETTINGS_TTL:
+            settings = _rag_settings_cache
+        else:
+            settings = {s.key: s.value for s in self.db.query(Setting).all()}
+            _rag_settings_cache = settings
+            _rag_settings_cache_time = current_time
+
         self.chromadb_path = settings.get("rag_chromadb_path", "./data/chromadb")
         self.chunk_size = int(settings.get("rag_chunk_size", "1000"))
         self.chunk_overlap = int(settings.get("rag_chunk_overlap", "200"))
@@ -41,6 +70,11 @@ class RAGService:
         self.max_context_chars = int(settings.get("rag_max_context_chars", "32000"))
         self.max_chunk_display = int(settings.get("rag_max_chunk_display", "8000"))
         self.max_chunk_index = int(settings.get("rag_max_chunk_index", "10000"))
+
+        # Cache settings (tunable via admin UI) - aggressive defaults
+        self.query_cache_max = int(settings.get("rag_query_cache_max", "100000"))
+        self.query_cache_ttl = int(settings.get("rag_query_cache_ttl", "600"))
+        self.embedding_cache_max = int(settings.get("rag_embedding_cache_max", "250000"))
 
     def _ensure_chroma_client(self):
         """Get or create ChromaDB client."""
@@ -68,12 +102,21 @@ class RAGService:
         return f"user_{self.user_id}_collection_{collection_id}"
 
     def _get_or_create_chroma_collection(self, collection_id: int):
-        """Get or create a ChromaDB collection."""
+        """Get or create a ChromaDB collection with caching."""
+        global _chroma_collection_cache
+
+        cache_key = f"{self.user_id}_{collection_id}"
+        if cache_key in _chroma_collection_cache:
+            return _chroma_collection_cache[cache_key]
+
         name = self._get_collection_name(collection_id)
-        return self.client.get_or_create_collection(
+        collection = self.client.get_or_create_collection(
             name=name,
             metadata={"hnsw:space": "cosine"}
         )
+
+        _chroma_collection_cache[cache_key] = collection
+        return collection
 
     # ----- Code-Aware Chunking -----
 
@@ -453,6 +496,92 @@ class RAGService:
 
     # ----- Query/Retrieval -----
 
+    def _get_collection_name_cached(self, collection_id: int) -> str:
+        """Get collection name with caching."""
+        global _collection_cache
+
+        current_time = time.time()
+        cache_key = f"name_{collection_id}"
+
+        if cache_key in _collection_cache:
+            cached = _collection_cache[cache_key]
+            if current_time - cached["time"] < _COLLECTION_CACHE_TTL:
+                return cached["name"]
+
+        db_collection = self.db.query(RAGCollection).filter(
+            RAGCollection.id == collection_id
+        ).first()
+        name = db_collection.name if db_collection else "Unknown"
+
+        _collection_cache[cache_key] = {"name": name, "time": current_time}
+        return name
+
+    def _query_single_collection(
+        self,
+        collection_id: int,
+        query_embedding: List[float],
+        top_k: int,
+        min_similarity: float
+    ) -> List[Dict[str, Any]]:
+        """Query a single collection - designed for parallel execution."""
+        results = []
+        try:
+            chroma_collection = self._get_or_create_chroma_collection(collection_id)
+            collection_name = self._get_collection_name_cached(collection_id)
+
+            # Query without calling count() - just request top_k results
+            # ChromaDB handles the case where fewer results exist
+            query_results = chroma_collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                include=["documents", "metadatas", "distances"]
+            )
+
+            if query_results["documents"] and query_results["documents"][0]:
+                for i, doc in enumerate(query_results["documents"][0]):
+                    distance = query_results["distances"][0][i] if query_results["distances"] else 0
+                    similarity = 1 - distance
+
+                    if similarity >= min_similarity:
+                        results.append({
+                            "content": doc,
+                            "file_path": query_results["metadatas"][0][i].get("file_path", ""),
+                            "similarity": similarity,
+                            "collection_name": collection_name,
+                            "metadata": query_results["metadatas"][0][i]
+                        })
+        except Exception as e:
+            logger.error(f"Error querying collection {collection_id}: {e}")
+
+        return results
+
+    def _get_query_cache_key(self, query_text: str, collection_ids: List[int], top_k: int) -> str:
+        """Generate cache key for query results."""
+        import hashlib
+        key_str = f"{self.user_id}:{query_text}:{sorted(collection_ids)}:{top_k}"
+        return hashlib.md5(key_str.encode()).hexdigest()
+
+    def _get_cached_query(self, cache_key: str) -> Optional[List[Dict[str, Any]]]:
+        """Get cached query results if still valid."""
+        global _query_results_cache
+        if cache_key in _query_results_cache:
+            result, timestamp = _query_results_cache[cache_key]
+            if time.time() - timestamp < self.query_cache_ttl:
+                return result
+            else:
+                del _query_results_cache[cache_key]
+        return None
+
+    def _cache_query_result(self, cache_key: str, results: List[Dict[str, Any]]):
+        """Cache query results."""
+        global _query_results_cache
+        # Enforce max size
+        while len(_query_results_cache) >= self.query_cache_max:
+            # Remove oldest entry
+            oldest_key = next(iter(_query_results_cache))
+            del _query_results_cache[oldest_key]
+        _query_results_cache[cache_key] = (results, time.time())
+
     def query(
         self,
         query_text: str,
@@ -461,6 +590,8 @@ class RAGService:
     ) -> List[Dict[str, Any]]:
         """
         Query the RAG index and return relevant chunks.
+        Uses parallel execution for multiple collections.
+        Results are cached in RAM for fast repeated queries.
         """
         if top_k is None:
             top_k = self.top_k
@@ -475,53 +606,49 @@ class RAGService:
         if not collection_ids:
             return []
 
-        # Generate query embedding
+        # Check query results cache first
+        cache_key = self._get_query_cache_key(query_text, collection_ids, top_k)
+        cached_results = self._get_cached_query(cache_key)
+        if cached_results is not None:
+            logger.debug(f"[RAG] Query cache hit for: {query_text[:50]}...")
+            return cached_results
+
+        # Generate query embedding (also cached in embedding service)
         embedding_service = get_embedding_service(self.db)
         query_embedding = embedding_service.embed_single(query_text)
 
-        # Query each collection and merge results
         all_results = []
 
-        for collection_id in collection_ids:
-            try:
-                chroma_collection = self._get_or_create_chroma_collection(collection_id)
+        # For single collection, query directly (no thread overhead)
+        if len(collection_ids) == 1:
+            all_results = self._query_single_collection(
+                collection_ids[0], query_embedding, top_k, self.min_similarity
+            )
+        else:
+            # Parallel query for multiple collections
+            with ThreadPoolExecutor(max_workers=min(4, len(collection_ids))) as executor:
+                futures = {
+                    executor.submit(
+                        self._query_single_collection,
+                        cid, query_embedding, top_k, self.min_similarity
+                    ): cid for cid in collection_ids
+                }
 
-                # Check if collection has any documents
-                if chroma_collection.count() == 0:
-                    continue
-
-                # Get collection info for name
-                db_collection = self.db.query(RAGCollection).filter(
-                    RAGCollection.id == collection_id
-                ).first()
-                collection_name = db_collection.name if db_collection else "Unknown"
-
-                results = chroma_collection.query(
-                    query_embeddings=[query_embedding],
-                    n_results=min(top_k, chroma_collection.count()),
-                    include=["documents", "metadatas", "distances"]
-                )
-
-                if results["documents"] and results["documents"][0]:
-                    for i, doc in enumerate(results["documents"][0]):
-                        # ChromaDB returns distance, convert to similarity
-                        distance = results["distances"][0][i] if results["distances"] else 0
-                        similarity = 1 - distance  # For cosine distance
-
-                        if similarity >= self.min_similarity:
-                            all_results.append({
-                                "content": doc,
-                                "file_path": results["metadatas"][0][i].get("file_path", ""),
-                                "similarity": similarity,
-                                "collection_name": collection_name,
-                                "metadata": results["metadatas"][0][i]
-                            })
-            except Exception as e:
-                logger.error(f"Error querying collection {collection_id}: {e}")
+                for future in as_completed(futures):
+                    try:
+                        results = future.result()
+                        all_results.extend(results)
+                    except Exception as e:
+                        logger.error(f"Collection query failed: {e}")
 
         # Sort by similarity and return top_k
         all_results.sort(key=lambda x: x["similarity"], reverse=True)
-        return all_results[:top_k]
+        final_results = all_results[:top_k]
+
+        # Cache the results
+        self._cache_query_result(cache_key, final_results)
+
+        return final_results
 
     def format_context(self, results: List[Dict[str, Any]], max_context_chars: int = None) -> str:
         """Format query results as context for the LLM.
@@ -655,3 +782,34 @@ class RAGService:
 def get_rag_service(db: Session, user_id: int) -> RAGService:
     """Get RAG service instance for a user."""
     return RAGService(db, user_id)
+
+
+def get_cache_stats() -> dict:
+    """Get RAG cache statistics."""
+    return {
+        "settings_cache_age_seconds": time.time() - _rag_settings_cache_time if _rag_settings_cache_time else None,
+        "collection_cache_size": len(_collection_cache),
+        "chroma_collection_cache_size": len(_chroma_collection_cache),
+        "query_results_cache_size": len(_query_results_cache),
+        "query_results_cache_max": _QUERY_RESULTS_CACHE_MAX,
+    }
+
+
+def clear_all_caches():
+    """Clear all RAG caches."""
+    global _rag_settings_cache, _rag_settings_cache_time, _collection_cache
+    global _chroma_collection_cache, _query_results_cache
+
+    _rag_settings_cache = {}
+    _rag_settings_cache_time = 0
+    _collection_cache = {}
+    _chroma_collection_cache = {}
+    _query_results_cache = {}
+    logger.info("All RAG caches cleared")
+
+
+def clear_query_cache():
+    """Clear only the query results cache."""
+    global _query_results_cache
+    _query_results_cache = {}
+    logger.info("RAG query cache cleared")

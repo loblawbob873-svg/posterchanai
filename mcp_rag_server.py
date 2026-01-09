@@ -20,9 +20,39 @@ import sys
 import os
 import asyncio
 import logging
+import time
+import hashlib
+from collections import OrderedDict
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Query result cache with TTL - large cache for aggressive RAM usage
+_query_cache = OrderedDict()
+_QUERY_CACHE_MAX = 50000  # 50k cached MCP queries
+_QUERY_CACHE_TTL = 600  # 10 minutes TTL for search results
+
+
+def _get_cached_result(cache_key: str):
+    """Get cached result if still valid."""
+    if cache_key in _query_cache:
+        result, timestamp = _query_cache[cache_key]
+        if time.time() - timestamp < _QUERY_CACHE_TTL:
+            # Move to end (LRU)
+            _query_cache.move_to_end(cache_key)
+            return result
+        else:
+            # Expired, remove it
+            del _query_cache[cache_key]
+    return None
+
+
+def _cache_result(cache_key: str, result):
+    """Cache a result with timestamp."""
+    # Enforce max size
+    while len(_query_cache) >= _QUERY_CACHE_MAX:
+        _query_cache.popitem(last=False)  # Remove oldest
+    _query_cache[cache_key] = (result, time.time())
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -156,11 +186,22 @@ async def search_codebase(query: str, top_k: int = 2):
 
 
 def _sync_search(query: str, top_k: int):
-    """Synchronous search helper (runs in thread pool)."""
+    """Synchronous search helper (runs in thread pool) with caching."""
+    # Check cache first
+    cache_key = hashlib.md5(f"{query}:{top_k}:{DEFAULT_USER_ID}".encode()).hexdigest()
+    cached = _get_cached_result(cache_key)
+    if cached is not None:
+        logger.info(f"[MCP] Cache hit for query: {query[:50]}...")
+        return cached
+
     db = SessionLocal()
     try:
         rag_service = get_rag_service(db, DEFAULT_USER_ID)
-        return rag_service.query(query, top_k=top_k)
+        results = rag_service.query(query, top_k=top_k)
+
+        # Cache successful results
+        _cache_result(cache_key, results)
+        return results
     except Exception as e:
         logger.error(f"RAG search failed: {e}")
         return f"Error searching codebase: {str(e)}"

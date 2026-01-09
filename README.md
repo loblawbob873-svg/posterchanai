@@ -95,6 +95,9 @@ Access Admin Panel > Settings to configure RAG:
 | `rag_min_similarity` | 0.3 | Minimum similarity threshold (0-1) |
 | `rag_chromadb_path` | ./data/chromadb | Vector store location |
 | `rag_auto_context` | true | Auto-inject RAG context into chat |
+| `rag_embedding_cache_max` | 250000 | Max cached embeddings (~375MB RAM) |
+| `rag_query_cache_max` | 100000 | Max cached query results |
+| `rag_query_cache_ttl` | 600 | Query cache TTL in seconds |
 
 ### Creating Collections
 

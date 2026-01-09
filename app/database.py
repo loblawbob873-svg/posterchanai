@@ -186,6 +186,10 @@ Just be cute and helpful for those situations. Always respond in English unless 
             "rag_num_threads": "0",
             "rag_chromadb_path": "./data/chromadb",
             "rag_auto_context": "true",
+            # RAG cache settings (for performance tuning) - aggressive RAM caching
+            "rag_query_cache_max": "100000",
+            "rag_query_cache_ttl": "600",
+            "rag_embedding_cache_max": "250000",
         }
 
         for key, value in default_settings.items():

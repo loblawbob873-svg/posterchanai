@@ -392,6 +392,35 @@
                 </fieldset>
 
                 <fieldset>
+                    <legend>RAM Cache (Performance)</legend>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="rag_embedding_cache_max">Embedding Cache Size</label>
+                            <input type="number" id="rag_embedding_cache_max" name="rag_embedding_cache_max" value="250000" min="1000" max="1000000">
+                            <small>Max cached embeddings (~1.5KB each, 250k = ~375MB)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="rag_query_cache_max">Query Cache Size</label>
+                            <input type="number" id="rag_query_cache_max" name="rag_query_cache_max" value="100000" min="1000" max="500000">
+                            <small>Max cached search results</small>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="rag_query_cache_ttl">Query Cache TTL (sec)</label>
+                            <input type="number" id="rag_query_cache_ttl" name="rag_query_cache_ttl" value="600" min="10" max="86400">
+                            <small>How long cached results stay valid</small>
+                        </div>
+                        <div class="form-group">
+                            <label>&nbsp;</label>
+                            <button type="button" class="btn-secondary" id="clearRagCacheBtn">Clear RAG Caches</button>
+                            <small>Free memory by clearing all caches</small>
+                        </div>
+                    </div>
+                    <div id="ragCacheStatus" class="model-status"></div>
+                </fieldset>
+
+                <fieldset>
                     <legend>Context Limits</legend>
                     <div class="form-row">
                         <div class="form-group">
@@ -1443,6 +1472,33 @@ document.getElementById('reloadEmbeddingModelBtn').addEventListener('click', asy
         } else {
             statusDiv.className = 'model-status error';
             statusDiv.textContent = data.detail || 'Failed to reload embedding model';
+        }
+    } catch (err) {
+        statusDiv.className = 'model-status error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
+
+// Clear RAG caches button
+document.getElementById('clearRagCacheBtn').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('ragCacheStatus');
+    statusDiv.className = 'model-status loading';
+    statusDiv.textContent = 'Clearing RAG caches...';
+    statusDiv.style.display = 'block';
+
+    try {
+        const response = await fetch('/api/admin/clear-rag-cache', {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            statusDiv.className = 'model-status success';
+            statusDiv.textContent = data.message || 'RAG caches cleared successfully!';
+        } else {
+            statusDiv.className = 'model-status error';
+            statusDiv.textContent = data.detail || 'Failed to clear RAG caches';
         }
     } catch (err) {
         statusDiv.className = 'model-status error';
