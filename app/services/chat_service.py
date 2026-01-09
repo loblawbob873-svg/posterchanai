@@ -63,55 +63,38 @@ class ChatService:
     def _get_load_balancer(self) -> Optional[LoadBalancer]:
         """Get load balancer if chat servers are configured"""
         chat_server_urls = self._settings.get("chat_server_urls", "")
-        with open("/tmp/loadbalancer.log", "a") as f:
-            f.write(f"[DEBUG] _get_load_balancer called, chat_server_urls={chat_server_urls}\n")
         servers = parse_server_urls(chat_server_urls)
-        with open("/tmp/loadbalancer.log", "a") as f:
-            f.write(f"[DEBUG] parsed servers={servers}\n")
         if servers:
             timeout = int(self._settings.get("ollama_timeout", "120000")) / 1000
             model = self._settings.get("ollama_model", "default")
             api_key = self._settings.get("chat_server_api_key", "")
-            with open("/tmp/loadbalancer.log", "a") as f:
-                f.write(f"[DEBUG] Creating LoadBalancer with {len(servers)} servers, model={model}\n")
+            logger.debug(f"Creating LoadBalancer with {len(servers)} servers, model={model}")
             return LoadBalancer(servers, timeout=timeout, model=model, api_key=api_key if api_key else None)
         return None
 
     def _get_rag_context(self, user_message: str) -> str:
         """Get RAG context for the user message if enabled."""
-        def log(msg):
-            with open("/tmp/rag_debug.log", "a") as f:
-                f.write(f"{msg}\n")
-
         if not self.user:
-            log("[RAG] No user, skipping RAG")
             return ""
 
         # Check if RAG is enabled
         rag_enabled = self._settings.get("rag_enabled", "true").lower() == "true"
         auto_context = self._settings.get("rag_auto_context", "true").lower() == "true"
 
-        log(f"[RAG] user={self.user.id}, enabled={rag_enabled}, auto={auto_context}")
-
         if not rag_enabled or not auto_context:
             return ""
 
         try:
             from app.services.rag_service import get_rag_service
-            log(f"[RAG] Getting RAG service...")
             rag_service = get_rag_service(self.db, self.user.id)
-            log(f"[RAG] Querying: {user_message[:100]}...")
             results = rag_service.query(user_message)
-            log(f"[RAG] Query returned {len(results)} results")
 
             if results:
                 context = rag_service.format_context(results)
-                log(f"[RAG] Injecting {len(context)} chars of context")
+                logger.debug(f"[RAG] Injecting {len(context)} chars of context")
                 return RAG_CONTEXT_TEMPLATE.format(context=context)
         except Exception as e:
-            log(f"[RAG] ERROR: {e}")
-            import traceback
-            log(traceback.format_exc())
+            logger.debug(f"[RAG] Error getting context: {e}")
 
         return ""
 
@@ -135,10 +118,6 @@ class ChatService:
                 system_found = True
             else:
                 enhanced_messages.append(msg)
-
-        # Log what we're sending
-        with open("/tmp/rag_debug.log", "a") as f:
-            f.write(f"[INJECT] System message length: {len(enhanced_messages[0]['content']) if enhanced_messages else 0}\n")
 
         # If no system message was found, add one with RAG context
         if not system_found:
@@ -211,8 +190,18 @@ class ChatService:
 
     async def chat_stream(self, messages: list[dict]) -> AsyncGenerator[str, None]:
         """Streaming chat completion - uses async queue to avoid blocking event loop"""
-        with open("/tmp/rag_debug.log", "a") as f:
-            f.write(f"[STREAM] chat_stream called, user={self.user.id if self.user else None}\n")
+        # Regex patterns for thinking tag detection (matches all variants)
+        THINKING_CLOSE_PATTERN = re.compile(
+            r'</(?:think(?:ing)?|thought|reasoning|internal[_-]?thought)>',
+            re.IGNORECASE
+        )
+        THINKING_OPEN_PREFIXES = ('<think', '<thought', '<reasoning', '<internal')
+
+        def has_thinking_open(text: str) -> bool:
+            """Check if text contains any thinking tag opening"""
+            lower = text.lower()
+            return any(prefix in lower for prefix in THINKING_OPEN_PREFIXES)
+
         try:
             # Extract user message for RAG query (last user message)
             user_message = ""
@@ -220,9 +209,6 @@ class ChatService:
                 if msg.get("role") == "user":
                     user_message = msg.get("content", "")
                     break
-
-            with open("/tmp/rag_debug.log", "a") as f:
-                f.write(f"[STREAM] user_message={user_message[:50]}...\n")
 
             # Inject RAG context if available
             messages = self._inject_rag_context(messages, user_message)
@@ -254,14 +240,14 @@ class ChatService:
                                 buffer += content
 
                                 if not thinking_done:
-                                    match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
+                                    match = THINKING_CLOSE_PATTERN.search(buffer)
                                     if match:
                                         thinking_done = True
                                         after_think = buffer[match.end():]
                                         buffer = ""
                                         if after_think.strip():
                                             yield after_think
-                                    elif len(buffer) > 50 and '<think' not in buffer.lower():
+                                    elif len(buffer) > 50 and not has_thinking_open(buffer):
                                         thinking_done = True
                                         yield buffer
                                         buffer = ""
@@ -306,7 +292,7 @@ class ChatService:
 
                                 if not thinking_done:
                                     # Look for end of thinking tag
-                                    match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
+                                    match = THINKING_CLOSE_PATTERN.search(buffer)
                                     if match:
                                         thinking_done = True
                                         after_think = buffer[match.end():]
@@ -314,7 +300,7 @@ class ChatService:
                                         if after_think.strip():
                                             yield after_think
                                     # Also check if no think tag in first 50 chars - assume no thinking
-                                    elif len(buffer) > 50 and '<think' not in buffer.lower():
+                                    elif len(buffer) > 50 and not has_thinking_open(buffer):
                                         thinking_done = True
                                         yield buffer
                                         buffer = ""
@@ -390,9 +376,10 @@ class ChatService:
                                 buffer += content
 
                                 if thinking_mode is None:
-                                    # Check if model started with <think> tag (ignore leading whitespace)
+                                    # Check if model started with thinking tag (ignore leading whitespace)
                                     buffer_stripped = buffer.lstrip()
-                                    if buffer_stripped.lower().startswith('<think'):
+                                    lower_stripped = buffer_stripped.lower()
+                                    if any(lower_stripped.startswith(p) for p in THINKING_OPEN_PREFIXES):
                                         thinking_mode = True
                                     elif len(buffer_stripped) > 30:
                                         # No think tag in first 30 non-whitespace chars - assume no thinking
@@ -402,7 +389,7 @@ class ChatService:
 
                                 elif thinking_mode is True:
                                     # In thinking mode - look for end tag
-                                    match = re.search(r'</think(?:ing)?>', buffer, re.IGNORECASE)
+                                    match = THINKING_CLOSE_PATTERN.search(buffer)
                                     if match:
                                         thinking_mode = False
                                         after_think = buffer[match.end():]
