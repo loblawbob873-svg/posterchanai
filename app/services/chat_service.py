@@ -71,9 +71,10 @@ class ChatService:
         if servers:
             timeout = int(self._settings.get("ollama_timeout", "120000")) / 1000
             model = self._settings.get("ollama_model", "default")
+            api_key = self._settings.get("chat_server_api_key", "")
             with open("/tmp/loadbalancer.log", "a") as f:
                 f.write(f"[DEBUG] Creating LoadBalancer with {len(servers)} servers, model={model}\n")
-            return LoadBalancer(servers, timeout=timeout, model=model)
+            return LoadBalancer(servers, timeout=timeout, model=model, api_key=api_key if api_key else None)
         return None
 
     def _get_rag_context(self, user_message: str) -> str:

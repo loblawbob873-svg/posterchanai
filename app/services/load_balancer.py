@@ -126,10 +126,12 @@ def parse_server_urls(urls_string: str, exclude_self: bool = True, current_port:
 class LoadBalancer:
     """Simple round-robin load balancer for posterchanai servers"""
 
-    def __init__(self, servers: List[str], timeout: float = 120.0, model: str = "default"):
+    def __init__(self, servers: List[str], timeout: float = 120.0, model: str = "default", api_key: Optional[str] = None):
         self.servers = servers
         self.timeout = timeout
         self.model = model
+        self.api_key = api_key
+        self.headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     async def chat_stream(
         self,
@@ -154,6 +156,7 @@ class LoadBalancer:
                 async with client.stream(
                     "POST",
                     f"{server}/v1/chat/completions",
+                    headers=self.headers,
                     json={
                         "model": self.model,
                         "messages": messages,
@@ -210,6 +213,7 @@ class LoadBalancer:
             try:
                 response = await client.post(
                     f"{server}/v1/chat/completions",
+                    headers=self.headers,
                     json={
                         "model": self.model,
                         "messages": messages,
