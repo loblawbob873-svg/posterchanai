@@ -473,6 +473,24 @@ foxnews.com|Fox News"></textarea>
     background: var(--danger);
     color: white;
 }
+.rag-collection-checkbox .btn-pull-collection {
+    padding: 2px 8px;
+    font-size: 11px;
+    background: transparent;
+    border: 1px solid var(--primary);
+    color: var(--primary);
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 8px;
+}
+.rag-collection-checkbox .btn-pull-collection:hover {
+    background: var(--primary);
+    color: white;
+}
+.rag-collection-checkbox .btn-pull-collection:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
 </style>
 
 <script src="/static/js/mascot.js"></script>
@@ -557,6 +575,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <input type="checkbox" value="${c.id}" ${selectedCollections.includes(c.id) ? 'checked' : ''}>
                         <span class="collection-name">${escapeHtml(c.name)}</span>
                         <span class="collection-stats">${c.document_count || 0} docs</span>
+                        ${c.collection_type === 'git' ? `<button type="button" class="btn-pull-collection" data-id="${c.id}" title="Pull & Re-index">↻</button>` : ''}
                         <button type="button" class="btn-delete-collection" data-id="${c.id}" title="Delete collection">×</button>
                     </label>
                 `).join('');
@@ -582,6 +601,31 @@ document.addEventListener('DOMContentLoaded', function() {
                             } catch (err) {
                                 alert('Error deleting collection');
                             }
+                        }
+                    });
+                });
+
+                // Add pull handlers for git collections
+                ragUserCollections.querySelectorAll('.btn-pull-collection').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const id = btn.dataset.id;
+                        try {
+                            btn.disabled = true;
+                            btn.textContent = '...';
+                            const resp = await fetch(`/api/rag/collections/${id}/pull`, { method: 'POST' });
+                            if (resp.ok) {
+                                alert('Pull & re-index started');
+                            } else {
+                                const data = await resp.json();
+                                alert(data.detail || 'Failed to pull');
+                            }
+                        } catch (err) {
+                            alert('Error pulling repository');
+                        } finally {
+                            btn.disabled = false;
+                            btn.textContent = '↻';
                         }
                     });
                 });
