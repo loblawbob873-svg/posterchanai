@@ -5,28 +5,35 @@ import re
 def strip_thinking_tags(response: str) -> str:
     """Strip thinking tags from AI response (used by Qwen and other reasoning models).
 
-    Handles:
+    Handles multiple tag variants:
     - <think>...</think> and <thinking>...</thinking> blocks
-    - Unclosed <think> or <thinking> tags (strips from opening tag to end or next paragraph)
+    - <thought>...</thought> blocks
+    - <reasoning>...</reasoning> blocks
+    - <internal_thought>...</internal_thought> blocks
+    - Unclosed tags (strips from opening tag to end)
     """
-    # First, try to find closed thinking blocks and return content after
-    matches = list(re.finditer(r'</think(?:ing)?>', response, re.IGNORECASE))
-    if matches:
-        last_match = matches[-1]
-        return response[last_match.end():].strip()
+    cleaned = response
 
-    # If no closing tag, check for unclosed opening tag
-    # Pattern: <think> or <thinking> at the start (with possible whitespace)
-    open_match = re.search(r'^\s*<think(?:ing)?>', response, re.IGNORECASE)
-    if open_match:
-        # Unclosed thinking tag - look for double newline as end of thinking
-        rest = response[open_match.end():]
-        # Try to find where actual content starts (after double newline)
-        content_match = re.search(r'\n\n+', rest)
-        if content_match:
-            return rest[content_match.end():].strip()
-        # No clear separator - return the thinking content without the tag
-        # (better than nothing for debugging/transparency)
-        return rest.strip() if rest.strip() else "I apologize, I wasn't able to generate a proper response. Please try again."
+    # First, remove all properly closed thinking blocks
+    # Matches: <think>...</think>, <thinking>...</thinking>
+    cleaned = re.sub(r'<think(?:ing)?[^>]*>[\s\S]*?</think(?:ing)?>', '', cleaned, flags=re.IGNORECASE)
+    # Matches: <thought>...</thought>
+    cleaned = re.sub(r'<thought[^>]*>[\s\S]*?</thought>', '', cleaned, flags=re.IGNORECASE)
+    # Matches: <reasoning>...</reasoning>
+    cleaned = re.sub(r'<reasoning[^>]*>[\s\S]*?</reasoning>', '', cleaned, flags=re.IGNORECASE)
+    # Matches: <internal_thought>...</internal_thought> or <internal-thought>...</internal-thought>
+    cleaned = re.sub(r'<internal[_-]?thought[^>]*>[\s\S]*?</internal[_-]?thought>', '', cleaned, flags=re.IGNORECASE)
 
-    return response
+    # Then handle unclosed tags at the end (model stopped mid-thought)
+    cleaned = re.sub(r'<think(?:ing)?[^>]*>[\s\S]*$', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'<thought[^>]*>[\s\S]*$', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'<reasoning[^>]*>[\s\S]*$', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'<internal[_-]?thought[^>]*>[\s\S]*$', '', cleaned, flags=re.IGNORECASE)
+
+    result = cleaned.strip()
+
+    # If everything was stripped, return a fallback message
+    if not result:
+        return "I apologize, I wasn't able to generate a proper response. Please try again."
+
+    return result

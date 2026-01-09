@@ -3,8 +3,10 @@ OpenAI-compatible API router for LLM backend.
 Supports both native llama-cpp-python and Ollama backends.
 Provides both /v1/* and /api/* endpoints for maximum compatibility.
 """
+import json
+import re
 from datetime import datetime
-from typing import Optional
+from typing import Optional, AsyncGenerator
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -21,9 +23,69 @@ from app.schemas import (
     ModelsResponse,
 )
 from app.services.inference_factory import get_inference_service
+from app.services.text_utils import strip_thinking_tags
 
 
 router = APIRouter(tags=["OpenAI API"])
+
+
+async def filter_thinking_stream(stream: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:
+    """Filter thinking tags from SSE stream, buffering until thinking section ends.
+
+    Handles multiple tag variants:
+    - <think>/<thinking>, <thought>, <reasoning>, <internal_thought>
+    """
+    buffer = ""
+    thinking_done = False
+
+    # Pattern to detect end of any thinking tag variant
+    end_pattern = re.compile(r'</(?:think(?:ing)?|thought|reasoning|internal[_-]?thought)>', re.IGNORECASE)
+    # Pattern to detect if any thinking tag is present
+    start_pattern = re.compile(r'<(?:think(?:ing)?|thought|reasoning|internal[_-]?thought)', re.IGNORECASE)
+
+    async for chunk in stream:
+        if not chunk.startswith("data: "):
+            yield chunk
+            continue
+
+        data_str = chunk[6:].strip()
+        if data_str == "[DONE]":
+            # Flush any remaining buffer
+            if buffer:
+                clean = strip_thinking_tags(buffer)
+                if clean and clean != "I apologize, I wasn't able to generate a proper response. Please try again.":
+                    # Re-emit as SSE chunk
+                    yield f"data: {json.dumps({'choices': [{'delta': {'content': clean}}]})}\n\n"
+            yield chunk
+            continue
+
+        try:
+            data = json.loads(data_str)
+            content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+            if content:
+                buffer += content
+
+                if not thinking_done:
+                    # Look for end of any thinking tag variant
+                    match = end_pattern.search(buffer)
+                    if match:
+                        thinking_done = True
+                        after_think = buffer[match.end():]
+                        buffer = ""
+                        if after_think.strip():
+                            # Re-emit content after thinking
+                            data["choices"][0]["delta"]["content"] = after_think
+                            yield f"data: {json.dumps(data)}\n\n"
+                    # Check if no thinking tag in first 50 chars - assume no thinking
+                    elif len(buffer) > 50 and not start_pattern.search(buffer):
+                        thinking_done = True
+                        data["choices"][0]["delta"]["content"] = buffer
+                        yield f"data: {json.dumps(data)}\n\n"
+                        buffer = ""
+                else:
+                    yield chunk
+        except json.JSONDecodeError:
+            yield chunk
 
 
 def verify_api_key(
@@ -165,13 +227,14 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
 
             try:
                 if request.stream:
+                    lb_stream = load_balancer.chat_stream(
+                        messages=messages,
+                        temperature=temperature,
+                        top_p=top_p,
+                        max_tokens=max_tokens
+                    )
                     return StreamingResponse(
-                        load_balancer.chat_stream(
-                            messages=messages,
-                            temperature=temperature,
-                            top_p=top_p,
-                            max_tokens=max_tokens
-                        ),
+                        filter_thinking_stream(lb_stream),
                         media_type="text/event-stream",
                         headers={
                             "Cache-Control": "no-cache",
@@ -191,6 +254,11 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
                             status_code=500,
                             detail=result["error"].get("message", "Unknown error")
                         )
+                    # Strip thinking tags from load balancer response
+                    if result.get("choices"):
+                        for choice in result["choices"]:
+                            if choice.get("message", {}).get("content"):
+                                choice["message"]["content"] = strip_thinking_tags(choice["message"]["content"])
                     return result
             except NoHealthyServersError:
                 # No healthy remote servers, fall through to local processing
@@ -213,12 +281,13 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
 
     # Handle streaming vs non-streaming
     if request.stream:
+        stream = service.chat_completion_stream(
+            messages=messages,
+            model=request.model,
+            **kwargs
+        )
         return StreamingResponse(
-            service.chat_completion_stream(
-                messages=messages,
-                model=request.model,
-                **kwargs
-            ),
+            filter_thinking_stream(stream),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -239,6 +308,12 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
                 status_code=result["error"].get("code", 500),
                 detail=result["error"].get("message", "Unknown error")
             )
+
+        # Strip thinking tags from response content
+        if result.get("choices"):
+            for choice in result["choices"]:
+                if choice.get("message", {}).get("content"):
+                    choice["message"]["content"] = strip_thinking_tags(choice["message"]["content"])
 
         return result
 

@@ -248,24 +248,31 @@ class IPEXService:
 
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
-        # First try to find closing tag and return content after it
-        matches = list(re.finditer(r'</think(?:ing)?>', response, re.IGNORECASE))
-        if matches:
-            last_match = matches[-1]
-            return response[last_match.end():].strip()
+        from app.services.text_utils import strip_thinking_tags
+        return strip_thinking_tags(response)
 
-        # If no closing tag, check if response starts with opening tag (unclosed thinking)
-        if re.match(r'^\s*<think(?:ing)?>', response, re.IGNORECASE):
-            # Extract content after the opening tag
-            rest = re.sub(r'^\s*<think(?:ing)?>', '', response, count=1, flags=re.IGNORECASE)
-            # Return the thinking content (better than nothing)
-            return rest.strip() if rest.strip() else "I apologize, I wasn't able to generate a proper response. Please try again."
+    def _prepare_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Prepare messages for inference - adds /no_think flag if thinking is disabled"""
+        if not self.disable_thinking:
+            return messages
 
-        return response
+        # Make a copy to avoid modifying original
+        messages = [dict(m) for m in messages]
+
+        # Find last user message and append /no_think
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                content = messages[i].get("content", "")
+                if "/no_think" not in content.lower():
+                    messages[i]["content"] = content + " /no_think"
+                break
+
+        return messages
 
     def _generate_response(self, messages: List[Dict[str, Any]], **kwargs) -> str:
         """Generate a response synchronously with retry for transient errors"""
         self._ensure_model_loaded()
+        messages = self._prepare_messages(messages)
 
         if self._is_gguf:
             # Use llama.cpp API for GGUF models with retry for transient errors
@@ -428,6 +435,7 @@ class IPEXService:
     ) -> AsyncGenerator[str, None]:
         """Streaming chat completion using async queue."""
         self._ensure_model_loaded()
+        messages = self._prepare_messages(messages)
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
@@ -566,6 +574,7 @@ class IPEXService:
         start_time = time.time()
 
         self._ensure_model_loaded()
+        messages = self._prepare_messages(messages)
 
         # Per-token timeout (seconds) - if no token in this time, abort
         token_timeout = 60  # 60 seconds max between tokens

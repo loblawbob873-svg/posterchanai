@@ -62,11 +62,8 @@ class CustomAIService:
 
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
-        matches = list(re.finditer(r'</think(?:ing)?>', response, re.IGNORECASE))
-        if matches:
-            last_match = matches[-1]
-            return response[last_match.end():].strip()
-        return response
+        from app.services.text_utils import strip_thinking_tags
+        return strip_thinking_tags(response)
 
     async def chat_stream(
         self,
