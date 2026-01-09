@@ -230,6 +230,7 @@ class IPEXService:
 
             except Exception as e:
                 error_msg = str(e)
+                logger.error(f"Original error loading model: {e}")
                 # Provide helpful error messages for common issues
                 if "memory" in error_msg.lower() or "dnnl" in error_msg.lower() or "oneDNN" in error_msg:
                     logger.error(f"Memory allocation failed loading model: {e}")
@@ -239,12 +240,9 @@ class IPEXService:
                     logger.error("  - Using a smaller model")
                     logger.error("  - Closing other applications")
                     raise RuntimeError(f"Memory allocation failed: {e}. Try reducing context/batch size or using a smaller model.")
-                elif "No such file" in error_msg or ("not found" in error_msg.lower() and self.model_path in error_msg):
+                elif ("No such file" in error_msg or "not found" in error_msg.lower()) and not os.path.exists(self.model_path):
                     logger.error(f"Model file not found: {self.model_path}")
                     raise FileNotFoundError(f"Model file not found: {self.model_path}")
-                elif "not found" in error_msg.lower():
-                    logger.error(f"Failed to load model (something not found): {e}")
-                    raise
                 else:
                     logger.error(f"Failed to load model: {e}")
                     raise
