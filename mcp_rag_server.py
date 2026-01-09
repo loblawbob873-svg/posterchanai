@@ -520,8 +520,9 @@ if __name__ == "__main__":
     parser.add_argument("--workers", type=int, default=2, help="Max worker threads (default: 2)")
     args = parser.parse_args()
 
-    # Update executor if custom worker count
+    # Update executor if custom worker count (module-level assignment)
     if args.workers != 2:
+        _executor.shutdown(wait=False)  # Shutdown old executor
         _executor = ThreadPoolExecutor(max_workers=args.workers, thread_name_prefix="rag_worker")
         logger.info(f"Using {args.workers} worker threads")
 
