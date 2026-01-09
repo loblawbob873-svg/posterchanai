@@ -561,12 +561,33 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                             messages.append({"role": "user", "content": content})
 
                         # Stream response with thinking tag filtering
+                        # Supports multiple tag variants used by different models
+                        THINKING_TAGS = [
+                            ("<think>", "</think>"),
+                            ("<thinking>", "</thinking>"),
+                            ("<thought>", "</thought>"),
+                            ("<reasoning>", "</reasoning>"),
+                            ("<internal_thought>", "</internal_thought>"),
+                            ("<internal-thought>", "</internal-thought>"),
+                        ]
+                        BUFFER_MARGIN = 20  # Enough for longest closing tag
+
+                        def find_thinking_open(text):
+                            """Find earliest thinking tag opening, return (position, tag_pair) or (-1, None)"""
+                            text_lower = text.lower()
+                            earliest_pos = -1
+                            found_pair = None
+                            for open_tag, close_tag in THINKING_TAGS:
+                                pos = text_lower.find(open_tag)
+                                if pos != -1 and (earliest_pos == -1 or pos < earliest_pos):
+                                    earliest_pos = pos
+                                    found_pair = (open_tag, close_tag)
+                            return earliest_pos, found_pair
+
                         full_response = ""
                         buffer = ""
                         in_thinking = False
-                        THINK_OPEN = "<think>"
-                        THINK_CLOSE = "</think>"
-                        BUFFER_MARGIN = len(THINK_CLOSE)  # Keep enough chars to detect split tags
+                        current_close_tag = None  # Track which closing tag we're looking for
 
                         async for chunk in chat_service.chat_stream(messages):
                             # Check if user requested stop OR switched to another chat
@@ -578,8 +599,8 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                             # Filter out thinking content in real-time
                             while True:
                                 if not in_thinking:
-                                    # Look for start of thinking tag
-                                    think_start = buffer.find(THINK_OPEN)
+                                    # Look for start of any thinking tag
+                                    think_start, tag_pair = find_thinking_open(buffer)
                                     if think_start == -1:
                                         # No thinking tag, send buffered content (keep margin in case tag is split)
                                         if len(buffer) > BUFFER_MARGIN:
@@ -592,25 +613,28 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                                 }, conn_id)
                                         break
                                     else:
-                                        # Found <think>, send content before it and enter thinking mode
+                                        # Found opening tag, send content before it and enter thinking mode
                                         if think_start > 0:
                                             await manager.send_json(user.id, {
                                                 "type": "stream",
                                                 "content": buffer[:think_start]
                                             }, conn_id)
-                                        buffer = buffer[think_start + len(THINK_OPEN):]
+                                        open_tag, close_tag = tag_pair
+                                        buffer = buffer[think_start + len(open_tag):]
+                                        current_close_tag = close_tag
                                         in_thinking = True
                                 else:
-                                    # In thinking mode, look for end tag
-                                    think_end = buffer.find(THINK_CLOSE)
+                                    # In thinking mode, look for matching end tag
+                                    think_end = buffer.lower().find(current_close_tag)
                                     if think_end == -1:
                                         # Still in thinking, discard buffered thinking content but keep margin
                                         if len(buffer) > BUFFER_MARGIN:
                                             buffer = buffer[-BUFFER_MARGIN:]
                                         break
                                     else:
-                                        # Found </think>, exit thinking mode
-                                        buffer = buffer[think_end + len(THINK_CLOSE):]
+                                        # Found closing tag, exit thinking mode
+                                        buffer = buffer[think_end + len(current_close_tag):]
+                                        current_close_tag = None
                                         in_thinking = False
 
                         # Send any remaining buffered content
