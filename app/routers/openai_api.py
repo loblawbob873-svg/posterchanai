@@ -66,15 +66,14 @@ async def filter_thinking_stream(stream: AsyncGenerator[str, None]) -> AsyncGene
             data = json.loads(data_str)
             content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
             if content:
-                buffer += content
-
                 if not thinking_done:
+                    buffer += content
                     # Look for end of any thinking tag variant
                     match = end_pattern.search(buffer)
                     if match:
                         thinking_done = True
                         after_think = buffer[match.end():]
-                        buffer = ""
+                        buffer = ""  # Clear buffer - we're done with thinking
                         if after_think.strip():
                             # Re-emit content after thinking
                             data["choices"][0]["delta"]["content"] = after_think
@@ -84,8 +83,9 @@ async def filter_thinking_stream(stream: AsyncGenerator[str, None]) -> AsyncGene
                         thinking_done = True
                         data["choices"][0]["delta"]["content"] = buffer
                         yield f"data: {json.dumps(data)}\n\n"
-                        buffer = ""
+                        buffer = ""  # Clear buffer - we're done with thinking
                 else:
+                    # thinking_done=True, just pass through chunks (don't buffer)
                     yield chunk
         except json.JSONDecodeError:
             yield chunk
