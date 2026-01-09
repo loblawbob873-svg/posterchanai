@@ -137,9 +137,6 @@ class IPEXService:
         # System prompt
         self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
 
-        # Disable thinking mode (for Qwen3 and similar models)
-        self.disable_thinking = settings.get("llm_disable_thinking", "false").lower() == "true"
-
         # Idle timeout for automatic unloading (0 = disabled)
         self._idle_timeout = int(settings.get("llm_idle_timeout", "0"))
 
@@ -252,18 +249,9 @@ class IPEXService:
         from app.services.text_utils import strip_thinking_tags
         return strip_thinking_tags(response)
 
-    def _prepare_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Prepare messages for inference.
-
-        NOTE: /no_think injection is disabled. DeepSeek R1 Distill ignores it
-        and treats it as literal text. We rely on strip_thinking_tags instead.
-        """
-        return messages
-
     def _generate_response(self, messages: List[Dict[str, Any]], **kwargs) -> str:
         """Generate a response synchronously with retry for transient errors"""
         self._ensure_model_loaded()
-        messages = self._prepare_messages(messages)
 
         if self._is_gguf:
             # Use llama.cpp API for GGUF models with retry for transient errors
@@ -426,7 +414,6 @@ class IPEXService:
     ) -> AsyncGenerator[str, None]:
         """Streaming chat completion using async queue."""
         self._ensure_model_loaded()
-        messages = self._prepare_messages(messages)
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
@@ -565,7 +552,6 @@ class IPEXService:
         start_time = time.time()
 
         self._ensure_model_loaded()
-        messages = self._prepare_messages(messages)
 
         # Per-token timeout (seconds) - if no token in this time, abort
         token_timeout = 60  # 60 seconds max between tokens

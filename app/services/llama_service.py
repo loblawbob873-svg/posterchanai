@@ -135,9 +135,6 @@ class LlamaService:
         # Stop sequences
         self.stop_sequences = [s.strip() for s in settings.get("ollama_stop", "").split(",") if s.strip()]
 
-        # Disable thinking mode (for Qwen3 and similar models)
-        self.disable_thinking = settings.get("llm_disable_thinking", "false").lower() == "true"
-
         # Idle timeout for automatic unloading (0 = disabled)
         self._idle_timeout = int(settings.get("llm_idle_timeout", "0"))
 
@@ -244,19 +241,9 @@ class LlamaService:
         from app.services.text_utils import strip_thinking_tags
         return strip_thinking_tags(response)
 
-    def _prepare_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Prepare messages for inference.
-
-        NOTE: /no_think injection is disabled. DeepSeek R1 Distill ignores it
-        and treats it as literal text. We rely on strip_thinking_tags instead.
-        """
-        return messages
-
     def _sync_chat_completion(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
         """Synchronous chat completion (runs in thread pool)"""
         self._ensure_model_loaded()
-        messages = self._prepare_messages(messages)
-
         params = self._get_sampling_params(**kwargs)
 
         with _get_inference_semaphore(self.max_concurrent):
@@ -319,8 +306,6 @@ class LlamaService:
         Uses async queue to avoid blocking the event loop.
         """
         self._ensure_model_loaded()
-        messages = self._prepare_messages(messages)
-
         params = self._get_sampling_params(**kwargs)
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
@@ -405,7 +390,6 @@ class LlamaService:
         For internal use by web UI - more efficient than parsing SSE.
         """
         self._ensure_model_loaded()
-        messages = self._prepare_messages(messages)
         params = self._get_sampling_params(**kwargs)
 
         with _get_inference_semaphore(self.max_concurrent):

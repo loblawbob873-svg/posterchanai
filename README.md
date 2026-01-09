@@ -389,15 +389,9 @@ context:
 
 **Use `@codebase` manually** to search RAG when needed, rather than loading it automatically.
 
-### Qwen3 Thinking Mode
+### Reasoning Models (Qwen3, DeepSeek R1)
 
-Qwen3 models have a "thinking" mode that can cause infinite loops. Posterchanai includes a setting to disable this:
-
-```sql
-INSERT INTO settings (key, value) VALUES ('llm_disable_thinking', 'true');
-```
-
-This adds `<think>` as a stop sequence, preventing the model from entering thinking mode.
+Models with thinking/reasoning capabilities (like Qwen3 and DeepSeek R1) output their reasoning in `<think>...</think>` blocks. Posterchanai automatically filters these blocks during streaming, so users only see the final response. The thinking content is stripped in real-time before being sent to the frontend.
 
 ## Installation
 
