@@ -3,6 +3,7 @@ IPEX-LLM Service for Intel Arc GPU acceleration.
 Uses Intel's optimized LLM inference for maximum performance on Arc GPUs.
 """
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -257,15 +258,33 @@ class IPEXService:
         if not self.disable_thinking:
             return messages
 
-        # Make a copy to avoid modifying original
-        messages = [dict(m) for m in messages]
+        logger.info("Disable thinking is ON - adding /no_think to user message")
+
+        # Make a deep copy to avoid modifying original
+        messages = copy.deepcopy(messages)
 
         # Find last user message and append /no_think
         for i in range(len(messages) - 1, -1, -1):
             if messages[i].get("role") == "user":
                 content = messages[i].get("content", "")
-                if "/no_think" not in content.lower():
-                    messages[i]["content"] = content + " /no_think"
+                # Handle multimodal content (list of text/image parts)
+                if isinstance(content, list):
+                    # Find the text part and append /no_think
+                    for j, part in enumerate(content):
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text = part.get("text", "")
+                            if "/no_think" not in text.lower():
+                                messages[i]["content"][j]["text"] = text + " /no_think"
+                                logger.info(f"Added /no_think to multimodal message")
+                            break
+                    else:
+                        # No text part found, add one
+                        messages[i]["content"].append({"type": "text", "text": "/no_think"})
+                        logger.info(f"Added /no_think as new text part")
+                elif isinstance(content, str):
+                    if "/no_think" not in content.lower():
+                        messages[i]["content"] = content + " /no_think"
+                        logger.info(f"Added /no_think to text message")
                 break
 
         return messages
