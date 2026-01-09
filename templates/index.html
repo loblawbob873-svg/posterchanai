@@ -426,6 +426,11 @@ foxnews.com|Fox News"></textarea>
     font-size: 12px;
     color: var(--text-secondary);
 }
+.rag-collection-checkbox .collection-indexed {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-left: 4px;
+}
 .rag-status-section {
     margin: 20px 0;
     padding: 12px;
@@ -570,15 +575,18 @@ document.addEventListener('DOMContentLoaded', function() {
                     return;
                 }
 
-                ragUserCollections.innerHTML = collections.map(c => `
+                ragUserCollections.innerHTML = collections.map(c => {
+                    const lastIndexed = c.last_indexed_at ? new Date(c.last_indexed_at).toLocaleString() : 'Never';
+                    return `
                     <label class="rag-collection-checkbox">
                         <input type="checkbox" value="${c.id}" ${selectedCollections.includes(c.id) ? 'checked' : ''}>
                         <span class="collection-name">${escapeHtml(c.name)}</span>
                         <span class="collection-stats">${c.document_count || 0} docs</span>
+                        <span class="collection-indexed" title="Last indexed: ${lastIndexed}">📅 ${c.last_indexed_at ? new Date(c.last_indexed_at).toLocaleDateString() : '-'}</span>
                         ${c.collection_type === 'git' ? `<button type="button" class="btn-pull-collection" data-id="${c.id}" title="Pull & Re-index">↻</button>` : ''}
                         <button type="button" class="btn-delete-collection" data-id="${c.id}" title="Delete collection">×</button>
                     </label>
-                `).join('');
+                `}).join('');
 
                 // Add delete handlers
                 ragUserCollections.querySelectorAll('.btn-delete-collection').forEach(btn => {
@@ -613,19 +621,52 @@ document.addEventListener('DOMContentLoaded', function() {
                         const id = btn.dataset.id;
                         try {
                             btn.disabled = true;
-                            btn.textContent = '...';
+                            btn.textContent = '⏳';
+                            btn.title = 'Pulling & indexing...';
                             const resp = await fetch(`/api/rag/collections/${id}/pull`, { method: 'POST' });
                             if (resp.ok) {
-                                alert('Pull & re-index started');
+                                // Show status and auto-refresh after delay
+                                btn.textContent = '✓';
+                                btn.title = 'Pull started - refreshing...';
+                                // Poll for completion by checking last_indexed_at
+                                let attempts = 0;
+                                const checkInterval = setInterval(async () => {
+                                    attempts++;
+                                    try {
+                                        const checkResp = await fetch('/api/rag/collections');
+                                        if (checkResp.ok) {
+                                            const cols = await checkResp.json();
+                                            const col = cols.find(c => c.id === parseInt(id));
+                                            if (col && col.last_indexed_at) {
+                                                const indexedTime = new Date(col.last_indexed_at);
+                                                const now = new Date();
+                                                // If indexed within last 30 seconds, it's done
+                                                if ((now - indexedTime) < 30000) {
+                                                    clearInterval(checkInterval);
+                                                    await loadRagCollections();
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                    } catch (e) {}
+                                    // Stop polling after 60 seconds
+                                    if (attempts >= 12) {
+                                        clearInterval(checkInterval);
+                                        await loadRagCollections();
+                                    }
+                                }, 5000);
                             } else {
                                 const data = await resp.json();
                                 alert(data.detail || 'Failed to pull');
+                                btn.disabled = false;
+                                btn.textContent = '↻';
+                                btn.title = 'Pull & Re-index';
                             }
                         } catch (err) {
                             alert('Error pulling repository');
-                        } finally {
                             btn.disabled = false;
                             btn.textContent = '↻';
+                            btn.title = 'Pull & Re-index';
                         }
                     });
                 });
