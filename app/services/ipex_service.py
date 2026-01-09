@@ -283,8 +283,9 @@ class IPEXService:
                         logger.info(f"Added /no_think as new text part")
                 elif isinstance(content, str):
                     if "/no_think" not in content.lower():
-                        messages[i]["content"] = content + " /no_think"
-                        logger.info(f"Added /no_think to text message")
+                        # Put /no_think at the BEGINNING for DeepSeek R1
+                        messages[i]["content"] = "/no_think " + content
+                        logger.info(f"Added /no_think to text message (at beginning)")
                 break
 
         return messages

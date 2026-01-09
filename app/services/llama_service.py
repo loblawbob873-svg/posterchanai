@@ -235,11 +235,12 @@ class LlamaService:
             stop = [stop]
 
         # Add thinking stop sequences if disabled (for Qwen3 and similar)
-        if self.disable_thinking:
-            thinking_stops = ["<think>", "<thinking>"]
-            for ts in thinking_stops:
-                if ts not in stop:
-                    stop.append(ts)
+        # DISABLED: DeepSeek R1 may still output <think> despite /no_think
+        # if self.disable_thinking:
+        #     thinking_stops = ["<think>", "<thinking>"]
+        #     for ts in thinking_stops:
+        #         if ts not in stop:
+        #             stop.append(ts)
 
         if stop:
             params["stop"] = stop
@@ -252,40 +253,13 @@ class LlamaService:
         return strip_thinking_tags(response)
 
     def _prepare_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Prepare messages for inference - adds /no_think flag if thinking is disabled"""
-        if not self.disable_thinking:
-            return messages
+        """Prepare messages for inference - adds /no_think flag if thinking is disabled.
 
-        logger.info("Disable thinking is ON - adding /no_think to user message")
-
-        # Make a deep copy to avoid modifying original
-        import copy
-        messages = copy.deepcopy(messages)
-
-        # Find last user message and append /no_think
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i].get("role") == "user":
-                content = messages[i].get("content", "")
-                # Handle multimodal content (list of text/image parts)
-                if isinstance(content, list):
-                    # Find the text part and append /no_think
-                    for j, part in enumerate(content):
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            text = part.get("text", "")
-                            if "/no_think" not in text.lower():
-                                messages[i]["content"][j]["text"] = text + " /no_think"
-                                logger.info("Added /no_think to multimodal message")
-                            break
-                    else:
-                        # No text part found, add one
-                        messages[i]["content"].append({"type": "text", "text": "/no_think"})
-                        logger.info("Added /no_think as new text part")
-                elif isinstance(content, str):
-                    if "/no_think" not in content.lower():
-                        messages[i]["content"] = content + " /no_think"
-                        logger.info("Added /no_think to text message")
-                break
-
+        NOTE: /no_think only works for Qwen3 models. DeepSeek R1 Distill ignores it.
+        For DeepSeek, we let it think and strip the tags from output instead.
+        """
+        # Disabled: DeepSeek R1 Distill doesn't support /no_think - it treats it as literal text
+        # For now, just return messages as-is and rely on strip_thinking_tags for output
         return messages
 
     def _sync_chat_completion(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
@@ -446,6 +420,8 @@ class LlamaService:
 
         with _get_inference_semaphore(self.max_concurrent):
             try:
+                logger.info(f"Starting stream_chat_content inference...")
+                token_count = 0
                 for chunk in self._model.create_chat_completion(
                     messages=messages,
                     stream=True,
@@ -455,11 +431,16 @@ class LlamaService:
                         delta = chunk["choices"][0].get("delta", {})
                         content = delta.get("content", "")
                         if content:
+                            token_count += 1
+                            if token_count <= 3:
+                                logger.info(f"Token {token_count}: {repr(content[:50])}")
                             yield content
 
                         finish_reason = chunk["choices"][0].get("finish_reason")
                         if finish_reason:
+                            logger.info(f"Finished after {token_count} tokens, reason: {finish_reason}")
                             break
+                logger.info(f"Stream completed with {token_count} tokens")
             except Exception as e:
                 logger.error(f"Stream content error: {e}")
                 yield f"Error: {e}"
