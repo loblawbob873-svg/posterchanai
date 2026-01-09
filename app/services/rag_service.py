@@ -557,7 +557,6 @@ class RAGService:
 
     def _get_query_cache_key(self, query_text: str, collection_ids: List[int], top_k: int) -> str:
         """Generate cache key for query results."""
-        import hashlib
         key_str = f"{self.user_id}:{query_text}:{sorted(collection_ids)}:{top_k}"
         return hashlib.md5(key_str.encode()).hexdigest()
 

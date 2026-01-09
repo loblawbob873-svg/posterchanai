@@ -190,6 +190,10 @@ class SettingsResponse(BaseModel):
     rag_max_chunk_display: str = "8000"   # Max chars per chunk when displaying
     rag_max_chunk_index: str = "10000"    # Max chunk size during indexing
     rag_api_url: str = ""  # Remote RAG API URL for distributed setups
+    # RAG cache settings
+    rag_embedding_cache_max: str = "250000"  # Max cached embeddings
+    rag_query_cache_max: str = "100000"      # Max cached query results
+    rag_query_cache_ttl: str = "600"         # Query cache TTL in seconds
 
 
 # TTS schema

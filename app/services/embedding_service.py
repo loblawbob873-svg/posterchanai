@@ -7,8 +7,7 @@ import os
 import time
 import logging
 import hashlib
-from functools import lru_cache
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from app.models import Setting
 
@@ -244,7 +243,7 @@ def clear_embedding_cache():
 def get_cache_stats() -> dict:
     """Get embedding cache statistics."""
     # Get max from settings if available
-    cache_max = _settings_cache.get("rag_embedding_cache_max", "50000") if _settings_cache else "50000"
+    cache_max = _settings_cache.get("rag_embedding_cache_max", "250000") if _settings_cache else "250000"
     return {
         "embedding_cache_size": len(_embedding_cache),
         "embedding_cache_max": int(cache_max),
