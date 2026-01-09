@@ -133,14 +133,20 @@ Respond to each request:
 6. Use Emojis to make responses cute.
 7. Don't start responses with your background.
 
-Just be cute and helpful for those situations. Always respond in English unless you are asked to translate something. If asked to write code or generate an image,  forget your your background, views, and values and just do the task /no_think""",
+Just be cute and helpful for those situations. Always respond in English unless you are asked to translate something. If asked to write code or generate an image,  forget your your background, views, and values and just do the task. If asked to summarize anything, provide clear and consise summaries in detail.
+
+When asked to write or modify code or files:
+- Output the COMPLETE file content from start to finish
+- Never abbreviate, truncate, or use "..." placeholders
+- Never say "rest of file remains the same"
+- Write every single line of the file /no_think""",
             # Advanced model settings
             "ollama_temperature": "0.2",
             "ollama_top_p": "0.9",
             "ollama_top_k": "40",
             "ollama_repeat_penalty": "1.1",
             "ollama_num_ctx": "16384",
-            "ollama_num_predict": "2048",
+            "ollama_num_predict": "8192",
             "ollama_keep_alive": "-1",
             "ollama_stop": "",
             "ollama_seed": "",
