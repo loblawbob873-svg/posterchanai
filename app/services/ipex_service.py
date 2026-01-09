@@ -248,10 +248,23 @@ class IPEXService:
 
     def strip_thinking_tags(self, response: str) -> str:
         """Strip thinking tags from AI response"""
+        # First try to find closing tag and return content after it
         matches = list(re.finditer(r'</think(?:ing)?>', response, re.IGNORECASE))
         if matches:
             last_match = matches[-1]
             return response[last_match.end():].strip()
+
+        # If no closing tag, check if response starts with opening tag (unclosed thinking)
+        # In this case, the model only generated thinking content - return empty or a fallback
+        if re.match(r'^<think(?:ing)?>', response.strip(), re.IGNORECASE):
+            # Remove the thinking block entirely since it's incomplete
+            # Try to extract any content after the thinking
+            stripped = re.sub(r'^<think(?:ing)?>\s*.*$', '', response.strip(), flags=re.IGNORECASE | re.DOTALL)
+            if stripped.strip():
+                return stripped.strip()
+            # Model only produced thinking - regenerate would be ideal but return placeholder
+            return "I apologize, but I wasn't able to generate a proper response. Please try again."
+
         return response
 
     def _generate_response(self, messages: List[Dict[str, Any]], **kwargs) -> str:
@@ -265,10 +278,6 @@ class IPEXService:
 
             # Build stop sequences
             stop = list(kwargs.get("stop", []) or [])
-            if self.disable_thinking:
-                for ts in ["<think>", "<thinking>"]:
-                    if ts not in stop:
-                        stop.append(ts)
 
             for attempt in range(max_retries + 1):
                 try:
@@ -433,10 +442,6 @@ class IPEXService:
 
         # Build stop sequences
         stop = list(kwargs.get("stop", []) or [])
-        if self.disable_thinking:
-            for ts in ["<think>", "<thinking>"]:
-                if ts not in stop:
-                    stop.append(ts)
 
         def run_streaming():
             """Run generation in thread, put tokens in queue"""
