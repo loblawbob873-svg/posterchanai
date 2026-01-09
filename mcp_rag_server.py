@@ -32,6 +32,7 @@ from mcp.types import Tool, TextContent
 from app.database import SessionLocal
 from app.models import RAGCollection
 from app.services.rag_service import get_rag_service
+from app.services.rag_folder_service import get_folder_indexer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -72,6 +73,20 @@ async def list_tools():
                 "type": "object",
                 "properties": {}
             }
+        ),
+        Tool(
+            name="reindex_collection",
+            description="Re-index a RAG collection to pick up file changes. Use after git pull or code changes.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "collection_id": {
+                        "type": "integer",
+                        "description": "Collection ID to re-index (use list_collections to find IDs)",
+                        "default": 2
+                    }
+                }
+            }
         )
     ]
 
@@ -87,6 +102,10 @@ async def call_tool(name: str, arguments: dict):
         )
     elif name == "list_collections":
         return await list_collections()
+    elif name == "reindex_collection":
+        return await reindex_collection(
+            collection_id=arguments.get("collection_id", 2)
+        )
     else:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
@@ -149,6 +168,48 @@ async def list_collections():
     return [TextContent(type="text", text=result)]
 
 
+async def reindex_collection(collection_id: int = 2):
+    """Trigger re-indexing of a collection."""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _sync_reindex_collection, collection_id)
+    return [TextContent(type="text", text=result)]
+
+
+def _sync_reindex_collection(collection_id: int):
+    """Synchronous reindex helper (runs in thread pool)."""
+    db = SessionLocal()
+    try:
+        # Get collection
+        collection = db.query(RAGCollection).filter(
+            RAGCollection.id == collection_id,
+            RAGCollection.user_id == DEFAULT_USER_ID
+        ).first()
+
+        if not collection:
+            return f"Error: Collection {collection_id} not found"
+
+        if collection.collection_type not in ("codebase", "folder"):
+            return f"Error: Collection '{collection.name}' is type '{collection.collection_type}'. Only codebase/folder collections can be re-indexed."
+
+        if not collection.source_path or not os.path.isdir(collection.source_path):
+            return f"Error: Source path '{collection.source_path}' is not a valid directory"
+
+        # Perform reindex using folder indexer
+        indexer = get_folder_indexer(db, DEFAULT_USER_ID)
+        indexer.index_folder(collection)
+
+        # Refresh collection to get updated count
+        db.refresh(collection)
+
+        return f"Successfully re-indexed collection '{collection.name}' (id: {collection_id})\n- Source: {collection.source_path}\n- Documents: {collection.document_count}"
+
+    except Exception as e:
+        logger.error(f"Failed to reindex collection {collection_id}: {e}")
+        return f"Error re-indexing: {str(e)}"
+    finally:
+        db.close()
+
+
 def _sync_list_collections():
     """Synchronous list collections helper."""
     db = SessionLocal()
@@ -188,11 +249,24 @@ def main_sse(host: str = "0.0.0.0", port: int = 8808):
     """Run the MCP server over SSE/HTTP (for network use)."""
     from mcp.server.sse import SseServerTransport
     from starlette.applications import Starlette
-    from starlette.responses import Response
+    from starlette.responses import Response, JSONResponse
     from starlette.routing import Route
     import uvicorn
 
     sse = SseServerTransport("/messages/")
+
+    async def handle_reindex(request):
+        """Simple REST endpoint for git hooks to trigger reindex."""
+        try:
+            body = await request.json()
+            collection_id = body.get("collection_id", 2)
+        except Exception:
+            collection_id = 2
+
+        # Run sync function in thread pool
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _sync_reindex_collection, collection_id)
+        return JSONResponse({"status": "ok", "message": result})
 
     async def handle_sse(request):
         async with sse.connect_sse(
@@ -209,6 +283,7 @@ def main_sse(host: str = "0.0.0.0", port: int = 8808):
         routes=[
             Route("/sse", endpoint=handle_sse),
             Route("/messages/", endpoint=handle_messages, methods=["POST"]),
+            Route("/reindex", endpoint=handle_reindex, methods=["POST"]),
         ]
     )
 
