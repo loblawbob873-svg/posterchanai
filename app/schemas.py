@@ -352,7 +352,7 @@ class RAGCollectionCreate(BaseModel):
     collection_type: str  # "folder", "git", "watcher"
     source_path: Optional[str] = None
     git_branch: Optional[str] = "main"
-    file_patterns: Optional[str] = "*.py,*.js,*.ts,*.md,*.txt"
+    file_patterns: Optional[str] = "*.py,*.js,*.ts,*.tsx,*.jsx,*.html,*.css,*.json,*.yaml,*.yml,*.md,*.txt,*.go,*.rs,*.java,*.sh"
 
 
 class RAGCollectionUpdate(BaseModel):
@@ -421,7 +421,7 @@ class RAGGitCloneRequest(BaseModel):
     name: str
     git_url: str
     branch: Optional[str] = "main"
-    file_patterns: Optional[str] = "*.py,*.js,*.ts,*.md,*.txt"
+    file_patterns: Optional[str] = "*.py,*.js,*.ts,*.tsx,*.jsx,*.html,*.css,*.json,*.yaml,*.yml,*.md,*.txt,*.go,*.rs,*.java,*.sh"
 
 
 class RAGStatusResponse(BaseModel):

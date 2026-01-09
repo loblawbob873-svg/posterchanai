@@ -56,7 +56,7 @@ def create_collection(
         collection_type=data.collection_type,
         source_path=data.source_path,
         git_branch=data.git_branch,
-        file_patterns=data.file_patterns or "*.py,*.js,*.ts,*.md,*.txt"
+        file_patterns=data.file_patterns or "*.py,*.js,*.ts,*.tsx,*.jsx,*.html,*.css,*.json,*.yaml,*.yml,*.md,*.txt,*.go,*.rs,*.java,*.sh"
     )
     db.add(collection)
     db.commit()
@@ -181,7 +181,7 @@ async def clone_git_repository(
         collection_type="git",
         source_path=data.git_url,
         git_branch=data.branch or "main",
-        file_patterns=data.file_patterns or "*.py,*.js,*.ts,*.md,*.txt"
+        file_patterns=data.file_patterns or "*.py,*.js,*.ts,*.tsx,*.jsx,*.html,*.css,*.json,*.yaml,*.yml,*.md,*.txt,*.go,*.rs,*.java,*.sh"
     )
     db.add(collection)
     db.commit()
@@ -300,7 +300,7 @@ def _index_upload_task(user_id: int, collection_id: int):
 
         # Re-read and index the zip file
         logger.info(f"[RAG-INDEX] Reading zip file: {zip_path}")
-        file_patterns = collection.file_patterns or "*.py,*.js,*.ts,*.md,*.txt"
+        file_patterns = collection.file_patterns or "*.py,*.js,*.ts,*.tsx,*.jsx,*.html,*.css,*.json,*.yaml,*.yml,*.md,*.txt,*.go,*.rs,*.java,*.sh"
         patterns = [p.strip() for p in file_patterns.split(",")]
 
         skip_dirs = {
@@ -373,7 +373,7 @@ async def upload_folder(
     file: UploadFile = File(...),
     name: str = Form(...),
     description: Optional[str] = Form(None),
-    file_patterns: str = Form("*.py,*.js,*.ts,*.md,*.txt"),
+    file_patterns: str = Form("*.py,*.js,*.ts,*.tsx,*.jsx,*.html,*.css,*.json,*.yaml,*.yml,*.md,*.txt,*.go,*.rs,*.java,*.sh"),
     background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -463,7 +463,7 @@ async def index_local_folder(
         description=data.description,
         collection_type="folder",
         source_path=data.source_path,
-        file_patterns=data.file_patterns or "*.py,*.js,*.ts,*.md,*.txt"
+        file_patterns=data.file_patterns or "*.py,*.js,*.ts,*.tsx,*.jsx,*.html,*.css,*.json,*.yaml,*.yml,*.md,*.txt,*.go,*.rs,*.java,*.sh"
     )
     db.add(collection)
     db.commit()

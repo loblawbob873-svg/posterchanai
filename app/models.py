@@ -109,7 +109,7 @@ class RAGCollection(Base):
     collection_type = Column(String(20), nullable=False)  # "folder", "git", "watcher"
     source_path = Column(String(500), nullable=True)  # Local path or git URL
     git_branch = Column(String(100), default="main")
-    file_patterns = Column(Text, default="*.py,*.js,*.ts,*.md,*.txt")  # Comma-separated globs
+    file_patterns = Column(Text, default="*.py,*.js,*.ts,*.tsx,*.jsx,*.html,*.css,*.json,*.yaml,*.yml,*.md,*.txt,*.go,*.rs,*.java,*.sh")  # Comma-separated globs
     last_indexed_at = Column(DateTime, nullable=True)
     document_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
