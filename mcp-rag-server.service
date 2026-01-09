@@ -1,0 +1,14 @@
+[Unit]
+Description=Posterchanai RAG MCP Server
+After=network.target
+
+[Service]
+Type=simple
+User=verita84
+WorkingDirectory=/home/verita84/posterchanai
+ExecStart=/home/verita84/posterchanai/venv-ipex/bin/python mcp_rag_server.py --sse --port 8808
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

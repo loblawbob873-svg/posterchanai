@@ -89,18 +89,36 @@ class EmbeddingService:
         self._ensure_model_loaded()
 
         try:
-            # Use batch_size for efficient processing
-            # show_progress_bar for large batches (>1000 texts)
-            show_progress = len(texts) > 1000
-            embeddings = _model.encode(
-                texts,
-                convert_to_numpy=True,
-                batch_size=self.batch_size,
-                show_progress_bar=show_progress
-            )
-            return embeddings.tolist()
+            total = len(texts)
+            logger.info(f"[EMBED] Starting embedding generation for {total} texts (batch_size={self.batch_size})")
+
+            # For very large batches, process in chunks and log progress
+            if total > 1000:
+                all_embeddings = []
+                chunk_size = 1000  # Process 1000 at a time for progress logging
+                for i in range(0, total, chunk_size):
+                    chunk = texts[i:i + chunk_size]
+                    logger.info(f"[EMBED] Processing texts {i+1}-{min(i+len(chunk), total)} of {total} ({100*i//total}%)")
+                    chunk_embeddings = _model.encode(
+                        chunk,
+                        convert_to_numpy=True,
+                        batch_size=self.batch_size,
+                        show_progress_bar=False
+                    )
+                    all_embeddings.extend(chunk_embeddings.tolist())
+                logger.info(f"[EMBED] Completed all {total} embeddings")
+                return all_embeddings
+            else:
+                embeddings = _model.encode(
+                    texts,
+                    convert_to_numpy=True,
+                    batch_size=self.batch_size,
+                    show_progress_bar=False
+                )
+                logger.info(f"[EMBED] Completed {total} embeddings")
+                return embeddings.tolist()
         except Exception as e:
-            logger.error(f"Embedding generation failed: {e}")
+            logger.error(f"[EMBED] Embedding generation failed: {e}")
             raise
 
     def embed_single(self, text: str) -> List[float]:

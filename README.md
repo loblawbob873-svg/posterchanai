@@ -255,9 +255,67 @@ RAG requires these additional packages (included in requirements.txt):
 ```
 chromadb>=0.4.0
 sentence-transformers>=2.2.0
+mcp>=1.0.0  # For MCP server
 ```
 
 The embedding model (~90MB) is downloaded automatically on first use.
+
+### MCP Server (Model Context Protocol)
+
+Posterchanai includes an MCP server that exposes RAG functionality to MCP-compatible clients like Continue.dev, Claude Desktop, and other AI coding assistants.
+
+#### Starting the MCP Server
+
+**Option 1: SSE/HTTP mode (for remote access)**
+```bash
+source venv-ipex/bin/activate
+python mcp_rag_server.py --sse --port 8808
+```
+
+**Option 2: Stdio mode (for local use)**
+```bash
+source venv-ipex/bin/activate
+python mcp_rag_server.py
+```
+
+**Option 3: Systemd service**
+```bash
+sudo cp mcp-rag-server.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now mcp-rag-server
+```
+
+#### Configure Continue.dev
+
+Add to your `~/.continue/config.yaml`:
+
+```yaml
+mcpServers:
+  - name: posterchanai-rag
+    url: http://YOUR_SERVER_IP:8808/sse
+```
+
+Or for local stdio mode:
+```yaml
+mcpServers:
+  - name: posterchanai-rag
+    command: /path/to/venv/bin/python
+    args:
+      - /path/to/posterchanai/mcp_rag_server.py
+```
+
+#### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `search_codebase` | Search indexed code for relevant snippets |
+| `list_collections` | List all RAG collections |
+
+#### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RAG_USER_ID` | 1 | User ID for RAG queries |
 
 ## Installation
 

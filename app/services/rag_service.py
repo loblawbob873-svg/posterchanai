@@ -403,9 +403,11 @@ class RAGService:
             return 0
 
         # Generate embeddings
+        logger.info(f"[RAG-INDEX] Generating embeddings for {len(chunks)} chunks from {file_path}")
         embedding_service = get_embedding_service(self.db)
         texts = [c["content"] for c in chunks]
         embeddings = embedding_service.embed(texts)
+        logger.info(f"[RAG-INDEX] Embeddings generated, writing to ChromaDB...")
 
         # Add to ChromaDB
         ids = [f"{file_path}_{i}" for i in range(len(chunks))]

@@ -272,11 +272,15 @@ def _index_folder_task(user_id: int, collection_id: int):
 def _index_upload_task(user_id: int, collection_id: int):
     """Background task to re-index an uploaded zip file."""
     from datetime import datetime
+    import traceback
+
+    logger.info(f"[RAG-INDEX] Starting upload re-index for collection {collection_id}, user {user_id}")
 
     db = SessionLocal()
     try:
         collection = db.query(RAGCollection).filter(RAGCollection.id == collection_id).first()
         if not collection or not collection.source_path:
+            logger.warning(f"[RAG-INDEX] Collection {collection_id} not found or no source_path")
             return
 
         zip_path = Path(collection.source_path)
@@ -290,10 +294,12 @@ def _index_upload_task(user_id: int, collection_id: int):
         max_log_size = int(settings.get("rag_max_log_size", "100")) * 1_000_000
 
         # Clear existing documents for this collection
+        logger.info(f"[RAG-INDEX] Clearing existing documents for collection {collection_id}")
         rag_service = get_rag_service(db, user_id)
         rag_service.delete_collection_documents(collection_id)
 
         # Re-read and index the zip file
+        logger.info(f"[RAG-INDEX] Reading zip file: {zip_path}")
         file_patterns = collection.file_patterns or "*.py,*.js,*.ts,*.md,*.txt"
         patterns = [p.strip() for p in file_patterns.split(",")]
 
@@ -336,12 +342,19 @@ def _index_upload_task(user_id: int, collection_id: int):
                         break
 
         # Index files
+        logger.info(f"[RAG-INDEX] Found {len(files_to_index)} files to index")
+        if files_to_index:
+            for f in files_to_index:
+                logger.info(f"[RAG-INDEX]   - {f['filename']}: {len(f['content'])} bytes")
+
         indexer = get_folder_indexer(db, user_id)
+        logger.info(f"[RAG-INDEX] Starting indexer.index_uploaded_files...")
         indexer.index_uploaded_files(collection, files_to_index)
 
-        logger.info(f"Re-indexed {len(files_to_index)} files for upload collection {collection_id}")
+        logger.info(f"[RAG-INDEX] Completed re-indexing {len(files_to_index)} files for collection {collection_id}")
     except Exception as e:
-        logger.error(f"Upload re-indexing failed for collection {collection_id}: {e}")
+        logger.error(f"[RAG-INDEX] Upload re-indexing failed for collection {collection_id}: {e}")
+        logger.error(f"[RAG-INDEX] Traceback: {traceback.format_exc()}")
     finally:
         db.close()
 
