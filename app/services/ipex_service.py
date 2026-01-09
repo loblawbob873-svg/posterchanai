@@ -577,10 +577,6 @@ class IPEXService:
                 if self._is_gguf:
                     # Build stop sequences
                     stop = list(kwargs.get("stop", []) or [])
-                    if self.disable_thinking:
-                        for ts in ["<think>", "<thinking>"]:
-                            if ts not in stop:
-                                stop.append(ts)
 
                     # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()
