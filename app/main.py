@@ -78,6 +78,22 @@ async def startup():
     from app.services.news_scheduler import start_scheduler
     start_scheduler()
 
+    # Auto-warmup RAG cache if enabled
+    db2 = SessionLocal()
+    try:
+        rag_enabled = db2.query(Setting).filter(Setting.key == "rag_enabled").first()
+        rag_auto_warmup = db2.query(Setting).filter(Setting.key == "rag_auto_warmup").first()
+
+        if (rag_enabled and rag_enabled.value == "true" and
+            (not rag_auto_warmup or rag_auto_warmup.value == "true")):
+            import threading
+            from app.services.rag_warmup import warmup_rag_cache
+            logging.info("Starting RAG cache warmup in background...")
+            warmup_thread = threading.Thread(target=warmup_rag_cache, daemon=True)
+            warmup_thread.start()
+    finally:
+        db2.close()
+
 
 @app.on_event("shutdown")
 async def shutdown():

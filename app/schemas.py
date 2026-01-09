@@ -186,6 +186,7 @@ class SettingsResponse(BaseModel):
     rag_num_threads: str = "0"
     rag_chromadb_path: str = "./data/chromadb"
     rag_auto_context: str = "true"
+    rag_auto_warmup: str = "true"  # Auto-load RAG data into RAM on startup
     rag_max_context_chars: str = "32000"  # Max total context injected into prompt
     rag_max_chunk_display: str = "8000"   # Max chars per chunk when displaying
     rag_max_chunk_index: str = "10000"    # Max chunk size during indexing
