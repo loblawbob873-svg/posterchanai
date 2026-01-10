@@ -433,8 +433,7 @@ class PluginService:
                 # Try different possible field names from API
                 income = result.get('income') or result.get('total_income') or result.get('monthly_income') or 0
                 remaining = result.get('remaining') or result.get('balance') or result.get('available') or 0
-                # Show income and remaining only - use 'budget bills' for unpaid total
-                return f"## Budget Summary\n\n💰 **Income:** ${float(income):,.2f}\n✨ **Remaining:** ${float(remaining):,.2f}\n\n_Use `budget bills` to see unpaid bills._"
+                return f"## Budget Summary\n\n💰 **Income:** ${float(income):,.2f}\n✨ **Remaining:** ${float(remaining):,.2f}"
             elif action == "bills":
                 bills = result.get('bills', [])
                 if not bills:
