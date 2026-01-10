@@ -336,9 +336,8 @@ class CommandService:
             if "error" in result:
                 return {"type": "text", "content": f"Firewall error: {result['error']}"}
 
-            # Handle HTML or text responses
-            content = result.get('result', '') or json.dumps(result, indent=2)
-            return {"type": "text", "content": content}
+            formatted = plugin_service.format_result_for_display("firewall", subcommand, result)
+            return {"type": "text", "content": formatted}
         except Exception as e:
             return {"type": "text", "content": f"Firewall error: {str(e)}"}
 
