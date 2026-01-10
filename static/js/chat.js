@@ -1825,6 +1825,19 @@ class ChatHandler {
         }
     }
 
+    // Subcommand hints for commands
+    commandHints = {
+        'torrents': ['movies', 'tv', 'music', 'anime', 'download <#>'],
+        'nyaa': ['<search query>', 'download <#>'],
+        'flood': ['list', 'add <magnet>', 'start <hash>', 'stop <hash>', 'delete <hash>'],
+        'budget': ['', 'bills', 'add <name> <amount>', 'pay <name>'],
+        'firewall': ['', 'search <ip>', 'analyze <ip>'],
+        'yt': ['<youtube-url>'],
+        'geni': ['<image prompt>'],
+        'search': ['<query>'],
+        'images': ['<query>']
+    };
+
     // Tab autocomplete for commands
     autocompleteCommand() {
         const input = this.messageInput.value;
@@ -1834,6 +1847,17 @@ class ChatHandler {
         if (cursorPos > input.length) return;
 
         const textBeforeCursor = input.substring(0, cursorPos).toLowerCase();
+
+        // Check if we're after a command (has space)
+        const spaceIndex = textBeforeCursor.indexOf(' ');
+        if (spaceIndex > 0) {
+            const cmd = textBeforeCursor.substring(0, spaceIndex);
+            if (this.commandHints[cmd]) {
+                const hints = this.commandHints[cmd];
+                this.showToast(`${cmd}: ${hints.join(' | ')}`);
+                return;
+            }
+        }
 
         // Find matching commands
         const commandMatches = this.commands.filter(cmd => cmd.startsWith(textBeforeCursor));
