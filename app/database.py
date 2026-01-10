@@ -77,6 +77,7 @@ def _run_migrations():
 
 def init_db():
     from app.models import User, Conversation, Message, Setting
+    logger.info("[INIT] Initializing database...")
     Base.metadata.create_all(bind=engine)
 
     # Run migrations for new columns on existing databases
@@ -264,6 +265,8 @@ When asked to write or modify code or files:
 
         if added_settings:
             logger.info(f"[MIGRATE] Added {len(added_settings)} new settings: {', '.join(added_settings)}")
+        else:
+            logger.info("[MIGRATE] Database up to date, no new settings needed")
 
         # Create default admin user if no users exist
         from app.auth import get_password_hash
