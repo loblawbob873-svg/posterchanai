@@ -285,7 +285,18 @@ class PluginService:
                         # Substitute params in body - properly escape for JSON
                         body_str = json.dumps(body)
                         for key, value in params.items():
-                            # JSON-encode the value to handle special chars, then strip the quotes
+                            # Try to preserve numeric types
+                            try:
+                                numeric_val = float(value)
+                                if numeric_val.is_integer():
+                                    escaped_value = str(int(numeric_val))
+                                else:
+                                    escaped_value = str(numeric_val)
+                                # Replace "{{key}}" with unquoted number
+                                body_str = body_str.replace(f'"{{{{{key}}}}}"', escaped_value)
+                            except (ValueError, TypeError):
+                                pass
+                            # Also do string replacement for non-numeric or remaining placeholders
                             escaped_value = json.dumps(str(value))[1:-1]
                             body_str = body_str.replace(f"{{{{{key}}}}}", escaped_value)
                         body = json.loads(body_str)
@@ -410,6 +421,29 @@ class PluginService:
                 if "error" in result:
                     return f"Failed to stop: {result['error']}"
                 return "Torrent stopped."
+
+        elif plugin == "budget":
+            if "error" in result:
+                return f"Budget error: {result['error']}"
+            if action == "summary":
+                income = result.get('income', 0)
+                unpaid = result.get('unpaid_total', 0)
+                remaining = result.get('remaining', income - unpaid)
+                return f"## Budget Summary\n\n💰 **Income:** ${income:,.2f}\n📋 **Unpaid Bills:** ${unpaid:,.2f}\n✨ **Remaining:** ${remaining:,.2f}"
+            elif action == "bills":
+                bills = result.get('bills', [])
+                if not bills:
+                    return "No unpaid bills! 🎉"
+                lines = ["## Unpaid Bills\n"]
+                for bill in bills:
+                    name = bill.get('name', 'Unknown')
+                    amount = bill.get('amount', 0)
+                    lines.append(f"- **{name}**: ${amount:,.2f}")
+                return "\n".join(lines)
+            elif action == "add":
+                return f"✅ Bill added: {result.get('name', 'bill')} - ${result.get('amount', 0):,.2f}"
+            elif action == "pay":
+                return f"✅ Bill paid: {result.get('name', 'bill')}"
 
         # Default: return JSON
         return json.dumps(result, indent=2)

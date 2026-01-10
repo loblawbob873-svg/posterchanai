@@ -282,23 +282,25 @@ class CommandService:
 
         try:
             if subcommand in ("summary", ""):
-                result = await plugin_service.execute_tool_call("budget", "get_summary", {}, self.user.id)
+                result = await plugin_service.execute_tool_call("budget", "summary", {}, self.user.id)
+                action = "summary"
             elif subcommand == "bills":
-                result = await plugin_service.execute_tool_call("budget", "get_bills", {}, self.user.id)
+                result = await plugin_service.execute_tool_call("budget", "bills", {}, self.user.id)
+                action = "bills"
             elif subcommand == "add" and len(parts) >= 3:
                 name = parts[1]
                 amount = parts[2]
-                result = await plugin_service.execute_tool_call("budget", "add_bill", {"name": name, "amount": amount}, self.user.id)
+                result = await plugin_service.execute_tool_call("budget", "add", {"name": name, "amount": amount}, self.user.id)
+                action = "add"
             elif subcommand == "pay" and len(parts) >= 2:
                 name = parts[1]
-                result = await plugin_service.execute_tool_call("budget", "pay_bill", {"name": name}, self.user.id)
+                result = await plugin_service.execute_tool_call("budget", "pay", {"name": name}, self.user.id)
+                action = "pay"
             else:
                 return {"type": "text", "content": "Usage: `budget` | `budget bills` | `budget add <name> <amount>` | `budget pay <name>`"}
 
-            if "error" in result:
-                return {"type": "text", "content": f"Budget error: {result['error']}"}
-
-            return {"type": "text", "content": f"```json\n{json.dumps(result, indent=2)}\n```"}
+            formatted = plugin_service.format_result_for_display("budget", action, result)
+            return {"type": "text", "content": formatted}
         except Exception as e:
             return {"type": "text", "content": f"Budget error: {str(e)}"}
 
