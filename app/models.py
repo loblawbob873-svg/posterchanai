@@ -148,3 +148,25 @@ class RAGWatcher(Base):
 
     user = relationship("User", backref="rag_watchers")
     collection = relationship("RAGCollection", back_populates="watchers")
+
+
+# AI Plugin System
+
+class Plugin(Base):
+    """User-defined AI plugins for external service integration"""
+    __tablename__ = "plugins"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)  # NULL = global plugin
+    name = Column(String(50), nullable=False)  # e.g., "budget", "flood"
+    description = Column(Text, nullable=False)  # Description for the AI to understand when to use it
+    base_url = Column(String(500), nullable=False)  # e.g., "https://budget.poster.place/api/v1"
+    auth_type = Column(String(20), default="none")  # "none", "bearer", "basic", "header"
+    auth_header = Column(String(100), default="X-API-Key")  # Header name for auth
+    auth_value = Column(String(500), nullable=True)  # API key or credentials
+    actions = Column(Text, nullable=False)  # JSON array of action definitions
+    enabled = Column(Boolean, default=True)
+    allowed_users = Column(Text, nullable=True)  # Comma-separated user IDs, NULL = all users
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", backref="plugins")

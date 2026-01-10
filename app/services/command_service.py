@@ -1,9 +1,11 @@
 import logging
+import json
 from typing import Optional, Tuple, Callable, TYPE_CHECKING
 from sqlalchemy.orm import Session
 from app.services.search_service import SearchService
 from app.services.image_factory import generate_image_for_user
 from app.services.chat_service import ChatService
+from app.services.plugin_service import PluginService
 # Lock now handled inside image_factory for fine-grained control
 
 if TYPE_CHECKING:
@@ -14,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 class CommandService:
     COMMANDS = {
+        "help": "Show available commands and plugins",
         "search": "Search the web and get AI-summarized results",
         "images": "Search for images",
         "geni": "Generate an AI image from your prompt",
@@ -40,7 +43,9 @@ class CommandService:
     async def execute_command(self, command: str, arg: str, last_prompt: Optional[str] = None,
                               stop_check: Optional[Callable[[], bool]] = None) -> dict:
         """Execute a command and return the result"""
-        if command == "search":
+        if command == "help":
+            return await self._help_command()
+        elif command == "search":
             return await self._search_command(arg)
         elif command == "images":
             return await self._images_command(arg)
@@ -48,6 +53,41 @@ class CommandService:
             return await self._geni_command(arg, stop_check)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
+
+    async def _help_command(self) -> dict:
+        """Show available commands and plugins"""
+        help_text = "## Available Commands\n\n"
+
+        # Built-in commands
+        for cmd, desc in self.COMMANDS.items():
+            help_text += f"**{cmd}** - {desc}\n"
+
+        # Get user's plugins
+        if self.user:
+            plugin_service = PluginService(self.db)
+            plugins = plugin_service.get_plugins_for_user(self.user.id)
+
+            if plugins:
+                help_text += "\n## AI Plugins\n\n"
+                help_text += "These plugins are used automatically by the AI when relevant to your request.\n\n"
+
+                for plugin in plugins:
+                    help_text += f"### {plugin.name}\n"
+                    help_text += f"{plugin.description}\n\n"
+
+                    try:
+                        actions = json.loads(plugin.actions)
+                        help_text += "**Actions:**\n"
+                        for action in actions:
+                            help_text += f"- `{action['name']}` - {action['description']}\n"
+                    except:
+                        pass
+
+                    help_text += "\n"
+
+        help_text += "\n---\n*Plugins are invoked automatically based on your chat message.*"
+
+        return {"type": "text", "content": help_text}
 
     async def _search_command(self, query: str) -> dict:
         if not query:

@@ -55,11 +55,37 @@ class ChatHandler {
             }
         });
 
+        // Message history for up arrow recall
+        this.messageHistory = [];
+        this.historyIndex = -1;
+
+        // Available commands for tab autocomplete
+        this.commands = ['help', 'search', 'images', 'geni'];
+        this.pluginActions = []; // Will be populated with plugin action hints
+
+        // Load plugins for autocomplete
+        this.loadPluginsForAutocomplete();
+
         // Enter to send (Shift+Enter for new line)
         this.messageInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 this.sendMessage();
+            }
+            // Up arrow - recall last message
+            else if (e.key === 'ArrowUp' && this.messageInput.selectionStart === 0) {
+                e.preventDefault();
+                this.recallPreviousMessage();
+            }
+            // Down arrow - navigate forward in history
+            else if (e.key === 'ArrowDown' && this.historyIndex >= 0) {
+                e.preventDefault();
+                this.recallNextMessage();
+            }
+            // Tab - autocomplete commands
+            else if (e.key === 'Tab') {
+                e.preventDefault();
+                this.autocompleteCommand();
             }
         });
 
@@ -720,6 +746,9 @@ class ChatHandler {
 
         // Need either content or a file upload
         if (!content && !this.uploadedFile && !this.uploadedImage) return;
+
+        // Save to message history for up arrow recall
+        this.saveToHistory(displayContent);
 
         if (mode) {
             content = `${mode} ${content}`;
@@ -1702,6 +1731,142 @@ class ChatHandler {
         this.streamingMessage = null;
         this.lastPayload = null;
         this.lastUserMessage = null;
+    }
+
+    // Save message to history (called when sending)
+    saveToHistory(message) {
+        if (message && message.trim()) {
+            // Don't add duplicates at the end
+            if (this.messageHistory.length === 0 || this.messageHistory[this.messageHistory.length - 1] !== message) {
+                this.messageHistory.push(message);
+                // Keep history manageable
+                if (this.messageHistory.length > 50) {
+                    this.messageHistory.shift();
+                }
+            }
+        }
+        this.historyIndex = -1; // Reset index after sending
+    }
+
+    // Recall previous message (up arrow)
+    recallPreviousMessage() {
+        if (this.messageHistory.length === 0) return;
+
+        if (this.historyIndex === -1) {
+            // First press - save current input and go to last message
+            this.savedInput = this.messageInput.value;
+            this.historyIndex = this.messageHistory.length - 1;
+        } else if (this.historyIndex > 0) {
+            // Navigate further back
+            this.historyIndex--;
+        }
+
+        this.messageInput.value = this.messageHistory[this.historyIndex];
+        // Move cursor to end
+        this.messageInput.setSelectionRange(this.messageInput.value.length, this.messageInput.value.length);
+    }
+
+    // Recall next message (down arrow)
+    recallNextMessage() {
+        if (this.historyIndex === -1) return;
+
+        this.historyIndex++;
+
+        if (this.historyIndex >= this.messageHistory.length) {
+            // Past the end - restore saved input
+            this.historyIndex = -1;
+            this.messageInput.value = this.savedInput || '';
+        } else {
+            this.messageInput.value = this.messageHistory[this.historyIndex];
+        }
+        // Move cursor to end
+        this.messageInput.setSelectionRange(this.messageInput.value.length, this.messageInput.value.length);
+    }
+
+    // Load plugins for autocomplete
+    async loadPluginsForAutocomplete() {
+        try {
+            const response = await fetch('/api/plugins');
+            if (response.ok) {
+                const plugins = await response.json();
+                this.pluginActions = [];
+                for (const plugin of plugins) {
+                    if (plugin.enabled) {
+                        // Add plugin name as a keyword
+                        const pluginKeyword = plugin.name.toLowerCase().replace(/\s+/g, '');
+                        if (!this.commands.includes(pluginKeyword)) {
+                            this.commands.push(pluginKeyword);
+                        }
+                        // Store plugin action hints
+                        if (plugin.actions) {
+                            for (const action of plugin.actions) {
+                                this.pluginActions.push({
+                                    plugin: plugin.name,
+                                    action: action.name,
+                                    description: action.description,
+                                    keyword: `${pluginKeyword} ${action.name}`.toLowerCase()
+                                });
+                            }
+                        }
+                    }
+                }
+                console.log('[Autocomplete] Loaded plugins:', this.commands);
+            }
+        } catch (e) {
+            console.error('Failed to load plugins for autocomplete:', e);
+        }
+    }
+
+    // Tab autocomplete for commands
+    autocompleteCommand() {
+        const input = this.messageInput.value;
+        const cursorPos = this.messageInput.selectionStart;
+
+        // Only autocomplete at the start of input
+        if (cursorPos > input.length) return;
+
+        const textBeforeCursor = input.substring(0, cursorPos).toLowerCase();
+
+        // Find matching commands
+        const commandMatches = this.commands.filter(cmd => cmd.startsWith(textBeforeCursor));
+
+        // Find matching plugin actions
+        const actionMatches = this.pluginActions.filter(pa =>
+            pa.keyword.startsWith(textBeforeCursor) ||
+            pa.action.toLowerCase().startsWith(textBeforeCursor)
+        );
+
+        // Combine matches
+        const allMatches = [...commandMatches];
+        for (const am of actionMatches) {
+            const actionHint = `${am.plugin.toLowerCase().replace(/\s+/g, '')} ${am.action}`;
+            if (!allMatches.includes(actionHint)) {
+                allMatches.push(actionHint);
+            }
+        }
+
+        if (allMatches.length === 1) {
+            // Single match - complete it
+            const completed = allMatches[0] + ' ';
+            this.messageInput.value = completed + input.substring(cursorPos);
+            this.messageInput.setSelectionRange(completed.length, completed.length);
+        } else if (allMatches.length > 1) {
+            // Multiple matches - complete common prefix
+            let commonPrefix = allMatches[0];
+            for (const match of allMatches) {
+                while (!match.startsWith(commonPrefix)) {
+                    commonPrefix = commonPrefix.slice(0, -1);
+                }
+            }
+            if (commonPrefix.length > textBeforeCursor.length) {
+                this.messageInput.value = commonPrefix + input.substring(cursorPos);
+                this.messageInput.setSelectionRange(commonPrefix.length, commonPrefix.length);
+            }
+            // Show available options as a toast (limit to 5)
+            const displayMatches = allMatches.slice(0, 5);
+            const more = allMatches.length > 5 ? ` (+${allMatches.length - 5} more)` : '';
+            this.showToast(`Options: ${displayMatches.join(', ')}${more}`);
+        }
     }
 }
 

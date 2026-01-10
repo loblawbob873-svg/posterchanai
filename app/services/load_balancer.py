@@ -236,7 +236,8 @@ class LoadBalancer:
         messages: List[dict],
         temperature: float = 0.7,
         top_p: float = 0.9,
-        max_tokens: int = 2048
+        max_tokens: int = 2048,
+        stop: List[str] = None
     ) -> AsyncGenerator[str, None]:
         """
         Stream chat completion from a load-balanced server.
@@ -254,20 +255,24 @@ class LoadBalancer:
         start_time = time.time()
         logger.info(f"STREAM REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
 
+        request_body = {
+            "model": self.model,
+            "messages": messages,
+            "stream": True,
+            "temperature": temperature,
+            "top_p": top_p,
+            "max_tokens": max_tokens
+        }
+        if stop:
+            request_body["stop"] = stop
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 async with client.stream(
                     "POST",
                     f"{server}/v1/chat/completions",
                     headers=self.headers,
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "stream": True,
-                        "temperature": temperature,
-                        "top_p": top_p,
-                        "max_tokens": max_tokens
-                    }
+                    json=request_body
                 ) as response:
                     logger.info(f"STREAM RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
                     response.raise_for_status()

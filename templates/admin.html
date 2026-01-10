@@ -16,6 +16,7 @@
         <button class="tab-btn active" data-tab="ai">AI Settings</button>
         <button class="tab-btn" data-tab="image">Image Generation</button>
         <button class="tab-btn" data-tab="rag">RAG</button>
+        <button class="tab-btn" data-tab="plugins">Plugins</button>
         <button class="tab-btn" data-tab="services">Services</button>
         <button class="tab-btn" data-tab="site">Site Settings</button>
         <button class="tab-btn" data-tab="users">Users</button>
@@ -866,6 +867,82 @@ newsweek.com|Newsweek"></textarea>
             <button type="submit" class="btn-primary save-btn">Save Settings</button>
         </form>
 
+        <!-- Plugins Tab -->
+        <div class="tab-content" id="tab-plugins">
+            <div class="admin-section">
+                <h3>AI Plugins</h3>
+                <p class="section-description">Plugins allow the AI to interact with external services like budget trackers, torrent clients, and more.</p>
+
+                <div id="pluginList" class="plugin-list">
+                    <!-- Plugins loaded here -->
+                </div>
+
+                <h3>Add Plugin</h3>
+                <form id="createPluginForm" class="plugin-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="pluginName">Name</label>
+                            <input type="text" id="pluginName" placeholder="budget" required>
+                            <small>Short identifier (no spaces)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="pluginBaseUrl">Base URL</label>
+                            <input type="url" id="pluginBaseUrl" placeholder="https://api.example.com/v1" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="pluginDescription">Description</label>
+                        <textarea id="pluginDescription" rows="2" placeholder="What this plugin does - helps the AI know when to use it" required></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="pluginAuthType">Auth Type</label>
+                            <select id="pluginAuthType">
+                                <option value="none">None</option>
+                                <option value="header">API Key (Header)</option>
+                                <option value="bearer">Bearer Token</option>
+                                <option value="basic">Basic Auth</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="authHeaderGroup" style="display:none;">
+                            <label for="pluginAuthHeader">Header Name</label>
+                            <input type="text" id="pluginAuthHeader" value="X-API-Key">
+                        </div>
+                        <div class="form-group" id="authValueGroup" style="display:none;">
+                            <label for="pluginAuthValue">API Key / Token</label>
+                            <input type="password" id="pluginAuthValue" placeholder="Your API key">
+                        </div>
+                    </div>
+
+                    <div class="form-group" id="globalPluginGroup" style="margin-top: 15px;">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="pluginIsGlobal">
+                            <span>Global Plugin (available to selected users)</span>
+                        </label>
+                        <small>Admin only: Create a plugin available to specific users instead of just yourself</small>
+                    </div>
+
+                    <div class="form-group" id="allowedUsersGroup" style="display: none;">
+                        <label>Allowed Users</label>
+                        <div id="allowedUsersList" class="allowed-users-list">
+                            <!-- Users loaded here -->
+                        </div>
+                        <small>Select which users can use this plugin. Leave empty for all users.</small>
+                    </div>
+
+                    <h4>Actions</h4>
+                    <div id="pluginActions" class="plugin-actions">
+                        <!-- Actions added here -->
+                    </div>
+                    <button type="button" class="btn-secondary" id="addActionBtn">+ Add Action</button>
+
+                    <div class="form-actions" style="margin-top: 20px;">
+                        <button type="submit" class="btn-primary">Create Plugin</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <!-- Users Tab -->
         <div class="tab-content" id="tab-users">
             <div class="admin-section">
@@ -1222,6 +1299,120 @@ newsweek.com|Newsweek"></textarea>
 .btn-small {
     font-size: 12px;
     padding: 4px 10px;
+}
+
+/* Plugin styles */
+.plugin-list {
+    margin-bottom: 30px;
+}
+.plugin-item {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 10px;
+}
+.plugin-item.global {
+    border-left: 3px solid var(--accent);
+}
+.plugin-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.plugin-name {
+    font-weight: 600;
+    font-size: 16px;
+    color: var(--text-primary);
+}
+.plugin-name .badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    margin-left: 8px;
+    background: var(--accent);
+    color: white;
+    border-radius: 4px;
+}
+.plugin-description {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-bottom: 10px;
+}
+.plugin-url {
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--bg-primary);
+    padding: 4px 8px;
+    border-radius: 4px;
+    display: inline-block;
+    margin-bottom: 10px;
+}
+.plugin-actions-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+.plugin-action-tag {
+    background: var(--bg-primary);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.plugin-controls {
+    display: flex;
+    gap: 8px;
+}
+.action-item {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+}
+.action-item .form-row {
+    margin-bottom: 10px;
+}
+.action-item .remove-action {
+    float: right;
+    color: var(--danger);
+    cursor: pointer;
+    font-size: 18px;
+}
+.section-description {
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+}
+.allowed-users-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    background: var(--bg-primary);
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    max-height: 150px;
+    overflow-y: auto;
+}
+.user-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-secondary);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+.user-checkbox input {
+    margin: 0;
+}
+.plugin-users-badge {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 5px;
 }
 </style>
 
@@ -1608,6 +1799,7 @@ document.getElementById('refreshImageQueueBtn').addEventListener('click', refres
 // Initialize
 loadSettings();
 loadUsers();
+loadUsersForPlugins().then(() => loadPlugins());
 
 // Update backend UI after settings load
 setTimeout(() => {
@@ -1616,6 +1808,227 @@ setTimeout(() => {
     refreshImageQueue();
     loadRagCollections();
 }, 500);
+
+// === Plugin Management ===
+
+let pluginActionCounter = 0;
+let allUsersCache = [];
+
+async function loadPlugins() {
+    try {
+        const response = await fetch('/api/plugins');
+        if (response.ok) {
+            const plugins = await response.json();
+            const list = document.getElementById('pluginList');
+
+            if (plugins.length === 0) {
+                list.innerHTML = '<div class="rag-empty">No plugins configured yet.<br>Add a plugin below to enable AI integrations.</div>';
+                return;
+            }
+
+            list.innerHTML = plugins.map(p => {
+                // Build allowed users display
+                let usersDisplay = '';
+                if (p.is_global && p.allowed_users && p.allowed_users.length > 0) {
+                    const userNames = p.allowed_users.map(id => {
+                        const user = allUsersCache.find(u => u.id === id);
+                        return user ? user.username : `User ${id}`;
+                    });
+                    usersDisplay = `<div class="plugin-users-badge">Users: ${userNames.join(', ')}</div>`;
+                } else if (p.is_global) {
+                    usersDisplay = '<div class="plugin-users-badge">All users</div>';
+                }
+
+                return `
+                <div class="plugin-item ${p.is_global ? 'global' : ''}">
+                    <div class="plugin-header">
+                        <span class="plugin-name">
+                            ${escapeHtml(p.name)}
+                            ${p.is_global ? '<span class="badge">Global</span>' : ''}
+                        </span>
+                        <div class="plugin-controls">
+                            <button class="btn-secondary btn-small" onclick="togglePlugin(${p.id}, ${p.enabled})">${p.enabled ? 'Disable' : 'Enable'}</button>
+                            ${!p.is_global || {{ 'true' if user.is_admin else 'false' }} ? `<button class="btn-danger btn-small" onclick="deletePlugin(${p.id})">Delete</button>` : ''}
+                        </div>
+                    </div>
+                    <div class="plugin-description">${escapeHtml(p.description)}</div>
+                    <div class="plugin-url">${escapeHtml(p.base_url)}</div>
+                    ${usersDisplay}
+                    <div class="plugin-actions-list">
+                        ${p.actions.map(a => `<span class="plugin-action-tag">${escapeHtml(a.name)}</span>`).join('')}
+                    </div>
+                </div>
+            `}).join('');
+        }
+    } catch (err) {
+        console.error('Failed to load plugins:', err);
+    }
+}
+
+async function loadUsersForPlugins() {
+    // Only show global plugin option for admins
+    const isAdmin = {{ 'true' if user.is_admin else 'false' }};
+    if (!isAdmin) {
+        document.getElementById('globalPluginGroup').style.display = 'none';
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/admin/users');
+        if (response.ok) {
+            allUsersCache = await response.json();
+            const list = document.getElementById('allowedUsersList');
+            list.innerHTML = allUsersCache.map(u => `
+                <label class="user-checkbox">
+                    <input type="checkbox" name="allowedUser" value="${u.id}">
+                    ${escapeHtml(u.username)}
+                </label>
+            `).join('');
+        }
+    } catch (err) {
+        console.error('Failed to load users:', err);
+    }
+}
+
+document.getElementById('pluginIsGlobal').addEventListener('change', (e) => {
+    document.getElementById('allowedUsersGroup').style.display = e.target.checked ? 'block' : 'none';
+});
+
+async function togglePlugin(id, currentState) {
+    try {
+        const response = await fetch(`/api/plugins/${id}/toggle`, { method: 'POST' });
+        if (response.ok) {
+            loadPlugins();
+        }
+    } catch (err) {
+        console.error('Failed to toggle plugin:', err);
+    }
+}
+
+async function deletePlugin(id) {
+    if (!confirm('Delete this plugin?')) return;
+    try {
+        const response = await fetch(`/api/plugins/${id}`, { method: 'DELETE' });
+        if (response.ok) {
+            loadPlugins();
+        } else {
+            alert('Failed to delete plugin');
+        }
+    } catch (err) {
+        console.error('Failed to delete plugin:', err);
+    }
+}
+
+function addActionRow(name = '', description = '', method = 'GET', path = '') {
+    const container = document.getElementById('pluginActions');
+    const id = pluginActionCounter++;
+    const html = `
+        <div class="action-item" data-action-id="${id}">
+            <span class="remove-action" onclick="this.parentElement.remove()">&times;</span>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Action Name</label>
+                    <input type="text" class="action-name" value="${escapeHtml(name)}" placeholder="get_summary" required>
+                </div>
+                <div class="form-group">
+                    <label>Method</label>
+                    <select class="action-method">
+                        <option value="GET" ${method === 'GET' ? 'selected' : ''}>GET</option>
+                        <option value="POST" ${method === 'POST' ? 'selected' : ''}>POST</option>
+                        <option value="PUT" ${method === 'PUT' ? 'selected' : ''}>PUT</option>
+                        <option value="DELETE" ${method === 'DELETE' ? 'selected' : ''}>DELETE</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Path</label>
+                    <input type="text" class="action-path" value="${escapeHtml(path)}" placeholder="/endpoint" required>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <input type="text" class="action-description" value="${escapeHtml(description)}" placeholder="What this action does" required>
+            </div>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', html);
+}
+
+document.getElementById('addActionBtn').addEventListener('click', () => addActionRow());
+
+document.getElementById('pluginAuthType').addEventListener('change', (e) => {
+    const type = e.target.value;
+    document.getElementById('authHeaderGroup').style.display = type === 'header' ? 'block' : 'none';
+    document.getElementById('authValueGroup').style.display = type !== 'none' ? 'block' : 'none';
+});
+
+document.getElementById('createPluginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const actions = [];
+    document.querySelectorAll('.action-item').forEach(item => {
+        actions.push({
+            name: item.querySelector('.action-name').value,
+            description: item.querySelector('.action-description').value,
+            method: item.querySelector('.action-method').value,
+            path: item.querySelector('.action-path').value
+        });
+    });
+
+    if (actions.length === 0) {
+        alert('Please add at least one action');
+        return;
+    }
+
+    const data = {
+        name: document.getElementById('pluginName').value,
+        description: document.getElementById('pluginDescription').value,
+        base_url: document.getElementById('pluginBaseUrl').value,
+        auth_type: document.getElementById('pluginAuthType').value,
+        auth_header: document.getElementById('pluginAuthHeader').value,
+        auth_value: document.getElementById('pluginAuthValue').value,
+        actions: actions
+    };
+
+    // Handle global plugin with allowed users (admin only)
+    const isGlobal = document.getElementById('pluginIsGlobal').checked;
+    if (isGlobal) {
+        const selectedUsers = [];
+        document.querySelectorAll('input[name="allowedUser"]:checked').forEach(cb => {
+            selectedUsers.push(parseInt(cb.value));
+        });
+        data.allowed_users = selectedUsers.length > 0 ? selectedUsers : [];
+    }
+
+    try {
+        const response = await fetch('/api/plugins', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        if (response.ok) {
+            // Reset form
+            document.getElementById('pluginName').value = '';
+            document.getElementById('pluginDescription').value = '';
+            document.getElementById('pluginBaseUrl').value = '';
+            document.getElementById('pluginAuthType').value = 'none';
+            document.getElementById('pluginAuthValue').value = '';
+            document.getElementById('pluginActions').innerHTML = '';
+            document.getElementById('authHeaderGroup').style.display = 'none';
+            document.getElementById('authValueGroup').style.display = 'none';
+            document.getElementById('pluginIsGlobal').checked = false;
+            document.getElementById('allowedUsersGroup').style.display = 'none';
+            document.querySelectorAll('input[name="allowedUser"]').forEach(cb => cb.checked = false);
+            loadPlugins();
+        } else {
+            const err = await response.json();
+            alert(err.detail || 'Failed to create plugin');
+        }
+    } catch (err) {
+        console.error('Failed to create plugin:', err);
+        alert('Failed to create plugin');
+    }
+});
 
 // === RAG Management ===
 

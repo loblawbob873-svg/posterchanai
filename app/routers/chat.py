@@ -19,6 +19,7 @@ from app.services.storage_service import StorageService
 from app.services.document_service import extract_pdf_text, extract_document_text, extract_image_text
 from app.services.email_service import EmailService
 from app.services.search_service import SearchService
+from app.services.plugin_service import PluginService
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -360,6 +361,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
         command_service = CommandService(db, user=user)
         storage_service = StorageService(db)
         search_service = SearchService(db)
+        plugin_service = PluginService(db)
 
         try:
             while True:
@@ -502,6 +504,10 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         system_prompt = chat_service.system_prompt.replace(
                             "{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d")
                         )
+                        # Add plugin information to system prompt
+                        plugin_prompt = plugin_service.build_system_prompt_addition(user.id)
+                        if plugin_prompt:
+                            system_prompt += plugin_prompt
                         messages = [
                             {"role": "system", "content": system_prompt}
                         ]
@@ -628,11 +634,55 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                         # Save assistant response
                         if full_response:
                             clean_response = chat_service.strip_thinking_tags(full_response)
-                            assistant_msg = Message(
-                                conversation_id=conversation_id,
-                                role="assistant",
-                                content=clean_response
-                            )
+
+                            # Check for plugin tool calls in the response
+                            tool_calls = plugin_service.parse_tool_calls(clean_response)
+                            if tool_calls:
+                                # Execute tool calls
+                                stripped_response, results = await plugin_service.execute_all_tool_calls(
+                                    clean_response, user.id
+                                )
+
+                                # Send tool results to client
+                                for r in results:
+                                    await manager.send_json(user.id, {
+                                        "type": "plugin_result",
+                                        "plugin": r['plugin'],
+                                        "action": r['action'],
+                                        "result": r['result']
+                                    }, conn_id)
+
+                                # Get AI follow-up response with tool results
+                                result_context = plugin_service.format_results_for_ai(results)
+                                follow_up_messages = messages + [
+                                    {"role": "assistant", "content": stripped_response},
+                                    {"role": "user", "content": f"Here are the results from the plugin calls:{result_context}\n\nPlease summarize these results naturally for the user."}
+                                ]
+
+                                # Stream follow-up response
+                                follow_up_response = ""
+                                async for chunk in chat_service.chat_stream(follow_up_messages):
+                                    if manager.should_stop(user.id, conn_id):
+                                        break
+                                    follow_up_response += chunk
+                                    await manager.send_json(user.id, {
+                                        "type": "stream",
+                                        "content": chunk
+                                    }, conn_id)
+
+                                # Save combined response
+                                final_response = chat_service.strip_thinking_tags(follow_up_response) if follow_up_response else stripped_response
+                                assistant_msg = Message(
+                                    conversation_id=conversation_id,
+                                    role="assistant",
+                                    content=final_response
+                                )
+                            else:
+                                assistant_msg = Message(
+                                    conversation_id=conversation_id,
+                                    role="assistant",
+                                    content=clean_response
+                                )
                             db.add(assistant_msg)
                             db.commit()
 
