@@ -370,9 +370,8 @@ class CommandService:
 
         # Summarize the first YouTube URL found
         success, result = await summarize_youtube(urls[0], self.chat_service)
-        if success:
-            return {"type": "text", "content": result}
-        return None
+        # Return result whether success or failure (so user sees error messages)
+        return {"type": "text", "content": result}
 
 
 def get_command_service(db: Session) -> CommandService:

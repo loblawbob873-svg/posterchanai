@@ -880,6 +880,10 @@ Type these commands in the chat (or use the mode buttons):
 | `geni <prompt>` | Generate an AI image from your prompt |
 | `img2img <prompt>` | Transform an uploaded image with your prompt |
 | `regen` | Regenerate the last image with a new seed |
+| `yt <url>` | Summarize a YouTube video transcript |
+| `flood` | Torrent manager (list, add, start, stop, delete) |
+| `budget` | Budget manager (summary, bills, add, pay) |
+| `firewall` | Firewall status and log search |
 
 ### Edit Image (img2img) with Face Swap
 
