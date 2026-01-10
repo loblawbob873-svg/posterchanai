@@ -7,6 +7,8 @@ from datetime import datetime
 import os
 import logging
 
+from app.middleware.csrf import CSRFMiddleware
+
 # Configure logging for console output
 logging.basicConfig(
     level=logging.INFO,
@@ -25,6 +27,9 @@ app = FastAPI(
     description="AI Chat Application",
     version="1.0.0"
 )
+
+# Add CSRF protection middleware
+app.add_middleware(CSRFMiddleware)
 
 # Mount static files
 static_path = os.path.join(os.path.dirname(__file__), "..", "static")

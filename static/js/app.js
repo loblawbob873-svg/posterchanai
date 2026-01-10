@@ -177,7 +177,7 @@ class App {
 
     async createConversation() {
         try {
-            const response = await fetch('/api/conversations', {
+            const response = await csrfFetch('/api/conversations', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ title: 'New Chat' })
@@ -205,7 +205,7 @@ class App {
         if (!confirm('Delete this chat?')) return;
 
         try {
-            const response = await fetch(`/api/conversations/${this.currentConversation.id}`, {
+            const response = await csrfFetch(`/api/conversations/${this.currentConversation.id}`, {
                 method: 'DELETE'
             });
 
@@ -238,7 +238,7 @@ class App {
         if (!confirm('Delete ALL chats? This cannot be undone.')) return;
 
         try {
-            const response = await fetch('/api/conversations', {
+            const response = await csrfFetch('/api/conversations', {
                 method: 'DELETE'
             });
 
@@ -257,7 +257,7 @@ class App {
 
     async logout() {
         try {
-            await fetch('/api/auth/logout', { method: 'POST' });
+            await csrfFetch('/api/auth/logout', { method: 'POST' });
             window.location.href = '/login';
         } catch (err) {
             console.error('Logout failed:', err);

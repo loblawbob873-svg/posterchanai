@@ -66,7 +66,7 @@ document.getElementById('settingsForm').addEventListener('submit', async (e) => 
     }
 
     try {
-        const response = await fetch('/api/admin/settings', {
+        const response = await csrfFetch('/api/admin/settings', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ settings })
@@ -74,7 +74,7 @@ document.getElementById('settingsForm').addEventListener('submit', async (e) => 
         if (response.ok) {
             // Apply MCP settings (start/stop based on enabled setting)
             try {
-                const mcpResponse = await fetch('/api/admin/mcp-apply', { method: 'POST' });
+                const mcpResponse = await csrfFetch('/api/admin/mcp-apply', { method: 'POST' });
                 const mcpData = await mcpResponse.json();
                 // Update MCP status display
                 const statusDiv = document.getElementById('mcpStatus');
@@ -130,7 +130,7 @@ async function resetPassword(userId, username) {
     if (!newPassword) return;
 
     try {
-        const response = await fetch(`/api/admin/users/${userId}/password`, {
+        const response = await csrfFetch(`/api/admin/users/${userId}/password`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ password: newPassword })
@@ -150,7 +150,7 @@ async function resetPassword(userId, username) {
 async function deleteUser(id) {
     if (!confirm('Delete this user?')) return;
     try {
-        const response = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+        const response = await csrfFetch(`/api/admin/users/${id}`, { method: 'DELETE' });
         if (response.ok) {
             loadUsers();
         } else {
@@ -170,7 +170,7 @@ document.getElementById('createUserForm').addEventListener('submit', async (e) =
     const is_admin = document.getElementById('newIsAdmin').checked;
 
     try {
-        const response = await fetch('/api/admin/users', {
+        const response = await csrfFetch('/api/admin/users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password, is_admin })
@@ -205,7 +205,7 @@ document.getElementById('sendTestEmailBtn').addEventListener('click', async () =
     resultDiv.textContent = 'Sending test email...';
 
     try {
-        const response = await fetch('/api/admin/test-email', {
+        const response = await csrfFetch('/api/admin/test-email', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ to_email: email })
@@ -251,7 +251,7 @@ document.getElementById('reloadModelBtn').addEventListener('click', async () => 
     statusDiv.style.display = 'block';
 
     try {
-        const response = await fetch('/api/admin/reload-model', {
+        const response = await csrfFetch('/api/admin/reload-model', {
             method: 'POST'
         });
 
@@ -278,7 +278,7 @@ document.getElementById('reloadEmbeddingModelBtn').addEventListener('click', asy
     statusDiv.style.display = 'block';
 
     try {
-        const response = await fetch('/api/admin/reload-embedding-model', {
+        const response = await csrfFetch('/api/admin/reload-embedding-model', {
             method: 'POST'
         });
 
@@ -305,7 +305,7 @@ document.getElementById('clearRagCacheBtn').addEventListener('click', async () =
     statusDiv.style.display = 'block';
 
     try {
-        const response = await fetch('/api/admin/clear-rag-cache', {
+        const response = await csrfFetch('/api/admin/clear-rag-cache', {
             method: 'POST'
         });
 
@@ -349,7 +349,7 @@ document.getElementById('reloadImageModelBtn').addEventListener('click', async (
     statusDiv.style.display = 'block';
 
     try {
-        const response = await fetch('/api/admin/reload-image-model', {
+        const response = await csrfFetch('/api/admin/reload-image-model', {
             method: 'POST'
         });
 
@@ -404,7 +404,7 @@ document.getElementById('mcpRestartBtn').addEventListener('click', async () => {
     statusDiv.style.display = 'block';
 
     try {
-        const response = await fetch('/api/admin/mcp-restart', { method: 'POST' });
+        const response = await csrfFetch('/api/admin/mcp-restart', { method: 'POST' });
         const data = await response.json();
 
         if (response.ok && data.success) {
@@ -427,7 +427,7 @@ document.getElementById('mcpWarmupBtn').addEventListener('click', async () => {
     statusDiv.style.display = 'block';
 
     try {
-        const response = await fetch('/api/admin/mcp-warmup', { method: 'POST' });
+        const response = await csrfFetch('/api/admin/mcp-warmup', { method: 'POST' });
         const data = await response.json();
 
         if (response.ok && data.success) {
@@ -562,7 +562,7 @@ document.getElementById('pluginIsGlobal').addEventListener('change', (e) => {
 
 async function togglePlugin(id, currentState) {
     try {
-        const response = await fetch(`/api/plugins/${id}/toggle`, { method: 'POST' });
+        const response = await csrfFetch(`/api/plugins/${id}/toggle`, { method: 'POST' });
         if (response.ok) {
             loadPlugins();
         }
@@ -574,7 +574,7 @@ async function togglePlugin(id, currentState) {
 async function deletePlugin(id) {
     if (!confirm('Delete this plugin?')) return;
     try {
-        const response = await fetch(`/api/plugins/${id}`, { method: 'DELETE' });
+        const response = await csrfFetch(`/api/plugins/${id}`, { method: 'DELETE' });
         if (response.ok) {
             loadPlugins();
         } else {
@@ -803,7 +803,7 @@ document.getElementById('createPluginForm').addEventListener('submit', async (e)
         const url = editingPluginId ? `/api/plugins/${editingPluginId}` : '/api/plugins';
         const method = editingPluginId ? 'PUT' : 'POST';
 
-        const response = await fetch(url, {
+        const response = await csrfFetch(url, {
             method: method,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -978,7 +978,7 @@ document.getElementById('wizardGitSubmit').addEventListener('click', async () =>
     statusDiv.textContent = 'Cloning repository...';
 
     try {
-        const response = await fetch('/api/rag/collections/git', {
+        const response = await csrfFetch('/api/rag/collections/git', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, git_url: gitUrl, branch, file_patterns: patterns })
@@ -1022,7 +1022,7 @@ document.getElementById('wizardUploadSubmit').addEventListener('click', async ()
     formData.append('file_patterns', patterns);
 
     try {
-        const response = await fetch('/api/rag/collections/upload', {
+        const response = await csrfFetch('/api/rag/collections/upload', {
             method: 'POST',
             body: formData
         });
@@ -1056,7 +1056,7 @@ document.getElementById('wizardVscodeSubmit').addEventListener('click', async ()
 
     try {
         // Create collection
-        const colResponse = await fetch('/api/rag/collections', {
+        const colResponse = await csrfFetch('/api/rag/collections', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, collection_type: 'watcher', file_patterns: patterns })
@@ -1070,7 +1070,7 @@ document.getElementById('wizardVscodeSubmit').addEventListener('click', async ()
         }
 
         // Create watcher
-        const watchResponse = await fetch('/api/rag/watchers', {
+        const watchResponse = await csrfFetch('/api/rag/watchers', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ collection_id: colData.id })
@@ -1139,7 +1139,7 @@ function copyApiKey() {
 async function deleteCollection(id) {
     if (!confirm('Delete this codebase and all indexed files?')) return;
     try {
-        const response = await fetch(`/api/rag/collections/${id}`, { method: 'DELETE' });
+        const response = await csrfFetch(`/api/rag/collections/${id}`, { method: 'DELETE' });
         if (response.ok) {
             loadRagCollections();
         } else {
@@ -1152,7 +1152,7 @@ async function deleteCollection(id) {
 
 async function reindexCollection(id) {
     try {
-        const response = await fetch(`/api/rag/collections/${id}/reindex`, { method: 'POST' });
+        const response = await csrfFetch(`/api/rag/collections/${id}/reindex`, { method: 'POST' });
         if (response.ok) {
             alert('Re-indexing started');
             loadRagCollections();
@@ -1185,7 +1185,7 @@ async function pullCollection(id) {
     try {
         btn.disabled = true;
         btn.textContent = '⏳ Pulling...';
-        const response = await fetch(`/api/rag/collections/${id}/pull`, { method: 'POST' });
+        const response = await csrfFetch(`/api/rag/collections/${id}/pull`, { method: 'POST' });
         if (response.ok) {
             btn.textContent = '⏳ Indexing...';
             // Poll for completion
@@ -1247,7 +1247,7 @@ async function showApiKey(collectionId) {
                 }
             } else {
                 alert('No watcher found. Creating one...');
-                const createResp = await fetch('/api/rag/watchers', {
+                const createResp = await csrfFetch('/api/rag/watchers', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ collection_id: collectionId })
@@ -1316,7 +1316,7 @@ async function saveCollection(andReindex = false) {
     statusDiv.textContent = 'Saving...';
 
     try {
-        const response = await fetch(`/api/rag/collections/${id}`, {
+        const response = await csrfFetch(`/api/rag/collections/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -1325,7 +1325,7 @@ async function saveCollection(andReindex = false) {
         if (response.ok) {
             if (andReindex) {
                 statusDiv.textContent = 'Saved! Starting re-index...';
-                const reindexResp = await fetch(`/api/rag/collections/${id}/reindex`, { method: 'POST' });
+                const reindexResp = await csrfFetch(`/api/rag/collections/${id}/reindex`, { method: 'POST' });
                 if (reindexResp.ok) {
                     statusDiv.className = 'rag-status-message success';
                     statusDiv.textContent = 'Saved and re-indexing started!';

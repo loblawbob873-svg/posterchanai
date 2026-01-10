@@ -71,7 +71,7 @@ class APIKeysManager {
         const name = nameInput.value.trim() || 'Default';
 
         try {
-            const response = await fetch('/api/auth/api-keys', {
+            const response = await csrfFetch('/api/auth/api-keys', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name })
@@ -179,7 +179,7 @@ class APIKeysManager {
 
     async toggleKey(id) {
         try {
-            const response = await fetch(`/api/auth/api-keys/${id}/toggle`, {
+            const response = await csrfFetch(`/api/auth/api-keys/${id}/toggle`, {
                 method: 'PUT'
             });
             if (response.ok) {
@@ -194,7 +194,7 @@ class APIKeysManager {
         if (!confirm('Delete this API key? Any applications using it will stop working.')) return;
 
         try {
-            const response = await fetch(`/api/auth/api-keys/${id}`, {
+            const response = await csrfFetch(`/api/auth/api-keys/${id}`, {
                 method: 'DELETE'
             });
             if (response.ok) {

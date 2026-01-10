@@ -12,7 +12,7 @@ import re
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -240,13 +240,9 @@ def start_miniflux_scheduler():
         logger.warning("Miniflux scheduler already running")
         return
 
-    # Get interval from settings
+    # Check if enabled
     db = SessionLocal()
     try:
-        interval_setting = db.query(Setting).filter(Setting.key == "miniflux_interval").first()
-        interval_minutes = int(interval_setting.value) if interval_setting else 30
-
-        # Check if enabled
         enabled_setting = db.query(Setting).filter(Setting.key == "miniflux_enabled").first()
         if not enabled_setting or enabled_setting.value.lower() != "true":
             logger.info("Miniflux scheduler disabled")
@@ -256,21 +252,17 @@ def start_miniflux_scheduler():
 
     miniflux_scheduler = AsyncIOScheduler()
 
-    # Run every N minutes
+    # Run at :00 and :30 every hour (cron-based, not affected by restarts)
     miniflux_scheduler.add_job(
         check_and_run_miniflux_news,
-        IntervalTrigger(minutes=interval_minutes),
+        CronTrigger(minute="0,30"),
         id="miniflux_scheduler",
         name="Miniflux News Scheduler",
         replace_existing=True
     )
 
     miniflux_scheduler.start()
-    logger.info(f"Miniflux scheduler started - checking every {interval_minutes} minutes")
-
-    # Run immediately on startup
-    import asyncio
-    asyncio.create_task(check_and_run_miniflux_news())
+    logger.info("Miniflux scheduler started - running at :00 and :30 every hour")
 
 
 def stop_miniflux_scheduler():

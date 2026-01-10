@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         const id = btn.dataset.id;
                         if (confirm('Delete this collection? This cannot be undone.')) {
                             try {
-                                const resp = await fetch(`/api/rag/collections/${id}`, { method: 'DELETE' });
+                                const resp = await csrfFetch(`/api/rag/collections/${id}`, { method: 'DELETE' });
                                 if (resp.ok) {
                                     // Remove from selected collections
                                     selectedCollections = selectedCollections.filter(cid => cid !== parseInt(id));
@@ -142,7 +142,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             btn.textContent = '⏳';
                             btn.title = 'Pulling & indexing...';
                             btn.classList.add('pulling');
-                            const resp = await fetch(`/api/rag/collections/${id}/pull`, { method: 'POST' });
+                            const resp = await csrfFetch(`/api/rag/collections/${id}/pull`, { method: 'POST' });
                             if (resp.ok) {
                                 // Keep showing spinner while polling for completion
                                 let attempts = 0;
@@ -284,7 +284,7 @@ document.addEventListener('DOMContentLoaded', function() {
             formData.append('file', ragUploadFile.files[0]);
 
             try {
-                const response = await fetch('/api/rag/collections/upload', {
+                const response = await csrfFetch('/api/rag/collections/upload', {
                     method: 'POST',
                     body: formData
                 });

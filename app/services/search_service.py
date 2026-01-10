@@ -1,12 +1,71 @@
 import httpx
+import ipaddress
 import logging
 import re
+import socket
 from typing import Optional
+from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 from bs4 import BeautifulSoup
 from app.models import Setting
 
 logger = logging.getLogger(__name__)
+
+
+def is_safe_url(url: str) -> tuple[bool, str]:
+    """
+    SSRF protection: Validate that URL doesn't point to internal networks.
+    Returns (is_safe, error_message).
+    """
+    try:
+        parsed = urlparse(url)
+
+        # Only allow http/https
+        if parsed.scheme not in ('http', 'https'):
+            return False, f"Invalid scheme: {parsed.scheme}"
+
+        hostname = parsed.hostname
+        if not hostname:
+            return False, "No hostname in URL"
+
+        # Block localhost variations
+        localhost_names = {'localhost', 'localhost.localdomain', '127.0.0.1', '::1'}
+        if hostname.lower() in localhost_names:
+            return False, "Localhost URLs not allowed"
+
+        # Resolve hostname to IP
+        try:
+            ip = socket.gethostbyname(hostname)
+            ip_obj = ipaddress.ip_address(ip)
+        except (socket.gaierror, ValueError) as e:
+            return False, f"Cannot resolve hostname: {e}"
+
+        # Block private/internal IP ranges
+        if ip_obj.is_private:
+            return False, f"Private IP not allowed: {ip}"
+        if ip_obj.is_loopback:
+            return False, f"Loopback IP not allowed: {ip}"
+        if ip_obj.is_link_local:
+            return False, f"Link-local IP not allowed: {ip}"
+        if ip_obj.is_reserved:
+            return False, f"Reserved IP not allowed: {ip}"
+        if ip_obj.is_multicast:
+            return False, f"Multicast IP not allowed: {ip}"
+
+        # Block common internal hostnames
+        internal_patterns = ['internal', 'intranet', 'corp', 'local', 'private']
+        for pattern in internal_patterns:
+            if pattern in hostname.lower():
+                return False, f"Internal hostname pattern detected: {hostname}"
+
+        # Block AWS/cloud metadata endpoints
+        metadata_ips = ['169.254.169.254', '100.100.100.200', 'fd00:ec2::254']
+        if ip in metadata_ips:
+            return False, "Cloud metadata endpoint not allowed"
+
+        return True, ""
+    except Exception as e:
+        return False, f"URL validation error: {e}"
 
 # Regex patterns for URL detection
 # Match full URLs with protocol
@@ -120,6 +179,17 @@ class SearchService:
 
     async def fetch_url_content(self, url: str, max_length: int = 15000) -> Optional[dict]:
         """Fetch and extract text content from a URL"""
+        # SSRF protection: validate URL before fetching
+        is_safe, error_msg = is_safe_url(url)
+        if not is_safe:
+            logger.warning(f"SSRF blocked: {url} - {error_msg}")
+            return {
+                "url": url,
+                "title": url,
+                "content": "",
+                "error": f"URL blocked: {error_msg}"
+            }
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",

@@ -92,17 +92,47 @@ setup_llama_cpp_intel() {
     # Create libittnotify stub if not exists
     create_vtune_stub
 
-    # Install IPEX-LLM
+    # Install PyTorch with XPU support from Intel's index
+    echo "  Installing PyTorch with XPU support..."
+    pip install torch torchvision \
+        --index-url https://download.pytorch.org/whl/xpu \
+        -q 2>/dev/null || {
+        print_warning "XPU PyTorch not available, trying CPU fallback..."
+        pip install torch torchvision -q
+    }
+
+    # Install Intel Extension for PyTorch (provides XPU device support)
+    echo "  Installing Intel Extension for PyTorch..."
+    pip install --upgrade intel-extension-for-pytorch \
+        --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ \
+        -q 2>/dev/null || print_warning "IPEX install failed, GPU acceleration may not work"
+
+    # Install IPEX-LLM (provides optimized llama.cpp bindings for Intel GPUs)
     echo "  Installing IPEX-LLM..."
     pip install --pre --upgrade ipex-llm[cpp] -q
 
-    # Fix executable stack issue on modern glibc
+    # Verify IPEX installation
+    if python -c "import intel_extension_for_pytorch" 2>/dev/null; then
+        print_success "Intel Extension for PyTorch installed successfully"
+    else
+        print_warning "Intel Extension for PyTorch import failed - GPU may not be used"
+    fi
+
+    # Fix executable stack issue on modern glibc (2.41+)
+    # This is required for systems with strict memory protection
     if command -v patchelf &>/dev/null; then
         echo "  Fixing IPEX library executable stack flags..."
         local IPEX_LIB
-        IPEX_LIB=$(find venv-ipex/lib -name "libintel-ext-pt-cpu.so" 2>/dev/null | head -1)
-        if [ -n "$IPEX_LIB" ]; then
+        # Find the library in the current venv
+        IPEX_LIB=$(python -c "import intel_extension_for_pytorch, os; print(os.path.dirname(intel_extension_for_pytorch.__file__) + '/lib/libintel-ext-pt-cpu.so')" 2>/dev/null)
+        if [ -f "$IPEX_LIB" ]; then
             patchelf --clear-execstack "$IPEX_LIB" 2>/dev/null && print_success "Fixed executable stack on IPEX library" || true
+        else
+            # Fallback: search in venv
+            IPEX_LIB=$(find "$VIRTUAL_ENV/lib" -name "libintel-ext-pt-cpu.so" 2>/dev/null | head -1)
+            if [ -n "$IPEX_LIB" ]; then
+                patchelf --clear-execstack "$IPEX_LIB" 2>/dev/null && print_success "Fixed executable stack on IPEX library" || true
+            fi
         fi
     fi
 

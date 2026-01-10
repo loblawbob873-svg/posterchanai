@@ -218,7 +218,7 @@ class ChatHandler {
                 aiToggleLabel.textContent = enabled ? 'Using: Custom AI' : 'Using: Server AI';
 
                 try {
-                    await fetch('/api/auth/settings', {
+                    await csrfFetch('/api/auth/settings', {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ custom_ai_enabled: enabled })
@@ -289,7 +289,7 @@ class ChatHandler {
                 try {
                     // Don't send placeholder '********' as actual key - use null to indicate "use stored key"
                     const apiKeyValue = customAiApiKey.value === '********' ? null : (customAiApiKey.value || null);
-                    const response = await fetch('/api/auth/test-custom-ai', {
+                    const response = await csrfFetch('/api/auth/test-custom-ai', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -316,7 +316,7 @@ class ChatHandler {
                 testImageResult.textContent = 'Testing...';
                 testImageResult.className = 'test-result';
                 try {
-                    const response = await fetch('/api/auth/test-custom-image?url=' + encodeURIComponent(customImageUrl.value), {
+                    const response = await csrfFetch('/api/auth/test-custom-image?url=' + encodeURIComponent(customImageUrl.value), {
                         method: 'POST'
                     });
                     const data = await response.json();
@@ -458,7 +458,7 @@ class ChatHandler {
                 }
 
                 try {
-                    const response = await fetch('/api/auth/settings', {
+                    const response = await csrfFetch('/api/auth/settings', {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(settingsData)
@@ -504,7 +504,7 @@ class ChatHandler {
                     formData.append('file', file);
 
                     try {
-                        const response = await fetch('/api/auth/avatar', {
+                        const response = await csrfFetch('/api/auth/avatar', {
                             method: 'POST',
                             body: formData
                         });
@@ -531,7 +531,7 @@ class ChatHandler {
                     deleteAvatarBtn.addEventListener('click', async () => {
                         avatarStatus.textContent = 'Removing...';
                         try {
-                            const response = await fetch('/api/auth/avatar', { method: 'DELETE' });
+                            const response = await csrfFetch('/api/auth/avatar', { method: 'DELETE' });
                             if (response.ok) {
                                 this.updateAvatarPreview(null);
                                 avatarStatus.textContent = 'Avatar removed';
@@ -1540,7 +1540,7 @@ class ChatHandler {
         }
 
         try {
-            const response = await fetch('/api/chat/email-response', {
+            const response = await csrfFetch('/api/chat/email-response', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content: content })
