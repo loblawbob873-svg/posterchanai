@@ -7,12 +7,16 @@ from app.services.image_factory import generate_image_for_user
 from app.services.chat_service import ChatService
 from app.services.plugin_service import PluginService
 from app.services.youtube_service import is_youtube_url, extract_youtube_urls, summarize_youtube
+from app.services.torrent_service import scrape_torrents, format_torrent_results, TorrentResult
 # Lock now handled inside image_factory for fine-grained control
 
 if TYPE_CHECKING:
     from app.models import User
 
 logger = logging.getLogger(__name__)
+
+# Cache for last torrent search results (per user session - simple in-memory cache)
+_torrent_cache: dict[int, list[TorrentResult]] = {}
 
 
 class CommandService:
@@ -22,6 +26,7 @@ class CommandService:
         "images": "Search for images",
         "geni": "Generate an AI image from your prompt",
         "yt": "Summarize a YouTube video: yt <url>",
+        "torrents": "Browse torrents: torrents [movies|tv|music|anime] | torrents download <#>",
         "flood": "Torrent manager: flood list | flood add <url> | flood start/stop/delete <hash>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
         "firewall": "Firewall: firewall | firewall search <ip> [date] | firewall analyze <ip>",
@@ -64,6 +69,8 @@ class CommandService:
             return await self._firewall_command(arg)
         elif command == "yt":
             return await self._youtube_command(arg)
+        elif command == "torrents":
+            return await self._torrents_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -358,6 +365,71 @@ class CommandService:
         target_url = urls[0]
         success, result = await summarize_youtube(target_url, self.chat_service)
         return {"type": "text", "content": result}
+
+    async def _torrents_command(self, arg: str) -> dict:
+        """Browse torrents from configured torrent site"""
+        global _torrent_cache
+
+        parts = arg.strip().split()
+        subcommand = parts[0].lower() if parts else "movies"
+
+        # Handle download subcommand
+        if subcommand in ("download", "dl", "get"):
+            if len(parts) < 2:
+                return {"type": "text", "content": "Usage: `torrents download <number>`\nFirst browse with `torrents movies` or another category."}
+
+            try:
+                num = int(parts[1])
+            except ValueError:
+                return {"type": "text", "content": "Please provide a valid number. Example: `torrents download 3`"}
+
+            # Get cached results
+            user_id = self.user.id if self.user else 0
+            cached = _torrent_cache.get(user_id, [])
+
+            if not cached:
+                return {"type": "text", "content": "No torrent results cached. Browse first with `torrents movies`, `torrents tv`, etc."}
+
+            if num < 1 or num > len(cached):
+                return {"type": "text", "content": f"Invalid number. Choose between 1 and {len(cached)}."}
+
+            torrent = cached[num - 1]
+            magnet = torrent.magnet
+
+            # Use flood command to add the torrent
+            if not self.user:
+                return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\nLogin required to add to Flood."}
+
+            # Execute flood add command
+            result = await self._flood_command(f"add {magnet}")
+            if "error" in result.get("content", "").lower():
+                return result
+
+            return {"type": "text", "content": f"**Adding to Flood:** {torrent.title}\n\n{result['content']}"}
+
+        # Handle category browsing
+        category = subcommand
+        if category not in ("movies", "tv", "music", "anime"):
+            category = "movies"
+
+        try:
+            results = await scrape_torrents(self.db, category, limit=15)
+
+            if not results:
+                return {"type": "text", "content": f"No {category} torrents found. The site may be unavailable or not configured.\n\nAdmin can set `torrent_site_url` in settings."}
+
+            # Cache results for download command
+            user_id = self.user.id if self.user else 0
+            _torrent_cache[user_id] = results
+
+            formatted = format_torrent_results(results, category)
+            formatted += f"\n\n*Use `torrents download <#>` to add to Flood*"
+
+            return {"type": "text", "content": formatted}
+
+        except Exception as e:
+            logger.error(f"Torrents command error: {e}")
+            return {"type": "text", "content": f"Error fetching torrents: {str(e)}"}
 
     async def check_youtube_url(self, message: str) -> Optional[dict]:
         """Check if message contains a YouTube URL and summarize it"""

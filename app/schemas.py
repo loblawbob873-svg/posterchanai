@@ -100,6 +100,7 @@ class SettingsResponse(BaseModel):
     # VRAM management
     vram_mode: str = "shared"  # "shared" (swap models) or "dedicated" (keep both)
     searxng_url: str = ""
+    torrent_site_url: str = ""  # TorrentGalaxy or compatible site URL
     tts_voice: str = "en-GB-SoniaNeural"
     tts_rate: str = "+5%"
     tts_pitch: str = "+10Hz"
