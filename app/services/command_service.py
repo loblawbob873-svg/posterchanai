@@ -7,7 +7,7 @@ from app.services.image_factory import generate_image_for_user
 from app.services.chat_service import ChatService
 from app.services.plugin_service import PluginService
 from app.services.youtube_service import is_youtube_url, extract_youtube_urls, summarize_youtube
-from app.services.torrent_service import scrape_torrents, format_torrent_results, TorrentResult
+from app.services.torrent_service import scrape_torrents, format_torrent_results, TorrentResult, scrape_all_categories, format_all_categories
 # Lock now handled inside image_factory for fine-grained control
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ class CommandService:
         "images": "Search for images",
         "geni": "Generate an AI image from your prompt",
         "yt": "Summarize a YouTube video: yt <url>",
-        "torrents": "Browse torrents: torrents [movies|tv|music|anime] | torrents download <#>",
+        "torrents": "Browse torrents: torrents | torrents movies|tv|music|anime | torrents download <#>",
         "flood": "Torrent manager: flood list | flood add <url> | flood start/stop/delete <hash>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
         "firewall": "Firewall: firewall | firewall search <ip> [date] | firewall analyze <ip>",
@@ -371,7 +371,7 @@ class CommandService:
         global _torrent_cache
 
         parts = arg.strip().split()
-        subcommand = parts[0].lower() if parts else "movies"
+        subcommand = parts[0].lower() if parts else ""
 
         # Handle download subcommand
         if subcommand in ("download", "dl", "get"):
@@ -407,10 +407,20 @@ class CommandService:
 
             return {"type": "text", "content": f"**Adding to Flood:** {torrent.title}\n\n{result['content']}"}
 
+        # No subcommand - show all categories overview
+        if not subcommand:
+            try:
+                all_results = await scrape_all_categories(self.db, limit_per_category=5)
+                formatted = format_all_categories(all_results)
+                return {"type": "text", "content": formatted}
+            except Exception as e:
+                logger.error(f"Torrents command error: {e}")
+                return {"type": "text", "content": f"Error fetching torrents: {str(e)}"}
+
         # Handle category browsing
         category = subcommand
         if category not in ("movies", "tv", "music", "anime"):
-            category = "movies"
+            return {"type": "text", "content": f"Unknown category: `{subcommand}`\n\nAvailable: `torrents movies`, `torrents tv`, `torrents music`, `torrents anime`"}
 
         try:
             results = await scrape_torrents(self.db, category, limit=15)

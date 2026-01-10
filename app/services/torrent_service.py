@@ -34,6 +34,7 @@ class TorrentResult:
     seeders: int
     leechers: int
     category: str
+    url: str = ""  # Link to torrent detail page
 
 
 def get_torrent_base_url(db: Session) -> str:
@@ -99,9 +100,11 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
                             title_link = parent.find("a", href=re.compile(r"/(?:torrent|post-detail)/"))
                             if title_link:
                                 title = title_link.get_text(strip=True)
+                                detail_url = base_url + title_link.get("href", "")
                             else:
                                 # Get first meaningful text
                                 title = parent.get_text(separator=" ", strip=True)[:100]
+                                detail_url = ""
 
                         results.append(TorrentResult(
                             title=title,
@@ -109,7 +112,8 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
                             size="N/A",
                             seeders=0,
                             leechers=0,
-                            category=category
+                            category=category,
+                            url=detail_url
                         ))
                     return results[:limit]
 
@@ -126,6 +130,9 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
                     title = title_elem.get_text(strip=True)
                     if not title or len(title) < 3:
                         continue
+
+                    # Get detail page URL
+                    detail_url = base_url + title_elem.get("href", "")
 
                     # Find magnet link
                     magnet_elem = row.find("a", href=re.compile(r"^magnet:\?"))
@@ -190,7 +197,8 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
                         size=size,
                         seeders=seeders,
                         leechers=leechers,
-                        category=category
+                        category=category,
+                        url=detail_url
                     ))
 
                     if len(results) >= limit:
@@ -230,7 +238,13 @@ def format_torrent_results(results: list[TorrentResult], category: str) -> str:
         else:
             seed_icon = "🔴"
 
-        lines.append(f"**{i}. {title}**")
+        # Make title a clickable link if URL available
+        if t.url:
+            title_display = f"[{title}]({t.url})"
+        else:
+            title_display = title
+
+        lines.append(f"**{i}. {title_display}**")
         lines.append(f"   {seed_icon} S:{t.seeders} L:{t.leechers} | {t.size}")
         lines.append(f"   `{t.magnet[:80]}...`\n")
 
@@ -254,3 +268,71 @@ async def get_torrents_formatted(db: Session, category: str = "movies", limit: i
     """
     results = await scrape_torrents(db, category, limit)
     return format_torrent_results(results, category)
+
+
+async def scrape_all_categories(db: Session, limit_per_category: int = 5) -> dict[str, list[TorrentResult]]:
+    """
+    Scrape torrents from all categories.
+
+    Args:
+        db: Database session for reading settings
+        limit_per_category: Maximum results per category
+
+    Returns:
+        Dict mapping category name to list of TorrentResult
+    """
+    import asyncio
+    categories = list(CATEGORY_PATHS.keys())
+    tasks = [scrape_torrents(db, cat, limit_per_category) for cat in categories]
+    results_list = await asyncio.gather(*tasks, return_exceptions=True)
+
+    all_results = {}
+    for cat, results in zip(categories, results_list):
+        if isinstance(results, Exception):
+            logger.error(f"Error scraping {cat}: {results}")
+            all_results[cat] = []
+        else:
+            all_results[cat] = results
+
+    return all_results
+
+
+def format_all_categories(all_results: dict[str, list[TorrentResult]]) -> str:
+    """Format results from all categories for display"""
+    lines = ["## Torrents\n"]
+
+    for category, results in all_results.items():
+        cat_title = category.upper()
+        lines.append(f"### {cat_title}\n")
+
+        if not results:
+            lines.append(f"*No {category} torrents found*\n")
+            continue
+
+        for i, t in enumerate(results, 1):
+            title = t.title[:60] + "..." if len(t.title) > 60 else t.title
+
+            # Seeder indicator
+            if t.seeders >= 50:
+                seed_icon = "🟢"
+            elif t.seeders >= 10:
+                seed_icon = "🟡"
+            elif t.seeders > 0:
+                seed_icon = "🟠"
+            else:
+                seed_icon = "🔴"
+
+            # Make title a clickable link if URL available
+            if t.url:
+                title_display = f"[{title}]({t.url})"
+            else:
+                title_display = title
+
+            lines.append(f"{i}. {seed_icon} {title_display} ({t.size})")
+
+        lines.append("")
+
+    lines.append("---")
+    lines.append("*Use `torrents movies`, `torrents tv`, `torrents music`, or `torrents anime` for more*")
+
+    return "\n".join(lines)
