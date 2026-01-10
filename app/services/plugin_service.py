@@ -244,7 +244,11 @@ class PluginService:
             return {'error': f'Action "{action_name}" not found in plugin "{plugin_name}"'}
 
         # Build the request
-        url = f"{plugin.base_url.rstrip('/')}/{action['path'].lstrip('/')}"
+        path = action.get('path', '').lstrip('/')
+        if path:
+            url = f"{plugin.base_url.rstrip('/')}/{path}"
+        else:
+            url = plugin.base_url.rstrip('/')
 
         # Substitute params in URL path
         for key, value in params.items():
