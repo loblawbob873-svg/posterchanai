@@ -659,6 +659,11 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                     {"role": "user", "content": f"Here are the results from the plugin calls:{result_context}\n\nPlease summarize these results naturally for the user."}
                                 ]
 
+                                # Signal frontend to clear current content for follow-up
+                                await manager.send_json(user.id, {
+                                    "type": "stream_clear"
+                                }, conn_id)
+
                                 # Stream follow-up response
                                 follow_up_response = ""
                                 async for chunk in chat_service.chat_stream(follow_up_messages):

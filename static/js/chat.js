@@ -871,6 +871,14 @@ class ChatHandler {
             case 'stream':
                 this.handleStreamChunk(data.content);
                 break;
+            case 'stream_clear':
+                // Clear current streaming content for follow-up (e.g., after plugin execution)
+                this.fullStreamContent = '';
+                if (this.streamingMessage) {
+                    const contentEl = this.streamingMessage.querySelector('.message-content');
+                    contentEl.innerHTML = '';
+                }
+                break;
             case 'stream_end':
                 this.handleStreamEnd();
                 break;
