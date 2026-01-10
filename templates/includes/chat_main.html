@@ -1,0 +1,53 @@
+<!-- Main Chat Area -->
+<main class="chat-main">
+    <header class="chat-header">
+        <button class="btn-icon mobile-menu" id="menuBtn">☰</button>
+        <div class="chat-title" id="chatTitle">Select a chat or start a new one</div>
+        <div class="header-actions">
+            <button class="btn-icon tts-toggle" id="ttsToggle" title="Toggle TTS">🔊</button>
+            <button class="btn-icon" id="deleteChatBtn" title="Delete Chat">🗑️</button>
+        </div>
+    </header>
+
+    <div class="mascot-section" id="mascotSection">
+        <div class="mascot-container">
+            <img src="/static/mascot/mascot-neutral-front-00.png" alt="Mascot" class="mascot-image" id="mascotImage">
+            <div class="speech-bubble" id="speechBubble"></div>
+        </div>
+        <div class="particles" id="particles"></div>
+    </div>
+
+    <div class="messages-container" id="messagesContainer">
+        <div class="messages" id="messages"></div>
+    </div>
+
+    <div class="quick-actions" id="quickActions">
+        <button class="quick-btn mode-btn active" data-mode="">Chat</button>
+        <button class="quick-btn mode-btn" data-mode="search">Search</button>
+        <button class="quick-btn mode-btn" data-mode="images">Images</button>
+        <button class="quick-btn mode-btn" data-mode="geni">Generate</button>
+        <button class="quick-btn" id="translateBtn">Translate</button>
+        <button class="quick-btn" id="newsBtn">News</button>
+        <button class="quick-btn" id="ragBtn" title="RAG Context">RAG</button>
+    </div>
+
+    <div class="input-area">
+        <div class="upload-preview" id="uploadPreview" style="display: none;">
+            <img id="imagePreview" alt="Preview">
+            <div id="filePreview"></div>
+            <button class="btn-icon remove-upload" id="removeUpload">×</button>
+        </div>
+        <div class="input-row">
+            <label class="btn-icon upload-btn" title="Attach file or image">
+                📎
+                <input type="file" id="fileInput" accept="image/*,.heic,.heif,.pdf,.txt,.py,.js,.ts,.json,.md,.csv,.html,.css,.docx,.xlsx,.pptx" style="display: none;">
+            </label>
+            <label class="btn-icon camera-btn" title="Take photo">
+                📷
+                <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display: none;">
+            </label>
+            <textarea id="messageInput" placeholder="Type a message or command..." rows="1"></textarea>
+            <button class="btn-send" id="sendBtn">Send</button>
+        </div>
+    </div>
+</main>

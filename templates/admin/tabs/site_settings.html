@@ -1,0 +1,102 @@
+<!-- Site Settings Tab -->
+<div class="tab-content" id="tab-site">
+    <fieldset>
+        <legend>Load Balancing</legend>
+        <div class="form-group">
+            <label for="chat_server_urls">Chat Server URLs</label>
+            <input type="text" id="chat_server_urls" name="chat_server_urls" placeholder="http://192.168.0.85:3051">
+            <small>Comma-separated URLs. Chat requests alternate between this server and listed servers. Local URLs on different ports (e.g., localhost:3052) are allowed.</small>
+        </div>
+        <div class="form-group">
+            <label for="image_server_urls">Image Server URLs</label>
+            <input type="text" id="image_server_urls" name="image_server_urls" placeholder="http://localhost:3052, http://nas.lan:3051">
+            <small>Comma-separated URLs. For dual-instance setup, use <code>http://localhost:3052</code> to forward images to a local image-only instance.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Registration</legend>
+        <div class="form-group">
+            <label for="allow_registration">
+                <input type="checkbox" id="allow_registration" name="allow_registration"> Allow User Registration
+            </label>
+            <small>Enable self-registration on the login page</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>API Access</legend>
+        <div class="form-group">
+            <label for="openai_api_key">Global API Key (optional)</label>
+            <input type="password" id="openai_api_key" name="openai_api_key" placeholder="sk-... (leave empty for user keys only)">
+            <small>Global key for /v1/chat/completions. Users can also generate their own keys.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>LLM Health Check</legend>
+        <div class="form-group">
+            <label for="ollama_ping_enabled">
+                <input type="checkbox" id="ollama_ping_enabled" name="ollama_ping_enabled"> Enable Health Check
+            </label>
+            <small>Periodically check LLM backend and recover if unresponsive</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="ollama_ping_interval">Ping Interval (seconds)</label>
+                <input type="number" id="ollama_ping_interval" name="ollama_ping_interval" value="90" min="30">
+            </div>
+            <div class="form-group">
+                <label for="ollama_restart_after_failures">Restart After Failures</label>
+                <input type="number" id="ollama_restart_after_failures" name="ollama_restart_after_failures" value="5" min="1">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="ollama_restart_command">Restart Command (Ollama only)</label>
+            <input type="text" id="ollama_restart_command" name="ollama_restart_command" value="sudo systemctl restart ollama">
+            <small>Command to restart Ollama service. Native/IPEX backends reload the model in-process instead.</small>
+        </div>
+        <div class="form-group" style="margin-top: 15px;">
+            <label for="gpu_memory_check_enabled">
+                <input type="checkbox" id="gpu_memory_check_enabled" name="gpu_memory_check_enabled"> Enable GPU Memory Monitoring
+            </label>
+            <small>Reload model when GPU VRAM usage exceeds threshold</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="gpu_memory_threshold">VRAM Threshold (%)</label>
+                <input type="number" id="gpu_memory_threshold" name="gpu_memory_threshold" value="99" min="50" max="100">
+            </div>
+            <div class="form-group">
+                <label for="gpu_type">GPU Type</label>
+                <select id="gpu_type" name="gpu_type">
+                    <option value="nvidia">NVIDIA</option>
+                    <option value="intel">Intel Arc</option>
+                </select>
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Storage</legend>
+        <div class="form-group">
+            <label for="upload_path">Upload Path</label>
+            <input type="text" id="upload_path" name="upload_path" value="/var/lib/posterchanai">
+            <small>Directory where user uploads and generated images are stored</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>News Sources</legend>
+        <div class="form-group">
+            <label for="news_sources">News Websites</label>
+            <textarea id="news_sources" name="news_sources" rows="6" placeholder="drudgereport.com|Drudge Report
+npr.org/sections/news|NPR
+nypost.com|NY Post
+foxnews.com|Fox News
+newsweek.com|Newsweek"></textarea>
+            <small>One per line: <code>domain|Display Name</code> (e.g., <code>npr.org/sections/news|NPR</code>). Leave empty to use defaults.</small>
+            <button type="button" class="btn-secondary" id="resetNewsSourcesBtn" style="margin-top: 8px;">Reset to Defaults</button>
+        </div>
+    </fieldset>
+</div>

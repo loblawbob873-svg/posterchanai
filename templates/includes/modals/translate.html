@@ -1,0 +1,42 @@
+<!-- Translate Modal -->
+<div class="modal" id="translateModal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Translate Document</h2>
+            <button class="btn-icon modal-close" id="closeTranslateModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="modal-info">Upload a file or image to translate its contents.</p>
+            <div class="settings-form">
+                <label for="targetLanguage">Target Language</label>
+                <select id="targetLanguage">
+                    <option value="English">English</option>
+                    <option value="Spanish">Spanish</option>
+                    <option value="French">French</option>
+                    <option value="German">German</option>
+                    <option value="Italian">Italian</option>
+                    <option value="Portuguese">Portuguese</option>
+                    <option value="Russian">Russian</option>
+                    <option value="Japanese">Japanese</option>
+                    <option value="Korean">Korean</option>
+                    <option value="Chinese (Simplified)">Chinese (Simplified)</option>
+                    <option value="Chinese (Traditional)">Chinese (Traditional)</option>
+                    <option value="Arabic">Arabic</option>
+                    <option value="Hindi">Hindi</option>
+                    <option value="Dutch">Dutch</option>
+                    <option value="Polish">Polish</option>
+                    <option value="Vietnamese">Vietnamese</option>
+                    <option value="Thai">Thai</option>
+                    <option value="Turkish">Turkish</option>
+                    <option value="Hebrew">Hebrew</option>
+                    <option value="Greek">Greek</option>
+                </select>
+                <label class="btn-primary translate-upload-btn">
+                    Choose File to Translate
+                    <input type="file" id="translateFileInput" accept="image/*,.heic,.heif,.pdf,.txt,.md,.docx" style="display: none;">
+                </label>
+                <div id="translateFileName" class="translate-file-name"></div>
+            </div>
+        </div>
+    </div>
+</div>

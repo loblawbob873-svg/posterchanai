@@ -79,6 +79,10 @@ async def startup():
     from app.services.news_scheduler import start_scheduler
     start_scheduler()
 
+    # Start Miniflux news scheduler
+    from app.services.miniflux_scheduler import start_miniflux_scheduler
+    start_miniflux_scheduler()
+
     # Auto-warmup RAG cache if enabled (only if MCP server is not handling it)
     db2 = SessionLocal()
     try:
@@ -111,6 +115,9 @@ async def shutdown():
     # Stop news scheduler
     from app.services.news_scheduler import stop_scheduler
     stop_scheduler()
+    # Stop Miniflux news scheduler
+    from app.services.miniflux_scheduler import stop_miniflux_scheduler
+    stop_miniflux_scheduler()
     # Stop MCP server
     from app.services.mcp_service import stop_mcp_server
     stop_mcp_server()

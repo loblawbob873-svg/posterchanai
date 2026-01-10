@@ -1,0 +1,19 @@
+<!-- API Keys Modal -->
+<div class="modal" id="apiKeysModal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>API Keys</h2>
+            <button class="btn-icon modal-close" id="closeApiKeysModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="modal-info">API keys allow external applications to access the AI API.</p>
+            <div class="api-key-form">
+                <input type="text" id="newKeyName" placeholder="Key name (optional)">
+                <button class="btn-primary" id="createApiKey">Generate New Key</button>
+            </div>
+            <div class="api-key-list" id="apiKeyList">
+                <!-- Keys loaded here -->
+            </div>
+        </div>
+    </div>
+</div>

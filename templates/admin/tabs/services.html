@@ -1,0 +1,172 @@
+<!-- Services Tab -->
+<div class="tab-content" id="tab-services">
+    <fieldset>
+        <legend>MCP Server (RAG API)</legend>
+        <div class="form-group">
+            <label for="mcp_enabled">
+                <input type="checkbox" id="mcp_enabled" name="mcp_enabled"> Enable MCP Server
+            </label>
+            <small>Exposes RAG API to MCP clients (Continue.dev, Claude Desktop, etc.)</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="mcp_host">Host</label>
+                <input type="text" id="mcp_host" name="mcp_host" value="0.0.0.0">
+                <small>0.0.0.0 for all interfaces</small>
+            </div>
+            <div class="form-group">
+                <label for="mcp_port">Port</label>
+                <input type="number" id="mcp_port" name="mcp_port" value="8808" min="1024" max="65535">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="mcp_warmup">
+                <input type="checkbox" id="mcp_warmup" name="mcp_warmup"> Auto-warmup on Start
+            </label>
+            <small>Pre-load embeddings into RAM when MCP server starts</small>
+        </div>
+        <div class="form-row" style="gap: 10px; margin-top: 15px;">
+            <button type="button" class="btn-secondary" id="mcpRestartBtn">Restart MCP Server</button>
+            <button type="button" class="btn-secondary" id="mcpWarmupBtn">Warmup Now</button>
+            <button type="button" class="btn-secondary" id="mcpStatusBtn">Check Status</button>
+        </div>
+        <div id="mcpStatus" class="model-status"></div>
+    </fieldset>
+
+    <fieldset>
+        <legend>SearXNG (Search)</legend>
+        <div class="form-group">
+            <label for="searxng_url">URL</label>
+            <input type="url" id="searxng_url" name="searxng_url" placeholder="https://search.example.com">
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Torrent Site</legend>
+        <div class="form-group">
+            <label for="torrent_site_url">TorrentGalaxy URL</label>
+            <input type="url" id="torrent_site_url" name="torrent_site_url" placeholder="https://torrentgalaxy.one">
+            <small>Base URL for TorrentGalaxy or compatible site (default: torrentgalaxy.one)</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Text-to-Speech</legend>
+        <div class="form-group">
+            <label for="tts_voice">Default Voice</label>
+            <input type="text" id="tts_voice" name="tts_voice" value="zh-CN-XiaoxiaoNeural">
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="tts_rate">Rate</label>
+                <input type="text" id="tts_rate" name="tts_rate" value="+5%">
+            </div>
+            <div class="form-group">
+                <label for="tts_pitch">Pitch</label>
+                <input type="text" id="tts_pitch" name="tts_pitch" value="+10Hz">
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Email (SMTP)</legend>
+        <div class="form-group">
+            <label for="smtp_enabled">
+                <input type="checkbox" id="smtp_enabled" name="smtp_enabled"> Enable SMTP
+            </label>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="smtp_host">SMTP Host</label>
+                <input type="text" id="smtp_host" name="smtp_host" placeholder="smtp.example.com">
+            </div>
+            <div class="form-group">
+                <label for="smtp_port">Port</label>
+                <input type="number" id="smtp_port" name="smtp_port" value="587">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="smtp_username">Username</label>
+                <input type="text" id="smtp_username" name="smtp_username" placeholder="user@example.com">
+            </div>
+            <div class="form-group">
+                <label for="smtp_password">Password</label>
+                <input type="password" id="smtp_password" name="smtp_password">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="smtp_from_email">From Email</label>
+                <input type="email" id="smtp_from_email" name="smtp_from_email" placeholder="noreply@example.com">
+            </div>
+            <div class="form-group">
+                <label for="smtp_from_name">From Name</label>
+                <input type="text" id="smtp_from_name" name="smtp_from_name" value="Posterchanai">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="smtp_use_tls">
+                    <input type="checkbox" id="smtp_use_tls" name="smtp_use_tls"> Use STARTTLS
+                </label>
+                <small>For port 587</small>
+            </div>
+            <div class="form-group">
+                <label for="smtp_use_ssl">
+                    <input type="checkbox" id="smtp_use_ssl" name="smtp_use_ssl"> Use SSL
+                </label>
+                <small>For port 465</small>
+            </div>
+        </div>
+        <div class="form-row test-email-row">
+            <div class="form-group">
+                <label for="test_email_address">Test Email</label>
+                <input type="email" id="test_email_address" placeholder="your@email.com">
+            </div>
+            <button type="button" class="btn-secondary" id="sendTestEmailBtn">Send Test</button>
+        </div>
+        <div id="testEmailResult" class="test-result"></div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Email (IMAP - Sent Folder)</legend>
+        <div class="form-group">
+            <label for="imap_enabled">
+                <input type="checkbox" id="imap_enabled" name="imap_enabled"> Enable IMAP
+            </label>
+            <small>Save sent emails to IMAP Sent folder</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="imap_host">IMAP Host</label>
+                <input type="text" id="imap_host" name="imap_host" placeholder="imap.example.com">
+            </div>
+            <div class="form-group">
+                <label for="imap_port">Port</label>
+                <input type="number" id="imap_port" name="imap_port" value="993">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="imap_username">Username (if different)</label>
+                <input type="text" id="imap_username" name="imap_username" placeholder="Leave empty to use SMTP username">
+            </div>
+            <div class="form-group">
+                <label for="imap_password">Password (if different)</label>
+                <input type="password" id="imap_password" name="imap_password" placeholder="Leave empty to use SMTP password">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="imap_use_ssl">
+                    <input type="checkbox" id="imap_use_ssl" name="imap_use_ssl" checked> Use SSL
+                </label>
+            </div>
+            <div class="form-group">
+                <label for="imap_sent_folder">Sent Folder Name</label>
+                <input type="text" id="imap_sent_folder" name="imap_sent_folder" value="Sent">
+            </div>
+        </div>
+    </fieldset>
+</div>

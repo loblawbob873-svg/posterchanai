@@ -1,0 +1,50 @@
+<!-- Sidebar -->
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <h2>Chats</h2>
+        <button class="btn-icon" id="newChatBtn" title="New Chat">+</button>
+    </div>
+    <div class="conversation-list" id="conversationList">
+        <!-- Conversations loaded here -->
+    </div>
+    <div class="sidebar-footer">
+        <div class="user-menu-container">
+            <button class="user-menu-btn" id="userMenuBtn">
+                <span class="user-icon" id="sidebarUserIcon">
+                    <img id="sidebarAvatar" src="/api/auth/avatar/{{ user.username }}" alt="" style="display: none;" onerror="this.style.display='none'; document.getElementById('sidebarInitial').style.display='block';" onload="this.style.display='block'; document.getElementById('sidebarInitial').style.display='none';">
+                    <span id="sidebarInitial">{{ user.username[0].upper() }}</span>
+                </span>
+                <span class="user-name">{{ user.username }}</span>
+                <span class="menu-arrow">&#9662;</span>
+            </button>
+            <div class="user-menu" id="userMenu">
+                <button class="menu-item" id="userSettingsBtn">
+                    <span class="menu-icon">👤</span> Settings
+                </button>
+                <button class="menu-item" id="apiKeysBtn">
+                    <span class="menu-icon">🔑</span> API Keys
+                </button>
+                <div class="menu-item ai-toggle-item" id="aiToggleItem" style="display: none;">
+                    <span class="menu-icon">🤖</span>
+                    <span id="aiToggleLabel">Using: Server AI</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="quickAiToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                {% if user.is_admin %}
+                <a href="/admin" class="menu-item">
+                    <span class="menu-icon">⚙️</span> Admin Panel
+                </a>
+                {% endif %}
+                <div class="menu-divider"></div>
+                <button class="menu-item text-danger" id="deleteAllBtn">
+                    <span class="menu-icon">🗑️</span> Delete All Chats
+                </button>
+                <button class="menu-item" id="logoutBtn">
+                    <span class="menu-icon">🚪</span> Logout
+                </button>
+            </div>
+        </div>
+    </div>
+</aside>

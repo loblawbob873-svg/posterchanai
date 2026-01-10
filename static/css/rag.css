@@ -1,0 +1,131 @@
+/* RAG Modal Styles */
+.rag-toggle-section {
+    margin-bottom: 20px;
+}
+.rag-toggle-section .toggle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+.rag-collections-section h4 {
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+.rag-collection-checkboxes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+.rag-collection-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    cursor: pointer;
+}
+.rag-collection-checkbox:hover {
+    background: var(--bg-tertiary);
+}
+.rag-collection-checkbox input {
+    margin: 0;
+}
+.rag-collection-checkbox .collection-name {
+    flex: 1;
+    font-weight: 500;
+}
+.rag-collection-checkbox .collection-stats {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.rag-collection-checkbox .collection-indexed {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-left: 4px;
+}
+.rag-status-section {
+    margin: 20px 0;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+.rag-status-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+}
+.rag-actions {
+    margin-top: 15px;
+}
+.rag-empty-msg {
+    text-align: center;
+    padding: 20px;
+    color: var(--text-secondary);
+}
+#ragBtn.active {
+    background: var(--accent);
+    color: white;
+}
+.rag-upload-section {
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border-color);
+}
+.rag-upload-section h4 {
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+.rag-collection-checkbox .btn-delete-collection {
+    padding: 2px 8px;
+    font-size: 11px;
+    background: transparent;
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 8px;
+}
+.rag-collection-checkbox .btn-delete-collection:hover {
+    background: var(--danger);
+    color: white;
+}
+.rag-collection-checkbox .btn-pull-collection {
+    padding: 2px 8px;
+    font-size: 11px;
+    background: transparent;
+    border: 1px solid var(--primary);
+    color: var(--primary);
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 8px;
+}
+.rag-collection-checkbox .btn-pull-collection:hover {
+    background: var(--primary);
+    color: white;
+}
+.rag-collection-checkbox .btn-pull-collection:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.rag-collection-checkbox .btn-pull-collection.pulling {
+    animation: spin 1s linear infinite;
+    background: var(--primary);
+    color: white;
+}
+.rag-collection-checkbox .btn-pull-collection.done {
+    background: #28a745;
+    border-color: #28a745;
+    color: white;
+}
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}

@@ -77,7 +77,7 @@ def list_plugins(
     for p in plugins:
         try:
             actions = json.loads(p.actions)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError):
             actions = []
 
         # Parse allowed_users
@@ -183,7 +183,7 @@ def get_plugin(
 
     try:
         actions = json.loads(plugin.actions)
-    except:
+    except (json.JSONDecodeError, TypeError, ValueError):
         actions = []
 
     allowed_users = None
@@ -255,7 +255,7 @@ def update_plugin(
 
     try:
         actions = json.loads(plugin.actions)
-    except:
+    except (json.JSONDecodeError, TypeError, ValueError):
         actions = []
 
     return PluginResponse(

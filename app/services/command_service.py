@@ -9,6 +9,8 @@ from app.services.plugin_service import PluginService
 from app.services.youtube_service import is_youtube_url, extract_youtube_urls, summarize_youtube
 from app.services.torrent_service import scrape_torrents, format_torrent_results, TorrentResult, scrape_all_categories, format_all_categories
 from app.services.nyaa_service import search_nyaa, format_nyaa_results, NyaaResult
+from app.services.miniflux_service import MinifluxService
+from app.routers.news import fetch_news_from_source, get_user_news_sources
 # Lock now handled inside image_factory for fine-grained control
 
 if TYPE_CHECKING:
@@ -35,6 +37,8 @@ class CommandService:
         "flood": "Torrent manager: flood list | flood add <url> | flood start/stop/delete <#>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
         "firewall": "Firewall: firewall | firewall search <ip> [date] | firewall analyze <ip>",
+        "news": "Get unread news from Miniflux: news | news refresh",
+        "dailynews": "Get news from configured sources: dailynews",
     }
 
     def __init__(self, db: Session, user: Optional["User"] = None):
@@ -78,6 +82,10 @@ class CommandService:
             return await self._torrents_command(arg)
         elif command == "nyaa":
             return await self._nyaa_command(arg)
+        elif command == "news":
+            return await self._news_command(arg)
+        elif command == "dailynews":
+            return await self._dailynews_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -542,6 +550,120 @@ class CommandService:
         except Exception as e:
             logger.error(f"Nyaa command error: {e}")
             return {"type": "text", "content": f"Error searching nyaa.si: {str(e)}"}
+
+    async def _news_command(self, arg: str) -> dict:
+        """Get unread news from Miniflux with AI summaries"""
+        import re
+        from datetime import datetime
+
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use Miniflux news."}
+
+        # Check if user has Miniflux enabled
+        if not self.user.miniflux_enabled:
+            return {"type": "text", "content": "Miniflux is disabled for your account. Enable it in settings."}
+
+        # Get Miniflux service
+        miniflux = MinifluxService.from_settings(self.db, self.user)
+        if not miniflux:
+            return {"type": "text", "content": "Miniflux is not configured. Ask your admin to set it up in the admin panel."}
+
+        parts = arg.strip().split()
+        subcommand = parts[0].lower() if parts else ""
+
+        # Handle refresh - force fetch new articles
+        if subcommand in ("refresh", "fetch", "update"):
+            pass  # Same as default, just fetch
+
+        try:
+            # Fetch unread entries
+            entries = await miniflux.get_unread_entries(limit=20)
+
+            if not entries:
+                return {"type": "text", "content": "No unread articles in Miniflux."}
+
+            # Build response with summaries
+            summaries = []
+            entry_ids = []
+
+            for entry in entries:
+                entry_id = entry.get("id")
+                title = entry.get("title", "Untitled")
+                url = entry.get("url", "")
+                content = entry.get("content", "")
+                feed_title = entry.get("feed", {}).get("title", "Unknown Feed")
+
+                # Convert HTML to text
+                text_content = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
+                text_content = re.sub(r'<style[^>]*>.*?</style>', '', text_content, flags=re.DOTALL | re.IGNORECASE)
+                text_content = re.sub(r'<[^>]+>', ' ', text_content)
+                text_content = re.sub(r'\s+', ' ', text_content).strip()
+
+                # Truncate for summarization
+                if len(text_content) > 6000:
+                    text_content = text_content[:6000] + "..."
+
+                # Generate AI summary
+                messages = [
+                    {"role": "system", "content": "You are a news summarizer. Provide a concise 2-3 sentence summary of this article. Focus on the key facts."},
+                    {"role": "user", "content": f"Title: {title}\n\nContent:\n{text_content}"}
+                ]
+
+                try:
+                    summary = await self.chat_service.chat(messages)
+                except Exception as e:
+                    summary = f"(Error summarizing: {str(e)[:50]})"
+
+                summaries.append(f"**{title}**\n*{feed_title}*\n{url}\n\n{summary}")
+                entry_ids.append(entry_id)
+
+            # Mark all as read
+            await miniflux.mark_entries_as_read(entry_ids)
+
+            # Format response
+            timestamp = datetime.now().strftime("%B %d, %Y %H:%M")
+            result = f"## News Update - {timestamp}\n\n" + "\n\n---\n\n".join(summaries)
+            result += f"\n\n---\n*Marked {len(entry_ids)} articles as read*"
+
+            return {"type": "text", "content": result}
+
+        except Exception as e:
+            logger.error(f"News command error: {e}")
+            return {"type": "text", "content": f"Error fetching news: {str(e)}"}
+
+    async def _dailynews_command(self, arg: str) -> dict:
+        """Get news from configured web sources (CNN, NPR, etc.)"""
+        from datetime import datetime
+
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use Daily News."}
+
+        try:
+            # Get news sources (user's custom sources or admin defaults)
+            sources = get_user_news_sources(self.user, self.db)
+
+            if not sources:
+                return {"type": "text", "content": "No news sources configured. Add sources in User Settings."}
+
+            # Fetch news from all sources
+            results = []
+            for source in sources:
+                try:
+                    markdown = await fetch_news_from_source(source["url"], source["name"], self.db)
+                    results.append(markdown)
+                except Exception as e:
+                    logger.error(f"Error fetching news from {source['name']}: {e}")
+                    results.append(f"**{source['name']}:** Error fetching headlines")
+
+            # Format response
+            today = datetime.now().strftime("%B %d, %Y %H:%M")
+            content = f"## Daily News - {today}\n\n" + "\n\n---\n\n".join(results)
+
+            return {"type": "text", "content": content}
+
+        except Exception as e:
+            logger.error(f"Daily news command error: {e}")
+            return {"type": "text", "content": f"Error fetching daily news: {str(e)}"}
 
     async def check_youtube_url(self, message: str) -> Optional[dict]:
         """Check if message contains a YouTube URL and summarize it"""

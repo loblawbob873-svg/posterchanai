@@ -60,7 +60,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'flood', 'budget', 'firewall'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'flood', 'budget', 'firewall', 'news', 'dailynews'];
         this.pluginActions = []; // Will be populated with plugin action hints
 
         // Load plugins for autocomplete
@@ -141,8 +141,6 @@ class ChatHandler {
                     this.filePreview.textContent = '';
                     this.filePreview.style.display = 'none';
                     this.uploadPreview.style.display = 'flex';
-
-                    console.log('[PASTE] Image pasted from clipboard');
                 };
                 reader.readAsDataURL(file);
                 break;  // Only handle first image
@@ -180,6 +178,13 @@ class ChatHandler {
         const newsScheduleSettings = document.getElementById('newsScheduleSettings');
         const newsScheduleTime = document.getElementById('newsScheduleTime');
         const newsSources = document.getElementById('newsSources');
+
+        // Miniflux elements
+        const minifluxEnabled = document.getElementById('minifluxEnabled');
+        const minifluxSettings = document.getElementById('minifluxSettings');
+        const minifluxUrl = document.getElementById('minifluxUrl');
+        const minifluxUsername = document.getElementById('minifluxUsername');
+        const minifluxPassword = document.getElementById('minifluxPassword');
 
         // Quick AI Toggle elements (in user menu)
         const aiToggleItem = document.getElementById('aiToggleItem');
@@ -362,6 +367,15 @@ class ChatHandler {
                         }
                         if (newsScheduleTime) newsScheduleTime.value = data.news_schedule_time || '12:00';
                         if (newsSources) newsSources.value = data.news_sources || '';
+
+                        // Load Miniflux settings
+                        if (minifluxEnabled) {
+                            minifluxEnabled.checked = data.miniflux_enabled !== false;
+                            if (minifluxSettings) minifluxSettings.style.display = data.miniflux_enabled !== false ? 'flex' : 'none';
+                        }
+                        if (minifluxUrl) minifluxUrl.value = data.miniflux_url || '';
+                        if (minifluxUsername) minifluxUsername.value = data.miniflux_username || '';
+                        if (minifluxPassword) minifluxPassword.value = data.miniflux_has_password ? '********' : '';
                     }
                 } catch (e) {
                     console.error('Failed to load settings:', e);
@@ -426,6 +440,21 @@ class ChatHandler {
                 }
                 if (newsSources) {
                     settingsData.news_sources = newsSources.value;
+                }
+
+                // Add Miniflux settings
+                if (minifluxEnabled) {
+                    settingsData.miniflux_enabled = minifluxEnabled.checked;
+                }
+                if (minifluxUrl) {
+                    settingsData.miniflux_url = minifluxUrl.value.trim();
+                }
+                if (minifluxUsername) {
+                    settingsData.miniflux_username = minifluxUsername.value.trim();
+                }
+                // Only update password if it's not the placeholder
+                if (minifluxPassword && minifluxPassword.value !== '********') {
+                    settingsData.miniflux_password = minifluxPassword.value;
                 }
 
                 try {
@@ -725,9 +754,7 @@ class ChatHandler {
     }
 
     async sendMessage() {
-        console.log('[DEBUG] sendMessage called');
         let content = this.messageInput.value.trim();
-        console.log('[DEBUG] content:', content, 'ws:', !!this.ws, 'wsState:', this.ws?.readyState);
 
         // Auto-create conversation if none exists
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -742,7 +769,6 @@ class ChatHandler {
         // Get current mode and prepend command if needed
         const mode = window.app ? window.app.getMode() : '';
         const displayContent = content;
-        console.log('[DEBUG] sendMessage - mode:', mode, 'content:', content, 'hasImage:', !!this.uploadedImage);
 
         // Need either content or a file upload
         if (!content && !this.uploadedFile && !this.uploadedImage) return;
@@ -752,7 +778,6 @@ class ChatHandler {
 
         if (mode) {
             content = `${mode} ${content}`;
-            console.log('[DEBUG] After mode prepend:', content);
         }
 
         // Build display message
@@ -834,7 +859,6 @@ class ChatHandler {
         // Store payload for potential retry
         this.lastPayload = payload;
 
-        console.log('[DEBUG] Sending payload:', { type: payload.type, content: payload.content, hasImageData: !!payload.image_data });
         // Send to server (with command prepended)
         this.ws.send(JSON.stringify(payload));
 
@@ -1818,7 +1842,6 @@ class ChatHandler {
                         }
                     }
                 }
-                console.log('[Autocomplete] Loaded plugins:', this.commands);
             }
         } catch (e) {
             console.error('Failed to load plugins for autocomplete:', e);
@@ -1832,7 +1855,8 @@ class ChatHandler {
         'nyaa': ['download'],
         'flood': ['list', 'add', 'start', 'stop', 'delete'],
         'budget': ['bills', 'add', 'pay'],
-        'firewall': ['search', 'analyze']
+        'firewall': ['search', 'analyze'],
+        'news': ['refresh']
     };
 
     // Tab autocomplete for commands

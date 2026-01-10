@@ -1,0 +1,140 @@
+<!-- User Settings Modal -->
+<div class="modal" id="userSettingsModal" style="display: none;">
+    <div class="modal-content modal-large">
+        <div class="modal-header">
+            <h2>User Settings</h2>
+            <button class="btn-icon modal-close" id="closeUserSettingsModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="settings-section">
+                <h3>Profile Picture</h3>
+                <div class="avatar-upload-section">
+                    <div class="avatar-preview" id="avatarPreview">
+                        <img id="avatarImage" src="" alt="Avatar" style="display: none;">
+                        <span id="avatarPlaceholder">No avatar</span>
+                    </div>
+                    <div class="avatar-controls">
+                        <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none;">
+                        <button class="btn-secondary" id="uploadAvatarBtn">Upload</button>
+                        <button class="btn-danger" id="deleteAvatarBtn" style="display: none;">Remove</button>
+                    </div>
+                </div>
+                <div id="avatarStatus" class="settings-status"></div>
+            </div>
+            <div class="settings-section">
+                <h3>Email Notifications</h3>
+                <p class="modal-info">Set an email address to receive AI responses via email.</p>
+                <div class="settings-form">
+                    <label for="notificationEmail">Notification Email</label>
+                    <input type="email" id="notificationEmail" placeholder="your@email.com">
+                </div>
+            </div>
+
+            <!-- Custom AI Service Section -->
+            <div class="settings-section">
+                <h3>Custom AI Service</h3>
+                <p class="modal-info">Connect to your own AI running on your desktop (Ollama, Open-WebUI, or Posterchanai).</p>
+
+                <!-- Custom LLM Settings -->
+                <div class="settings-subsection">
+                    <h4>Chat / LLM</h4>
+                    <div class="settings-form">
+                        <div class="toggle-row">
+                            <label for="customAiEnabled">Use Custom LLM</label>
+                            <input type="checkbox" id="customAiEnabled">
+                        </div>
+                        <div id="customAiSettings" style="display: none;">
+                            <label for="customAiType">Service Type</label>
+                            <select id="customAiType">
+                                <option value="ollama">Ollama</option>
+                                <option value="openai">Open-WebUI / Posterchanai</option>
+                            </select>
+                            <label for="customAiUrl">Service URL</label>
+                            <input type="text" id="customAiUrl" placeholder="http://192.168.1.100:11434">
+                            <label for="customAiModel">Model Name</label>
+                            <input type="text" id="customAiModel" placeholder="llama3:latest">
+                            <div id="apiKeySection">
+                                <label for="customAiApiKey">API Key <span id="apiKeyHint">(required for Open-WebUI/Posterchanai)</span></label>
+                                <input type="password" id="customAiApiKey" placeholder="API key for authentication">
+                            </div>
+                            <button class="btn-secondary" id="testCustomAi">Test Connection</button>
+                            <span id="testAiResult" class="test-result"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Custom Image Generation Settings -->
+                <div class="settings-subsection">
+                    <h4>Image Generation (ComfyUI)</h4>
+                    <div class="settings-form">
+                        <div class="toggle-row">
+                            <label for="customImageEnabled">Use Custom ComfyUI</label>
+                            <input type="checkbox" id="customImageEnabled">
+                        </div>
+                        <div id="customImageSettings" style="display: none;">
+                            <label for="customImageUrl">ComfyUI URL</label>
+                            <input type="text" id="customImageUrl" placeholder="http://192.168.1.100:8188">
+                            <button class="btn-secondary" id="testCustomImage">Test Connection</button>
+                            <span id="testImageResult" class="test-result"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Daily News Schedule Section -->
+            <div class="settings-section">
+                <h3>Daily News</h3>
+                <p class="modal-info">Automatically create a news summary conversation at a scheduled time.</p>
+                <div class="settings-form">
+                    <div class="toggle-row">
+                        <label for="newsScheduleEnabled">Enable Daily News</label>
+                        <input type="checkbox" id="newsScheduleEnabled">
+                    </div>
+                    <div id="newsScheduleSettings" style="display: none;">
+                        <label for="newsScheduleTime">Time (24-hour format)</label>
+                        <input type="time" id="newsScheduleTime" value="12:00">
+                        <p class="modal-info" style="margin-top: 8px;">A "Daily News" conversation with AI summaries from all sources will be created at this time.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Custom News Sources Section -->
+            <div class="settings-section">
+                <h3>News Sources</h3>
+                <p class="modal-info">Customize your news sources. One per line, format: url|name (e.g., cnn.com|CNN). Leave blank to use defaults.</p>
+                <div class="settings-form">
+                    <textarea id="newsSources" rows="5" placeholder="drudgereport.com|Drudge Report
+npr.org/sections/news|NPR
+nypost.com|NY Post
+foxnews.com|Fox News"></textarea>
+                </div>
+            </div>
+
+            <!-- Miniflux RSS Reader Section -->
+            <div class="settings-section">
+                <h3>Miniflux News</h3>
+                <p class="modal-info">Connect to your Miniflux RSS reader to get AI-summarized news. Use /news command to fetch articles.</p>
+                <div class="settings-form">
+                    <div class="toggle-row">
+                        <label for="minifluxEnabled">Enable Miniflux</label>
+                        <input type="checkbox" id="minifluxEnabled" checked>
+                    </div>
+                    <div id="minifluxSettings" class="settings-form" style="margin-top: 12px;">
+                        <label for="minifluxUrl">Miniflux URL</label>
+                        <input type="url" id="minifluxUrl" placeholder="https://news.example.com">
+                        <label for="minifluxUsername">Username</label>
+                        <input type="text" id="minifluxUsername" placeholder="admin">
+                        <label for="minifluxPassword">Password</label>
+                        <input type="password" id="minifluxPassword" placeholder="Leave blank to keep current">
+                        <p class="modal-info" style="margin-top: 8px;">Articles are fetched every 30 minutes and added to a "News" chat with AI summaries.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section save-section">
+                <button class="btn-primary" id="saveUserSettings">Save All Settings</button>
+                <div id="settingsStatus" class="settings-status"></div>
+            </div>
+        </div>
+    </div>
+</div>

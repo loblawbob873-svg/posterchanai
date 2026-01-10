@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from pathlib import Path
 import json
@@ -335,8 +335,10 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             await websocket.close(code=4001)
             return
 
-        # Verify conversation belongs to user
-        conversation = db.query(Conversation).filter(
+        # Verify conversation belongs to user (eagerly load messages to avoid N+1 queries)
+        conversation = db.query(Conversation).options(
+            joinedload(Conversation.messages)
+        ).filter(
             Conversation.id == conversation_id,
             Conversation.user_id == user.id
         ).first()

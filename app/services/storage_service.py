@@ -111,7 +111,14 @@ class StorageService:
 
     def get_avatar_path(self, username: str) -> Path | None:
         """Get path to user's avatar if it exists"""
-        user_path = Path(self.upload_path) / username
+        safe_username = _sanitize_path_component(username)
+        user_path = Path(self.upload_path) / safe_username
+
+        # Verify path is within upload directory
+        if not _validate_path_within_base(user_path, Path(self.upload_path)):
+            logger.warning(f"Path traversal attempt blocked in get_avatar_path: {username}")
+            return None
+
         for avatar_file in user_path.glob("avatar.*"):
             return avatar_file
         return None
@@ -150,34 +157,66 @@ class StorageService:
 
     def delete_conversation_files(self, username: str, conversation_id: int) -> bool:
         """Delete all files for a conversation"""
-        conv_path = Path(self.upload_path) / username / str(conversation_id)
-        if conv_path.exists():
-            shutil.rmtree(conv_path)
-            return True
+        try:
+            safe_username = _sanitize_path_component(username)
+            safe_conv_id = _sanitize_path_component(str(conversation_id))
+            conv_path = Path(self.upload_path) / safe_username / safe_conv_id
+
+            # Verify path is within upload directory
+            if not _validate_path_within_base(conv_path, Path(self.upload_path)):
+                logger.warning(f"Path traversal attempt blocked in delete_conversation_files: {username}/{conversation_id}")
+                return False
+
+            if conv_path.exists():
+                shutil.rmtree(conv_path)
+                return True
+        except ValueError as e:
+            logger.warning(f"Invalid path component in delete_conversation_files: {e}")
         return False
 
     def delete_user_files(self, username: str) -> bool:
         """Delete all files for a user"""
-        user_path = Path(self.upload_path) / username
-        if user_path.exists():
-            shutil.rmtree(user_path)
-            return True
+        try:
+            safe_username = _sanitize_path_component(username)
+            user_path = Path(self.upload_path) / safe_username
+
+            # Verify path is within upload directory
+            if not _validate_path_within_base(user_path, Path(self.upload_path)):
+                logger.warning(f"Path traversal attempt blocked in delete_user_files: {username}")
+                return False
+
+            if user_path.exists():
+                shutil.rmtree(user_path)
+                return True
+        except ValueError as e:
+            logger.warning(f"Invalid path component in delete_user_files: {e}")
         return False
 
     def get_file_count(self, username: str, conversation_id: int = None) -> int:
         """Count files for a user or specific conversation"""
-        if conversation_id:
-            target_path = Path(self.upload_path) / username / str(conversation_id)
-        else:
-            target_path = Path(self.upload_path) / username
+        try:
+            safe_username = _sanitize_path_component(username)
+            if conversation_id:
+                safe_conv_id = _sanitize_path_component(str(conversation_id))
+                target_path = Path(self.upload_path) / safe_username / safe_conv_id
+            else:
+                target_path = Path(self.upload_path) / safe_username
 
-        if not target_path.exists():
+            # Verify path is within upload directory
+            if not _validate_path_within_base(target_path, Path(self.upload_path)):
+                logger.warning(f"Path traversal attempt blocked in get_file_count: {username}")
+                return 0
+
+            if not target_path.exists():
+                return 0
+
+            count = 0
+            for root, dirs, files in os.walk(target_path):
+                count += len(files)
+            return count
+        except ValueError as e:
+            logger.warning(f"Invalid path component in get_file_count: {e}")
             return 0
-
-        count = 0
-        for root, dirs, files in os.walk(target_path):
-            count += len(files)
-        return count
 
     def load_image_as_base64(self, image_url: str) -> str | None:
         """Load image from URL path and return as base64"""

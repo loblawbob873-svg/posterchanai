@@ -258,9 +258,10 @@ def resend_verification(request: Request, db: Session = Depends(get_db), current
     )
 
     if not success:
+        logger.error(f"Failed to send verification email to {current_user.email}: {msg}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to send verification email: {msg}"
+            detail="Failed to send verification email. Please try again later."
         )
 
     return {"message": "Verification email sent"}
@@ -397,7 +398,12 @@ def get_user_settings(current_user: User = Depends(get_current_user)):
         # Scheduled news settings
         news_schedule_enabled=current_user.news_schedule_enabled or False,
         news_schedule_time=current_user.news_schedule_time or "12:00",
-        news_sources=current_user.news_sources or ""
+        news_sources=current_user.news_sources or "",
+        # Miniflux news plugin settings
+        miniflux_enabled=current_user.miniflux_enabled if current_user.miniflux_enabled is not None else True,
+        miniflux_url=current_user.miniflux_url,
+        miniflux_username=current_user.miniflux_username,
+        miniflux_has_password=bool(current_user.miniflux_password)
     )
 
 
@@ -453,6 +459,17 @@ def update_user_settings(
             )
     if settings.news_sources is not None:
         current_user.news_sources = settings.news_sources
+
+    # Update Miniflux settings
+    if settings.miniflux_enabled is not None:
+        current_user.miniflux_enabled = settings.miniflux_enabled
+    if settings.miniflux_url is not None:
+        current_user.miniflux_url = settings.miniflux_url.strip() if settings.miniflux_url else None
+    if settings.miniflux_username is not None:
+        current_user.miniflux_username = settings.miniflux_username.strip() if settings.miniflux_username else None
+    if settings.miniflux_password is not None:
+        # Allow clearing the password with empty string
+        current_user.miniflux_password = settings.miniflux_password if settings.miniflux_password else None
 
     db.commit()
 

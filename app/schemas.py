@@ -208,6 +208,12 @@ class SettingsResponse(BaseModel):
     mcp_host: str = "0.0.0.0"
     mcp_port: str = "8808"
     mcp_warmup: str = "true"
+    # Miniflux news plugin settings
+    miniflux_enabled: str = "true"
+    miniflux_url: str = ""
+    miniflux_username: str = ""
+    miniflux_password: str = ""
+    miniflux_interval: str = "30"
 
 
 # TTS schema
@@ -330,6 +336,11 @@ class UserSettingsUpdate(BaseModel):
     news_schedule_enabled: Optional[bool] = None
     news_schedule_time: Optional[str] = None  # HH:MM format
     news_sources: Optional[str] = None  # Custom sources, one per line: url|name
+    # Miniflux news plugin settings
+    miniflux_enabled: Optional[bool] = None
+    miniflux_url: Optional[str] = None
+    miniflux_username: Optional[str] = None
+    miniflux_password: Optional[str] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -348,6 +359,11 @@ class UserSettingsResponse(BaseModel):
     news_schedule_enabled: bool = False
     news_schedule_time: str = "12:00"
     news_sources: str = ""  # Custom sources, one per line: url|name
+    # Miniflux news plugin settings
+    miniflux_enabled: bool = True
+    miniflux_url: Optional[str] = None
+    miniflux_username: Optional[str] = None
+    miniflux_has_password: bool = False  # Don't expose actual password
 
 
 class TestConnectionRequest(BaseModel):
