@@ -439,10 +439,16 @@ class PluginService:
                 if not bills:
                     return "No unpaid bills! 🎉"
                 lines = ["## Unpaid Bills\n"]
+                total = 0
                 for bill in bills:
                     name = bill.get('name', 'Unknown')
-                    amount = bill.get('amount', 0)
+                    # Filter out income entries
+                    if 'income' in name.lower():
+                        continue
+                    amount = float(bill.get('amount', 0))
+                    total += amount
                     lines.append(f"- **{name}**: ${amount:,.2f}")
+                lines.append(f"\n**Total:** ${total:,.2f}")
                 return "\n".join(lines)
             elif action == "add":
                 name = result.get('name') or result.get('bill', {}).get('name', 'bill')
