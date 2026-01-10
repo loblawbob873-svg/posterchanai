@@ -8,6 +8,7 @@ from app.services.chat_service import ChatService
 from app.services.plugin_service import PluginService
 from app.services.youtube_service import is_youtube_url, extract_youtube_urls, summarize_youtube
 from app.services.torrent_service import scrape_torrents, format_torrent_results, TorrentResult, scrape_all_categories, format_all_categories
+from app.services.nyaa_service import search_nyaa, format_nyaa_results, NyaaResult
 # Lock now handled inside image_factory for fine-grained control
 
 if TYPE_CHECKING:
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Cache for last torrent search results (per user session - simple in-memory cache)
 _torrent_cache: dict[int, list[TorrentResult]] = {}
+_nyaa_cache: dict[int, list[NyaaResult]] = {}
 
 
 class CommandService:
@@ -27,6 +29,7 @@ class CommandService:
         "geni": "Generate an AI image from your prompt",
         "yt": "Summarize a YouTube video: yt <url>",
         "torrents": "Browse torrents: torrents | torrents movies|tv|music|anime | torrents download <#>",
+        "nyaa": "Search nyaa.si: nyaa <query> | nyaa download <#>",
         "flood": "Torrent manager: flood list | flood add <url> | flood start/stop/delete <hash>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
         "firewall": "Firewall: firewall | firewall search <ip> [date] | firewall analyze <ip>",
@@ -71,6 +74,8 @@ class CommandService:
             return await self._youtube_command(arg)
         elif command == "torrents":
             return await self._torrents_command(arg)
+        elif command == "nyaa":
+            return await self._nyaa_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -440,6 +445,71 @@ class CommandService:
         except Exception as e:
             logger.error(f"Torrents command error: {e}")
             return {"type": "text", "content": f"Error fetching torrents: {str(e)}"}
+
+    async def _nyaa_command(self, arg: str) -> dict:
+        """Search nyaa.si for anime torrents"""
+        global _nyaa_cache
+
+        parts = arg.strip().split()
+        if not parts:
+            return {"type": "text", "content": "Usage: `nyaa <search query>`\n\nExample: `nyaa one piece 1080p`"}
+
+        subcommand = parts[0].lower()
+
+        # Handle download subcommand
+        if subcommand in ("download", "dl", "get"):
+            if len(parts) < 2:
+                return {"type": "text", "content": "Usage: `nyaa download <number>`\nFirst search with `nyaa <query>`."}
+
+            try:
+                num = int(parts[1])
+            except ValueError:
+                return {"type": "text", "content": "Please provide a valid number. Example: `nyaa download 3`"}
+
+            # Get cached results
+            user_id = self.user.id if self.user else 0
+            cached = _nyaa_cache.get(user_id, [])
+
+            if not cached:
+                return {"type": "text", "content": "No nyaa results cached. Search first with `nyaa <query>`."}
+
+            if num < 1 or num > len(cached):
+                return {"type": "text", "content": f"Invalid number. Choose between 1 and {len(cached)}."}
+
+            torrent = cached[num - 1]
+            magnet = torrent.magnet
+
+            # Use flood command to add the torrent
+            if not self.user:
+                return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\nLogin required to add to Flood."}
+
+            # Execute flood add command
+            result = await self._flood_command(f"add {magnet}")
+            if "error" in result.get("content", "").lower():
+                return result
+
+            return {"type": "text", "content": f"**Adding to Flood:** {torrent.title}\n\n{result['content']}"}
+
+        # Search query
+        query = arg.strip()
+
+        try:
+            results = await search_nyaa(query, limit=15)
+
+            if not results:
+                return {"type": "text", "content": f"No results found for '{query}' on nyaa.si"}
+
+            # Cache results for download command
+            user_id = self.user.id if self.user else 0
+            _nyaa_cache[user_id] = results
+
+            formatted = format_nyaa_results(results, query)
+
+            return {"type": "text", "content": formatted}
+
+        except Exception as e:
+            logger.error(f"Nyaa command error: {e}")
+            return {"type": "text", "content": f"Error searching nyaa.si: {str(e)}"}
 
     async def check_youtube_url(self, message: str) -> Optional[dict]:
         """Check if message contains a YouTube URL and summarize it"""
