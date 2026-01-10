@@ -1825,17 +1825,13 @@ class ChatHandler {
         }
     }
 
-    // Subcommand hints for commands
-    commandHints = {
-        'torrents': ['movies', 'tv', 'music', 'anime', 'download <#>'],
-        'nyaa': ['<search query>', 'download <#>'],
-        'flood': ['list', 'add <magnet>', 'start <hash>', 'stop <hash>', 'delete <hash>'],
-        'budget': ['', 'bills', 'add <name> <amount>', 'pay <name>'],
-        'firewall': ['', 'search <ip>', 'analyze <ip>'],
-        'yt': ['<youtube-url>'],
-        'geni': ['<image prompt>'],
-        'search': ['<query>'],
-        'images': ['<query>']
+    // Subcommands that can be autocompleted
+    subcommands = {
+        'torrents': ['movies', 'tv', 'music', 'anime', 'download'],
+        'nyaa': ['download'],
+        'flood': ['list', 'add', 'start', 'stop', 'delete'],
+        'budget': ['bills', 'add', 'pay'],
+        'firewall': ['search', 'analyze']
     };
 
     // Tab autocomplete for commands
@@ -1848,15 +1844,33 @@ class ChatHandler {
 
         const textBeforeCursor = input.substring(0, cursorPos).toLowerCase();
 
-        // Check if we're after a command (has space)
+        // Check if we're after a command (has space) - handle subcommand completion
         const spaceIndex = textBeforeCursor.indexOf(' ');
         if (spaceIndex > 0) {
             const cmd = textBeforeCursor.substring(0, spaceIndex);
-            if (this.commandHints[cmd]) {
-                const hints = this.commandHints[cmd];
-                this.showToast(`${cmd}: ${hints.join(' | ')}`);
-                return;
+            const afterCmd = textBeforeCursor.substring(spaceIndex + 1);
+
+            if (this.subcommands[cmd]) {
+                const subs = this.subcommands[cmd];
+                const matches = subs.filter(s => s.startsWith(afterCmd));
+
+                if (matches.length === 1) {
+                    // Single match - complete it
+                    const completed = cmd + ' ' + matches[0] + ' ';
+                    this.messageInput.value = completed + input.substring(cursorPos);
+                    this.messageInput.setSelectionRange(completed.length, completed.length);
+                    return;
+                } else if (matches.length > 1) {
+                    // Multiple matches - show options
+                    this.showToast(`${cmd}: ${matches.join(' | ')}`);
+                    return;
+                } else if (afterCmd === '') {
+                    // No input yet - show all options
+                    this.showToast(`${cmd}: ${subs.join(' | ')}`);
+                    return;
+                }
             }
+            return;
         }
 
         // Find matching commands
