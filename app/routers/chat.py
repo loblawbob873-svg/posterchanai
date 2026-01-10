@@ -582,6 +582,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                 break
                             full_response += chunk
                             buffer += chunk
+                            logger.debug(f"[STREAM] Chunk received, len={len(chunk)}, buffer_len={len(buffer)}")
 
                             # Filter out thinking content in real-time
                             while True:
@@ -594,6 +595,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                             to_send = buffer[:-BUFFER_MARGIN]
                                             buffer = buffer[-BUFFER_MARGIN:]
                                             if to_send:
+                                                logger.debug(f"[STREAM] Sending chunk, len={len(to_send)}")
                                                 await manager.send_json(user.id, {
                                                     "type": "stream",
                                                     "content": to_send
@@ -626,10 +628,12 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
 
                         # Send any remaining buffered content
                         if buffer and not in_thinking:
+                            logger.debug(f"[STREAM] Sending final buffer, len={len(buffer)}")
                             await manager.send_json(user.id, {
                                 "type": "stream",
                                 "content": buffer
                             }, conn_id)
+                        logger.debug(f"[STREAM] Complete, total_len={len(full_response)}")
 
                         # Save assistant response
                         if full_response:
