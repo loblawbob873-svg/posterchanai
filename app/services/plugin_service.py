@@ -320,13 +320,13 @@ class PluginService:
                         error_msg = error_data.get('error') or error_data.get('message') or f'HTTP {response.status_code}'
                         logger.error(f"[Plugin] {plugin_name}.{action_name} failed: {response.status_code} - {error_data}")
                         return {'error': error_msg}
-                    except:
+                    except (json.JSONDecodeError, ValueError):
                         logger.error(f"[Plugin] {plugin_name}.{action_name} failed: {response.status_code} - {response.text[:200]}")
                         return {'error': f'HTTP {response.status_code}: {response.text[:100]}'}
 
                 try:
                     return response.json()
-                except:
+                except (json.JSONDecodeError, ValueError):
                     return {'result': response.text}
 
         except httpx.TimeoutException:

@@ -1,5 +1,6 @@
 import logging
 import json
+import threading
 from typing import Optional, Tuple, Callable, TYPE_CHECKING
 from sqlalchemy.orm import Session
 from app.services.search_service import SearchService
@@ -18,11 +19,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Cache for torrent results (per user, per category)
+# Cache for torrent results (per user, per category) - thread-safe with locks
 _torrent_cache: dict[int, dict[str, list[TorrentResult]]] = {}
 _nyaa_cache: dict[int, list[NyaaResult]] = {}
 # Cache for flood torrent number-to-hash mapping (per user)
 _flood_hash_map: dict[int, dict[int, str]] = {}
+# Locks for thread-safe cache access
+_cache_lock = threading.Lock()
 
 
 class CommandService:
@@ -115,8 +118,8 @@ class CommandService:
                         help_text += "**Actions:**\n"
                         for action in actions:
                             help_text += f"- `{action['name']}` - {action['description']}\n"
-                    except:
-                        pass
+                    except (json.JSONDecodeError, KeyError, TypeError):
+                        pass  # Skip malformed plugin actions
 
                     help_text += "\n"
 

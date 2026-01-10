@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+import asyncio
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from pathlib import Path
@@ -254,6 +255,7 @@ class ConnectionManager:
         self.stop_flags: dict[int, bool] = {}  # Stop streaming flags per user
         self.pending_results: dict[tuple, list] = {}  # (user_id, conv_id) -> list of pending results
         self._next_conn_id = 0
+        self._conn_lock = asyncio.Lock()  # Protect connection ID increment
 
     async def connect(self, user_id: int, conversation_id: int, websocket: WebSocket) -> int:
         await websocket.accept()
@@ -261,12 +263,14 @@ class ConnectionManager:
         self.stop_flags[user_id] = True
         self.active_connections[user_id] = websocket
         self.conversation_ids[user_id] = conversation_id
-        # Increment connection ID so old streams know they're stale
-        self._next_conn_id += 1
-        self.connection_ids[user_id] = self._next_conn_id
+        # Increment connection ID atomically so old streams know they're stale
+        async with self._conn_lock:
+            self._next_conn_id += 1
+            conn_id = self._next_conn_id
+        self.connection_ids[user_id] = conn_id
         # Reset stop flag for new connection
         self.stop_flags[user_id] = False
-        return self._next_conn_id
+        return conn_id
 
     def disconnect(self, user_id: int):
         self.active_connections.pop(user_id, None)
