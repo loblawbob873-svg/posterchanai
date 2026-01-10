@@ -38,9 +38,11 @@ def get_transcript(video_id: str) -> Optional[str]:
     if not YOUTUBE_API_AVAILABLE:
         return None
     try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        # Combine all transcript segments
-        full_text = ' '.join([entry['text'] for entry in transcript_list])
+        # New API requires instance and uses fetch() method
+        api = YouTubeTranscriptApi()
+        transcript = api.fetch(video_id)
+        # Combine all transcript snippets
+        full_text = ' '.join([snippet.text for snippet in transcript.snippets])
         return full_text
     except TranscriptsDisabled:
         logger.warning(f"Transcripts disabled for video {video_id}")
