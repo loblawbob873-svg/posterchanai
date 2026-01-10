@@ -16,12 +16,12 @@ logger = logging.getLogger(__name__)
 # Default URL if not configured
 DEFAULT_TORRENT_URL = "https://torrentgalaxy.one"
 
-# Category paths (appended to base URL)
-CATEGORY_PATHS = {
-    "movies": "/torrents.php?cat=1",      # Movies
-    "tv": "/torrents.php?cat=41",         # TV Shows
-    "music": "/torrents.php?cat=22",      # Music
-    "anime": "/torrents.php?cat=28",      # Anime
+# Category section IDs on homepage (TorrentGalaxy uses homepage sections now)
+CATEGORY_SECTIONS = {
+    "movies": "Movies",
+    "tv": "TV",
+    "music": "Music",
+    "anime": "Anime",
 }
 
 
@@ -47,7 +47,7 @@ def get_torrent_base_url(db: Session) -> str:
 
 async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15) -> list[TorrentResult]:
     """
-    Scrape torrents from the configured torrent site for a given category.
+    Scrape torrents from the configured torrent site homepage sections.
 
     Args:
         db: Database session for reading settings
@@ -58,72 +58,48 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
         List of TorrentResult objects
     """
     category = category.lower()
-    if category not in CATEGORY_PATHS:
+    if category not in CATEGORY_SECTIONS:
         logger.warning(f"Unknown category: {category}, defaulting to movies")
         category = "movies"
 
+    section_id = CATEGORY_SECTIONS[category]
     base_url = get_torrent_base_url(db)
-    url = base_url + CATEGORY_PATHS[category]
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
-        "Referer": base_url,
+        "Accept-Encoding": "gzip, deflate",
     }
 
     results = []
 
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            response = await client.get(url, headers=headers)
+            response = await client.get(base_url, headers=headers)
             response.raise_for_status()
 
             soup = BeautifulSoup(response.text, "lxml")
 
-            # TorrentGalaxy uses a table-based or div-based layout for torrent listings
-            # Look for torrent rows - they typically have class containing 'tgxtable' or similar
-            torrent_rows = soup.select("div.tgxtablerow, tr.tgxtablerow, div[class*='torrent']")
+            # Find the section header for this category
+            section_header = soup.find("h3", id=section_id)
+            if not section_header:
+                logger.warning(f"Could not find section: {section_id}")
+                return []
 
-            if not torrent_rows:
-                # Fallback: look for any rows with magnet links
-                torrent_rows = soup.find_all("div", class_=re.compile(r"tgx"))
-                if not torrent_rows:
-                    # Another fallback - find all elements containing magnet links
-                    magnet_links = soup.find_all("a", href=re.compile(r"^magnet:\?"))
-                    for magnet_link in magnet_links[:limit]:
-                        magnet_href = magnet_link.get("href", "")
-                        # Try to find the title from nearby elements
-                        parent = magnet_link.find_parent(["div", "tr"])
-                        title = "Unknown"
-                        if parent:
-                            title_link = parent.find("a", href=re.compile(r"/(?:torrent|post-detail)/"))
-                            if title_link:
-                                title = title_link.get_text(strip=True)
-                                detail_url = base_url + title_link.get("href", "")
-                            else:
-                                # Get first meaningful text
-                                title = parent.get_text(separator=" ", strip=True)[:100]
-                                detail_url = ""
+            # Find the parent panel containing the torrents
+            panel = section_header.find_parent("div", class_="panel")
+            if not panel:
+                logger.warning(f"Could not find panel for section: {section_id}")
+                return []
 
-                        results.append(TorrentResult(
-                            title=title,
-                            magnet=magnet_href,
-                            size="N/A",
-                            seeders=0,
-                            leechers=0,
-                            category=category,
-                            url=detail_url
-                        ))
-                    return results[:limit]
+            # Find all torrent rows within this panel
+            torrent_rows = panel.find_all("div", class_="tgxtablerow")
 
-            for row in torrent_rows[:limit * 2]:  # Get more rows in case some are invalid
+            for row in torrent_rows[:limit]:
                 try:
-                    # Find title - usually in a link to the torrent details page
-                    title_elem = row.find("a", href=re.compile(r"/(?:torrent|post-detail)/"))
-                    if not title_elem:
-                        title_elem = row.find("a", class_=re.compile(r"txlight|title"))
-
+                    # Find title link
+                    title_elem = row.find("a", href=re.compile(r"/post-detail/"))
                     if not title_elem:
                         continue
 
@@ -131,15 +107,10 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
                     if not title or len(title) < 3:
                         continue
 
-                    # Get detail page URL
                     detail_url = base_url + title_elem.get("href", "")
 
                     # Find magnet link
                     magnet_elem = row.find("a", href=re.compile(r"^magnet:\?"))
-                    if not magnet_elem:
-                        # Sometimes magnet is in a child element
-                        magnet_elem = row.select_one("a[href^='magnet:']")
-
                     if not magnet_elem:
                         continue
 
@@ -147,49 +118,36 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
                     if not magnet.startswith("magnet:"):
                         continue
 
-                    # Find size - look for common size patterns
+                    # Find size
                     size = "N/A"
-                    size_elem = row.find("span", class_=re.compile(r"size"))
-                    if size_elem:
-                        size = size_elem.get_text(strip=True)
-                    else:
-                        # Look for size pattern in text
-                        row_text = row.get_text()
-                        size_match = re.search(r'(\d+(?:\.\d+)?\s*(?:GB|MB|KB|TB))', row_text, re.IGNORECASE)
-                        if size_match:
-                            size = size_match.group(1)
+                    row_text = row.get_text()
+                    size_match = re.search(r'(\d+(?:\.\d+)?\s*(?:GB|MB|KB|TB|GiB|MiB))', row_text, re.IGNORECASE)
+                    if size_match:
+                        size = size_match.group(1)
 
-                    # Find seeders/leechers
+                    # Find seeders/leechers from font colors
                     seeders = 0
                     leechers = 0
 
-                    # Look for seeder/leecher elements (often have specific classes or are in order)
-                    seed_elem = row.find("span", class_=re.compile(r"seed|green"))
-                    leech_elem = row.find("span", class_=re.compile(r"leech|red"))
-
-                    if seed_elem:
+                    green_fonts = row.find_all("font", color=re.compile(r"green", re.I))
+                    for font in green_fonts:
                         try:
-                            seeders = int(re.sub(r'[^\d]', '', seed_elem.get_text()))
+                            val = int(re.sub(r'[^\d]', '', font.get_text()))
+                            if val >= 0:
+                                seeders = val
+                                break
                         except ValueError:
-                            pass
+                            continue
 
-                    if leech_elem:
+                    red_fonts = row.find_all("font", color=re.compile(r"red", re.I))
+                    for font in red_fonts:
                         try:
-                            leechers = int(re.sub(r'[^\d]', '', leech_elem.get_text()))
+                            val = int(re.sub(r'[^\d]', '', font.get_text()))
+                            if val >= 0:
+                                leechers = val
+                                break
                         except ValueError:
-                            pass
-
-                    # If we couldn't find specific elements, try font color based approach
-                    if seeders == 0:
-                        green_fonts = row.find_all("font", color=re.compile(r"green|#0f0|#00ff00", re.I))
-                        for font in green_fonts:
-                            try:
-                                val = int(re.sub(r'[^\d]', '', font.get_text()))
-                                if val > 0:
-                                    seeders = val
-                                    break
-                            except ValueError:
-                                continue
+                            continue
 
                     results.append(TorrentResult(
                         title=title,
@@ -200,9 +158,6 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
                         category=category,
                         url=detail_url
                     ))
-
-                    if len(results) >= limit:
-                        break
 
                 except Exception as e:
                     logger.debug(f"Error parsing torrent row: {e}")
@@ -282,7 +237,7 @@ async def scrape_all_categories(db: Session, limit_per_category: int = 5) -> dic
         Dict mapping category name to list of TorrentResult
     """
     import asyncio
-    categories = list(CATEGORY_PATHS.keys())
+    categories = list(CATEGORY_SECTIONS.keys())
     tasks = [scrape_torrents(db, cat, limit_per_category) for cat in categories]
     results_list = await asyncio.gather(*tasks, return_exceptions=True)
 
