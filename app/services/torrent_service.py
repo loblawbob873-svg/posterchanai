@@ -96,7 +96,7 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
                         parent = magnet_link.find_parent(["div", "tr"])
                         title = "Unknown"
                         if parent:
-                            title_link = parent.find("a", href=re.compile(r"/torrent/"))
+                            title_link = parent.find("a", href=re.compile(r"/(?:torrent|post-detail)/"))
                             if title_link:
                                 title = title_link.get_text(strip=True)
                             else:
@@ -116,7 +116,7 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
             for row in torrent_rows[:limit * 2]:  # Get more rows in case some are invalid
                 try:
                     # Find title - usually in a link to the torrent details page
-                    title_elem = row.find("a", href=re.compile(r"/torrent/"))
+                    title_elem = row.find("a", href=re.compile(r"/(?:torrent|post-detail)/"))
                     if not title_elem:
                         title_elem = row.find("a", class_=re.compile(r"txlight|title"))
 
