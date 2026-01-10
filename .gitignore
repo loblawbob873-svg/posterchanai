@@ -74,3 +74,4 @@ models/
 run-*.sh
 data/
 .aider*
+crush.json
