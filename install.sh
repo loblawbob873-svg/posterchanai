@@ -1124,77 +1124,15 @@ EOF
 }
 
 setup_mcp_server() {
-    print_step "MCP Server Setup (optional)"
+    print_step "MCP Server (Integrated)"
     echo ""
-    echo "  The MCP (Model Context Protocol) server exposes RAG search to IDEs:"
-    echo "    • Continue.dev - VS Code AI assistant"
-    echo "    • Claude Desktop - Anthropic's desktop app"
-    echo "    • Other MCP-compatible tools"
+    echo "  The MCP (Model Context Protocol) server is now integrated into the main app!"
+    echo "  It starts automatically - no separate service needed."
     echo ""
-    read -p "Install MCP server as systemd service? [y/N]: " INSTALL_MCP
-    INSTALL_MCP=${INSTALL_MCP:-N}
-
-    if [[ ! "$INSTALL_MCP" =~ ^[Yy] ]]; then
-        print_warning "Skipping MCP server setup"
-        echo "  You can run it manually: python mcp_rag_server.py"
-        return
-    fi
-
-    MCP_SERVICE_NAME="posterchanai-mcp"
-
-    # Determine which venv to use (same as main service)
-    MCP_VENV_PATH="$SCRIPT_DIR/venv"
-    [ "$BACKEND" = "intel" ] && MCP_VENV_PATH="$SCRIPT_DIR/venv-ipex"
-
-    # Create run script for MCP server
-    MCP_RUN_SCRIPT="$SCRIPT_DIR/run-mcp.sh"
-    cat > "$MCP_RUN_SCRIPT" << SCRIPT
-#!/bin/bash
-# MCP RAG Server wrapper script
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-cd "\$SCRIPT_DIR"
-exec "$MCP_VENV_PATH/bin/python" mcp_rag_server.py "\$@"
-SCRIPT
-    chmod +x "$MCP_RUN_SCRIPT"
-
-    # Create systemd service for MCP server
-    sudo tee /etc/systemd/system/$MCP_SERVICE_NAME.service > /dev/null << EOF
-[Unit]
-Description=Posterchanai MCP RAG Server
-After=network.target $SERVICE_NAME.service
-Requires=$SERVICE_NAME.service
-
-[Service]
-Type=simple
-User=$(whoami)
-WorkingDirectory=$SCRIPT_DIR
-Environment="PATH=$MCP_VENV_PATH/bin:/usr/local/bin:/usr/bin"
-Environment="VIRTUAL_ENV=$MCP_VENV_PATH"
-ExecStart=$MCP_RUN_SCRIPT --sse --port 3053
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    sudo systemctl daemon-reload
-    print_success "Created systemd service: $MCP_SERVICE_NAME"
-
-    read -p "Enable and start MCP server now? [Y/n]: " START_MCP
-    START_MCP=${START_MCP:-Y}
-
-    if [[ "$START_MCP" =~ ^[Yy] ]]; then
-        sudo systemctl enable $MCP_SERVICE_NAME
-        sudo systemctl start $MCP_SERVICE_NAME
-        sleep 2
-        if systemctl is-active --quiet $MCP_SERVICE_NAME; then
-            print_success "MCP server started on port 3053"
-        else
-            print_error "MCP server failed to start. Check: sudo journalctl -u $MCP_SERVICE_NAME -n 50"
-        fi
-    fi
-
+    echo "  Features:"
+    echo "    • Exposes RAG search to Continue.dev, Claude Desktop, and other MCP clients"
+    echo "    • Configure in Admin > Services > MCP Server"
+    echo "    • Default port: 8808"
     echo ""
     echo -e "  ${BOLD}Configure in Continue.dev (~/.continue/config.yaml):${NC}"
     echo ""
@@ -1202,9 +1140,9 @@ EOF
     echo "      - name: posterchanai-rag"
     echo "        transport:"
     echo "          type: sse"
-    echo "          url: http://localhost:3053/sse"
+    echo "          url: http://localhost:8808/sse"
     echo ""
-    MCP_INSTALLED="1"
+    print_success "MCP server will start automatically with the main app"
 }
 
 download_model() {

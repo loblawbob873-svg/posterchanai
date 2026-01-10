@@ -79,14 +79,17 @@ async def startup():
     from app.services.news_scheduler import start_scheduler
     start_scheduler()
 
-    # Auto-warmup RAG cache if enabled
+    # Auto-warmup RAG cache if enabled (only if MCP server is not handling it)
     db2 = SessionLocal()
     try:
         rag_enabled = db2.query(Setting).filter(Setting.key == "rag_enabled").first()
         rag_auto_warmup = db2.query(Setting).filter(Setting.key == "rag_auto_warmup").first()
+        mcp_enabled = db2.query(Setting).filter(Setting.key == "mcp_enabled").first()
 
+        # Only run standalone RAG warmup if MCP is disabled (MCP handles its own warmup)
         if (rag_enabled and rag_enabled.value == "true" and
-            (not rag_auto_warmup or rag_auto_warmup.value == "true")):
+            (not rag_auto_warmup or rag_auto_warmup.value == "true") and
+            (not mcp_enabled or mcp_enabled.value != "true")):
             import threading
             from app.services.rag_warmup import warmup_rag_cache
             logging.info("Starting RAG cache warmup in background...")
@@ -94,6 +97,10 @@ async def startup():
             warmup_thread.start()
     finally:
         db2.close()
+
+    # Start integrated MCP server if enabled
+    from app.services.mcp_service import start_mcp_server
+    start_mcp_server()
 
 
 @app.on_event("shutdown")
@@ -104,6 +111,9 @@ async def shutdown():
     # Stop news scheduler
     from app.services.news_scheduler import stop_scheduler
     stop_scheduler()
+    # Stop MCP server
+    from app.services.mcp_service import stop_mcp_server
+    stop_mcp_server()
 
 
 @app.get("/")

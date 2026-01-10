@@ -298,46 +298,27 @@ The embedding model (~90MB) is downloaded automatically on first use.
 
 ### MCP Server (Model Context Protocol)
 
-Posterchanai includes an MCP server that exposes RAG functionality to MCP-compatible clients like Continue.dev, Claude Desktop, and other AI coding assistants.
+Posterchanai includes an **integrated MCP server** that exposes RAG functionality to MCP-compatible clients like Continue.dev, Claude Desktop, and other AI coding assistants.
 
-#### Starting the MCP Server
+#### Configuration
 
-**Option 1: SSE/HTTP mode (for remote access)**
-```bash
-source venv-ipex/bin/activate
-python mcp_rag_server.py --sse --port 8808 --warmup
-```
+The MCP server is **enabled by default** and starts automatically with the main application. No separate service is needed.
 
-**Option 2: Stdio mode (for local use)**
-```bash
-source venv-ipex/bin/activate
-python mcp_rag_server.py --warmup
-```
+**Admin Settings** (Admin > Services > MCP Server):
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Enable MCP Server | On | Start MCP server with the app |
+| Host | 0.0.0.0 | Interface to bind (0.0.0.0 for all) |
+| Port | 8808 | Port for MCP clients |
+| Auto-warmup | On | Pre-load embeddings into RAM on start |
 
-**MCP Server Flags:**
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--sse` | false | Run as SSE/HTTP server (vs stdio) |
-| `--port` | 8808 | Port for SSE mode |
-| `--warmup` | false | Pre-load model + cache all RAG data in RAM |
-| `--no-docs` | false | Skip document caching (lighter warmup) |
-| `--workers` | 2 | Max worker threads for queries |
-
-**HTTP Endpoints (SSE mode):**
+**HTTP Endpoints:**
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/sse` | GET | SSE connection for MCP clients |
 | `/search` | POST | Query RAG index |
-| `/reindex` | POST | Trigger collection re-index |
 | `/status` | GET | Cache stats and health |
 | `/warmup` | POST | Pre-load embedding model |
-
-**Option 3: Systemd service**
-```bash
-sudo cp mcp-rag-server.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now mcp-rag-server
-```
 
 #### Configure Continue.dev
 
@@ -347,15 +328,6 @@ Add to your `~/.continue/config.yaml`:
 mcpServers:
   - name: posterchanai-rag
     url: http://YOUR_SERVER_IP:8808/sse
-```
-
-Or for local stdio mode:
-```yaml
-mcpServers:
-  - name: posterchanai-rag
-    command: /path/to/venv/bin/python
-    args:
-      - /path/to/posterchanai/mcp_rag_server.py
 ```
 
 #### Available MCP Tools
@@ -408,11 +380,7 @@ Request → Remote Node (192.168.0.85)
 
 **Setup:**
 
-1. **On the main server (192.168.0.1)** - Start the MCP RAG server:
-   ```bash
-   source venv-ipex/bin/activate
-   nohup python mcp_rag_server.py --sse --port 9999 > /tmp/mcp_rag_server.log 2>&1 &
-   ```
+1. **On the main server (192.168.0.1)** - The MCP server starts automatically with the app. Configure the port in Admin > Services > MCP Server (default: 8808).
 
 2. **On remote nodes (192.168.0.85, etc.)** - Configure the RAG API URL:
    - Go to Admin > RAG > Settings

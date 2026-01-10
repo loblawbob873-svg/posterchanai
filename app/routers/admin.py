@@ -273,3 +273,106 @@ def clear_rag_cache(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to clear RAG caches: {str(e)}"
         )
+
+
+@router.get("/mcp-status")
+def get_mcp_server_status(
+    admin: User = Depends(get_admin_user)
+):
+    """Get MCP server status and cache statistics."""
+    from app.services.mcp_service import get_mcp_status, is_mcp_running
+
+    status = get_mcp_status()
+    status["running"] = is_mcp_running()
+    return status
+
+
+@router.post("/mcp-restart")
+def restart_mcp_server(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Restart the MCP server with current settings."""
+    from app.services.mcp_service import stop_mcp_server, start_mcp_server, is_mcp_running
+
+    try:
+        # Check if MCP is enabled in settings
+        mcp_enabled = db.query(Setting).filter(Setting.key == "mcp_enabled").first()
+        should_run = mcp_enabled and mcp_enabled.value == "true"
+
+        if should_run:
+            # Stop if running, then start
+            if is_mcp_running():
+                stop_mcp_server()
+                import time
+                time.sleep(1)
+            success = start_mcp_server(db)
+            if success:
+                return {"success": True, "message": "MCP server started successfully"}
+            else:
+                return {"success": False, "message": "Failed to start MCP server"}
+        else:
+            # Stop if running
+            if is_mcp_running():
+                stop_mcp_server()
+                return {"success": True, "message": "MCP server stopped (disabled in settings)"}
+            else:
+                return {"success": True, "message": "MCP server is disabled"}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to restart MCP server: {str(e)}"
+        )
+
+
+@router.post("/mcp-apply")
+def apply_mcp_settings(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Apply MCP settings - start or stop server based on mcp_enabled setting."""
+    from app.services.mcp_service import stop_mcp_server, start_mcp_server, is_mcp_running
+
+    try:
+        mcp_enabled = db.query(Setting).filter(Setting.key == "mcp_enabled").first()
+        should_run = mcp_enabled and mcp_enabled.value == "true"
+        currently_running = is_mcp_running()
+
+        if should_run and not currently_running:
+            # Start the server
+            success = start_mcp_server(db)
+            if success:
+                return {"success": True, "message": "MCP server started", "running": True}
+            else:
+                return {"success": False, "message": "Failed to start MCP server", "running": False}
+        elif not should_run and currently_running:
+            # Stop the server
+            stop_mcp_server()
+            return {"success": True, "message": "MCP server stopped", "running": False}
+        else:
+            # No change needed
+            return {"success": True, "message": "No change needed", "running": currently_running}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to apply MCP settings: {str(e)}"
+        )
+
+
+@router.post("/mcp-warmup")
+def trigger_mcp_warmup(
+    admin: User = Depends(get_admin_user)
+):
+    """Trigger MCP cache warmup."""
+    from app.services.mcp_service import warmup_model
+
+    try:
+        result = warmup_model()
+        return {"success": True, "result": result}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to warmup MCP: {str(e)}"
+        )

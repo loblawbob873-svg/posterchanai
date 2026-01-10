@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 # Cache for torrent results (per user, per category)
 _torrent_cache: dict[int, dict[str, list[TorrentResult]]] = {}
 _nyaa_cache: dict[int, list[NyaaResult]] = {}
+# Cache for flood torrent number-to-hash mapping (per user)
+_flood_hash_map: dict[int, dict[int, str]] = {}
 
 
 class CommandService:
@@ -30,7 +32,7 @@ class CommandService:
         "yt": "Summarize a YouTube video: yt <url>",
         "torrents": "Browse torrents: torrents | torrents download <category> <#>",
         "nyaa": "Search nyaa.si: nyaa <query> | nyaa download <#>",
-        "flood": "Torrent manager: flood list | flood add <url> | flood start/stop/delete <hash>",
+        "flood": "Torrent manager: flood list | flood add <url> | flood start/stop/delete <#>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
         "firewall": "Firewall: firewall | firewall search <ip> [date] | firewall analyze <ip>",
     }
@@ -192,7 +194,9 @@ class CommandService:
         return f"{size_bytes:.1f} PB"
 
     def _format_torrent_list(self, result: dict) -> str:
-        """Format Flood torrent list as readable text"""
+        """Format Flood torrent list as readable text with numbered entries"""
+        global _flood_hash_map
+
         if not result or isinstance(result, list) and len(result) == 0:
             return "No torrents found."
 
@@ -201,8 +205,15 @@ class CommandService:
         if not torrents:
             return "No torrents found."
 
+        # Build number-to-hash mapping for this user
+        user_id = self.user.id if self.user else 0
+        _flood_hash_map[user_id] = {}
+
         lines = ["## Torrents\n"]
-        for hash_id, t in torrents.items():
+        for num, (hash_id, t) in enumerate(torrents.items(), 1):
+            # Store mapping
+            _flood_hash_map[user_id][num] = hash_id
+
             # Status emoji
             status = t.get('status', [])
             if 'seeding' in status:
@@ -226,10 +237,9 @@ class CommandService:
             filled = int(percent / 10)
             bar = "█" * filled + "░" * (10 - filled)
 
-            lines.append(f"{icon} **{name}**")
+            lines.append(f"**{num}.** {icon} **{name}**")
             lines.append(f"   [{bar}] {percent:.1f}% | {size}")
-            lines.append(f"   ↓ {down_rate} | ↑ {up_rate}")
-            lines.append(f"   `{hash_id}`\n")
+            lines.append(f"   ↓ {down_rate} | ↑ {up_rate}\n")
 
         return "\n".join(lines)
 
@@ -249,6 +259,15 @@ class CommandService:
             # Keep only valid URL characters
             param = re.match(r'^[a-zA-Z0-9:/?#\[\]@!$&\'()*+,;=._~%-]+', param)
             param = param.group(0) if param else ""
+
+        # Resolve number to hash if param is a number
+        if param and param.isdigit():
+            num = int(param)
+            user_map = _flood_hash_map.get(self.user.id, {})
+            if num in user_map:
+                param = user_map[num]
+            else:
+                return {"type": "text", "content": f"Invalid torrent number: {num}. Run `flood list` first."}
 
         try:
             if subcommand in ("list", "ls", ""):
@@ -282,7 +301,7 @@ class CommandService:
                 return {"type": "text", "content": "⏸️ Torrent stopped."}
 
             else:
-                return {"type": "text", "content": "Usage: `flood list` | `flood add <url>` | `flood start <hash>` | `flood stop <hash>` | `flood delete <hash>`"}
+                return {"type": "text", "content": "Usage: `flood list` | `flood add <url>` | `flood start <#>` | `flood stop <#>` | `flood delete <#>`"}
 
         except Exception as e:
             return {"type": "text", "content": f"Flood error: {str(e)}"}

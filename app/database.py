@@ -218,6 +218,11 @@ When asked to write or modify code or files:
             "rag_hnsw_ef_search": "100",       # Query-time accuracy (higher = slower but better)
             "rag_hnsw_ef_construction": "200", # Index build quality (higher = slower builds)
             "rag_hnsw_m": "16",                # Max connections per node (16 is good default)
+            # MCP Server settings (integrated, no separate service needed)
+            "mcp_enabled": "true",             # MCP server enabled by default
+            "mcp_port": "8808",                # SSE/HTTP port for MCP clients
+            "mcp_host": "0.0.0.0",             # Host to bind MCP server
+            "mcp_warmup": "true",              # Pre-load embeddings on startup
         }
 
         for key, value in default_settings.items():

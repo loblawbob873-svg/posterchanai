@@ -633,6 +633,39 @@
 
             <div class="tab-content" id="tab-services">
                 <fieldset>
+                    <legend>MCP Server (RAG API)</legend>
+                    <div class="form-group">
+                        <label for="mcp_enabled">
+                            <input type="checkbox" id="mcp_enabled" name="mcp_enabled"> Enable MCP Server
+                        </label>
+                        <small>Exposes RAG API to MCP clients (Continue.dev, Claude Desktop, etc.)</small>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="mcp_host">Host</label>
+                            <input type="text" id="mcp_host" name="mcp_host" value="0.0.0.0">
+                            <small>0.0.0.0 for all interfaces</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="mcp_port">Port</label>
+                            <input type="number" id="mcp_port" name="mcp_port" value="8808" min="1024" max="65535">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="mcp_warmup">
+                            <input type="checkbox" id="mcp_warmup" name="mcp_warmup"> Auto-warmup on Start
+                        </label>
+                        <small>Pre-load embeddings into RAM when MCP server starts</small>
+                    </div>
+                    <div class="form-row" style="gap: 10px; margin-top: 15px;">
+                        <button type="button" class="btn-secondary" id="mcpRestartBtn">Restart MCP Server</button>
+                        <button type="button" class="btn-secondary" id="mcpWarmupBtn">Warmup Now</button>
+                        <button type="button" class="btn-secondary" id="mcpStatusBtn">Check Status</button>
+                    </div>
+                    <div id="mcpStatus" class="model-status"></div>
+                </fieldset>
+
+                <fieldset>
                     <legend>SearXNG (Search)</legend>
                     <div class="form-group">
                         <label for="searxng_url">URL</label>
@@ -1497,7 +1530,23 @@ document.getElementById('settingsForm').addEventListener('submit', async (e) => 
             body: JSON.stringify({ settings })
         });
         if (response.ok) {
-            alert('Settings saved!');
+            // Apply MCP settings (start/stop based on enabled setting)
+            try {
+                const mcpResponse = await fetch('/api/admin/mcp-apply', { method: 'POST' });
+                const mcpData = await mcpResponse.json();
+                // Update MCP status display
+                const statusDiv = document.getElementById('mcpStatus');
+                if (mcpData.message && mcpData.message !== 'No change needed') {
+                    statusDiv.className = 'model-status success';
+                    statusDiv.textContent = mcpData.message;
+                    statusDiv.style.display = 'block';
+                    alert('Settings saved! ' + mcpData.message);
+                } else {
+                    alert('Settings saved!');
+                }
+            } catch (mcpErr) {
+                alert('Settings saved! (MCP apply failed: ' + mcpErr.message + ')');
+            }
         } else {
             alert('Failed to save settings');
         }
@@ -1804,6 +1853,84 @@ async function refreshImageQueue() {
 }
 
 document.getElementById('refreshImageQueueBtn').addEventListener('click', refreshImageQueue);
+
+// MCP Server controls
+document.getElementById('mcpRestartBtn').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('mcpStatus');
+    statusDiv.className = 'model-status loading';
+    statusDiv.textContent = 'Restarting MCP server...';
+    statusDiv.style.display = 'block';
+
+    try {
+        const response = await fetch('/api/admin/mcp-restart', { method: 'POST' });
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            statusDiv.className = 'model-status success';
+            statusDiv.textContent = data.message || 'MCP server restarted!';
+        } else {
+            statusDiv.className = 'model-status error';
+            statusDiv.textContent = data.message || data.detail || 'Failed to restart MCP server';
+        }
+    } catch (err) {
+        statusDiv.className = 'model-status error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
+
+document.getElementById('mcpWarmupBtn').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('mcpStatus');
+    statusDiv.className = 'model-status loading';
+    statusDiv.textContent = 'Running warmup...';
+    statusDiv.style.display = 'block';
+
+    try {
+        const response = await fetch('/api/admin/mcp-warmup', { method: 'POST' });
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            const result = data.result || {};
+            statusDiv.className = 'model-status success';
+            statusDiv.textContent = `Warmup complete: ${result.collections_loaded || 0} collections, ${result.chunks_cached || 0} chunks cached`;
+        } else {
+            statusDiv.className = 'model-status error';
+            statusDiv.textContent = data.detail || 'Failed to warmup';
+        }
+    } catch (err) {
+        statusDiv.className = 'model-status error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
+
+document.getElementById('mcpStatusBtn').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('mcpStatus');
+    statusDiv.className = 'model-status loading';
+    statusDiv.textContent = 'Checking status...';
+    statusDiv.style.display = 'block';
+
+    try {
+        const response = await fetch('/api/admin/mcp-status');
+        const data = await response.json();
+
+        if (response.ok) {
+            const running = data.running ? 'Running' : 'Stopped';
+            const warmup = data.warmup_complete ? 'Yes' : 'No';
+            const cacheSize = data.mcp_query_cache_size || 0;
+            const docChunks = data.document_cache?.chunks || 0;
+            statusDiv.className = 'model-status success';
+            statusDiv.innerHTML = `<strong>Status:</strong> ${running}<br>
+                <strong>Warmed up:</strong> ${warmup}<br>
+                <strong>Query cache:</strong> ${cacheSize} entries<br>
+                <strong>Document cache:</strong> ${docChunks} chunks`;
+        } else {
+            statusDiv.className = 'model-status error';
+            statusDiv.textContent = data.detail || 'Failed to get status';
+        }
+    } catch (err) {
+        statusDiv.className = 'model-status error';
+        statusDiv.textContent = 'Error: ' + err.message;
+    }
+});
 
 // Initialize
 loadSettings();
