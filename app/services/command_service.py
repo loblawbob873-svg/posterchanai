@@ -20,6 +20,9 @@ class CommandService:
         "search": "Search the web and get AI-summarized results",
         "images": "Search for images",
         "geni": "Generate an AI image from your prompt",
+        "flood": "Torrent manager: flood list | flood add <url> | flood delete <hash>",
+        "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
+        "firewall": "Firewall status: firewall | firewall blocked | firewall search <ip>",
     }
 
     def __init__(self, db: Session, user: Optional["User"] = None):
@@ -51,6 +54,12 @@ class CommandService:
             return await self._images_command(arg)
         elif command == "geni":
             return await self._geni_command(arg, stop_check)
+        elif command == "flood":
+            return await self._flood_command(arg)
+        elif command == "budget":
+            return await self._budget_command(arg)
+        elif command == "firewall":
+            return await self._firewall_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -157,6 +166,91 @@ class CommandService:
             "image": image_data,
             "prompt": prompt
         }
+
+    async def _flood_command(self, arg: str) -> dict:
+        """Direct Flood torrent manager commands"""
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use Flood commands."}
+
+        plugin_service = PluginService(self.db)
+        parts = arg.strip().split(maxsplit=1)
+        subcommand = parts[0].lower() if parts else "list"
+        param = parts[1] if len(parts) > 1 else ""
+
+        try:
+            if subcommand in ("list", "ls", ""):
+                result = await plugin_service.execute_tool_call("flood", "list_torrents", {}, self.user.id)
+            elif subcommand == "add" and param:
+                result = await plugin_service.execute_tool_call("flood", "add_torrent", {"url": param}, self.user.id)
+            elif subcommand in ("del", "delete", "rm") and param:
+                result = await plugin_service.execute_tool_call("flood", "delete_torrents", {"hashes": param}, self.user.id)
+            else:
+                return {"type": "text", "content": "Usage: `flood list` | `flood add <magnet/url>` | `flood delete <hash>`"}
+
+            if "error" in result:
+                return {"type": "text", "content": f"Flood error: {result['error']}"}
+
+            return {"type": "text", "content": f"```json\n{json.dumps(result, indent=2)}\n```"}
+        except Exception as e:
+            return {"type": "text", "content": f"Flood error: {str(e)}"}
+
+    async def _budget_command(self, arg: str) -> dict:
+        """Direct Budget manager commands"""
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use Budget commands."}
+
+        plugin_service = PluginService(self.db)
+        parts = arg.strip().split()
+        subcommand = parts[0].lower() if parts else "summary"
+
+        try:
+            if subcommand in ("summary", ""):
+                result = await plugin_service.execute_tool_call("budget", "get_summary", {}, self.user.id)
+            elif subcommand == "bills":
+                result = await plugin_service.execute_tool_call("budget", "get_bills", {}, self.user.id)
+            elif subcommand == "add" and len(parts) >= 3:
+                name = parts[1]
+                amount = parts[2]
+                result = await plugin_service.execute_tool_call("budget", "add_bill", {"name": name, "amount": amount}, self.user.id)
+            elif subcommand == "pay" and len(parts) >= 2:
+                name = parts[1]
+                result = await plugin_service.execute_tool_call("budget", "pay_bill", {"name": name}, self.user.id)
+            else:
+                return {"type": "text", "content": "Usage: `budget` | `budget bills` | `budget add <name> <amount>` | `budget pay <name>`"}
+
+            if "error" in result:
+                return {"type": "text", "content": f"Budget error: {result['error']}"}
+
+            return {"type": "text", "content": f"```json\n{json.dumps(result, indent=2)}\n```"}
+        except Exception as e:
+            return {"type": "text", "content": f"Budget error: {str(e)}"}
+
+    async def _firewall_command(self, arg: str) -> dict:
+        """Direct Firewall status commands"""
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use Firewall commands."}
+
+        plugin_service = PluginService(self.db)
+        parts = arg.strip().split()
+        subcommand = parts[0].lower() if parts else "status"
+
+        try:
+            if subcommand in ("status", ""):
+                result = await plugin_service.execute_tool_call("firewall", "get_status", {}, self.user.id)
+            elif subcommand == "blocked":
+                result = await plugin_service.execute_tool_call("firewall", "get_blocked", {}, self.user.id)
+            elif subcommand == "search" and len(parts) >= 2:
+                ip = parts[1]
+                result = await plugin_service.execute_tool_call("firewall", "search_logs", {"ip": ip}, self.user.id)
+            else:
+                return {"type": "text", "content": "Usage: `firewall` | `firewall blocked` | `firewall search <ip>`"}
+
+            if "error" in result:
+                return {"type": "text", "content": f"Firewall error: {result['error']}"}
+
+            return {"type": "text", "content": f"```json\n{json.dumps(result, indent=2)}\n```"}
+        except Exception as e:
+            return {"type": "text", "content": f"Firewall error: {str(e)}"}
 
 
 def get_command_service(db: Session) -> CommandService:
