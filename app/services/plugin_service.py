@@ -58,8 +58,12 @@ class PluginService:
 
         prompt = "\n\n## Available Plugins\n"
         prompt += "You have access to external plugins. When the user's request matches a plugin's capabilities, "
-        prompt += "use the plugin by outputting a tool call in this exact format:\n"
-        prompt += "<tool name=\"plugin_name\" action=\"action_name\">{\"param\": \"value\"}</tool>\n\n"
+        prompt += "use the plugin by outputting EXACTLY ONE tool call in this format:\n\n"
+        prompt += "```\n<tool name=\"PLUGIN\" action=\"ACTION\">{}</tool>\n```\n\n"
+        prompt += "Rules:\n"
+        prompt += "- Use `{}` for actions with no parameters\n"
+        prompt += "- Use `{\"key\": \"value\"}` only when parameters are needed\n"
+        prompt += "- Output the tool tag ONCE, do not repeat or explain the format\n\n"
         prompt += "Available plugins:\n\n"
 
         for plugin in plugins:
@@ -86,8 +90,9 @@ class PluginService:
 
     def parse_tool_calls(self, response: str) -> List[Dict[str, Any]]:
         """Parse tool calls from AI response"""
-        pattern = r'<tool\s+name="([^"]+)"\s+action="([^"]+)">\s*(\{[^}]*\})\s*</tool>'
-        matches = re.findall(pattern, response, re.DOTALL)
+        # More robust pattern - handles nested braces and whitespace variations
+        pattern = r'<tool\s+name=["\']([^"\']+)["\']\s+action=["\']([^"\']+)["\']>\s*(\{[^}]*\})\s*</tool>'
+        matches = re.findall(pattern, response, re.DOTALL | re.IGNORECASE)
 
         tool_calls = []
         for match in matches:
