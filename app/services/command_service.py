@@ -415,7 +415,7 @@ class CommandService:
         # No subcommand - show all categories overview
         if not subcommand:
             try:
-                all_results = await scrape_all_categories(self.db, limit_per_category=5)
+                all_results = await scrape_all_categories(self.db, limit_per_category=3)
                 formatted = format_all_categories(all_results)
                 return {"type": "text", "content": formatted}
             except Exception as e:
