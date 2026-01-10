@@ -90,13 +90,30 @@ class PluginService:
 
     def parse_tool_calls(self, response: str) -> List[Dict[str, Any]]:
         """Parse tool calls from AI response"""
-        # More robust pattern - handles nested braces and whitespace variations
-        pattern = r'<tool\s+name=["\']([^"\']+)["\']\s+action=["\']([^"\']+)["\']>\s*(\{[^}]*\})\s*</tool>'
+        # Capture everything between > and </tool>, then extract JSON
+        pattern = r'<tool\s+name=["\']([^"\']+)["\']\s+action=["\']([^"\']+)["\']>\s*(.*?)\s*</tool>'
         matches = re.findall(pattern, response, re.DOTALL | re.IGNORECASE)
 
         tool_calls = []
         for match in matches:
-            plugin_name, action_name, params_str = match
+            plugin_name, action_name, content = match
+            # Extract JSON from content (find first { to last })
+            content = content.strip()
+            if content.startswith('{'):
+                # Find matching closing brace
+                brace_count = 0
+                end_idx = 0
+                for i, c in enumerate(content):
+                    if c == '{':
+                        brace_count += 1
+                    elif c == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            end_idx = i + 1
+                            break
+                params_str = content[:end_idx] if end_idx > 0 else content
+            else:
+                params_str = '{}'
             try:
                 params = json.loads(params_str)
             except json.JSONDecodeError:
@@ -112,13 +129,17 @@ class PluginService:
 
     def strip_tool_calls(self, response: str) -> str:
         """Remove tool calls from response text"""
-        # Match properly formatted tool calls
-        pattern = r'<tool\s+name=["\'][^"\']+["\']\s+action=["\'][^"\']+["\']>\s*\{[^}]*\}\s*</tool>'
-        result = re.sub(pattern, '', response, flags=re.IGNORECASE)
-        # Also remove any malformed/partial tool tags
-        result = re.sub(r'<tool[^>]*>\s*\{[^}]*\}\s*</tool>', '', result, flags=re.IGNORECASE)
-        # Clean up any leftover fragments like ": "value"}</tool>
-        result = re.sub(r'["\']:\s*["\'][^"\']*["\']\s*\}\s*</tool>', '', result, flags=re.IGNORECASE)
+        # Match tool tags with any content (handles nested JSON)
+        pattern = r'<tool\s+name=["\'][^"\']+["\']\s+action=["\'][^"\']+["\']>.*?</tool>'
+        result = re.sub(pattern, '', response, flags=re.IGNORECASE | re.DOTALL)
+        # Also remove any malformed tool tags
+        result = re.sub(r'<tool[^>]*>.*?</tool>', '', result, flags=re.IGNORECASE | re.DOTALL)
+        # Clean up leftover fragments that might appear after malformed output
+        result = re.sub(r'^["\']?:\s*\d+.*?</tool>', '', result, flags=re.IGNORECASE | re.DOTALL)
+        # Remove any stray </tool> tags
+        result = re.sub(r'</tool>', '', result, flags=re.IGNORECASE)
+        # Clean up multiple newlines
+        result = re.sub(r'\n{3,}', '\n\n', result)
         return result.strip()
 
     # Cache for login-based sessions
