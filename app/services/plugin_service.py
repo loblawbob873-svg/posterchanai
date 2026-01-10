@@ -458,6 +458,30 @@ class PluginService:
                 name = result.get('name') or result.get('bill', {}).get('name', 'bill')
                 return f"✅ Bill paid: {name}"
 
+        elif plugin == "firewall":
+            # Firewall returns HTML - convert to readable text
+            import re
+            from html import unescape
+            content = result.get('result', '') or str(result)
+            # Remove script and style tags with content
+            content = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
+            content = re.sub(r'<style[^>]*>.*?</style>', '', content, flags=re.DOTALL | re.IGNORECASE)
+            # Convert block elements to newlines
+            content = re.sub(r'<br\s*/?>', '\n', content, flags=re.IGNORECASE)
+            content = re.sub(r'</?(p|div|h[1-6]|li|tr)[^>]*>', '\n', content, flags=re.IGNORECASE)
+            # Remove remaining HTML tags
+            content = re.sub(r'<[^>]+>', '', content)
+            # Decode HTML entities
+            content = unescape(content)
+            # Clean up whitespace but preserve line breaks
+            lines = [line.strip() for line in content.split('\n')]
+            lines = [line for line in lines if line]
+            content = '\n'.join(lines)
+            # Truncate if too long
+            if len(content) > 1500:
+                content = content[:1500] + "\n..."
+            return content if content else "No data returned"
+
         # Default: return JSON
         return json.dumps(result, indent=2)
 
