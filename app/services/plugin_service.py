@@ -441,9 +441,12 @@ class PluginService:
                     lines.append(f"- **{name}**: ${amount:,.2f}")
                 return "\n".join(lines)
             elif action == "add":
-                return f"✅ Bill added: {result.get('name', 'bill')} - ${result.get('amount', 0):,.2f}"
+                name = result.get('name') or result.get('bill', {}).get('name', 'bill')
+                amount = result.get('amount') or result.get('bill', {}).get('amount', 0)
+                return f"✅ Bill added: {name} - ${float(amount):,.2f}"
             elif action == "pay":
-                return f"✅ Bill paid: {result.get('name', 'bill')}"
+                name = result.get('name') or result.get('bill', {}).get('name', 'bill')
+                return f"✅ Bill paid: {name}"
 
         # Default: return JSON
         return json.dumps(result, indent=2)

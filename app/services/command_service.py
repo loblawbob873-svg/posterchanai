@@ -292,7 +292,7 @@ class CommandService:
                 amount = parts[2]
                 result = await plugin_service.execute_tool_call("budget", "add", {"name": name, "amount": amount}, self.user.id)
                 action = "add"
-            elif subcommand == "pay" and len(parts) >= 2:
+            elif subcommand in ("pay", "paid") and len(parts) >= 2:
                 name = parts[1]
                 result = await plugin_service.execute_tool_call("budget", "pay", {"name": name}, self.user.id)
                 action = "pay"
