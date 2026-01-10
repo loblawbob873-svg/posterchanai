@@ -6,6 +6,7 @@ from app.services.search_service import SearchService
 from app.services.image_factory import generate_image_for_user
 from app.services.chat_service import ChatService
 from app.services.plugin_service import PluginService
+from app.services.youtube_service import is_youtube_url, extract_youtube_urls, summarize_youtube
 # Lock now handled inside image_factory for fine-grained control
 
 if TYPE_CHECKING:
@@ -20,6 +21,7 @@ class CommandService:
         "search": "Search the web and get AI-summarized results",
         "images": "Search for images",
         "geni": "Generate an AI image from your prompt",
+        "yt": "Summarize a YouTube video: yt <url>",
         "flood": "Torrent manager: flood list | flood add <url> | flood start/stop/delete <hash>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
         "firewall": "Firewall: firewall | firewall search <ip> [date] | firewall analyze <ip>",
@@ -60,6 +62,8 @@ class CommandService:
             return await self._budget_command(arg)
         elif command == "firewall":
             return await self._firewall_command(arg)
+        elif command == "yt":
+            return await self._youtube_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -340,6 +344,35 @@ class CommandService:
             return {"type": "text", "content": formatted}
         except Exception as e:
             return {"type": "text", "content": f"Firewall error: {str(e)}"}
+
+    async def _youtube_command(self, url: str) -> dict:
+        """Summarize a YouTube video transcript"""
+        if not url:
+            return {"type": "text", "content": "Please provide a YouTube URL. Example: `yt https://youtube.com/watch?v=...`"}
+
+        # Extract URL if there's extra text
+        urls = extract_youtube_urls(url)
+        if not urls:
+            return {"type": "text", "content": "Could not find a valid YouTube URL."}
+
+        target_url = urls[0]
+        success, result = await summarize_youtube(target_url, self.chat_service)
+        return {"type": "text", "content": result}
+
+    async def check_youtube_url(self, message: str) -> Optional[dict]:
+        """Check if message contains a YouTube URL and summarize it"""
+        if not is_youtube_url(message):
+            return None
+
+        urls = extract_youtube_urls(message)
+        if not urls:
+            return None
+
+        # Summarize the first YouTube URL found
+        success, result = await summarize_youtube(urls[0], self.chat_service)
+        if success:
+            return {"type": "text", "content": result}
+        return None
 
 
 def get_command_service(db: Session) -> CommandService:

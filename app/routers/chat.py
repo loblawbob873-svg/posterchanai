@@ -443,6 +443,24 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     # Check for commands
                     command, arg = command_service.parse_command(content)
 
+                    # Check for YouTube URLs (auto-summarize)
+                    if not command:
+                        youtube_result = await command_service.check_youtube_url(content)
+                        if youtube_result:
+                            # Save and send YouTube summary
+                            assistant_msg = Message(
+                                conversation_id=conversation_id,
+                                role="assistant",
+                                content=youtube_result.get("content", "")
+                            )
+                            db.add(assistant_msg)
+                            db.commit()
+                            await manager.send_json(user.id, {
+                                "type": "response",
+                                "data": youtube_result
+                            }, conn_id, conversation_id)
+                            continue
+
                     if command:
                         # Execute command with stop check
                         try:
