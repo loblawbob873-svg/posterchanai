@@ -112,8 +112,14 @@ class PluginService:
 
     def strip_tool_calls(self, response: str) -> str:
         """Remove tool calls from response text"""
-        pattern = r'<tool\s+name="[^"]+"\s+action="[^"]+">\s*\{[^}]*\}\s*</tool>'
-        return re.sub(pattern, '', response).strip()
+        # Match properly formatted tool calls
+        pattern = r'<tool\s+name=["\'][^"\']+["\']\s+action=["\'][^"\']+["\']>\s*\{[^}]*\}\s*</tool>'
+        result = re.sub(pattern, '', response, flags=re.IGNORECASE)
+        # Also remove any malformed/partial tool tags
+        result = re.sub(r'<tool[^>]*>\s*\{[^}]*\}\s*</tool>', '', result, flags=re.IGNORECASE)
+        # Clean up any leftover fragments like ": "value"}</tool>
+        result = re.sub(r'["\']:\s*["\'][^"\']*["\']\s*\}\s*</tool>', '', result, flags=re.IGNORECASE)
+        return result.strip()
 
     # Cache for login-based sessions
     _session_cache: Dict[str, str] = {}
