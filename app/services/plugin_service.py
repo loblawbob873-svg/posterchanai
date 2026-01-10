@@ -426,10 +426,14 @@ class PluginService:
             if "error" in result:
                 return f"Budget error: {result['error']}"
             if action == "summary":
-                income = result.get('income', 0)
-                unpaid = result.get('unpaid_total', 0)
-                remaining = result.get('remaining', income - unpaid)
-                return f"## Budget Summary\n\n💰 **Income:** ${income:,.2f}\n📋 **Unpaid Bills:** ${unpaid:,.2f}\n✨ **Remaining:** ${remaining:,.2f}"
+                # Try different possible field names from API
+                income = result.get('income') or result.get('total_income') or result.get('monthly_income') or 0
+                unpaid = result.get('unpaid_total') or result.get('unpaid') or result.get('total_unpaid') or result.get('bills_total') or 0
+                remaining = result.get('remaining') or result.get('balance') or result.get('available') or 0
+                # Debug: show raw keys if values seem wrong
+                if income == 0 and remaining != 0:
+                    return f"## Budget Summary\n\n✨ **Remaining:** ${float(remaining):,.2f}\n\n_API fields: {list(result.keys())}_"
+                return f"## Budget Summary\n\n💰 **Income:** ${float(income):,.2f}\n📋 **Unpaid Bills:** ${float(unpaid):,.2f}\n✨ **Remaining:** ${float(remaining):,.2f}"
             elif action == "bills":
                 bills = result.get('bills', [])
                 if not bills:

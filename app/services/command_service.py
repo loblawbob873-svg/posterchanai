@@ -22,7 +22,7 @@ class CommandService:
         "geni": "Generate an AI image from your prompt",
         "flood": "Torrent manager: flood list | flood add <url> | flood start/stop/delete <hash>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
-        "firewall": "Firewall status: firewall | firewall blocked | firewall search <ip>",
+        "firewall": "Firewall: firewall | firewall search <ip> [date] | firewall analyze <ip>",
     }
 
     def __init__(self, db: Session, user: Optional["User"] = None):
@@ -319,19 +319,26 @@ class CommandService:
 
         try:
             if subcommand in ("status", ""):
-                result = await plugin_service.execute_tool_call("firewall", "get_status", {}, self.user.id)
-            elif subcommand == "blocked":
-                result = await plugin_service.execute_tool_call("firewall", "get_blocked", {}, self.user.id)
+                result = await plugin_service.execute_tool_call("firewall", "status", {}, self.user.id)
             elif subcommand == "search" and len(parts) >= 2:
                 ip = parts[1]
-                result = await plugin_service.execute_tool_call("firewall", "search_logs", {"ip": ip}, self.user.id)
+                date = parts[2] if len(parts) >= 3 else ""
+                params = {"ip": ip}
+                if date:
+                    params["date"] = date
+                result = await plugin_service.execute_tool_call("firewall", "search", params, self.user.id)
+            elif subcommand in ("analyze", "ai") and len(parts) >= 2:
+                ip = parts[1]
+                result = await plugin_service.execute_tool_call("firewall", "analyze", {"ip": ip}, self.user.id)
             else:
-                return {"type": "text", "content": "Usage: `firewall` | `firewall blocked` | `firewall search <ip>`"}
+                return {"type": "text", "content": "Usage: `firewall` | `firewall search <ip> [date]` | `firewall analyze <ip>`"}
 
             if "error" in result:
                 return {"type": "text", "content": f"Firewall error: {result['error']}"}
 
-            return {"type": "text", "content": f"```json\n{json.dumps(result, indent=2)}\n```"}
+            # Handle HTML or text responses
+            content = result.get('result', '') or json.dumps(result, indent=2)
+            return {"type": "text", "content": content}
         except Exception as e:
             return {"type": "text", "content": f"Firewall error: {str(e)}"}
 
