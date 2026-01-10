@@ -118,6 +118,7 @@ class SettingsResponse(BaseModel):
     llm_use_mmap: str = "true"  # Memory-map model file
     llm_use_mlock: str = "true"  # Lock model in RAM
     llm_idle_timeout: str = "0"  # Seconds before unloading LLM model (0=disabled)
+    llm_token_timeout: str = "600"  # Max seconds between tokens during streaming
     # Ollama settings (also used for native backend sampling parameters)
     ollama_url: str = "http://localhost:11434"
     ollama_api_format: str = "ollama"  # "ollama" for /api/chat, "openai" for /v1/chat/completions

@@ -137,6 +137,9 @@ class LlamaService:
         # Idle timeout for automatic unloading (0 = disabled)
         self._idle_timeout = int(settings.get("llm_idle_timeout", "0"))
 
+        # Token timeout for streaming (max seconds between tokens)
+        self.token_timeout = int(settings.get("llm_token_timeout", "600"))
+
         # System prompt
         self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
 
@@ -315,6 +318,9 @@ class LlamaService:
 
         def run_streaming():
             """Run synchronous generation in thread, put SSE chunks in queue"""
+            token_timeout = self.token_timeout
+            last_token_time = time.time()
+
             with _get_inference_semaphore(self.max_concurrent):
                 try:
                     for chunk in self._model.create_chat_completion(
@@ -322,6 +328,17 @@ class LlamaService:
                         stream=True,
                         **params
                     ):
+                        # Check for timeout between tokens
+                        current_time = time.time()
+                        if current_time - last_token_time > token_timeout:
+                            logger.error(f"Streaming timeout: no token in {token_timeout}s")
+                            loop.call_soon_threadsafe(
+                                queue.put_nowait,
+                                f"data: {json.dumps({'error': {'message': f'Generation timed out after {token_timeout}s', 'type': 'timeout_error'}})}\n\n"
+                            )
+                            return
+                        last_token_time = current_time
+
                         content = ""
                         if "choices" in chunk and len(chunk["choices"]) > 0:
                             delta = chunk["choices"][0].get("delta", {})
@@ -390,6 +407,8 @@ class LlamaService:
         """
         self._ensure_model_loaded()
         params = self._get_sampling_params(**kwargs)
+        token_timeout = self.token_timeout
+        last_token_time = time.time()
 
         with _get_inference_semaphore(self.max_concurrent):
             try:
@@ -398,6 +417,14 @@ class LlamaService:
                     stream=True,
                     **params
                 ):
+                    # Check for timeout between tokens
+                    current_time = time.time()
+                    if current_time - last_token_time > token_timeout:
+                        logger.error(f"Streaming timeout: no token in {token_timeout}s")
+                        yield "\n\n[Generation timed out]"
+                        return
+                    last_token_time = current_time
+
                     if "choices" in chunk and len(chunk["choices"]) > 0:
                         delta = chunk["choices"][0].get("delta", {})
                         content = delta.get("content", "")

@@ -255,6 +255,9 @@ class IPEXService:
         # Idle timeout for automatic unloading (0 = disabled)
         self._idle_timeout = int(settings.get("llm_idle_timeout", "0"))
 
+        # Token timeout for streaming (max seconds between tokens)
+        self.token_timeout = int(settings.get("llm_token_timeout", "600"))
+
         # Inference timeout (seconds) - prevents hung requests
         self.inference_timeout = int(settings.get("ollama_timeout", "120000")) // 1000  # Convert ms to seconds
 
@@ -699,7 +702,7 @@ class IPEXService:
         self._ensure_model_loaded()
 
         # Per-token timeout (seconds) - if no token in this time, abort
-        token_timeout = 60  # 60 seconds max between tokens
+        token_timeout = self.token_timeout
 
         with _get_inference_semaphore(self.max_concurrent):
             _current_request = f"STREAM-{request_id}"
