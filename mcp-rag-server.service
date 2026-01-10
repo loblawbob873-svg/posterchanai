@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=verita84
 WorkingDirectory=/home/verita84/posterchanai
-ExecStart=/home/verita84/posterchanai/venv-ipex/bin/python mcp_rag_server.py --sse --port 8808
+ExecStart=/home/verita84/posterchanai/venv-ipex/bin/python mcp_rag_server.py --sse --port 9999
 Restart=always
 RestartSec=5
 
