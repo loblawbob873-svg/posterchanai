@@ -44,6 +44,9 @@ class ChatService:
         self.temperature = float(self._settings.get("ollama_temperature", "0.7"))
         self.top_p = float(self._settings.get("ollama_top_p", "0.9"))
         self.num_predict = int(self._settings.get("ollama_num_predict", "2048"))
+        # Stop token(s) - can be comma-separated for multiple
+        stop_setting = self._settings.get("ollama_stop", "").strip()
+        self.stop = [s.strip() for s in stop_setting.split(",") if s.strip()] if stop_setting else None
 
     def _get_custom_ai_service(self) -> Optional[CustomAIService]:
         """Get custom AI service if user has it enabled, otherwise return None"""
@@ -152,7 +155,8 @@ class ChatService:
                     messages=messages,
                     temperature=self.temperature,
                     top_p=self.top_p,
-                    max_tokens=self.num_predict
+                    max_tokens=self.num_predict,
+                    stop=self.stop
                 )
                 if "error" in result:
                     return f"Error: {result['error'].get('message', 'Unknown error')}"
@@ -167,7 +171,8 @@ class ChatService:
                     messages=messages,
                     temperature=self.temperature,
                     top_p=self.top_p,
-                    max_tokens=self.num_predict
+                    max_tokens=self.num_predict,
+                    stop=self.stop
                 )
                 return content
             else:
@@ -178,7 +183,8 @@ class ChatService:
                     messages=messages,
                     temperature=self.temperature,
                     top_p=self.top_p,
-                    max_tokens=self.num_predict
+                    max_tokens=self.num_predict,
+                    stop=self.stop
                 )
                 if "error" in result:
                     return f"Error: {result['error'].get('message', 'Unknown error')}"
@@ -214,7 +220,8 @@ class ChatService:
                     messages=messages,
                     temperature=self.temperature,
                     top_p=self.top_p,
-                    max_tokens=self.num_predict
+                    max_tokens=self.num_predict,
+                    stop=self.stop
                 ):
                     if chunk.startswith("data: "):
                         data_str = chunk[6:].strip()
@@ -264,7 +271,8 @@ class ChatService:
                     messages=messages,
                     temperature=self.temperature,
                     top_p=self.top_p,
-                    max_tokens=self.num_predict
+                    max_tokens=self.num_predict,
+                    stop=self.stop
                 ):
                     if chunk.startswith("data: "):
                         data_str = chunk[6:].strip()
@@ -353,7 +361,8 @@ class ChatService:
                     messages=messages,
                     temperature=self.temperature,
                     top_p=self.top_p,
-                    max_tokens=self.num_predict
+                    max_tokens=self.num_predict,
+                    stop=self.stop
                 ):
                     if chunk.startswith("data: "):
                         data_str = chunk[6:].strip()

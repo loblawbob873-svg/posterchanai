@@ -1958,17 +1958,72 @@ async function reindexCollection(id) {
 }
 
 async function pullCollection(id) {
+    // Get button and original state
+    const btn = event.target;
+    const originalText = btn.textContent;
+
+    // Get current last_indexed_at before starting
+    let originalIndexTime = null;
     try {
+        const preResp = await fetch('/api/rag/collections');
+        if (preResp.ok) {
+            const preCols = await preResp.json();
+            const preCol = preCols.find(c => c.id === id);
+            if (preCol && preCol.last_indexed_at) {
+                originalIndexTime = new Date(preCol.last_indexed_at).getTime();
+            }
+        }
+    } catch (e) {}
+
+    try {
+        btn.disabled = true;
+        btn.textContent = '⏳ Pulling...';
         const response = await fetch(`/api/rag/collections/${id}/pull`, { method: 'POST' });
         if (response.ok) {
-            alert('Pull & re-index started');
-            loadRagCollections();
+            btn.textContent = '⏳ Indexing...';
+            // Poll for completion
+            let attempts = 0;
+            const checkInterval = setInterval(async () => {
+                attempts++;
+                try {
+                    const checkResp = await fetch('/api/rag/collections');
+                    if (checkResp.ok) {
+                        const cols = await checkResp.json();
+                        const col = cols.find(c => c.id === id);
+                        if (col && col.last_indexed_at) {
+                            const indexedTime = new Date(col.last_indexed_at).getTime();
+                            if (originalIndexTime === null || indexedTime > originalIndexTime) {
+                                clearInterval(checkInterval);
+                                btn.textContent = '✓ Done!';
+                                btn.style.background = '#28a745';
+                                btn.style.color = 'white';
+                                setTimeout(() => {
+                                    loadRagCollections();
+                                }, 1500);
+                                return;
+                            }
+                        }
+                    }
+                } catch (e) {}
+                btn.textContent = `⏳ Indexing... (${attempts * 3}s)`;
+                // Timeout after 5 minutes
+                if (attempts >= 100) {
+                    clearInterval(checkInterval);
+                    btn.textContent = 'Timeout';
+                    btn.disabled = false;
+                    setTimeout(() => loadRagCollections(), 2000);
+                }
+            }, 3000);
         } else {
             const data = await response.json();
             alert(data.detail || 'Failed to pull');
+            btn.disabled = false;
+            btn.textContent = originalText;
         }
     } catch (err) {
         alert('Error pulling repository');
+        btn.disabled = false;
+        btn.textContent = originalText;
     }
 }
 

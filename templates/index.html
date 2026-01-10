@@ -496,6 +496,20 @@ foxnews.com|Fox News"></textarea>
     opacity: 0.5;
     cursor: not-allowed;
 }
+.rag-collection-checkbox .btn-pull-collection.pulling {
+    animation: spin 1s linear infinite;
+    background: var(--primary);
+    color: white;
+}
+.rag-collection-checkbox .btn-pull-collection.done {
+    background: #28a745;
+    border-color: #28a745;
+    color: white;
+}
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
 </style>
 
 <script src="/static/js/mascot.js"></script>
@@ -619,16 +633,28 @@ document.addEventListener('DOMContentLoaded', function() {
                         e.preventDefault();
                         e.stopPropagation();
                         const id = btn.dataset.id;
+
+                        // Get current last_indexed_at before starting
+                        let originalIndexTime = null;
+                        try {
+                            const preResp = await fetch('/api/rag/collections');
+                            if (preResp.ok) {
+                                const preCols = await preResp.json();
+                                const preCol = preCols.find(c => c.id === parseInt(id));
+                                if (preCol && preCol.last_indexed_at) {
+                                    originalIndexTime = new Date(preCol.last_indexed_at).getTime();
+                                }
+                            }
+                        } catch (e) {}
+
                         try {
                             btn.disabled = true;
                             btn.textContent = '⏳';
                             btn.title = 'Pulling & indexing...';
+                            btn.classList.add('pulling');
                             const resp = await fetch(`/api/rag/collections/${id}/pull`, { method: 'POST' });
                             if (resp.ok) {
-                                // Show status and auto-refresh after delay
-                                btn.textContent = '✓';
-                                btn.title = 'Pull started - refreshing...';
-                                // Poll for completion by checking last_indexed_at
+                                // Keep showing spinner while polling for completion
                                 let attempts = 0;
                                 const checkInterval = setInterval(async () => {
                                     attempts++;
@@ -638,35 +664,48 @@ document.addEventListener('DOMContentLoaded', function() {
                                             const cols = await checkResp.json();
                                             const col = cols.find(c => c.id === parseInt(id));
                                             if (col && col.last_indexed_at) {
-                                                const indexedTime = new Date(col.last_indexed_at);
-                                                const now = new Date();
-                                                // If indexed within last 30 seconds, it's done
-                                                if ((now - indexedTime) < 30000) {
+                                                const indexedTime = new Date(col.last_indexed_at).getTime();
+                                                // Check if last_indexed_at changed from before
+                                                if (originalIndexTime === null || indexedTime > originalIndexTime) {
                                                     clearInterval(checkInterval);
-                                                    await loadRagCollections();
+                                                    btn.textContent = '✓';
+                                                    btn.title = 'Done! Indexed ' + new Date(col.last_indexed_at).toLocaleString();
+                                                    btn.classList.remove('pulling');
+                                                    btn.classList.add('done');
+                                                    // Show success briefly then refresh
+                                                    setTimeout(async () => {
+                                                        await loadRagCollections();
+                                                    }, 1500);
                                                     return;
                                                 }
                                             }
                                         }
                                     } catch (e) {}
-                                    // Stop polling after 60 seconds
-                                    if (attempts >= 12) {
+                                    // Update spinner to show progress
+                                    btn.title = `Indexing... (${attempts * 3}s)`;
+                                    // Stop polling after 5 minutes
+                                    if (attempts >= 100) {
                                         clearInterval(checkInterval);
-                                        await loadRagCollections();
+                                        btn.textContent = '?';
+                                        btn.title = 'Timeout - check logs';
+                                        btn.classList.remove('pulling');
+                                        setTimeout(() => loadRagCollections(), 2000);
                                     }
-                                }, 5000);
+                                }, 3000);
                             } else {
                                 const data = await resp.json();
                                 alert(data.detail || 'Failed to pull');
                                 btn.disabled = false;
                                 btn.textContent = '↻';
                                 btn.title = 'Pull & Re-index';
+                                btn.classList.remove('pulling');
                             }
                         } catch (err) {
                             alert('Error pulling repository');
                             btn.disabled = false;
                             btn.textContent = '↻';
                             btn.title = 'Pull & Re-index';
+                            btn.classList.remove('pulling');
                         }
                     });
                 });

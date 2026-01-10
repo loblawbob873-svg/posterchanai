@@ -199,8 +199,8 @@ When asked to write or modify code or files:
             # RAG (Retrieval-Augmented Generation) settings
             "rag_enabled": "true",
             "rag_embedding_model": "all-MiniLM-L6-v2",
-            "rag_chunk_size": "1000",
-            "rag_chunk_overlap": "200",
+            "rag_chunk_size": "2000",
+            "rag_chunk_overlap": "100",
             "rag_top_k": "5",
             "rag_min_similarity": "0.3",
             "rag_max_file_size": "1",
