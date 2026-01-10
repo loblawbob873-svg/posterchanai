@@ -3,9 +3,16 @@
 import re
 import logging
 from typing import Optional, Tuple
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
 logger = logging.getLogger(__name__)
+
+# Optional import - service works without it but transcript fetching is disabled
+try:
+    from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+    YOUTUBE_API_AVAILABLE = True
+except ImportError:
+    YOUTUBE_API_AVAILABLE = False
+    logger.warning("youtube-transcript-api not installed. YouTube summarization disabled.")
 
 
 def extract_video_id(url: str) -> Optional[str]:
@@ -28,6 +35,8 @@ def is_youtube_url(text: str) -> bool:
 
 def get_transcript(video_id: str) -> Optional[str]:
     """Fetch transcript for a YouTube video"""
+    if not YOUTUBE_API_AVAILABLE:
+        return None
     try:
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
         # Combine all transcript segments
@@ -55,6 +64,9 @@ async def summarize_youtube(url: str, chat_service) -> Tuple[bool, str]:
     Fetch transcript and summarize a YouTube video.
     Returns (success, result_message)
     """
+    if not YOUTUBE_API_AVAILABLE:
+        return False, "YouTube summarization is not available. Install: pip install youtube-transcript-api"
+
     video_id = extract_video_id(url)
     if not video_id:
         return False, "Could not extract video ID from URL"
