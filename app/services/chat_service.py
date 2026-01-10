@@ -234,21 +234,21 @@ class ChatService:
                                 return
                             content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                             if content:
-                                buffer += content
-
                                 if not thinking_done:
+                                    buffer += content
                                     match = THINKING_CLOSE_PATTERN.search(buffer)
                                     if match:
                                         thinking_done = True
                                         after_think = buffer[match.end():]
-                                        buffer = ""
+                                        buffer = ""  # Clear buffer - no longer needed
                                         if after_think.strip():
                                             yield after_think
                                     elif len(buffer) > 50 and not has_thinking_open(buffer):
                                         thinking_done = True
                                         yield buffer
-                                        buffer = ""
+                                        buffer = ""  # Clear buffer - no longer needed
                                 else:
+                                    # Thinking is done, yield content directly (don't buffer)
                                     yield content
                         except json.JSONDecodeError:
                             continue
@@ -286,23 +286,23 @@ class ChatService:
                                 return
                             content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                             if content:
-                                buffer += content
-
                                 if not thinking_done:
+                                    buffer += content
                                     # Look for end of thinking tag
                                     match = THINKING_CLOSE_PATTERN.search(buffer)
                                     if match:
                                         thinking_done = True
                                         after_think = buffer[match.end():]
-                                        buffer = ""
+                                        buffer = ""  # Clear buffer - no longer needed
                                         if after_think.strip():
                                             yield after_think
                                     # Also check if no think tag in first 50 chars - assume no thinking
                                     elif len(buffer) > 50 and not has_thinking_open(buffer):
                                         thinking_done = True
                                         yield buffer
-                                        buffer = ""
+                                        buffer = ""  # Clear buffer - no longer needed
                                 else:
+                                    # Thinking is done, yield content directly (don't buffer)
                                     yield content
                         except json.JSONDecodeError:
                             continue
