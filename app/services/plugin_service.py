@@ -56,14 +56,17 @@ class PluginService:
         if not plugins:
             return ""
 
-        prompt = "\n\n## Available Plugins\n"
-        prompt += "You have access to external plugins. When the user's request matches a plugin's capabilities, "
-        prompt += "use the plugin by outputting EXACTLY ONE tool call in this format:\n\n"
-        prompt += "```\n<tool name=\"PLUGIN\" action=\"ACTION\">{}</tool>\n```\n\n"
+        prompt = "\n\n## Available Plugins - IMPORTANT\n"
+        prompt += "You MUST use these plugins when the user asks about their capabilities. "
+        prompt += "Output EXACTLY ONE tool call in this format:\n\n"
+        prompt += "<tool name=\"PLUGIN\" action=\"ACTION\">{}</tool>\n\n"
+        prompt += "Examples:\n"
+        prompt += "- User asks 'show my torrents' -> <tool name=\"flood\" action=\"list\">{}</tool>\n"
+        prompt += "- User asks 'add this magnet' -> <tool name=\"flood\" action=\"add\">{\"url\": \"magnet:...\"}</tool>\n\n"
         prompt += "Rules:\n"
         prompt += "- Use `{}` for actions with no parameters\n"
-        prompt += "- Use `{\"key\": \"value\"}` only when parameters are needed\n"
-        prompt += "- Output the tool tag ONCE, do not repeat or explain the format\n\n"
+        prompt += "- Use `{\"key\": \"value\"}` when parameters are needed\n"
+        prompt += "- Output the tool tag ONCE, then STOP. Do not explain or add text after.\n\n"
         prompt += "Available plugins:\n\n"
 
         for plugin in plugins:
@@ -83,8 +86,7 @@ class PluginService:
 
             prompt += "\n"
 
-        prompt += "After calling a plugin, wait for the result before responding to the user. "
-        prompt += "Summarize the result naturally in your response.\n"
+        prompt += "ALWAYS use these plugins when relevant. After the tool call, wait for results.\n"
 
         return prompt
 
@@ -147,10 +149,14 @@ class PluginService:
 
     async def _get_login_session(self, plugin, client: httpx.AsyncClient) -> Optional[str]:
         """Authenticate and get session cookie for login-based auth"""
+        import logging
+        logger = logging.getLogger(__name__)
+
         cache_key = f"{plugin.id}_{plugin.base_url}"
 
         # Check cache first
         if cache_key in PluginService._session_cache:
+            logger.debug(f"[Plugin] Using cached session for {plugin.name}")
             return PluginService._session_cache[cache_key]
 
         try:
@@ -160,26 +166,54 @@ class PluginService:
             password = creds.get('password')
 
             if not username or not password:
+                logger.error(f"[Plugin] Missing credentials for {plugin.name}")
                 return None
 
             # Authenticate with Flood API
             auth_url = f"{plugin.base_url.rstrip('/')}/auth/authenticate"
+            logger.debug(f"[Plugin] Authenticating to {auth_url}")
+
             response = await client.post(auth_url, json={
                 'username': username,
                 'password': password
             })
 
+            logger.debug(f"[Plugin] Auth response: {response.status_code}")
+
             if response.status_code == 200:
-                # Extract JWT cookie from response
-                cookies = response.cookies
-                if 'jwt' in cookies:
-                    session = f"jwt={cookies['jwt']}"
+                # Extract JWT cookie from response - try multiple methods
+                jwt_token = None
+
+                # Method 1: Check cookies object
+                if response.cookies.get('jwt'):
+                    jwt_token = response.cookies.get('jwt')
+                    logger.debug(f"[Plugin] Found JWT in cookies")
+
+                # Method 2: Check raw Set-Cookie header
+                if not jwt_token:
+                    set_cookie = response.headers.get('set-cookie', '')
+                    if 'jwt=' in set_cookie:
+                        # Extract JWT from Set-Cookie header
+                        for part in set_cookie.split(';'):
+                            if part.strip().startswith('jwt='):
+                                jwt_token = part.strip()[4:]
+                                logger.debug(f"[Plugin] Found JWT in Set-Cookie header")
+                                break
+
+                if jwt_token:
+                    session = f"jwt={jwt_token}"
                     PluginService._session_cache[cache_key] = session
+                    logger.info(f"[Plugin] Successfully authenticated {plugin.name}")
                     return session
+                else:
+                    logger.error(f"[Plugin] Auth succeeded but no JWT found. Headers: {dict(response.headers)}")
+
+            else:
+                logger.error(f"[Plugin] Auth failed: {response.status_code} - {response.text}")
 
             return None
         except Exception as e:
-            print(f"Login auth failed: {e}")
+            logger.exception(f"[Plugin] Login auth failed for {plugin.name}: {e}")
             return None
 
     async def execute_tool_call(
@@ -248,10 +282,12 @@ class PluginService:
                     # Build body from action template + params
                     body = action.get('body', {})
                     if isinstance(body, dict):
-                        # Substitute params in body
+                        # Substitute params in body - properly escape for JSON
                         body_str = json.dumps(body)
                         for key, value in params.items():
-                            body_str = body_str.replace(f"{{{{{key}}}}}", str(value) if not isinstance(value, str) else value)
+                            # JSON-encode the value to handle special chars, then strip the quotes
+                            escaped_value = json.dumps(str(value))[1:-1]
+                            body_str = body_str.replace(f"{{{{{key}}}}}", escaped_value)
                         body = json.loads(body_str)
                     response = await client.post(url, headers=headers, json=body if body else params)
                 elif method == 'PUT':
@@ -262,11 +298,16 @@ class PluginService:
                     return {'error': f'Unsupported HTTP method: {method}'}
 
                 if response.status_code >= 400:
+                    import logging
+                    logger = logging.getLogger(__name__)
                     try:
                         error_data = response.json()
-                        return {'error': error_data.get('error', f'HTTP {response.status_code}')}
+                        error_msg = error_data.get('error') or error_data.get('message') or f'HTTP {response.status_code}'
+                        logger.error(f"[Plugin] {plugin_name}.{action_name} failed: {response.status_code} - {error_data}")
+                        return {'error': error_msg}
                     except:
-                        return {'error': f'HTTP {response.status_code}'}
+                        logger.error(f"[Plugin] {plugin_name}.{action_name} failed: {response.status_code} - {response.text[:200]}")
+                        return {'error': f'HTTP {response.status_code}: {response.text[:100]}'}
 
                 try:
                     return response.json()
@@ -303,6 +344,76 @@ class PluginService:
         clean_response = self.strip_tool_calls(response)
         return clean_response, results
 
+    def _format_size(self, size_bytes: int) -> str:
+        """Format bytes to human readable size"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.1f} PB"
+
+    def _format_flood_list(self, result: dict) -> str:
+        """Format Flood torrent list as readable text"""
+        if not result or isinstance(result, list) and len(result) == 0:
+            return "No torrents found."
+
+        torrents = result.get('torrents', {})
+        if not torrents:
+            return "No torrents found."
+
+        lines = ["Torrents:\n"]
+        for hash_id, t in torrents.items():
+            status = t.get('status', [])
+            if 'seeding' in status:
+                state = "Seeding"
+            elif 'downloading' in status:
+                state = "Downloading"
+            elif 'stopped' in status or 'paused' in status:
+                state = "Paused"
+            elif 'error' in status:
+                state = "Error"
+            else:
+                state = "Unknown"
+
+            name = t.get('name', 'Unknown')
+            percent = t.get('percentComplete', 0)
+            size = self._format_size(t.get('sizeBytes', 0))
+            down_rate = self._format_size(t.get('downRate', 0)) + "/s"
+            up_rate = self._format_size(t.get('upRate', 0)) + "/s"
+
+            lines.append(f"- {name}")
+            lines.append(f"  Status: {state} | {percent:.1f}% | {size}")
+            lines.append(f"  Down: {down_rate} | Up: {up_rate}")
+            lines.append(f"  Hash: {hash_id}\n")
+
+        return "\n".join(lines)
+
+    def format_result_for_display(self, plugin: str, action: str, result: dict) -> str:
+        """Format a plugin result for display to user"""
+        # Special formatting for known plugins
+        if plugin == "flood":
+            if action == "list":
+                return self._format_flood_list(result)
+            elif action == "add":
+                if "error" in result:
+                    return f"Failed to add torrent: {result['error']}"
+                return "Torrent added successfully and is now downloading. Use 'flood list' to check progress."
+            elif action == "delete":
+                if "error" in result:
+                    return f"Failed to delete: {result['error']}"
+                return "Torrent deleted."
+            elif action == "start":
+                if "error" in result:
+                    return f"Failed to start: {result['error']}"
+                return "Torrent started."
+            elif action == "stop":
+                if "error" in result:
+                    return f"Failed to stop: {result['error']}"
+                return "Torrent stopped."
+
+        # Default: return JSON
+        return json.dumps(result, indent=2)
+
     def format_results_for_ai(self, results: List[Dict[str, Any]]) -> str:
         """Format plugin results as context for AI follow-up"""
         if not results:
@@ -311,7 +422,7 @@ class PluginService:
         formatted = "\n\nPlugin Results:\n"
         for r in results:
             formatted += f"\n[{r['plugin']}.{r['action']}]:\n"
-            formatted += json.dumps(r['result'], indent=2)
+            formatted += self.format_result_for_display(r['plugin'], r['action'], r['result'])
             formatted += "\n"
 
         return formatted

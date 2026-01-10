@@ -492,6 +492,29 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         db.add(assistant_msg)
                         db.commit()
 
+                        # Add LLM follow-up for certain commands
+                        if command in ("flood", "budget", "firewall"):
+                            try:
+                                # Truncate result for LLM context if too long
+                                result_summary = result.get('content', '')
+                                if len(result_summary) > 500:
+                                    result_summary = result_summary[:500] + "..."
+
+                                # Build context for LLM
+                                follow_up_messages = [
+                                    {"role": "system", "content": "You are a helpful assistant. Respond conversationally and briefly. One sentence max."},
+                                    {"role": "user", "content": f"Command: {command} {arg}\nResult: {result_summary}\n\nGive a brief, friendly one-line response about this."}
+                                ]
+
+                                # Get LLM follow-up (non-streaming for simplicity)
+                                follow_up_text = await chat_service.chat(follow_up_messages)
+                                if follow_up_text:
+                                    result["content"] = result.get("content", "") + "\n\n" + follow_up_text
+                                    assistant_msg.content = result["content"]
+                                    db.commit()
+                            except Exception as e:
+                                logger.exception(f"LLM follow-up failed: {e}")
+
                         # Send response (with conn_id to ensure it goes to correct chat, queue if stale)
                         await manager.send_json(user.id, {
                             "type": "response",
@@ -647,20 +670,23 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                     clean_response, user.id
                                 )
 
-                                # Send tool results to client
+                                # Send tool results to client (formatted for display)
                                 for r in results:
+                                    formatted_result = plugin_service.format_result_for_display(
+                                        r['plugin'], r['action'], r['result']
+                                    )
                                     await manager.send_json(user.id, {
                                         "type": "plugin_result",
                                         "plugin": r['plugin'],
                                         "action": r['action'],
-                                        "result": r['result']
+                                        "result": formatted_result
                                     }, conn_id)
 
                                 # Get AI follow-up response with tool results
                                 result_context = plugin_service.format_results_for_ai(results)
                                 follow_up_messages = messages + [
                                     {"role": "assistant", "content": stripped_response},
-                                    {"role": "user", "content": f"Here are the results from the plugin calls:{result_context}\n\nPlease summarize these results naturally for the user."}
+                                    {"role": "user", "content": f"Plugin results:{result_context}\n\nRespond helpfully to the user based on these results. Be conversational but informative."}
                                 ]
 
                                 # Signal frontend to clear current content for follow-up

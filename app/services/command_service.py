@@ -20,7 +20,7 @@ class CommandService:
         "search": "Search the web and get AI-summarized results",
         "images": "Search for images",
         "geni": "Generate an AI image from your prompt",
-        "flood": "Torrent manager: flood list | flood add <url> | flood delete <hash>",
+        "flood": "Torrent manager: flood list | flood add <url> | flood start/stop/delete <hash>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
         "firewall": "Firewall status: firewall | firewall blocked | firewall search <ip>",
     }
@@ -167,6 +167,56 @@ class CommandService:
             "prompt": prompt
         }
 
+    def _format_size(self, size_bytes: int) -> str:
+        """Format bytes to human readable size"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.1f} PB"
+
+    def _format_torrent_list(self, result: dict) -> str:
+        """Format Flood torrent list as readable text"""
+        if not result or isinstance(result, list) and len(result) == 0:
+            return "No torrents found."
+
+        # Flood returns {torrents: {...}, id: [...]}
+        torrents = result.get('torrents', {})
+        if not torrents:
+            return "No torrents found."
+
+        lines = ["## Torrents\n"]
+        for hash_id, t in torrents.items():
+            # Status emoji
+            status = t.get('status', [])
+            if 'seeding' in status:
+                icon = "🌱"
+            elif 'downloading' in status:
+                icon = "⬇️"
+            elif 'stopped' in status or 'paused' in status:
+                icon = "⏸️"
+            elif 'error' in status:
+                icon = "❌"
+            else:
+                icon = "📦"
+
+            name = t.get('name', 'Unknown')[:50]
+            percent = t.get('percentComplete', 0)
+            size = self._format_size(t.get('sizeBytes', 0))
+            down_rate = self._format_size(t.get('downRate', 0)) + "/s"
+            up_rate = self._format_size(t.get('upRate', 0)) + "/s"
+
+            # Progress bar
+            filled = int(percent / 10)
+            bar = "█" * filled + "░" * (10 - filled)
+
+            lines.append(f"{icon} **{name}**")
+            lines.append(f"   [{bar}] {percent:.1f}% | {size}")
+            lines.append(f"   ↓ {down_rate} | ↑ {up_rate}")
+            lines.append(f"   `{hash_id}`\n")
+
+        return "\n".join(lines)
+
     async def _flood_command(self, arg: str) -> dict:
         """Direct Flood torrent manager commands"""
         if not self.user:
@@ -177,20 +227,47 @@ class CommandService:
         subcommand = parts[0].lower() if parts else "list"
         param = parts[1] if len(parts) > 1 else ""
 
+        # Sanitize URL/magnet - remove any trailing non-URL characters (emojis, etc.)
+        if param and (param.startswith("magnet:") or param.startswith("http")):
+            import re
+            # Keep only valid URL characters
+            param = re.match(r'^[a-zA-Z0-9:/?#\[\]@!$&\'()*+,;=._~%-]+', param)
+            param = param.group(0) if param else ""
+
         try:
             if subcommand in ("list", "ls", ""):
-                result = await plugin_service.execute_tool_call("flood", "list_torrents", {}, self.user.id)
+                result = await plugin_service.execute_tool_call("flood", "list", {}, self.user.id)
+                if "error" in result:
+                    return {"type": "text", "content": f"Flood error: {result['error']}"}
+                return {"type": "text", "content": self._format_torrent_list(result)}
+
             elif subcommand == "add" and param:
-                result = await plugin_service.execute_tool_call("flood", "add_torrent", {"url": param}, self.user.id)
+                result = await plugin_service.execute_tool_call("flood", "add", {"url": param}, self.user.id)
+                if "error" in result:
+                    return {"type": "text", "content": f"Flood error: {result['error']}"}
+                return {"type": "text", "content": "✅ Torrent added successfully!"}
+
             elif subcommand in ("del", "delete", "rm") and param:
-                result = await plugin_service.execute_tool_call("flood", "delete_torrents", {"hashes": param}, self.user.id)
+                result = await plugin_service.execute_tool_call("flood", "delete", {"hashes": param}, self.user.id)
+                if "error" in result:
+                    return {"type": "text", "content": f"Flood error: {result['error']}"}
+                return {"type": "text", "content": "🗑️ Torrent deleted."}
+
+            elif subcommand in ("start", "resume") and param:
+                result = await plugin_service.execute_tool_call("flood", "start", {"hashes": param}, self.user.id)
+                if "error" in result:
+                    return {"type": "text", "content": f"Flood error: {result['error']}"}
+                return {"type": "text", "content": "▶️ Torrent started."}
+
+            elif subcommand in ("stop", "pause") and param:
+                result = await plugin_service.execute_tool_call("flood", "stop", {"hashes": param}, self.user.id)
+                if "error" in result:
+                    return {"type": "text", "content": f"Flood error: {result['error']}"}
+                return {"type": "text", "content": "⏸️ Torrent stopped."}
+
             else:
-                return {"type": "text", "content": "Usage: `flood list` | `flood add <magnet/url>` | `flood delete <hash>`"}
+                return {"type": "text", "content": "Usage: `flood list` | `flood add <url>` | `flood start <hash>` | `flood stop <hash>` | `flood delete <hash>`"}
 
-            if "error" in result:
-                return {"type": "text", "content": f"Flood error: {result['error']}"}
-
-            return {"type": "text", "content": f"```json\n{json.dumps(result, indent=2)}\n```"}
         except Exception as e:
             return {"type": "text", "content": f"Flood error: {str(e)}"}
 
