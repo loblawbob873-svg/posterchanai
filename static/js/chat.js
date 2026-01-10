@@ -1827,7 +1827,8 @@ class ChatHandler {
 
     // Subcommands that can be autocompleted
     subcommands = {
-        'torrents': ['movies', 'tv', 'music', 'anime', 'download'],
+        'torrents': ['download'],
+        'torrents download': ['movies', 'tv', 'music', 'anime'],
         'nyaa': ['download'],
         'flood': ['list', 'add', 'start', 'stop', 'delete'],
         'budget': ['bills', 'add', 'pay'],
@@ -1847,25 +1848,47 @@ class ChatHandler {
         // Check if we're after a command (has space) - handle subcommand completion
         const spaceIndex = textBeforeCursor.indexOf(' ');
         if (spaceIndex > 0) {
-            const cmd = textBeforeCursor.substring(0, spaceIndex);
-            const afterCmd = textBeforeCursor.substring(spaceIndex + 1);
+            const parts = textBeforeCursor.split(' ');
+            const cmd = parts[0];
+            const afterCmd = parts.slice(1).join(' ');
 
+            // Check for multi-level subcommands (e.g., "torrents download")
+            const cmdPrefix = parts.slice(0, -1).join(' ');
+            const lastPart = parts[parts.length - 1];
+
+            // Try multi-level first (e.g., "torrents download" -> ["movies", "tv", ...])
+            if (this.subcommands[cmdPrefix]) {
+                const subs = this.subcommands[cmdPrefix];
+                const matches = subs.filter(s => s.startsWith(lastPart));
+
+                if (matches.length === 1) {
+                    const completed = cmdPrefix + ' ' + matches[0] + ' ';
+                    this.messageInput.value = completed + input.substring(cursorPos);
+                    this.messageInput.setSelectionRange(completed.length, completed.length);
+                    return;
+                } else if (matches.length > 1) {
+                    this.showToast(`${cmdPrefix}: ${matches.join(' | ')}`);
+                    return;
+                } else if (lastPart === '') {
+                    this.showToast(`${cmdPrefix}: ${subs.join(' | ')}`);
+                    return;
+                }
+            }
+
+            // Try single-level (e.g., "torrents" -> ["download"])
             if (this.subcommands[cmd]) {
                 const subs = this.subcommands[cmd];
                 const matches = subs.filter(s => s.startsWith(afterCmd));
 
                 if (matches.length === 1) {
-                    // Single match - complete it
                     const completed = cmd + ' ' + matches[0] + ' ';
                     this.messageInput.value = completed + input.substring(cursorPos);
                     this.messageInput.setSelectionRange(completed.length, completed.length);
                     return;
                 } else if (matches.length > 1) {
-                    // Multiple matches - show options
                     this.showToast(`${cmd}: ${matches.join(' | ')}`);
                     return;
                 } else if (afterCmd === '') {
-                    // No input yet - show all options
                     this.showToast(`${cmd}: ${subs.join(' | ')}`);
                     return;
                 }

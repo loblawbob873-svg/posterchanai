@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Cache for last torrent search results (per user session - simple in-memory cache)
-_torrent_cache: dict[int, list[TorrentResult]] = {}
+# Cache for torrent results (per user, per category)
+_torrent_cache: dict[int, dict[str, list[TorrentResult]]] = {}
 _nyaa_cache: dict[int, list[NyaaResult]] = {}
 
 
@@ -28,7 +28,7 @@ class CommandService:
         "images": "Search for images",
         "geni": "Generate an AI image from your prompt",
         "yt": "Summarize a YouTube video: yt <url>",
-        "torrents": "Browse torrents: torrents | torrents movies|tv|music|anime | torrents download <#>",
+        "torrents": "Browse torrents: torrents | torrents download <category> <#>",
         "nyaa": "Search nyaa.si: nyaa <query> | nyaa download <#>",
         "flood": "Torrent manager: flood list | flood add <url> | flood start/stop/delete <hash>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
@@ -377,23 +377,29 @@ class CommandService:
 
         parts = arg.strip().split()
         subcommand = parts[0].lower() if parts else ""
+        categories = ("movies", "tv", "music", "anime")
 
-        # Handle download subcommand
+        # Handle download subcommand: torrents download <category> <number>
         if subcommand in ("download", "dl", "get"):
-            if len(parts) < 2:
-                return {"type": "text", "content": "Usage: `torrents download <number>`\nFirst browse with `torrents movies` or another category."}
+            if len(parts) < 3:
+                return {"type": "text", "content": "Usage: `torrents download <category> <number>`\n\nExample: `torrents download anime 5`"}
+
+            category = parts[1].lower()
+            if category not in categories:
+                return {"type": "text", "content": f"Unknown category: `{category}`\n\nAvailable: movies, tv, music, anime"}
 
             try:
-                num = int(parts[1])
+                num = int(parts[2])
             except ValueError:
-                return {"type": "text", "content": "Please provide a valid number. Example: `torrents download 3`"}
+                return {"type": "text", "content": "Please provide a valid number. Example: `torrents download anime 5`"}
 
-            # Get cached results
+            # Get cached results for this category
             user_id = self.user.id if self.user else 0
-            cached = _torrent_cache.get(user_id, [])
+            user_cache = _torrent_cache.get(user_id, {})
+            cached = user_cache.get(category, [])
 
             if not cached:
-                return {"type": "text", "content": "No torrent results cached. Browse first with `torrents movies`, `torrents tv`, etc."}
+                return {"type": "text", "content": f"No {category} results cached. Run `torrents` first to load results."}
 
             if num < 1 or num > len(cached):
                 return {"type": "text", "content": f"Invalid number. Choose between 1 and {len(cached)}."}
@@ -416,6 +422,11 @@ class CommandService:
         if not subcommand:
             try:
                 all_results = await scrape_all_categories(self.db, limit_per_category=10)
+
+                # Cache all results by category
+                user_id = self.user.id if self.user else 0
+                _torrent_cache[user_id] = all_results
+
                 formatted = format_all_categories(all_results)
                 return {"type": "text", "content": formatted}
             except Exception as e:
@@ -424,7 +435,7 @@ class CommandService:
 
         # Handle category browsing
         category = subcommand
-        if category not in ("movies", "tv", "music", "anime"):
+        if category not in categories:
             return {"type": "text", "content": f"Unknown category: `{subcommand}`\n\nAvailable: `torrents movies`, `torrents tv`, `torrents music`, `torrents anime`"}
 
         try:
@@ -435,10 +446,12 @@ class CommandService:
 
             # Cache results for download command
             user_id = self.user.id if self.user else 0
-            _torrent_cache[user_id] = results
+            if user_id not in _torrent_cache:
+                _torrent_cache[user_id] = {}
+            _torrent_cache[user_id][category] = results
 
             formatted = format_torrent_results(results, category)
-            formatted += f"\n\n*Use `torrents download <#>` to add to Flood*"
+            formatted += f"\n\n*Use `torrents download {category} <#>` to add to Flood*"
 
             return {"type": "text", "content": formatted}
 

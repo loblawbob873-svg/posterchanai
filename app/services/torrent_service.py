@@ -288,6 +288,7 @@ def format_all_categories(all_results: dict[str, list[TorrentResult]]) -> str:
         lines.append("")
 
     lines.append("---")
-    lines.append("*Use `torrents movies`, `torrents tv`, `torrents music`, or `torrents anime` for more*")
+    lines.append("*Use `torrents download <category> <#>` to add to Flood*")
+    lines.append("*Example: `torrents download anime 5`*")
 
     return "\n".join(lines)
