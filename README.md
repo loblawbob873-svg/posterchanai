@@ -500,6 +500,25 @@ To see required packages for your distro before installing:
 ./install.sh --packages
 ```
 
+### Upgrading
+
+To upgrade an existing installation:
+
+```bash
+cd posterchanai
+git pull
+sudo systemctl restart posterchanai
+```
+
+**Automatic migrations:** New settings are automatically added to the database when the app starts. No manual migration is needed.
+
+**Manual migration (optional):** If you want to verify or run migrations without starting the app:
+
+```bash
+source venv/bin/activate  # or venv-ipex
+python scripts/migrate.py
+```
+
 ### Manual Setup
 
 If you prefer manual control:

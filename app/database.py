@@ -3,6 +3,9 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool, StaticPool
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Support custom database file via POSTERCHANAI_DB env var
 _db_file = os.getenv("POSTERCHANAI_DB", "posterchanai.db")
@@ -87,10 +90,26 @@ def init_db():
             "comfyui_default_model": "halcyonSDXL_v19.safetensors",
             "comfyui_anime_model": "nova3DCGXL_ilV80.safetensors",
             "comfyui_timeout": "300000",
+            # Native image generation settings
+            "image_backend": "comfyui",  # "native" or "comfyui"
+            "image_model_path": "",
+            "image_anime_model_path": "",
+            "image_model_type": "sdxl",  # "sd15", "sdxl", "sd3", "flux"
+            "image_default_steps": "20",
+            "image_default_cfg": "7.0",
+            "image_default_width": "1024",
+            "image_default_height": "1024",
+            "image_gpu_device": "auto",  # "auto", "cuda", "xpu", "cpu"
+            "image_idle_timeout": "120",  # Seconds before unloading (0=disabled)
+            "image_subprocess_mode": "false",  # Run each image in subprocess (Intel XPU)
+            # VRAM management
+            "vram_mode": "shared",  # "shared" (swap models) or "dedicated" (keep both)
             "searxng_url": "https://search.poster.place",
+            "torrent_site_url": "",  # TorrentGalaxy or compatible site URL
             "tts_voice": "en-GB-SoniaNeural",
             "tts_rate": "+5%",
             "tts_pitch": "+10Hz",
+            "upload_path": "/var/lib/posterchanai",
             # Ollama settings
             "ollama_url": "http://localhost:11434",
             "ollama_api_format": "ollama",  # "ollama" for /api/chat, "openai" for /v1/chat/completions
@@ -173,11 +192,16 @@ When asked to write or modify code or files:
             "llm_cpu_mode": "false",  # Force CPU-only (n_gpu_layers=0)
             "llm_use_mmap": "true",  # Memory-map model file
             "llm_use_mlock": "true",  # Lock model in RAM for faster inference
+            "llm_idle_timeout": "0",  # Seconds before unloading LLM (0=disabled)
             # LLM health check
             "ollama_ping_enabled": "false",
             "ollama_restart_command": "sudo systemctl restart ollama",
             "ollama_ping_interval": "90",
             "ollama_restart_after_failures": "2",
+            # GPU memory monitoring
+            "gpu_memory_check_enabled": "false",
+            "gpu_memory_threshold": "99",
+            "gpu_type": "nvidia",  # "nvidia" or "intel"
             # Email settings (SMTP)
             "smtp_enabled": "false",
             "smtp_host": "",
@@ -196,6 +220,8 @@ When asked to write or modify code or files:
             "imap_password": "",
             "imap_use_ssl": "true",
             "imap_sent_folder": "Sent",
+            # News sources
+            "news_sources": "",
             # RAG (Retrieval-Augmented Generation) settings
             "rag_enabled": "true",
             "rag_embedding_model": "all-MiniLM-L6-v2",
@@ -210,6 +236,10 @@ When asked to write or modify code or files:
             "rag_chromadb_path": "./data/chromadb",
             "rag_auto_context": "true",
             "rag_auto_warmup": "true",  # Auto-load RAG data into RAM on startup
+            "rag_max_context_chars": "32000",  # Max total context injected into prompt
+            "rag_max_chunk_display": "8000",   # Max chars per chunk when displaying
+            "rag_max_chunk_index": "10000",    # Max chunk size during indexing
+            "rag_api_url": "",  # Remote RAG API URL for distributed setups
             # RAG cache settings (for performance tuning) - aggressive RAM caching
             "rag_query_cache_max": "100000",
             "rag_query_cache_ttl": "600",
@@ -225,10 +255,15 @@ When asked to write or modify code or files:
             "mcp_warmup": "true",              # Pre-load embeddings on startup
         }
 
+        added_settings = []
         for key, value in default_settings.items():
             existing = db.query(Setting).filter(Setting.key == key).first()
             if not existing:
                 db.add(Setting(key=key, value=value))
+                added_settings.append(key)
+
+        if added_settings:
+            logger.info(f"[MIGRATE] Added {len(added_settings)} new settings: {', '.join(added_settings)}")
 
         # Create default admin user if no users exist
         from app.auth import get_password_hash

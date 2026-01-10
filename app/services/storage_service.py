@@ -181,7 +181,6 @@ class StorageService:
 
     def load_image_as_base64(self, image_url: str) -> str | None:
         """Load image from URL path and return as base64"""
-        import base64
         from urllib.parse import unquote
 
         # URL is like /api/files/username/conv_id/filename.png

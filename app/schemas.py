@@ -97,6 +97,7 @@ class SettingsResponse(BaseModel):
     image_default_height: str = "1024"
     image_gpu_device: str = "auto"  # "auto", "cuda", "xpu", "cpu"
     image_idle_timeout: str = "120"  # Seconds before unloading image model (0=disabled)
+    image_subprocess_mode: str = "false"  # Run each image in subprocess for VRAM release (Intel XPU)
     # VRAM management
     vram_mode: str = "shared"  # "shared" (swap models) or "dedicated" (keep both)
     searxng_url: str = ""
@@ -115,13 +116,14 @@ class SettingsResponse(BaseModel):
     # CPU optimization settings
     llm_cpu_mode: str = "false"  # Force CPU-only (n_gpu_layers=0)
     llm_use_mmap: str = "true"  # Memory-map model file
-    llm_use_mlock: str = "false"  # Lock model in RAM
+    llm_use_mlock: str = "true"  # Lock model in RAM
     llm_idle_timeout: str = "0"  # Seconds before unloading LLM model (0=disabled)
     # Ollama settings (also used for native backend sampling parameters)
     ollama_url: str = "http://localhost:11434"
     ollama_api_format: str = "ollama"  # "ollama" for /api/chat, "openai" for /v1/chat/completions
     ollama_model: str = "richardyoung/qwen3-14b-abliterated:Q5_K_M"
     ollama_timeout: str = "120000"
+    ollama_max_concurrent: str = "1"
     ollama_system_prompt: str = ""
     # Advanced model settings
     ollama_temperature: str = "0.2"
@@ -129,7 +131,7 @@ class SettingsResponse(BaseModel):
     ollama_top_k: str = "40"
     ollama_repeat_penalty: str = "1.1"
     ollama_num_ctx: str = "16384"
-    ollama_num_predict: str = "2048"
+    ollama_num_predict: str = "8192"
     ollama_keep_alive: str = "-1"
     ollama_stop: str = ""
     ollama_seed: str = ""
@@ -177,8 +179,8 @@ class SettingsResponse(BaseModel):
     # RAG (Retrieval-Augmented Generation) settings
     rag_enabled: str = "true"
     rag_embedding_model: str = "all-MiniLM-L6-v2"
-    rag_chunk_size: str = "1000"
-    rag_chunk_overlap: str = "200"
+    rag_chunk_size: str = "2000"
+    rag_chunk_overlap: str = "100"
     rag_top_k: str = "5"
     rag_min_similarity: str = "0.3"
     rag_max_file_size: str = "1"
@@ -200,6 +202,11 @@ class SettingsResponse(BaseModel):
     rag_hnsw_ef_search: str = "100"          # Query-time accuracy
     rag_hnsw_ef_construction: str = "200"    # Index build quality
     rag_hnsw_m: str = "16"                   # Max connections per node
+    # MCP Server settings
+    mcp_enabled: str = "true"
+    mcp_host: str = "0.0.0.0"
+    mcp_port: str = "8808"
+    mcp_warmup: str = "true"
 
 
 # TTS schema
