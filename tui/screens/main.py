@@ -230,7 +230,10 @@ class MainScreen(Screen):
         self.music_visible = True
         music_player = self.query_one("#music-player", MusicPlayerWidget)
         music_player.remove_class("--hidden")
-        music_player.play_track(data.get("track", {}))
+        track = data.get("track", {})
+        if track:
+            # Delay playback to not block response handling
+            self.set_timer(0.1, lambda: music_player.play_track(track))
 
     def handle_music_playlist(self, data: dict):
         """Handle music playlist command."""
@@ -240,7 +243,8 @@ class MainScreen(Screen):
         tracks = data.get("tracks", [])
         if tracks:
             music_player.load_playlist(tracks)
-            music_player.play_track(tracks[0])
+            # Delay playback to not block response handling
+            self.set_timer(0.1, lambda: music_player.play_track(tracks[0]))
 
     def handle_music_next(self):
         """Handle music next command."""
