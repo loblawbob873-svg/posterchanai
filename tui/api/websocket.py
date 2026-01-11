@@ -63,6 +63,7 @@ class ChatWebSocket:
                 ping_interval=30,
                 ping_timeout=300,  # Allow long operations like image generation (5 min)
                 close_timeout=10,
+                max_size=10 * 1024 * 1024,  # 10MB max message size for images
             )
             self._connected = True
             logger.info("WebSocket connected")
