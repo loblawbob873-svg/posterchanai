@@ -88,9 +88,34 @@ class MessageWidget(Widget):
             self._render_buttons()
 
     def _render_buttons(self):
-        """Render cmd: link buttons - disabled, using quick action buttons instead."""
-        # Buttons are now stripped out - we use the quick action bar instead
-        pass
+        """Render cmd: link buttons for essential actions."""
+        try:
+            button_container = self.query_one("#message-buttons", Horizontal)
+            button_container.remove_children()
+
+            # Only show buttons for actionable commands (mail, calendar, torrents)
+            # Skip if too many links (like music/search results)
+            if len(self._cmd_links) > 8:
+                return
+
+            # Filter to essential action buttons
+            essential_prefixes = ("mail ", "cal ", "torrents ", "todo ", "news ", "miniflux ")
+            actionable = [
+                (label, cmd) for label, cmd, _, _ in self._cmd_links
+                if any(cmd.startswith(p) for p in essential_prefixes)
+            ]
+
+            if actionable:
+                buttons_to_mount = []
+                for label, command in actionable[:6]:  # Max 6 buttons
+                    btn = Button(label, classes="cmd-button")
+                    btn.command = command
+                    buttons_to_mount.append(btn)
+
+                if buttons_to_mount:
+                    button_container.mount_all(buttons_to_mount)
+        except Exception:
+            pass
 
     def on_button_pressed(self, event: Button.Pressed):
         """Handle action button clicks."""
