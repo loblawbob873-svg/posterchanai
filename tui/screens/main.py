@@ -224,8 +224,10 @@ class MainScreen(Screen):
                 image_data = data.get("image", "")
                 prompt = data.get("prompt", "")
                 if image_data:
-                    chat_view.add_message("assistant", f"{content}\n\n**Image generated!** View in web UI or check uploads folder.\nPrompt: {prompt}")
-                    self.notify("Image generated successfully!", severity="information")
+                    chat_view.add_message("assistant", f"{content}\n\n**Image generated!**\nPrompt: {prompt}")
+                    self.notify("Image generated! Opening in browser...", severity="information")
+                    # Open image in browser
+                    self._open_generated_image(image_data)
                 else:
                     chat_view.add_message("assistant", f"{content}\n\n[Image generation completed]")
             else:
@@ -509,3 +511,33 @@ class MainScreen(Screen):
         """Toggle music player minimize (Alt+M)."""
         music_player = self.query_one("#music-player", MusicPlayerWidget)
         music_player.toggle_minimize()
+
+    def _open_generated_image(self, image_data: str):
+        """Open generated image in browser."""
+        import base64
+        import tempfile
+        import webbrowser
+        import os
+
+        try:
+            # Decode base64 image
+            image_bytes = base64.b64decode(image_data)
+
+            # Determine format from header
+            ext = "png"
+            if image_bytes[:3] == b'\xff\xd8\xff':
+                ext = "jpg"
+            elif image_bytes[:4] == b'GIF8':
+                ext = "gif"
+
+            # Save to temp file
+            with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as f:
+                f.write(image_bytes)
+                temp_path = f.name
+
+            # Open in browser
+            webbrowser.open(f"file://{temp_path}")
+
+        except Exception as e:
+            import logging
+            logging.getLogger("tui").error(f"Failed to open image: {e}")
