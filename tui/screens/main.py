@@ -264,7 +264,8 @@ class MainScreen(Screen):
         if tracks:
             music_player.load_playlist(tracks)
             # Delay playback to not block response handling
-            self.set_timer(0.1, lambda: music_player.play_track(tracks[0]))
+            # keep_playlist=True so we don't overwrite the loaded playlist
+            self.set_timer(0.1, lambda: music_player.play_track(tracks[0], keep_playlist=True))
 
     def handle_music_next(self):
         """Handle music next command."""

@@ -108,15 +108,21 @@ class MusicPlayerWidget(Widget):
         if self.playlist and self.playlist_index < len(self.playlist) - 1:
             self.next_track()
 
-    def play_track(self, track: dict):
-        """Play a single track."""
+    def play_track(self, track: dict, keep_playlist: bool = False):
+        """Play a single track.
+
+        Args:
+            track: Track to play
+            keep_playlist: If True, don't overwrite the existing playlist
+        """
         if not track:
             self.notify("No track to play", severity="warning")
             return
 
         self.current_track = track
-        self.playlist = [track]
-        self.playlist_index = 0
+        if not keep_playlist:
+            self.playlist = [track]
+            self.playlist_index = 0
 
         # Use worker to avoid blocking UI
         self._play_track_async(track)
