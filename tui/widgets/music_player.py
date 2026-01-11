@@ -140,6 +140,18 @@ class MusicPlayerWidget(Widget):
             self.notify("No stream URL for track", severity="error")
             return
 
+        # Convert relative URL to absolute using server base URL and add auth token
+        if url.startswith("/"):
+            try:
+                base_url = self.app.config.server_url.rstrip("/")
+                token = self.app.api.token
+                # Add token to URL for authentication
+                separator = "&" if "?" in url else "?"
+                url = f"{base_url}{url}{separator}token={token}"
+            except Exception:
+                self.notify("Could not resolve stream URL", severity="error")
+                return
+
         self.is_playing = True
         self.progress = 0.0
         self.duration = track.get("duration", 0.0)

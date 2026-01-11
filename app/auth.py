@@ -81,6 +81,10 @@ def get_current_user(
     if not token:
         token = request.cookies.get("access_token")
 
+    # If not in cookie, try query parameter (for streaming endpoints like music)
+    if not token:
+        token = request.query_params.get("token")
+
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

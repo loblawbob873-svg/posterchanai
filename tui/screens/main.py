@@ -246,6 +246,17 @@ class MainScreen(Screen):
 
     def handle_music_playlist(self, data: dict):
         """Handle music playlist command."""
+        # Stop streaming state first
+        self.is_streaming = False
+        chat_view = self.query_one("#chat-view", ChatView)
+        chat_view.stop_streaming()
+
+        # Display the track list content if present
+        content = data.get("content", "")
+        if content:
+            self.call_later(lambda: chat_view.add_message("assistant", content))
+
+        # Show music player and load playlist
         self.music_visible = True
         music_player = self.query_one("#music-player", MusicPlayerWidget)
         music_player.remove_class("--hidden")
