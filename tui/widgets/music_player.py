@@ -182,15 +182,23 @@ class MusicPlayerWidget(Widget):
         self._update_track_display()
         self._update_play_button()
 
-        # Start playback
+        # Start playback in background thread to avoid blocking
+        self._play_url_background(url, track.get("title", "Unknown"))
+
+    @work(thread=True)
+    def _play_url_background(self, url: str, title: str):
+        """Play URL in background thread."""
         try:
             self.player.play(url)
-            self._run_visualizer()
-            title = track.get("title", "Unknown")
-            self.notify(f"Now playing: {title}", severity="information")
+            self.app.call_from_thread(self._run_visualizer)
+            self.app.call_from_thread(lambda: self.notify(f"Now playing: {title}", severity="information"))
         except Exception as e:
-            self.is_playing = False
-            self.notify(f"Playback failed: {e}", severity="error")
+            self.app.call_from_thread(lambda: self._on_playback_failed(str(e)))
+
+    def _on_playback_failed(self, error: str):
+        """Handle playback failure on main thread."""
+        self.is_playing = False
+        self.notify(f"Playback failed: {error}", severity="error")
 
     def _update_track_display(self):
         """Update track info display."""
