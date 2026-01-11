@@ -429,6 +429,7 @@ def search_messages(
                                 # Handle different response formats
                                 if isinstance(msg_data[0], tuple) and len(msg_data[0]) >= 2:
                                     raw_email = msg_data[0][1]
+                                    logger.info(f"UID {uid_str}: tuple[0] len={len(msg_data[0])}, raw_email type={type(raw_email)}, size={len(raw_email) if raw_email else 0}")
                                 elif isinstance(msg_data[0], bytes):
                                     # Some servers return flags then data
                                     if len(msg_data) > 1 and isinstance(msg_data[1], tuple):
@@ -436,8 +437,10 @@ def search_messages(
                                     else:
                                         continue
                                 else:
+                                    logger.info(f"UID {uid_str}: tuple len={len(msg_data[0]) if isinstance(msg_data[0], tuple) else 'N/A'}")
                                     continue
                                 msg = parse_email(raw_email, uid_str, account.email)
+                                logger.info(f"UID {uid_str}: parse_email returned {msg is not None}")
                                 if msg:
                                     # Add folder info to message
                                     msg.account = f"{account.email} ({folder})"
