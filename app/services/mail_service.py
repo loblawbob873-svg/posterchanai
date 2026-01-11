@@ -1263,11 +1263,18 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
     lines.append("")
 
     # Body (prefer text, fall back to stripped HTML)
+    body_content = ""
     if msg.body_text and msg.body_text.strip():
-        lines.append(msg.body_text)
+        body_content = msg.body_text
+        # Check if body_text actually contains HTML (some clients put HTML in plain part)
+        if '<html' in body_content.lower() or '<body' in body_content.lower() or '<div' in body_content.lower():
+            body_content = html_to_text(body_content)
     elif msg.body_html:
-        # Better HTML to text conversion
-        lines.append(html_to_text(msg.body_html))
+        # Convert HTML to text
+        body_content = html_to_text(msg.body_html)
+
+    if body_content.strip():
+        lines.append(body_content)
     else:
         lines.append("(No message body)")
 
