@@ -1,0 +1,22 @@
+# Posterchanai TUI - Terminal Client
+# Install in isolated venv: python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+
+# Core TUI framework
+textual>=0.47.0
+rich>=13.7.0
+
+# HTTP/WebSocket client
+httpx>=0.26.0
+websockets>=12.0
+
+# Data validation
+pydantic>=2.5.0
+
+# Audio playback (requires mpv: apt install mpv / brew install mpv)
+python-mpv>=1.0.4
+
+# Secure credential storage
+keyring>=24.0.0
+
+# Configuration
+python-dotenv>=1.0.0

@@ -1,0 +1,515 @@
+/* Posterchanai TUI - Cyberpunk Theme */
+
+/* ======== COLOR VARIABLES ======== */
+$cyan: #00ffff;
+$magenta: #ff00ff;
+$orange: #ff6b00;
+$bg: #0a0a0f;
+$surface: #12121a;
+$surface-bright: #1a1a25;
+$surface-hover: #22222e;
+$text: #e0e0e0;
+$text-dim: #808090;
+$text-muted: #505060;
+$border: #2a2a40;
+$border-bright: #3a3a55;
+$error: #ff4444;
+$success: #44ff88;
+$warning: #ffaa00;
+
+/* ======== GLOBAL ======== */
+Screen {
+    background: $bg;
+}
+
+/* ======== HEADER/FOOTER ======== */
+Header {
+    background: $surface;
+    color: $cyan;
+    text-style: bold;
+}
+
+Footer {
+    background: $surface;
+    color: $text-dim;
+}
+
+FooterKey {
+    background: $surface-bright;
+    color: $cyan;
+}
+
+FooterKey > .footer-key--key {
+    background: $cyan;
+    color: $bg;
+}
+
+/* ======== SIDEBAR ======== */
+#sidebar {
+    width: 32;
+    background: $surface;
+    border-right: solid $border;
+}
+
+#sidebar-header {
+    height: 3;
+    background: $surface-bright;
+    padding: 1;
+    text-style: bold;
+    color: $cyan;
+    border-bottom: solid $border;
+}
+
+#new-chat-btn {
+    dock: right;
+    width: auto;
+    min-width: 5;
+    background: $cyan;
+    color: $bg;
+    text-style: bold;
+}
+
+#new-chat-btn:hover {
+    background: $cyan 80%;
+}
+
+#conversation-list {
+    height: 1fr;
+}
+
+.conversation-item {
+    height: 3;
+    padding: 0 1;
+    border-bottom: solid $border 30%;
+}
+
+.conversation-item:hover {
+    background: $surface-hover;
+}
+
+.conversation-item.--selected {
+    background: $cyan 15%;
+    border-left: thick $cyan;
+}
+
+.conversation-title {
+    color: $text;
+    text-style: bold;
+}
+
+.conversation-time {
+    color: $text-muted;
+    text-style: italic;
+}
+
+/* ======== CHAT AREA ======== */
+#chat-container {
+    background: $bg;
+}
+
+#chat-header {
+    height: 3;
+    background: $surface;
+    padding: 0 2;
+    border-bottom: solid $border;
+    content-align: center middle;
+}
+
+#chat-title {
+    color: $cyan;
+    text-style: bold;
+}
+
+#messages-container {
+    height: 1fr;
+    padding: 1;
+}
+
+/* ======== MESSAGES ======== */
+.message {
+    margin: 1 2;
+    padding: 1;
+    max-width: 80%;
+}
+
+.message-user {
+    background: $cyan 12%;
+    border: solid $cyan 40%;
+    margin-left: 20%;
+    text-align: right;
+}
+
+.message-assistant {
+    background: $magenta 12%;
+    border: solid $magenta 40%;
+    margin-right: 20%;
+}
+
+.message-system {
+    background: $surface;
+    text-align: center;
+    color: $text-dim;
+    border: solid $border;
+    margin: 1 10%;
+}
+
+.message-content {
+    color: $text;
+}
+
+.message-time {
+    color: $text-muted;
+    text-style: italic;
+}
+
+/* ======== CODE BLOCKS ======== */
+.code-block {
+    background: #1a1a2e;
+    border: solid $border-bright;
+    padding: 1;
+    margin: 1 0;
+}
+
+.code-header {
+    color: $text-muted;
+    background: $surface-bright;
+    padding: 0 1;
+}
+
+/* ======== INPUT AREA ======== */
+#input-area {
+    dock: bottom;
+    height: auto;
+    max-height: 12;
+    background: $surface;
+    border-top: double $border-bright;
+    padding: 1;
+}
+
+#input-row {
+    height: auto;
+}
+
+#message-input {
+    background: $surface-bright;
+    border: solid $border;
+    color: $text;
+    padding: 0 1;
+}
+
+#message-input:focus {
+    border: solid $cyan;
+}
+
+#send-btn {
+    width: 10;
+    background: $cyan;
+    color: $bg;
+    text-style: bold;
+    margin-left: 1;
+}
+
+#send-btn:hover {
+    background: $cyan 80%;
+}
+
+#send-btn.--streaming {
+    background: $error;
+}
+
+#stop-btn {
+    width: 10;
+    background: $error;
+    color: $text;
+    text-style: bold;
+    margin-left: 1;
+}
+
+/* ======== BUTTONS ======== */
+Button {
+    background: $surface-bright;
+    color: $text;
+    border: solid $border;
+}
+
+Button:hover {
+    background: $surface-hover;
+    border: solid $border-bright;
+}
+
+Button:focus {
+    border: solid $cyan;
+}
+
+Button.primary {
+    background: $cyan;
+    color: $bg;
+    border: none;
+}
+
+Button.primary:hover {
+    background: $cyan 80%;
+}
+
+Button.danger {
+    background: $error;
+    color: $text;
+    border: none;
+}
+
+Button.danger:hover {
+    background: $error 80%;
+}
+
+/* ======== CMD BUTTONS (inline command links) ======== */
+.cmd-button {
+    background: $cyan 15%;
+    color: $cyan;
+    padding: 0 1;
+    border: solid $cyan 40%;
+    height: 1;
+    min-width: 0;
+}
+
+.cmd-button:hover {
+    background: $cyan 30%;
+}
+
+/* ======== INPUTS ======== */
+Input {
+    background: $surface-bright;
+    border: solid $border;
+    color: $text;
+}
+
+Input:focus {
+    border: solid $cyan;
+}
+
+Input.-invalid {
+    border: solid $error;
+}
+
+/* ======== LOGIN SCREEN ======== */
+#login-container {
+    align: center middle;
+    width: 50;
+    height: auto;
+    background: $surface;
+    border: double $cyan;
+    padding: 2;
+}
+
+#login-title {
+    text-align: center;
+    color: $cyan;
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+#login-subtitle {
+    text-align: center;
+    color: $text-dim;
+    padding-bottom: 2;
+}
+
+.form-row {
+    height: 3;
+    margin-bottom: 1;
+}
+
+.form-label {
+    width: 12;
+    color: $text-dim;
+    padding-top: 1;
+}
+
+.form-input {
+    width: 1fr;
+}
+
+#login-btn {
+    width: 100%;
+    margin-top: 1;
+    background: $cyan;
+    color: $bg;
+    text-style: bold;
+}
+
+#login-error {
+    color: $error;
+    text-align: center;
+    padding: 1;
+}
+
+/* ======== MUSIC PLAYER ======== */
+#music-player {
+    dock: bottom;
+    height: 7;
+    background: $surface;
+    border-top: double $magenta;
+    padding: 1;
+}
+
+#music-player.--hidden {
+    display: none;
+}
+
+#music-header {
+    color: $magenta;
+    text-style: bold;
+    text-align: center;
+}
+
+#music-title {
+    color: $cyan;
+    text-style: bold;
+    text-align: center;
+}
+
+#music-artist {
+    color: $text-dim;
+    text-align: center;
+}
+
+#music-progress {
+    margin: 0 2;
+}
+
+#music-visualizer {
+    text-align: center;
+    color: $cyan;
+}
+
+#music-controls {
+    layout: horizontal;
+    align: center middle;
+    height: 1;
+}
+
+.music-btn {
+    background: transparent;
+    color: $magenta;
+    border: none;
+    min-width: 5;
+}
+
+.music-btn:hover {
+    color: $cyan;
+}
+
+/* ======== SETTINGS ======== */
+#settings-container {
+    padding: 2;
+}
+
+.settings-section {
+    background: $surface;
+    margin: 1;
+    padding: 1;
+    border: solid $border;
+}
+
+.settings-title {
+    color: $magenta;
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+.settings-row {
+    height: 3;
+    margin-bottom: 1;
+}
+
+/* ======== TABS ======== */
+Tabs {
+    background: $surface;
+}
+
+Tab {
+    background: $surface-bright;
+    color: $text-dim;
+    padding: 0 2;
+}
+
+Tab:hover {
+    background: $surface-hover;
+    color: $text;
+}
+
+Tab.-active {
+    background: $cyan 20%;
+    color: $cyan;
+}
+
+TabPane {
+    padding: 1;
+}
+
+/* ======== SCROLLBARS ======== */
+ScrollBar {
+    background: $surface;
+}
+
+ScrollBar > .scrollbar--bar {
+    background: $cyan 30%;
+}
+
+ScrollBar > .scrollbar--bar:hover {
+    background: $cyan 50%;
+}
+
+/* ======== LOADING/SPINNER ======== */
+LoadingIndicator {
+    color: $cyan;
+}
+
+/* ======== PROGRESS BAR ======== */
+ProgressBar > .bar--bar {
+    color: $cyan;
+}
+
+ProgressBar > .bar--complete {
+    color: $magenta;
+}
+
+/* ======== SPECIAL CONTENT ======== */
+.search-results {
+    padding: 1;
+}
+
+.search-result {
+    background: $surface;
+    padding: 1;
+    margin-bottom: 1;
+    border: solid $border;
+}
+
+.search-result-title {
+    color: $cyan;
+    text-style: bold;
+}
+
+.search-result-url {
+    color: $text-muted;
+}
+
+/* ======== HELP SCREEN ======== */
+#help-container {
+    padding: 2;
+}
+
+.help-section {
+    margin-bottom: 2;
+}
+
+.help-title {
+    color: $cyan;
+    text-style: bold;
+}
+
+.help-key {
+    background: $surface-bright;
+    color: $magenta;
+    padding: 0 1;
+}
