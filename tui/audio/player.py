@@ -1,6 +1,7 @@
 """
 Audio playback using mpv.
 """
+from __future__ import annotations
 
 import subprocess
 import threading

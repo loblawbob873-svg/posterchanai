@@ -1,6 +1,7 @@
 """
 Music player widget with ASCII visualizer.
 """
+from __future__ import annotations
 
 import asyncio
 from textual.app import ComposeResult

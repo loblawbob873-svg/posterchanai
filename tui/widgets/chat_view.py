@@ -1,6 +1,7 @@
 """
 Chat view widget for displaying messages.
 """
+from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.widget import Widget

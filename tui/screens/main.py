@@ -1,8 +1,8 @@
 """
 Main chat screen with sidebar, messages, and input.
 """
+from __future__ import annotations
 
-import asyncio
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import Static, Input, Button, Footer
@@ -61,9 +61,9 @@ class MainScreen(Screen):
         yield MusicPlayerWidget(id="music-player")
         yield Footer()
 
-    async def on_mount(self):
+    def on_mount(self):
         """Load conversations on mount."""
-        await self.load_conversations()
+        self.load_conversations()  # @work decorator handles async
 
     @work(exclusive=True)
     async def load_conversations(self):
@@ -290,15 +290,30 @@ Keyboard Shortcuts:
 
     def on_conversation_sidebar_conversation_selected(self, event):
         """Handle conversation selection from sidebar."""
-        asyncio.create_task(self.select_conversation(event.conversation_id))
+        self._select_conversation_worker(event.conversation_id)
 
     def on_conversation_sidebar_new_chat_requested(self, event):
         """Handle new chat request from sidebar."""
-        asyncio.create_task(self.create_new_chat())
+        self._create_new_chat_worker()
 
     def on_chat_input_message_submitted(self, event):
         """Handle message submission from input."""
-        asyncio.create_task(self.send_message(event.content))
+        self._send_message_worker(event.content)
+
+    @work(exclusive=True)
+    async def _select_conversation_worker(self, conversation_id: int):
+        """Worker to select conversation."""
+        await self.select_conversation(conversation_id)
+
+    @work(exclusive=True)
+    async def _create_new_chat_worker(self):
+        """Worker to create new chat."""
+        await self.create_new_chat()
+
+    @work(exclusive=True)
+    async def _send_message_worker(self, content: str):
+        """Worker to send message."""
+        await self.send_message(content)
 
     # Vim-style actions
     def action_next_conversation(self):
@@ -313,7 +328,7 @@ Keyboard Shortcuts:
                 break
 
         next_idx = (current_idx + 1) % len(self.conversations)
-        asyncio.create_task(self.select_conversation(self.conversations[next_idx].id))
+        self._select_conversation_worker(self.conversations[next_idx].id)
 
     def action_prev_conversation(self):
         """Select previous conversation (vim N)."""
@@ -327,7 +342,7 @@ Keyboard Shortcuts:
                 break
 
         prev_idx = (current_idx - 1) % len(self.conversations)
-        asyncio.create_task(self.select_conversation(self.conversations[prev_idx].id))
+        self._select_conversation_worker(self.conversations[prev_idx].id)
 
     def action_hide_sidebar(self):
         """Hide sidebar (vim h)."""
