@@ -422,6 +422,7 @@ def search_messages(
 
                                 # Use UID FETCH to fetch by UID
                                 status, msg_data = imap.uid('fetch', uid_str, "(RFC822)")
+                                logger.info(f"UID {uid_str}: status={status}, type={type(msg_data)}, len={len(msg_data) if msg_data else 0}, first={type(msg_data[0]) if msg_data and msg_data[0] else None}")
                                 if status != "OK" or not msg_data or not msg_data[0]:
                                     continue
 
