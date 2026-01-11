@@ -115,8 +115,13 @@ FooterKey > .footer-key--key {
 }
 
 /* ======== CHAT AREA ======== */
+#main-container {
+    height: 1fr;
+}
+
 #chat-container {
     background: $bg;
+    height: 1fr;
 }
 
 #chat-header {
@@ -575,7 +580,35 @@ ProgressBar > .bar--complete {
 
 /* ======== HELP SCREEN ======== */
 #help-container {
-    padding: 2;
+    padding: 1;
+    height: 1fr;
+}
+
+#help-title {
+    dock: top;
+    height: 2;
+    background: $surface-bright;
+    color: $magenta;
+    text-style: bold;
+    text-align: center;
+    padding: 0 1;
+    border-bottom: solid $border;
+}
+
+#help-scroll {
+    height: 1fr;
+}
+
+#help-content {
+    padding: 1;
+}
+
+#help-footer {
+    dock: bottom;
+    height: 1;
+    background: $surface;
+    color: $text-dim;
+    text-align: center;
 }
 
 .help-section {

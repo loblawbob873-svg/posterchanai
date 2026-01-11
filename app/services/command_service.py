@@ -1843,16 +1843,13 @@ Return ONLY valid JSON, no other text."""},
                 tracks = cache.get('tracks', [])
 
                 if not tracks:
-                    # No cached tracks, try to get some from root
-                    contents = list_webdav_folder(config['url'], config['username'], config['password'], "")
-                    # Flatten to get all tracks recursively (limit depth)
-                    all_tracks = [c for c in contents if isinstance(c, AudioTrack)]
-                    if not all_tracks:
-                        return {"type": "text", "content": "No tracks found. Try `music browse` first to load your library."}
-                    tracks = all_tracks
+                    # No cached tracks, scan library for tracks
+                    tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=100)
+                    if tracks:
+                        _music_cache[self.user.id] = {'tracks': tracks, 'folders': [], 'current_path': '/'}
 
                 if not tracks:
-                    return {"type": "text", "content": "No tracks available for random play. Browse your library first."}
+                    return {"type": "text", "content": "No tracks available for random play. Try `music browse` first."}
 
                 # Pick a random track
                 import random as rand_module
