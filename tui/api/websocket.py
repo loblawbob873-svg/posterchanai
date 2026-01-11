@@ -201,6 +201,7 @@ class ChatWebSocket:
                 # Command results are wrapped in {"type": "response", "data": {...}}
                 inner_data = data.get("data", data)
                 inner_type = inner_data.get("type", "")
+                logger.info(f"Processing response: inner_type={inner_type}")
 
                 # Check for music commands inside response
                 if inner_type == "music_play":
@@ -218,8 +219,10 @@ class ChatWebSocket:
                 elif inner_type == "music_stop":
                     if self.on_music_stop:
                         self.on_music_stop()
-                elif self.on_response:
-                    self.on_response(inner_data)
+                else:
+                    logger.info(f"Calling on_response for type={inner_type}")
+                    if self.on_response:
+                        self.on_response(inner_data)
 
             case "error":
                 if self.on_error:
