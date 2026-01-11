@@ -358,6 +358,10 @@ class UserSettingsUpdate(BaseModel):
     carddav_password: Optional[str] = None
     # Mail settings
     mail_accounts: Optional[List[dict]] = None  # List of {email, imap_server, imap_port, smtp_server, smtp_port, password}
+    # Music settings (WebDAV)
+    webdav_music_url: Optional[str] = None
+    webdav_music_username: Optional[str] = None
+    webdav_music_password: Optional[str] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -389,6 +393,10 @@ class UserSettingsResponse(BaseModel):
     carddav_has_password: bool = False
     # Mail settings
     mail_accounts: List[dict] = []  # List of mail accounts (passwords masked)
+    # Music settings (WebDAV)
+    webdav_music_url: Optional[str] = None
+    webdav_music_username: Optional[str] = None
+    webdav_music_has_password: bool = False
 
 
 class TestConnectionRequest(BaseModel):

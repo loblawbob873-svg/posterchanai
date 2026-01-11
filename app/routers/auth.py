@@ -446,6 +446,23 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         except json.JSONDecodeError:
             pass
 
+    # Get WebDAV music settings
+    webdav_music_url = None
+    webdav_music_username = None
+    webdav_music_has_password = False
+    webdav_music_setting = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == "webdav_music_config"
+    ).first()
+    if webdav_music_setting and webdav_music_setting.value:
+        try:
+            webdav_config = json.loads(webdav_music_setting.value)
+            webdav_music_url = webdav_config.get('url')
+            webdav_music_username = webdav_config.get('username')
+            webdav_music_has_password = bool(webdav_config.get('password'))
+        except json.JSONDecodeError:
+            pass
+
     return UserSettingsResponse(
         notification_email=current_user.notification_email,
         avatar=avatar_url,
@@ -474,7 +491,11 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         carddav_username=carddav_username,
         carddav_has_password=carddav_has_password,
         # Mail settings
-        mail_accounts=mail_accounts
+        mail_accounts=mail_accounts,
+        # Music settings (WebDAV)
+        webdav_music_url=webdav_music_url,
+        webdav_music_username=webdav_music_username,
+        webdav_music_has_password=webdav_music_has_password
     )
 
 
@@ -648,6 +669,19 @@ def update_user_settings(
             new_accounts.append(new_acc)
 
         save_user_setting("mail_accounts", json.dumps(new_accounts))
+
+    # Save WebDAV music settings
+    logger.info(f"WebDAV Music settings received: url={settings.webdav_music_url}, username={settings.webdav_music_username}, has_password={settings.webdav_music_password is not None}")
+    if settings.webdav_music_url is not None or settings.webdav_music_username is not None or settings.webdav_music_password is not None:
+        from app.services.webdav_music_service import save_user_webdav_config
+        logger.info(f"Saving WebDAV config for user {current_user.id}")
+        save_user_webdav_config(
+            current_user.id, db,
+            url=settings.webdav_music_url or '',
+            username=settings.webdav_music_username or '',
+            password=settings.webdav_music_password
+        )
+        logger.info("WebDAV config saved")
 
     db.commit()
 

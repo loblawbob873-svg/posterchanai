@@ -60,7 +60,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'miniflux', 'cal', 'contacts', 'mail'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'miniflux', 'cal', 'contacts', 'mail', 'music', 'todo'];
         this.pluginActions = []; // Will be populated with plugin action hints
 
         // Load plugins and mail accounts for autocomplete
@@ -109,6 +109,12 @@ class ChatHandler {
         // Remove upload button
         if (this.removeUpload) {
             this.removeUpload.addEventListener('click', () => this.clearUpload());
+        }
+
+        // Music shuffle button
+        const musicShuffleBtn = document.getElementById('musicShuffleBtn');
+        if (musicShuffleBtn) {
+            musicShuffleBtn.addEventListener('click', () => this.startMusicShuffle());
         }
 
         // Paste image from clipboard
@@ -257,6 +263,13 @@ class ChatHandler {
         // Mail account elements
         const mailAccountList = document.getElementById('mailAccountList');
         const addMailAccount = document.getElementById('addMailAccount');
+
+        // WebDAV Music elements
+        const webdavMusicUrl = document.getElementById('webdavMusicUrl');
+        const webdavMusicUsername = document.getElementById('webdavMusicUsername');
+        const webdavMusicPassword = document.getElementById('webdavMusicPassword');
+        const testWebdavMusic = document.getElementById('testWebdavMusic');
+        const testMusicResult = document.getElementById('testMusicResult');
 
         // Mail account list management
         let mailAccounts = [];
@@ -479,6 +492,34 @@ class ChatHandler {
             });
         }
 
+        // Test WebDAV Music connection
+        if (testWebdavMusic) {
+            testWebdavMusic.addEventListener('click', async () => {
+                testMusicResult.textContent = 'Testing...';
+                testMusicResult.className = 'test-result';
+                try {
+                    // Send form values directly to test endpoint (like custom AI test)
+                    const passwordValue = webdavMusicPassword.value === '********' ? null : webdavMusicPassword.value;
+                    const response = await csrfFetch('/api/music/test', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            url: webdavMusicUrl.value.trim(),
+                            username: webdavMusicUsername.value.trim(),
+                            password: passwordValue,
+                            use_stored_password: webdavMusicPassword.value === '********'
+                        })
+                    });
+                    const data = await response.json();
+                    testMusicResult.textContent = data.message;
+                    testMusicResult.className = 'test-result ' + (data.success ? 'success' : 'error');
+                } catch (e) {
+                    testMusicResult.textContent = 'Test failed';
+                    testMusicResult.className = 'test-result error';
+                }
+            });
+        }
+
         if (settingsBtn && settingsModal) {
             settingsBtn.addEventListener('click', async () => {
                 // Load current settings
@@ -544,6 +585,16 @@ class ChatHandler {
                             mailAccounts = data.mail_accounts;
                             renderMailAccountList();
                         }
+
+                        // Load WebDAV Music settings
+                        console.log('Loading WebDAV Music settings from server:', {
+                            url: data.webdav_music_url,
+                            username: data.webdav_music_username,
+                            hasPassword: data.webdav_music_has_password
+                        });
+                        if (webdavMusicUrl) webdavMusicUrl.value = data.webdav_music_url || '';
+                        if (webdavMusicUsername) webdavMusicUsername.value = data.webdav_music_username || '';
+                        if (webdavMusicPassword) webdavMusicPassword.value = data.webdav_music_has_password ? '********' : '';
                     }
                 } catch (e) {
                     console.error('Failed to load settings:', e);
@@ -672,6 +723,31 @@ class ChatHandler {
 
                 // Add Mail account settings
                 settingsData.mail_accounts = collectMailAccountData();
+
+                // Add WebDAV Music settings
+                console.log('WebDAV Music elements:', {
+                    urlEl: !!webdavMusicUrl,
+                    usernameEl: !!webdavMusicUsername,
+                    passwordEl: !!webdavMusicPassword,
+                    urlVal: webdavMusicUrl?.value,
+                    usernameVal: webdavMusicUsername?.value,
+                    passwordVal: webdavMusicPassword?.value?.substring(0, 3) + '...'
+                });
+                if (webdavMusicUrl) {
+                    settingsData.webdav_music_url = webdavMusicUrl.value.trim();
+                }
+                if (webdavMusicUsername) {
+                    settingsData.webdav_music_username = webdavMusicUsername.value.trim();
+                }
+                // Only update password if it's not the placeholder
+                if (webdavMusicPassword && webdavMusicPassword.value !== '********') {
+                    settingsData.webdav_music_password = webdavMusicPassword.value;
+                }
+                console.log('WebDAV Music in settingsData:', {
+                    url: settingsData.webdav_music_url,
+                    username: settingsData.webdav_music_username,
+                    hasPassword: !!settingsData.webdav_music_password
+                });
 
                 try {
                     const response = await csrfFetch('/api/auth/settings', {
@@ -1106,17 +1182,98 @@ class ChatHandler {
         this.showTypingIndicator();
     }
 
+    copyToClipboard(text) {
+        // Copy text to clipboard
+        if (!text) {
+            console.error('copyToClipboard: No text provided');
+            return;
+        }
+
+        // Decode escaped newlines
+        const decodedText = text.replace(/\\n/g, '\n');
+
+        navigator.clipboard.writeText(decodedText).then(() => {
+            // Show brief feedback
+            this.showNotification('Copied to clipboard!', 'success');
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+            // Fallback: select text in a temporary textarea
+            const textarea = document.createElement('textarea');
+            textarea.value = decodedText;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                this.showNotification('Copied to clipboard!', 'success');
+            } catch (e) {
+                this.showNotification('Failed to copy', 'error');
+            }
+            document.body.removeChild(textarea);
+        });
+    }
+
+    showNotification(message, type = 'info') {
+        // Show a brief notification toast
+        const existing = document.querySelector('.copy-toast');
+        if (existing) existing.remove();
+
+        const toast = document.createElement('div');
+        toast.className = `copy-toast ${type}`;
+        toast.textContent = message;
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: ${type === 'success' ? '#00ffff' : '#ff3366'};
+            color: #000;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 14px;
+            z-index: 10000;
+            animation: fadeInOut 2s ease-in-out;
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 2000);
+    }
+
     executeCommand(cmd) {
         // Execute a command from a button click
+        // Validate command
+        if (!cmd || typeof cmd !== 'string') {
+            console.error('executeCommand: Invalid command', cmd);
+            return;
+        }
+
+        // Decode HTML entities that may have been escaped
+        const textarea = document.createElement('textarea');
+        textarea.innerHTML = cmd;
+        const decodedCmd = textarea.value;
+
+        // Check WebSocket connection
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            console.warn('executeCommand: WebSocket not connected, attempting reconnect...');
+            // Try to reconnect and queue the command
+            this.connect().then(() => {
+                setTimeout(() => this.executeCommand(decodedCmd), 500);
+            }).catch(err => {
+                console.error('executeCommand: Reconnect failed', err);
+                alert('Connection lost. Please refresh the page.');
+            });
+            return;
+        }
+
         // If command ends with space, put in input for user to complete (e.g., reply)
-        if (cmd.endsWith(' ')) {
-            this.messageInput.value = cmd;
+        if (decodedCmd.endsWith(' ')) {
+            this.messageInput.value = decodedCmd;
             this.messageInput.focus();
             // Place cursor at end
-            this.messageInput.setSelectionRange(cmd.length, cmd.length);
+            this.messageInput.setSelectionRange(decodedCmd.length, decodedCmd.length);
         } else {
             // Execute immediately
-            this.messageInput.value = cmd;
+            this.messageInput.value = decodedCmd;
             this.sendMessage();
         }
     }
@@ -1283,6 +1440,38 @@ class ChatHandler {
         return encodeURI(url);
     }
 
+    async startMusicShuffle() {
+        // Send the music shuffle command
+        try {
+            const response = await csrfFetch('/api/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command: 'music shuffle' })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.type === 'music_playlist' && data.tracks && window.musicPlayer) {
+                    // Shuffle the tracks
+                    const shuffled = [...data.tracks].sort(() => Math.random() - 0.5);
+                    window.musicPlayer.clearQueue();
+                    shuffled.forEach(t => window.musicPlayer.addToQueue(t));
+                    if (shuffled.length > 0) {
+                        window.musicPlayer.play(shuffled[0]);
+                    }
+                    this.showToast(`Shuffling ${shuffled.length} tracks`);
+                } else if (data.type === 'music_play' && data.track && window.musicPlayer) {
+                    window.musicPlayer.play(data.track);
+                } else if (data.content) {
+                    this.showToast(data.content);
+                }
+            }
+        } catch (e) {
+            console.error('Music shuffle error:', e);
+            this.showToast('Failed to start shuffle');
+        }
+    }
+
     handleCommandResponse(data) {
         this.hideTypingIndicator();
         this.resetSendButton();
@@ -1329,6 +1518,25 @@ class ChatHandler {
                 </div>`;
             }
             html += '</div>';
+        } else if (data.type === 'music_play' && data.track && window.musicPlayer) {
+            // Play single track
+            window.musicPlayer.play(data.track);
+        } else if (data.type === 'music_playlist' && data.tracks && window.musicPlayer) {
+            // Play playlist (multiple tracks)
+            window.musicPlayer.clearQueue();
+            data.tracks.forEach(t => window.musicPlayer.addToQueue(t));
+            if (data.tracks.length > 0) {
+                window.musicPlayer.play(data.tracks[0]);
+            }
+        } else if (data.type === 'music_next' && window.musicPlayer) {
+            // Skip to next track
+            window.musicPlayer.next();
+        } else if (data.type === 'music_prev' && window.musicPlayer) {
+            // Go to previous track
+            window.musicPlayer.prev();
+        } else if (data.type === 'music_stop' && window.musicPlayer) {
+            // Stop playback
+            window.musicPlayer.stop();
         }
 
         this.addMessage('assistant', html, true);
@@ -1919,6 +2127,12 @@ class ChatHandler {
             links.push({ text, cmd, isCommand: true });
             return `\x00LINK${index}\x00`;
         });
+        // Match copy: links (clipboard copy buttons)
+        processed = processed.replace(/\[([^\]]+)\]\(copy:([^)]+)\)/g, (match, text, content) => {
+            const index = links.length;
+            links.push({ text, content: decodeURIComponent(content), isCopy: true });
+            return `\x00LINK${index}\x00`;
+        });
 
         // Escape HTML
         let html = processed
@@ -1933,6 +2147,11 @@ class ChatHandler {
                 // Command button - clicking executes the command
                 const escapedCmd = this.escapeHtml(link.cmd);
                 return `<button class="cmd-btn" data-cmd="${escapedCmd}" onclick="window.chatHandler.executeCommand('${escapedCmd.replace(/'/g, "\\'")}')">${this.escapeHtml(link.text)}</button>`;
+            }
+            if (link.isCopy) {
+                // Copy button - copies content to clipboard
+                const escapedContent = this.escapeHtml(link.content).replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                return `<button class="cmd-btn copy-btn" onclick="window.chatHandler.copyToClipboard('${escapedContent}')">${this.escapeHtml(link.text)}</button>`;
             }
             const target = link.external ? ' target="_blank"' : '';
             const download = link.download ? ' download' : '';
@@ -2204,7 +2423,13 @@ class ChatHandler {
         'mail delete': [],
         'mail deleteall': [],
         'mail archive': [],
-        'mail send': []
+        'mail send': [],
+        // Music subcommands
+        'music': ['browse', 'search', 'play', 'random', 'skip', 'next', 'prev', 'queue', 'mood', 'stop'],
+        'music mood': ['chill', 'upbeat', 'focus', 'workout', 'relaxing', 'energetic', 'party', 'calm'],
+        'music queue': ['add', 'clear'],
+        // Todo subcommands
+        'todo': ['add', 'rm', 'list']
     };
 
     // Tab autocomplete for commands

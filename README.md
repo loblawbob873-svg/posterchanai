@@ -46,6 +46,13 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 - Email verification for new registrations (when SMTP enabled)
 - Email notifications (SMTP/IMAP support)
 
+### Music
+- **WebDAV music streaming** - Stream from Nextcloud, ownCloud, or any WebDAV server
+- **Cyberpunk audio visualizer** - Web Audio API frequency display with glow effects
+- **AI-powered mood playlists** - LLM selects tracks matching your vibe
+- **Queue management** - Add, reorder, and control playback
+- **Natural language search** - AI-enhanced track discovery
+
 ### System
 - User registration (admin configurable)
 - LLM health check with auto-recovery (supports Native, IPEX, and Ollama backends)
@@ -887,6 +894,8 @@ Type these commands in the chat (or use the mode buttons):
 | `cal` | Calendar: today's events, week view, add events (aliases: sched, schedule) |
 | `contacts` | Search or add CardDAV contacts (with clickable phone/email links) |
 | `mail` | Email: inbox, read, reply, archive, delete, deleteall, send to contacts |
+| `music` | WebDAV music streaming: browse, search, play, queue, mood playlists |
+| `todo` | CalDAV task management: list, add, remove tasks |
 | `news` | Get unread news from Miniflux |
 | `logs` | System logs analysis (admin only) |
 
@@ -941,6 +950,68 @@ The mail command provides full IMAP/SMTP email functionality with encrypted pass
 **Security:** Passwords are encrypted at rest using Fernet. SSRF protection blocks connections to internal IPs.
 
 Configure email accounts in User Settings > Mail tab.
+
+### Music Command
+
+The music command provides WebDAV-based music streaming with a cyberpunk-styled player featuring a Web Audio API visualizer.
+
+| Subcommand | Description |
+|------------|-------------|
+| `music` | Browse music library root |
+| `music browse <path>` | Browse a specific folder |
+| `music search <query>` | Search tracks by filename |
+| `music play <#>` | Play track number from last results |
+| `music queue` | Show current playback queue |
+| `music queue add <#>` | Add track to queue |
+| `music mood <vibe>` | AI-curated playlist based on mood |
+| `music stop` | Stop playback |
+| `music next` | Skip to next track |
+| `music prev` | Previous track or restart current |
+
+**Examples:**
+- `music` - Browse library root
+- `music browse /Jazz` - Browse Jazz folder
+- `music search coltrane` - Search for Coltrane tracks
+- `music play 3` - Play track #3 from results
+- `music mood chill` - AI picks relaxing tracks
+
+**Tab Autocomplete:** Type `music ` and press Tab for subcommands, `music mood ` for mood suggestions.
+
+**Player Features:**
+- Cyberpunk-styled floating player with glow effects
+- Web Audio API visualizer (frequency bars with cyan-magenta gradient)
+- Controls: play/pause, prev/next, progress bar, volume
+- Queue management with drag-to-reorder
+- Collapsible design to minimize screen space
+
+**Setup:**
+1. Go to User Settings > Music tab
+2. Enter your WebDAV URL (e.g., `https://cloud.example.com/remote.php/dav/files/user/Music`)
+3. Enter username and password
+4. Click "Test Connection" to verify
+5. Save settings
+
+Works with Nextcloud, ownCloud, or any WebDAV-compatible server.
+
+### Todo Command
+
+The todo command provides CalDAV-integrated task management (VTODO items).
+
+| Subcommand | Description |
+|------------|-------------|
+| `todo` | List all tasks from configured calendars |
+| `todo list` | Same as `todo` |
+| `todo add <task>` | Add a new task to the first calendar |
+| `todo rm <#>` | Remove task by number |
+
+**Examples:**
+- `todo` - List all tasks
+- `todo add Buy groceries` - Add a new task
+- `todo rm 1` - Remove task #1
+
+**Tab Autocomplete:** Type `todo ` and press Tab for subcommands.
+
+Configure CalDAV calendars in User Settings > Calendar & Contacts tab. Tasks are stored as VTODO items.
 
 ### Edit Image (img2img) with Face Swap
 

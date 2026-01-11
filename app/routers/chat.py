@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 import asyncio
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
@@ -104,6 +105,24 @@ def delete_all_conversations(
     ).delete()
     db.commit()
     return {"message": "All conversations deleted"}
+
+
+class CommandRequest(BaseModel):
+    command: str
+
+@router.post("/command")
+async def execute_command_endpoint(
+    request: CommandRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Execute a command and return the result."""
+    command_service = CommandService(db, user=current_user)
+    command, arg = command_service.parse_command(request.command)
+    if not command:
+        return {"type": "text", "content": "Invalid command"}
+    result = await command_service.execute_command(command, arg)
+    return result
 
 
 @router.get("/conversations/{conversation_id}/messages")

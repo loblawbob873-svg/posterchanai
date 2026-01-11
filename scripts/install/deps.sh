@@ -48,6 +48,14 @@ check_dependencies() {
     fi
 
     print_success "All base dependencies found"
+
+    # Check optional dependencies
+    if ! command -v ffmpeg &>/dev/null; then
+        print_warning "ffmpeg not found - music transcoding will be unavailable"
+        echo "  Install ffmpeg for lower-quality music streaming (saves bandwidth)"
+    else
+        print_success "ffmpeg found (music transcoding available)"
+    fi
 }
 
 show_install_instructions() {

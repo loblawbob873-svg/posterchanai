@@ -1,5 +1,6 @@
 import logging
 import json
+import re
 import threading
 from typing import Optional, Tuple, Callable, TYPE_CHECKING
 from sqlalchemy.orm import Session
@@ -15,12 +16,18 @@ from app.routers.news import fetch_news_from_source, get_user_news_sources
 from app.services.caldav_service import (
     get_all_user_events, get_user_calendars, get_user_contacts,
     format_events_for_display, format_contacts_for_display,
-    add_event_to_calendar, add_user_contact
+    add_event_to_calendar, add_user_contact,
+    get_all_user_todos, add_todo_to_calendar, delete_todo_from_calendar,
+    format_todos_for_display
 )
 from app.services.mail_service import (
     fetch_all_accounts, fetch_messages, get_message_by_id, delete_message, delete_all_messages,
     archive_message, reply_to_message, send_email, get_user_mail_accounts,
     format_message_list, format_message_detail, search_messages
+)
+from app.services.webdav_music_service import (
+    get_user_webdav_config, list_folder, search_tracks, get_stream_url,
+    generate_mood_playlist, format_music_browse, format_music_tracks
 )
 # Lock now handled inside image_factory for fine-grained control
 
@@ -34,6 +41,8 @@ _torrent_cache: dict[int, dict[str, list[TorrentResult]]] = {}
 _nyaa_cache: dict[int, list[NyaaResult]] = {}
 # Cache for flood torrent number-to-hash mapping (per user)
 _flood_hash_map: dict[int, dict[int, str]] = {}
+# Cache for music results (per user)
+_music_cache: dict[int, dict] = {}  # user_id -> {tracks, folders, current_path}
 # Locks for thread-safe cache access
 _cache_lock = threading.Lock()
 
@@ -56,6 +65,8 @@ class CommandService:
         "cal": "Calendar: cal | cal today | cal week | cal add <event> <time>",
         "contacts": "Contacts: contacts all | contacts <query> | contacts add <name> <phone>",
         "mail": "Email: mail | mail search/read/summary/translate/reply/delete/archive <acct> <id>",
+        "todo": "Todo list (CalDAV): todo | todo add <task> | todo rm <#>",
+        "music": "Music: music | music browse | music search <query> | music play <#> | music random | music skip | music mood <vibe>",
     }
 
     # Command aliases (alias -> canonical command)
@@ -135,6 +146,10 @@ class CommandService:
             return await self._contacts_command(arg)
         elif command == "mail":
             return await self._mail_command(arg, attachments=attachments)
+        elif command == "todo":
+            return await self._todo_command(arg)
+        elif command == "music":
+            return await self._music_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -686,7 +701,12 @@ class CommandService:
                 except Exception as e:
                     summary = f"(Error summarizing: {str(e)[:50]})"
 
-                summaries.append(f"**{title}**\n*{feed_title}*\n{url}\n\n{summary}")
+                # Create copy content (title + summary + url)
+                import urllib.parse
+                copy_text = f"{title}\n\n{summary}\n\nSource: {url}"
+                copy_encoded = urllib.parse.quote(copy_text, safe='')
+
+                summaries.append(f"**{title}**\n*{feed_title}*\n{url}\n\n{summary}\n\n[Copy Article](copy:{copy_encoded})")
                 entry_ids.append(entry_id)
 
             # Mark all as read
@@ -702,6 +722,24 @@ class CommandService:
         except Exception as e:
             logger.error(f"News command error: {e}")
             return {"type": "text", "content": f"Error fetching news: {str(e)}"}
+
+    def _add_copy_buttons_to_news(self, markdown: str) -> str:
+        """Add copy buttons to news article links in markdown."""
+        import re
+        import urllib.parse
+
+        # Match markdown links: - [title](url)
+        def add_copy_btn(match):
+            full_match = match.group(0)
+            title = match.group(1)
+            url = match.group(2)
+            # Create copy content
+            copy_text = f"{title}\n\nSource: {url}"
+            copy_encoded = urllib.parse.quote(copy_text, safe='')
+            return f"{full_match} [Copy](copy:{copy_encoded})"
+
+        # Add copy button after each markdown link in bullet points
+        return re.sub(r'- \[([^\]]+)\]\(([^)]+)\)', add_copy_btn, markdown)
 
     async def _dailynews_command(self, arg: str) -> dict:
         """Get news from configured web sources (CNN, NPR, etc.)"""
@@ -722,6 +760,8 @@ class CommandService:
             for source in sources:
                 try:
                     markdown = await fetch_news_from_source(source["url"], source["name"], self.db)
+                    # Add copy buttons to each article
+                    markdown = self._add_copy_buttons_to_news(markdown)
                     results.append(markdown)
                 except Exception as e:
                     logger.error(f"Error fetching news from {source['name']}: {e}")
@@ -838,19 +878,19 @@ class CommandService:
                 today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
                 tomorrow = today + timedelta(days=1)
                 events = get_all_user_events(self.user.id, today, tomorrow, self.db)
-                events_text = format_events_for_display(events, include_description=True)
+                events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
 
-                date_str = today.strftime("%A, %B %d, %Y")
-                return {"type": "text", "content": f"## Schedule for {date_str}\n\n{events_text}"}
+                date_str = today.strftime("%A, %B %d")
+                return {"type": "text", "content": f"## ◈ SCHEDULE - {date_str.upper()} ◈\n\n{events_text}"}
 
             elif subcommand == "week":
                 # Get this week's events
                 today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
                 week_end = today + timedelta(days=7)
                 events = get_all_user_events(self.user.id, today, week_end, self.db)
-                events_text = format_events_for_display(events, include_description=True)
+                events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
 
-                return {"type": "text", "content": f"## Schedule for the Week\n\n{events_text}"}
+                return {"type": "text", "content": f"## ◈ SCHEDULE FOR THE WEEK ◈\n\n{events_text}"}
 
             elif subcommand == "add":
                 if not param:
@@ -1104,6 +1144,12 @@ Return ONLY valid JSON, no other text."""},
                 else:
                     uid = uid_part
 
+                # Sanitize UID - extract only numeric portion (strip emojis/extra chars)
+                uid_match = re.search(r'^(\d+)', uid)
+                if not uid_match:
+                    return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
+                uid = uid_match.group(1)
+
                 # Find matching account
                 account_email = None
                 for acc in accounts:
@@ -1133,6 +1179,12 @@ Return ONLY valid JSON, no other text."""},
                     folder, uid = uid_part.rsplit(':', 1)
                 else:
                     uid = uid_part
+
+                # Sanitize UID - extract only numeric portion (strip emojis/extra chars)
+                uid_match = re.search(r'^(\d+)', uid)
+                if not uid_match:
+                    return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
+                uid = uid_match.group(1)
 
                 # Find matching account
                 account_email = None
@@ -1171,6 +1223,12 @@ Return ONLY valid JSON, no other text."""},
                 else:
                     uid = uid_part
 
+                # Sanitize UID - extract only numeric portion (strip emojis/extra chars)
+                uid_match = re.search(r'^(\d+)', uid)
+                if not uid_match:
+                    return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
+                uid = uid_match.group(1)
+
                 # Find matching account
                 account_email = None
                 for acc in accounts:
@@ -1207,6 +1265,12 @@ Return ONLY valid JSON, no other text."""},
                 if ':' in uid_part:
                     folder, uid = uid_part.rsplit(':', 1)
 
+                # Sanitize UID - extract only numeric portion (strip emojis/extra chars)
+                uid_match = re.search(r'^(\d+)', uid)
+                if not uid_match:
+                    return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
+                uid = uid_match.group(1)
+
                 # Find matching account
                 account_email = None
                 for acc in accounts:
@@ -1235,6 +1299,12 @@ Return ONLY valid JSON, no other text."""},
                 uid = uid_part
                 if ':' in uid_part:
                     folder, uid = uid_part.rsplit(':', 1)
+
+                # Sanitize UID - extract only numeric portion (strip emojis/extra chars)
+                uid_match = re.search(r'^(\d+)', uid)
+                if not uid_match:
+                    return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
+                uid = uid_match.group(1)
 
                 # Find matching account
                 account_email = None
@@ -1280,6 +1350,12 @@ Return ONLY valid JSON, no other text."""},
 
                 account_hint = parts[1]
                 uid = parts[2]
+
+                # Sanitize UID - extract only numeric portion (strip emojis/extra chars)
+                uid_match = re.search(r'^(\d+)', uid)
+                if not uid_match:
+                    return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
+                uid = uid_match.group(1)
 
                 # Find matching account
                 account_email = None
@@ -1393,6 +1469,368 @@ Return ONLY valid JSON, no other text."""},
                 return {"type": "text", "content": f"✅ Email sent to {to_email}{attachment_note}"}
         else:
             return {"type": "text", "content": f"❌ Failed to send email to {to_email}"}
+
+    # Cache for todo UIDs (for rm command)
+    _todo_uid_cache: dict = {}
+
+    async def _todo_command(self, arg: str) -> dict:
+        """CalDAV Todo list commands - list, add, remove"""
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use the todo command."}
+
+        # Check if user has calendars configured
+        calendars = get_user_calendars(self.user.id, self.db)
+        if not calendars:
+            return {"type": "text", "content": "No calendars configured. Add calendars in User Settings to use todos."}
+
+        parts = arg.strip().split(maxsplit=1)
+        subcommand = parts[0].lower() if parts else ""
+        param = parts[1] if len(parts) > 1 else ""
+
+        try:
+            # List todos (default)
+            if not subcommand or subcommand in ("list", "ls"):
+                todos = get_all_user_todos(self.user.id, self.db)
+                # Cache UIDs for delete command
+                CommandService._todo_uid_cache[self.user.id] = {i+1: t.uid for i, t in enumerate(todos)}
+                todos_text = format_todos_for_display(todos)
+                return {"type": "text", "content": f"## ◈ TODO LIST ◈\n\n{todos_text}"}
+
+            # Add todo
+            elif subcommand == "add":
+                if not param:
+                    return {"type": "text", "content": "Usage: `todo add <task description>`\n\nExample: `todo add Buy groceries`"}
+
+                # Add to first calendar
+                cal = calendars[0]
+                success = add_todo_to_calendar(
+                    cal['url'], cal['username'], cal['password'],
+                    summary=param
+                )
+
+                if success:
+                    return {"type": "text", "content": f"✅ Todo added: **{param}**"}
+                else:
+                    return {"type": "text", "content": "❌ Failed to add todo. Check calendar settings."}
+
+            # Remove todo
+            elif subcommand in ("rm", "remove", "done", "del", "delete"):
+                if not param:
+                    return {"type": "text", "content": "Usage: `todo rm <number>`\n\nExample: `todo rm 1`"}
+
+                try:
+                    num = int(param)
+                except ValueError:
+                    return {"type": "text", "content": "Please provide a valid number. Example: `todo rm 1`"}
+
+                # Get cached UID
+                user_cache = CommandService._todo_uid_cache.get(self.user.id, {})
+                if num not in user_cache:
+                    # Refresh cache
+                    todos = get_all_user_todos(self.user.id, self.db)
+                    CommandService._todo_uid_cache[self.user.id] = {i+1: t.uid for i, t in enumerate(todos)}
+                    user_cache = CommandService._todo_uid_cache.get(self.user.id, {})
+
+                if num not in user_cache:
+                    return {"type": "text", "content": f"Invalid todo number: {num}. Run `todo` to see your list."}
+
+                todo_uid = user_cache[num]
+
+                # Try to delete from all calendars
+                deleted = False
+                for cal in calendars:
+                    if delete_todo_from_calendar(cal['url'], cal['username'], cal['password'], todo_uid):
+                        deleted = True
+                        break
+
+                if deleted:
+                    # Clear from cache
+                    del CommandService._todo_uid_cache[self.user.id][num]
+                    return {"type": "text", "content": f"✅ Todo #{num} completed and removed!"}
+                else:
+                    return {"type": "text", "content": f"❌ Failed to remove todo #{num}."}
+
+            else:
+                return {"type": "text", "content": "Usage:\n- `todo` - List all todos\n- `todo add <task>` - Add a new todo\n- `todo rm <#>` - Mark todo as done and remove it"}
+
+        except Exception as e:
+            logger.error(f"Todo command error: {e}")
+            return {"type": "text", "content": f"Error: {str(e)}"}
+
+    async def _music_command(self, arg: str) -> dict:
+        """WebDAV music browsing and playback commands"""
+        global _music_cache
+        from urllib.parse import quote
+
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use the music command."}
+
+        config = get_user_webdav_config(self.user.id, self.db)
+        if not config or not config.get('url'):
+            return {"type": "text", "content": "WebDAV music not configured. Add your music server in User Settings > Music."}
+
+        parts = arg.strip().split(maxsplit=1)
+        subcommand = parts[0].lower() if parts else ""
+        param = parts[1] if len(parts) > 1 else ""
+
+        try:
+            # Browse folder (default)
+            if not subcommand or subcommand == "browse":
+                path = param if param else "/"
+                contents = list_folder(config['url'], config['username'], config['password'], path)
+
+                # Cache results
+                _music_cache[self.user.id] = {
+                    'tracks': contents.get('tracks', []),
+                    'folders': contents.get('folders', []),
+                    'current_path': path
+                }
+
+                return {"type": "text", "content": format_music_browse(contents, path)}
+
+            # Search tracks
+            elif subcommand == "search":
+                if not param:
+                    return {"type": "text", "content": "Usage: `music search <query>`\n\nExample: `music search beatles`"}
+
+                tracks = search_tracks(config['url'], config['username'], config['password'], param)
+
+                # Cache results
+                _music_cache[self.user.id] = {
+                    'tracks': tracks,
+                    'folders': [],
+                    'current_path': '/'
+                }
+
+                return {"type": "text", "content": format_music_tracks(tracks, f"Search: {param}")}
+
+            # Play track by number
+            elif subcommand == "play":
+                if not param:
+                    return {"type": "text", "content": "Usage: `music play <#>`\n\nExample: `music play 1`"}
+
+                try:
+                    num = int(param)
+                except ValueError:
+                    return {"type": "text", "content": "Please provide a valid track number."}
+
+                cache = _music_cache.get(self.user.id, {})
+                tracks = cache.get('tracks', [])
+
+                if not tracks:
+                    return {"type": "text", "content": "No tracks loaded. Browse or search music first."}
+
+                if num < 1 or num > len(tracks):
+                    return {"type": "text", "content": f"Invalid track number. Choose 1-{len(tracks)}."}
+
+                track = tracks[num - 1]
+                stream_url = get_stream_url(track.path)
+
+                return {
+                    "type": "music_play",
+                    "content": f"## ◈ NOW PLAYING ◈\n\n**{track.title}**" + (f"\n*{track.artist}*" if track.artist else ""),
+                    "track": {
+                        "path": track.path,
+                        "title": track.title,
+                        "artist": track.artist,
+                        "album": track.album,
+                        "streamUrl": stream_url,
+                        "duration": track.duration
+                    }
+                }
+
+            # Queue management
+            elif subcommand == "queue":
+                if param.startswith("add "):
+                    try:
+                        num = int(param[4:].strip())
+                    except ValueError:
+                        return {"type": "text", "content": "Usage: `music queue add <#>`"}
+
+                    cache = _music_cache.get(self.user.id, {})
+                    tracks = cache.get('tracks', [])
+
+                    if num < 1 or num > len(tracks):
+                        return {"type": "text", "content": f"Invalid track number. Choose 1-{len(tracks)}."}
+
+                    track = tracks[num - 1]
+                    stream_url = get_stream_url(track.path)
+
+                    return {
+                        "type": "music_queue_add",
+                        "content": f"Added to queue: **{track.title}**",
+                        "track": {
+                            "title": track.title,
+                            "artist": track.artist,
+                            "stream_url": stream_url
+                        }
+                    }
+                else:
+                    return {"type": "text", "content": "Usage: `music queue add <#>`\n\nQueue is managed by the player. Use the player controls to view queue."}
+
+            # Mood-based playlist (LLM)
+            elif subcommand == "mood":
+                if not param:
+                    return {"type": "text", "content": "Usage: `music mood <vibe>`\n\nExamples:\n- `music mood chill`\n- `music mood upbeat workout`\n- `music mood relaxing evening`"}
+
+                cache = _music_cache.get(self.user.id, {})
+                tracks = cache.get('tracks', [])
+
+                if not tracks:
+                    return {"type": "text", "content": "No tracks loaded. Browse or search music first to load tracks for mood selection."}
+
+                playlist = await generate_mood_playlist(tracks, param, self.chat_service)
+
+                if not playlist:
+                    return {"type": "text", "content": f"No tracks found matching mood: {param}"}
+
+                # Cache the playlist as current tracks
+                _music_cache[self.user.id]['tracks'] = playlist
+
+                # Build track list for player
+                playlist_data = [
+                    {
+                        "path": t.path,
+                        "title": t.title,
+                        "artist": t.artist,
+                        "streamUrl": get_stream_url(t.path)
+                    }
+                    for t in playlist
+                ]
+
+                return {
+                    "type": "music_playlist",
+                    "content": format_music_tracks(playlist, f"Mood: {param}"),
+                    "tracks": playlist_data
+                }
+
+            # Skip to next track
+            elif subcommand in ("skip", "next"):
+                return {
+                    "type": "music_next",
+                    "content": "Skipping to next track..."
+                }
+
+            # Previous track
+            elif subcommand == "prev":
+                return {
+                    "type": "music_prev",
+                    "content": "Going to previous track..."
+                }
+
+            # Random/shuffle play
+            elif subcommand == "random":
+                # Get all tracks from current browse location or search for all
+                cache = _music_cache.get(self.user.id, {})
+                tracks = cache.get('tracks', [])
+
+                if not tracks:
+                    # No cached tracks, try to get some from root
+                    contents = list_webdav_folder(config['url'], config['username'], config['password'], "")
+                    # Flatten to get all tracks recursively (limit depth)
+                    all_tracks = [c for c in contents if isinstance(c, AudioTrack)]
+                    if not all_tracks:
+                        return {"type": "text", "content": "No tracks found. Try `music browse` first to load your library."}
+                    tracks = all_tracks
+
+                if not tracks:
+                    return {"type": "text", "content": "No tracks available for random play. Browse your library first."}
+
+                # Pick a random track
+                import random as rand_module
+                track = rand_module.choice(tracks)
+                return {
+                    "type": "music_play",
+                    "content": f"🎲 Random: **{track.title}**" + (f" - {track.artist}" if track.artist else ""),
+                    "track": {
+                        "path": track.path,
+                        "title": track.title,
+                        "artist": track.artist or "",
+                        "album": track.album or "",
+                        "streamUrl": get_stream_url(track.path)
+                    }
+                }
+
+            # Shuffle all tracks
+            elif subcommand == "shuffle":
+                import random as rand_module
+
+                # Check for cached tracks first (from search/browse)
+                cached = _music_cache.get(self.user.id, {})
+                all_tracks = cached.get('tracks', [])
+
+                # If no cached tracks, fetch all from library
+                if not all_tracks:
+                    all_tracks = search_tracks(config['url'], config['username'], config['password'], "", max_results=500)
+
+                if not all_tracks:
+                    return {"type": "text", "content": "No tracks found. Browse or search music first."}
+
+                # Make a copy and shuffle
+                all_tracks = list(all_tracks)
+                rand_module.shuffle(all_tracks)
+
+                # Update cache with shuffled tracks
+                _music_cache[self.user.id] = {
+                    'tracks': all_tracks,
+                    'folders': cached.get('folders', []),
+                    'current_path': cached.get('current_path', '/')
+                }
+
+                # Build playlist data
+                playlist_data = [
+                    {
+                        "path": t.path,
+                        "title": t.title,
+                        "artist": t.artist or "",
+                        "streamUrl": get_stream_url(t.path)
+                    }
+                    for t in all_tracks
+                ]
+
+                return {
+                    "type": "music_playlist",
+                    "content": f"Shuffling {len(all_tracks)} tracks",
+                    "tracks": playlist_data
+                }
+
+            # Queue all cached tracks (from last browse/search)
+            elif subcommand == "queueall":
+                cached = _music_cache.get(self.user.id, {})
+                tracks = cached.get('tracks', [])
+
+                if not tracks:
+                    return {"type": "text", "content": "No tracks to queue. Browse or search first."}
+
+                playlist_data = [
+                    {
+                        "path": t.path,
+                        "title": t.title,
+                        "artist": t.artist or "",
+                        "streamUrl": get_stream_url(t.path)
+                    }
+                    for t in tracks
+                ]
+
+                return {
+                    "type": "music_playlist",
+                    "content": f"Queued {len(tracks)} tracks",
+                    "tracks": playlist_data
+                }
+
+            # Stop playback
+            elif subcommand == "stop":
+                return {
+                    "type": "music_stop",
+                    "content": "Playback stopped."
+                }
+
+            else:
+                return {"type": "text", "content": "Usage:\n- `music` - Browse music library\n- `music browse <path>` - Browse folder\n- `music search <query>` - Search tracks\n- `music play <#>` - Play track\n- `music shuffle` - Shuffle all tracks\n- `music queueall` - Queue all from last search/browse\n- `music random` - Play random track\n- `music skip` / `music next` - Skip to next\n- `music prev` - Previous track\n- `music mood <vibe>` - AI mood playlist\n- `music stop` - Stop playback"}
+
+        except Exception as e:
+            logger.error(f"Music command error: {e}")
+            return {"type": "text", "content": f"Error: {str(e)}"}
 
 
 def get_command_service(db: Session) -> CommandService:

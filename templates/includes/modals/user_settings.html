@@ -12,6 +12,7 @@
                 <button class="user-tab-btn" data-tab="ai">AI Services</button>
                 <button class="user-tab-btn" data-tab="calendar">Calendar & Contacts</button>
                 <button class="user-tab-btn" data-tab="mail">Mail</button>
+                <button class="user-tab-btn" data-tab="music">Music</button>
                 <button class="user-tab-btn" data-tab="news">News & RSS</button>
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
             </div>
@@ -170,6 +171,44 @@
                         <legend>Default Send Account</legend>
                         <p class="fieldset-info">The first account in the list above is used for sending new emails.</p>
                         <small class="form-hint">Use <code>mail &lt;contact&gt; &lt;message&gt;</code> to send a new email. The contact name is looked up in your CardDAV contacts.</small>
+                    </fieldset>
+                </div>
+
+                <!-- Music Tab -->
+                <div class="user-tab-content" id="user-tab-music">
+                    <fieldset>
+                        <legend>WebDAV Music Library</legend>
+                        <p class="fieldset-info">Stream music from a WebDAV server (Nextcloud, ownCloud, etc.). Use <code>music</code> to browse your library.</p>
+                        <div class="form-group">
+                            <label for="webdavMusicUrl">WebDAV URL</label>
+                            <input type="url" id="webdavMusicUrl" placeholder="https://cloud.example.com/remote.php/dav/files/user/Music">
+                            <small>Full URL to your music folder on WebDAV</small>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="webdavMusicUsername">Username</label>
+                                <input type="text" id="webdavMusicUsername" placeholder="username">
+                            </div>
+                            <div class="form-group">
+                                <label for="webdavMusicPassword">Password</label>
+                                <input type="password" id="webdavMusicPassword" placeholder="Leave blank to keep current">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <button type="button" class="btn-secondary" id="testWebdavMusic">Test Connection</button>
+                            <span id="testMusicResult" class="test-result"></span>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend>Music Commands</legend>
+                        <small class="form-hint">
+                            <code>music</code> - Browse library root<br>
+                            <code>music search &lt;query&gt;</code> - Search tracks<br>
+                            <code>music play &lt;#&gt;</code> - Play track number<br>
+                            <code>music mood &lt;vibe&gt;</code> - AI-curated playlist<br>
+                            <code>music queue</code> - Show current queue
+                        </small>
                     </fieldset>
                 </div>
 

@@ -518,11 +518,13 @@ def add_user_contact(
     return add_contact(url, username, password, name, phone, email)
 
 
-def format_events_for_display(events: List[CalendarEvent], include_description: bool = False) -> str:
+def format_events_for_display(events: List[CalendarEvent], include_description: bool = False, cyberpunk: bool = False) -> str:
     """Format events for display with clickable map links for locations."""
     import urllib.parse
 
     if not events:
+        if cyberpunk:
+            return "📅 No events scheduled. Use `cal add <event> <time>` to add one."
         return "No events found."
 
     lines = []
@@ -532,21 +534,40 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
         event_date = event.start.date()
         if event_date != current_date:
             current_date = event_date
-            lines.append(f"\n**{event_date.strftime('%A, %B %d, %Y')}**")
+            if cyberpunk:
+                # Cyberpunk style date header
+                day_abbrev = event_date.strftime('%a').upper()
+                date_formatted = event_date.strftime('%b %d')
+                lines.append(f"\n**[{day_abbrev}]** {date_formatted}")
+            else:
+                lines.append(f"\n**{event_date.strftime('%A, %B %d, %Y')}**")
 
-        time_str = event.start.strftime("%I:%M %p")
+        time_str = event.start.strftime("%I:%M %p").lstrip('0')
         if event.end:
-            time_str += f" - {event.end.strftime('%I:%M %p')}"
+            end_str = event.end.strftime("%I:%M %p").lstrip('0')
+            time_str = f"{time_str} - {end_str}"
 
-        line = f"- {time_str}: {event.summary}"
+        if cyberpunk:
+            # Cyberpunk style event line with time in brackets
+            time_bracket = event.start.strftime("%H:%M")
+            line = f"  ⏰ `{time_bracket}` **{event.summary}**"
+        else:
+            line = f"- {time_str}: {event.summary}"
+
         if event.location:
             # Create Google Maps link for mobile
             maps_url = f"https://maps.google.com/maps?q={urllib.parse.quote(event.location)}"
-            line += f" @ [{event.location}]({maps_url})"
+            if cyberpunk:
+                line += f"\n    📍 [{event.location}]({maps_url})"
+            else:
+                line += f" @ [{event.location}]({maps_url})"
         lines.append(line)
 
         if include_description and event.description:
-            lines.append(f"  _{event.description}_")
+            if cyberpunk:
+                lines.append(f"    _{event.description}_")
+            else:
+                lines.append(f"  _{event.description}_")
 
     return "\n".join(lines)
 
@@ -575,5 +596,232 @@ def format_contacts_for_display(contacts: List[Contact]) -> str:
             lines.append(f"  Organization: {contact.organization}")
         if contact.note:
             lines.append(f"  Note: {contact.note}")
+
+    return "\n".join(lines)
+
+
+@dataclass
+class TodoItem:
+    """Represents a CalDAV todo item (VTODO)."""
+    uid: str
+    summary: str
+    description: Optional[str]
+    due: Optional[datetime]
+    priority: Optional[int]
+    status: Optional[str]  # NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED
+    calendar_name: str
+
+
+def get_todos_from_calendar(
+    url: str,
+    username: str,
+    password: str,
+    calendar_name: str = "Calendar"
+) -> List[TodoItem]:
+    """Get all VTODO items from a CalDAV calendar."""
+    todos = []
+
+    try:
+        client = caldav.DAVClient(url=url, username=username, password=password)
+
+        # Try to get calendar from URL directly
+        try:
+            calendar = caldav.Calendar(client=client, url=url)
+            calendars = [calendar]
+        except Exception:
+            principal = client.principal()
+            calendars = principal.calendars()
+
+        for cal in calendars:
+            try:
+                # Search for VTODO items
+                vtodos = cal.todos(include_completed=False)
+                for vtodo in vtodos:
+                    try:
+                        todo_obj = vtodo.vobject_instance.vtodo
+
+                        # Get due date if present
+                        due_dt = None
+                        if hasattr(todo_obj, 'due'):
+                            due_dt = to_naive_local(todo_obj.due.value)
+
+                        # Get priority (1-9, lower is higher priority)
+                        priority = None
+                        if hasattr(todo_obj, 'priority'):
+                            priority = int(todo_obj.priority.value)
+
+                        # Get status
+                        status = None
+                        if hasattr(todo_obj, 'status'):
+                            status = str(todo_obj.status.value)
+
+                        todos.append(TodoItem(
+                            uid=str(todo_obj.uid.value) if hasattr(todo_obj, 'uid') else "",
+                            summary=str(todo_obj.summary.value) if hasattr(todo_obj, 'summary') else "No Title",
+                            description=str(todo_obj.description.value) if hasattr(todo_obj, 'description') else None,
+                            due=due_dt,
+                            priority=priority,
+                            status=status,
+                            calendar_name=calendar_name
+                        ))
+                    except Exception as e:
+                        logger.debug(f"Error parsing todo: {e}")
+                        continue
+            except Exception as e:
+                logger.debug(f"Error fetching todos from calendar: {e}")
+                continue
+
+    except Exception as e:
+        logger.error(f"Failed to get todos from {url}: {e}")
+
+    return todos
+
+
+def get_all_user_todos(user_id: int, db: Session = None) -> List[TodoItem]:
+    """Get todos from all user's calendars."""
+    calendars = get_user_calendars(user_id, db)
+    all_todos = []
+
+    for cal_config in calendars:
+        url = cal_config.get('url', '')
+        username = cal_config.get('username', '')
+        password = cal_config.get('password', '')
+        name = cal_config.get('name', 'Calendar')
+
+        if url and username:
+            todos = get_todos_from_calendar(url, username, password, name)
+            all_todos.extend(todos)
+
+    # Sort by priority (lower number = higher priority), then by due date
+    all_todos.sort(key=lambda t: (t.priority or 99, t.due or datetime.max))
+    return all_todos
+
+
+def add_todo_to_calendar(
+    url: str,
+    username: str,
+    password: str,
+    summary: str,
+    description: str = "",
+    due: Optional[datetime] = None,
+    priority: int = 5
+) -> bool:
+    """Add a VTODO item to a CalDAV calendar."""
+    from icalendar import Calendar as ICalendar, Todo
+    import uuid
+
+    try:
+        logger.info(f"Adding todo '{summary}' to calendar at {url}")
+
+        client = caldav.DAVClient(url=url, username=username, password=password)
+
+        # Try to get calendar from URL directly
+        try:
+            calendar = caldav.Calendar(client=client, url=url)
+        except Exception:
+            principal = client.principal()
+            calendars = principal.calendars()
+            if not calendars:
+                logger.error("No calendars found")
+                return False
+            calendar = calendars[0]
+
+        # Create VTODO
+        cal = ICalendar()
+        cal.add('prodid', '-//Posterchanai//Todo//EN')
+        cal.add('version', '2.0')
+
+        todo = Todo()
+        todo.add('summary', summary)
+        todo.add('uid', str(uuid.uuid4()))
+        todo.add('dtstamp', datetime.now())
+        todo.add('created', datetime.now())
+        todo.add('status', 'NEEDS-ACTION')
+        todo.add('priority', priority)
+
+        if description:
+            todo.add('description', description)
+        if due:
+            todo.add('due', due)
+
+        cal.add_component(todo)
+
+        ical_data = cal.to_ical().decode('utf-8')
+        calendar.save_event(ical_data)
+        logger.info(f"Successfully added todo: {summary}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to add todo: {e}", exc_info=True)
+        return False
+
+
+def delete_todo_from_calendar(
+    url: str,
+    username: str,
+    password: str,
+    todo_uid: str
+) -> bool:
+    """Delete a VTODO item from a CalDAV calendar by UID."""
+    try:
+        client = caldav.DAVClient(url=url, username=username, password=password)
+
+        # Try to get calendar from URL directly
+        try:
+            calendar = caldav.Calendar(client=client, url=url)
+            calendars = [calendar]
+        except Exception:
+            principal = client.principal()
+            calendars = principal.calendars()
+
+        for cal in calendars:
+            try:
+                vtodos = cal.todos(include_completed=False)
+                for vtodo in vtodos:
+                    try:
+                        if hasattr(vtodo.vobject_instance.vtodo, 'uid'):
+                            if str(vtodo.vobject_instance.vtodo.uid.value) == todo_uid:
+                                vtodo.delete()
+                                logger.info(f"Deleted todo with UID: {todo_uid}")
+                                return True
+                    except Exception as e:
+                        logger.debug(f"Error checking todo: {e}")
+                        continue
+            except Exception as e:
+                logger.debug(f"Error searching calendar: {e}")
+                continue
+
+        logger.warning(f"Todo with UID {todo_uid} not found")
+        return False
+
+    except Exception as e:
+        logger.error(f"Failed to delete todo: {e}")
+        return False
+
+
+def format_todos_for_display(todos: List[TodoItem]) -> str:
+    """Format todos for display with action buttons."""
+    if not todos:
+        return "No todos found. Add one with `todo add <task>`"
+
+    lines = []
+    for idx, todo in enumerate(todos, 1):
+        # Priority indicator
+        if todo.priority and todo.priority <= 3:
+            priority_icon = "🔴"  # High priority
+        elif todo.priority and todo.priority <= 6:
+            priority_icon = "🟡"  # Medium priority
+        else:
+            priority_icon = "🟢"  # Low priority
+
+        # Due date
+        due_str = ""
+        if todo.due:
+            due_str = f" (due {todo.due.strftime('%b %d')})"
+
+        # Delete button
+        delete_btn = f"[Done](cmd:todo rm {idx})"
+
+        lines.append(f"**{idx}.** {priority_icon} {todo.summary}{due_str} {delete_btn}")
 
     return "\n".join(lines)
