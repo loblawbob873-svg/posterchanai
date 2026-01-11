@@ -396,7 +396,7 @@ def delete_all_messages(
     db: Session,
     account_email: str
 ) -> int:
-    """Delete all messages in the INBOX. Returns count of deleted messages, or -1 on error."""
+    """Delete ALL messages in the INBOX for the specified account. Returns count, or -1 on error."""
     accounts = get_user_mail_accounts(user_id, db)
 
     for account in accounts:
@@ -407,28 +407,28 @@ def delete_all_messages(
 
             try:
                 imap.select("INBOX")
-                # Search for all messages
+                # Search for all messages in this inbox
                 status, data = imap.search(None, "ALL")
                 if status != "OK":
                     return -1
 
                 message_ids = data[0].split()
-                count = len(message_ids)
-
-                if count == 0:
+                if not message_ids:
                     return 0
+
+                count = len(message_ids)
 
                 # Mark all for deletion
                 for uid in message_ids:
                     imap.store(uid, '+FLAGS', '\\Deleted')
 
-                # Expunge to actually delete
+                # Expunge to permanently delete
                 imap.expunge()
-                logger.info(f"Deleted all {count} messages from {account_email}")
+                logger.info(f"Purged {count} messages from {account_email} inbox")
                 return count
 
             except Exception as e:
-                logger.error(f"Error deleting all messages: {e}")
+                logger.error(f"Error purging inbox: {e}")
                 return -1
             finally:
                 try:

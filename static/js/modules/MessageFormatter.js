@@ -98,6 +98,12 @@ class MessageFormatter {
             links.push({ text, url, external: false });
             return `\x00LINK${index}\x00`;
         });
+        // Match relative URL links (starting with /)
+        processed = processed.replace(/\[([^\]]+)\]\((\/[^)]+)\)/g, (match, text, url) => {
+            const index = links.length;
+            links.push({ text, url, external: false, download: true });
+            return `\x00LINK${index}\x00`;
+        });
 
         // Escape HTML
         let html = processed
@@ -109,7 +115,8 @@ class MessageFormatter {
         html = html.replace(/\x00LINK(\d+)\x00/g, (match, index) => {
             const link = links[parseInt(index)];
             const target = link.external ? ' target="_blank"' : '';
-            return `<a href="${this.escapeUrl(link.url)}"${target}>${this.escapeHtml(link.text)}</a>`;
+            const download = link.download ? ' download' : '';
+            return `<a href="${this.escapeUrl(link.url)}"${target}${download}>${this.escapeHtml(link.text)}</a>`;
         });
 
         // Bold **text**
