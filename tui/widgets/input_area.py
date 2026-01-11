@@ -12,21 +12,8 @@ from textual.events import Key
 
 
 class AutocompleteInput(Input):
-    """Input that sends Tab key to parent for autocomplete."""
-
-    class TabPressed(Message):
-        """Posted when Tab is pressed."""
-        pass
-
-    async def _on_key(self, event: Key) -> None:
-        """Intercept Tab before default handling."""
-        if event.key == "tab":
-            event.stop()
-            event.prevent_default()
-            self.post_message(self.TabPressed())
-            return
-        # Let parent handle other keys
-        await super()._on_key(event)
+    """Input with Tab disabled for focus navigation."""
+    pass
 
 
 # Available commands for autocomplete
@@ -59,6 +46,7 @@ class ChatInput(Widget):
             super().__init__()
 
     BINDINGS = [
+        Binding("tab", "autocomplete", "Autocomplete", show=False, priority=True),
         Binding("up", "history_prev", "Previous", show=False),
         Binding("down", "history_next", "Next", show=False),
     ]
@@ -80,9 +68,6 @@ class ChatInput(Widget):
             id="input-container"
         )
 
-    def on_autocomplete_input_tab_pressed(self, event: AutocompleteInput.TabPressed) -> None:
-        """Handle Tab key from input."""
-        self.action_autocomplete()
 
     def on_mount(self):
         """Focus input on mount."""
