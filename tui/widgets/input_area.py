@@ -84,11 +84,14 @@ class ChatInput(Widget):
 
     def on_input_changed(self, event: Input.Changed):
         """Handle input changes for autocomplete."""
-        value = event.value
+        value = event.value.strip()
 
-        # Check for command prefix
-        if value.startswith("/"):
-            self.update_autocomplete(value[1:])
+        # Show autocomplete for any command-like input (no / required)
+        if value and not " " in value:
+            self.update_autocomplete(value.lstrip("/"))
+        elif value.startswith("/") or (value and value.split()[0].lower() in [c.split()[0] for c in COMMANDS]):
+            # Also show for multi-word commands
+            self.update_autocomplete(value.lstrip("/"))
         else:
             self.hide_autocomplete()
 
@@ -125,7 +128,7 @@ class ChatInput(Widget):
 
         if matches:
             self.autocomplete_suggestions = matches[:5]  # Limit to 5
-            hint_text = " | ".join(f"/{m}" for m in self.autocomplete_suggestions)
+            hint_text = " | ".join(self.autocomplete_suggestions)
             hint = self.query_one("#autocomplete-hint", Static)
             hint.update(hint_text)
             hint.remove_class("--hidden")
@@ -142,8 +145,8 @@ class ChatInput(Widget):
         """Complete the current command."""
         if self.autocomplete_suggestions:
             input_widget = self.query_one("#message-input", Input)
-            # Complete with first suggestion
-            input_widget.value = "/" + self.autocomplete_suggestions[0]
+            # Complete with first suggestion (no / prefix needed)
+            input_widget.value = self.autocomplete_suggestions[0]
             input_widget.cursor_position = len(input_widget.value)
             self.hide_autocomplete()
 
