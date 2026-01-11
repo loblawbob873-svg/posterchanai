@@ -433,6 +433,7 @@ def add_contact(
     """Add a new contact to CardDAV address book."""
     import uuid
     import re
+    import requests
 
     try:
         logger.info(f"Adding contact '{name}' to {url}")
