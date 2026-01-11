@@ -85,6 +85,7 @@ class MusicPlayerWidget(Widget):
 
     def _on_player_ready(self):
         """Called when player is ready after background init."""
+        self.notify("Audio player ready", severity="information")
         # If we have a pending track, start playing it
         if self._pending_track:
             track = self._pending_track
@@ -133,6 +134,7 @@ class MusicPlayerWidget(Widget):
     def play_track(self, track: dict):
         """Play a single track."""
         if not track:
+            self.notify("No track to play", severity="warning")
             return
 
         self.current_track = track
@@ -145,6 +147,7 @@ class MusicPlayerWidget(Widget):
             self._pending_track = track
             self._init_player()
             self._update_track_display()  # Show what's loading
+            self.notify("Initializing audio player...", severity="information")
             return
 
         if not self._player_ready:
@@ -183,6 +186,8 @@ class MusicPlayerWidget(Widget):
         try:
             self.player.play(url)
             self._run_visualizer()
+            title = track.get("title", "Unknown")
+            self.notify(f"Now playing: {title}", severity="information")
         except Exception as e:
             self.is_playing = False
             self.notify(f"Playback failed: {e}", severity="error")
