@@ -417,10 +417,17 @@ def search_messages(
                             try:
                                 # Use UID FETCH to fetch by UID
                                 status, msg_data = imap.uid('fetch', uid, "(RFC822)")
+                                logger.debug(f"Fetch UID {uid}: status={status}, msg_data type={type(msg_data)}, len={len(msg_data) if msg_data else 0}")
                                 if status != "OK" or not msg_data or not msg_data[0]:
+                                    logger.debug(f"Skipping UID {uid}: status={status}, msg_data={msg_data}")
                                     continue
 
-                                raw_email = msg_data[0][1]
+                                # Handle different response formats
+                                if isinstance(msg_data[0], tuple) and len(msg_data[0]) >= 2:
+                                    raw_email = msg_data[0][1]
+                                else:
+                                    logger.debug(f"Unexpected msg_data format: {type(msg_data[0])}")
+                                    continue
                                 uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
                                 msg = parse_email(raw_email, uid_str, account.email)
                                 if msg:
