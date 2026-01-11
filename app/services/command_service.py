@@ -1642,7 +1642,7 @@ Return ONLY valid JSON, no other text."""},
 
                 # If no cache, do a quick shallow scan
                 if not all_tracks:
-                    all_tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=200)
+                    all_tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=1000)
 
                 if not all_tracks:
                     return {"type": "text", "content": "No tracks found. Try `music browse` to explore your library first."}
@@ -1660,7 +1660,7 @@ Return ONLY valid JSON, no other text."""},
 
                 # Build track list for playlist
                 playlist = []
-                for track in all_tracks[:200]:
+                for track in all_tracks[:500]:
                     playlist.append({
                         "path": track.path,
                         "title": track.title,
@@ -1844,7 +1844,7 @@ Return ONLY valid JSON, no other text."""},
 
                 if not tracks:
                     # No cached tracks, scan library for tracks
-                    tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=200)
+                    tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=1000)
                     if tracks:
                         _music_cache[self.user.id] = {'tracks': tracks, 'folders': [], 'current_path': '/'}
 
