@@ -262,6 +262,8 @@ class MainScreen(Screen):
         music_player.remove_class("--hidden")
         tracks = data.get("tracks", [])
         if tracks:
+            # Stop current playback before loading new playlist
+            music_player.stop_current()
             music_player.load_playlist(tracks)
             # Delay playback to not block response handling
             # keep_playlist=True so we don't overwrite the loaded playlist

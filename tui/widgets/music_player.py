@@ -136,6 +136,17 @@ class MusicPlayerWidget(Widget):
 
         self._start_playback(track)
 
+    def stop_current(self):
+        """Stop current playback without hiding the player."""
+        if self.player:
+            try:
+                self.player.stop()
+            except Exception:
+                pass
+        self.is_playing = False
+        self.progress = 0.0
+        self._update_play_button()
+
     def load_playlist(self, tracks: list[dict]):
         """Load a playlist."""
         self.playlist = tracks
