@@ -75,13 +75,19 @@ class MessageWidget(Widget):
             # Parse and extract cmd links
             self._cmd_links = parse_cmd_links(content)
 
-            # Parse markdown for display
-            try:
-                rendered = parse_markdown(content)
-                content_widget.update(rendered)
-            except Exception:
-                # Fallback to plain text
+            # For performance: skip heavy markdown parsing if content has many cmd links
+            # (indicates it's a list like music tracks)
+            if len(self._cmd_links) > 20:
+                # Simple display without full markdown parsing
                 content_widget.update(content)
+            else:
+                # Parse markdown for display
+                try:
+                    rendered = parse_markdown(content)
+                    content_widget.update(rendered)
+                except Exception:
+                    # Fallback to plain text
+                    content_widget.update(content)
 
             # Render action buttons
             self._render_buttons()
@@ -93,11 +99,19 @@ class MessageWidget(Widget):
             button_container.remove_children()
 
             if self._cmd_links:
-                for label, command, _, _ in self._cmd_links:
-                    # Create a button for each cmd link
+                # Limit buttons to avoid UI performance issues
+                # Only show first 10 buttons - user can still use clickable text
+                max_buttons = 10
+                buttons_to_mount = []
+
+                for label, command, _, _ in self._cmd_links[:max_buttons]:
                     btn = Button(label, classes="cmd-button")
                     btn.command = command  # Store command on button
-                    button_container.mount(btn)
+                    buttons_to_mount.append(btn)
+
+                # Batch mount all buttons at once for better performance
+                if buttons_to_mount:
+                    button_container.mount_all(buttons_to_mount)
         except Exception:
             pass
 

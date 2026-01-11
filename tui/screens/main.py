@@ -181,9 +181,15 @@ class MainScreen(Screen):
     def handle_stream_end(self):
         """Handle stream end."""
         self.is_streaming = False
-        chat_view = self.query_one("#chat-view", ChatView)
-        chat_view.finish_streaming(self.streaming_content)
+        final_content = self.streaming_content
         self.streaming_content = ""
+
+        # Defer heavy markdown rendering to not block event loop
+        def finish():
+            chat_view = self.query_one("#chat-view", ChatView)
+            chat_view.finish_streaming(final_content)
+
+        self.call_later(finish)
 
     def handle_stream_clear(self):
         """Handle stream clear (regeneration)."""
@@ -200,18 +206,21 @@ class MainScreen(Screen):
         msg_type = data.get("type", "text")
         content = data.get("content", "")
 
-        if msg_type == "text":
-            chat_view.add_message("assistant", content)
-        elif msg_type == "search":
-            chat_view.add_message("assistant", content)
-            # TODO: Add search results widget
-        elif msg_type == "images":
-            chat_view.add_message("assistant", content)
-            # TODO: Add image grid widget
-        elif msg_type == "generated_image":
-            chat_view.add_message("assistant", f"{content}\n\n[Image generated - view in web UI]")
-        else:
-            chat_view.add_message("assistant", content)
+        # Defer the expensive message rendering to not block the event loop
+        def add_msg():
+            if msg_type == "text":
+                chat_view.add_message("assistant", content)
+            elif msg_type == "search":
+                chat_view.add_message("assistant", content)
+            elif msg_type == "images":
+                chat_view.add_message("assistant", content)
+            elif msg_type == "generated_image":
+                chat_view.add_message("assistant", f"{content}\n\n[Image generated - view in web UI]")
+            else:
+                chat_view.add_message("assistant", content)
+
+        # Use call_later to yield control back to event loop before heavy rendering
+        self.call_later(add_msg)
 
     def handle_error(self, error: str):
         """Handle WebSocket error."""
