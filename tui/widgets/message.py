@@ -98,13 +98,13 @@ class MessageWidget(Widget):
             button_container = self.query_one("#message-buttons", Horizontal)
             button_container.remove_children()
 
-            if self._cmd_links:
-                # Limit buttons to avoid UI performance issues
-                # Only show first 10 buttons - user can still use clickable text
-                max_buttons = 10
-                buttons_to_mount = []
+            # Skip buttons entirely for messages with many links (like search results)
+            if len(self._cmd_links) > 5:
+                return
 
-                for label, command, _, _ in self._cmd_links[:max_buttons]:
+            if self._cmd_links:
+                buttons_to_mount = []
+                for label, command, _, _ in self._cmd_links[:5]:
                     btn = Button(label, classes="cmd-button")
                     btn.command = command  # Store command on button
                     buttons_to_mount.append(btn)
