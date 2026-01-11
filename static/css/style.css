@@ -148,6 +148,19 @@ body {
     letter-spacing: 1px;
     font-size: 12px;
 }
+/* Checkbox labels need flex alignment */
+.form-group label:has(input[type="checkbox"]) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-transform: none;
+    font-size: 14px;
+}
+.form-group label input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+    flex-shrink: 0;
+}
 .form-group input, .form-group textarea {
     width: 100%;
     padding: 12px;
