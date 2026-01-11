@@ -34,6 +34,7 @@ class MainScreen(Screen):
         Binding("alt+p", "music_play_pause", "Play/Pause", show=False),
         Binding("alt+f", "music_next", "Next Track", show=False),
         Binding("alt+r", "music_prev", "Prev Track", show=False),
+        Binding("alt+m", "music_minimize", "Minimize Player", show=False),
     ]
 
     # Reactive state
@@ -496,3 +497,8 @@ class MainScreen(Screen):
         """Skip to previous track (Alt+R)."""
         music_player = self.query_one("#music-player", MusicPlayerWidget)
         music_player.prev_track()
+
+    def action_music_minimize(self):
+        """Toggle music player minimize (Alt+M)."""
+        music_player = self.query_one("#music-player", MusicPlayerWidget)
+        music_player.toggle_minimize()

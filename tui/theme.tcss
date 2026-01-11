@@ -431,7 +431,8 @@ Input.-invalid {
 /* ======== MUSIC PLAYER ======== */
 #music-player {
     dock: bottom;
-    height: 10;
+    height: auto;
+    max-height: 10;
     background: $surface;
     border-top: double $magenta;
 }
