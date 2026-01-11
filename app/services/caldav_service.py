@@ -287,31 +287,59 @@ def search_contacts(
     query: str
 ) -> List[Contact]:
     """Search contacts in a CardDAV address book."""
+    import requests
+    from requests.auth import HTTPBasicAuth
+    import re
+
     contacts = []
     query_lower = query.lower()
 
     try:
-        client = caldav.DAVClient(url=url, username=username, password=password)
-        principal = client.principal()
+        # Use PROPFIND to list all vCard files
+        headers = {
+            'Content-Type': 'application/xml',
+            'Depth': '1'
+        }
+        propfind_body = '''<?xml version="1.0" encoding="utf-8" ?>
+        <D:propfind xmlns:D="DAV:">
+          <D:prop>
+            <D:getcontenttype/>
+            <D:getetag/>
+          </D:prop>
+        </D:propfind>'''
 
-        # Get address books
-        try:
-            # Try direct URL first
-            addressbook = caldav.Calendar(client=client, url=url)
-            vcards = addressbook.objects()
-        except Exception:
-            # Fallback to getting all address books
-            addressbooks = principal.calendars()  # CardDAV uses similar API
-            vcards = []
-            for ab in addressbooks:
-                try:
-                    vcards.extend(ab.objects())
-                except Exception:
+        resp = requests.request('PROPFIND', url, auth=HTTPBasicAuth(username, password),
+                               headers=headers, data=propfind_body, timeout=30)
+
+        if resp.status_code != 207:
+            logger.error(f"CardDAV PROPFIND failed: {resp.status_code}")
+            return contacts
+
+        # Parse response to find .vcf files
+        vcf_urls = re.findall(r'<href>([^<]+\.vcf)</href>', resp.text)
+        logger.debug(f"Found {len(vcf_urls)} vCard files")
+
+        # Fetch each vCard
+        base_url = url.rstrip('/')
+        # Extract base (remove path after username)
+        url_parts = url.split('/')
+        scheme_host = '/'.join(url_parts[:3])  # https://cal.poster.place
+
+        for vcf_path in vcf_urls:
+            try:
+                # Build full URL
+                if vcf_path.startswith('http'):
+                    vcf_url = vcf_path
+                elif vcf_path.startswith('/'):
+                    vcf_url = scheme_host + vcf_path
+                else:
+                    vcf_url = base_url + '/' + vcf_path
+
+                vcf_resp = requests.get(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10)
+                if vcf_resp.status_code != 200:
                     continue
 
-        for vcard_obj in vcards:
-            try:
-                vcard_data = vcard_obj.data
+                vcard_data = vcf_resp.text
                 vcard = vobject.readOne(vcard_data)
 
                 # Get contact info
@@ -337,9 +365,9 @@ def search_contacts(
                 if hasattr(vcard, 'note'):
                     note = str(vcard.note.value)
 
-                # Check if query matches
+                # Check if query matches (empty query matches all)
                 searchable = f"{name} {email or ''} {phone or ''} {org or ''} {note or ''}".lower()
-                if query_lower in searchable:
+                if not query_lower or query_lower in searchable:
                     contacts.append(Contact(
                         uid=str(vcard.uid.value) if hasattr(vcard, 'uid') else "",
                         name=name,
@@ -350,7 +378,7 @@ def search_contacts(
                     ))
 
             except Exception as e:
-                logger.debug(f"Error parsing vCard: {e}")
+                logger.debug(f"Error parsing vCard {vcf_path}: {e}")
                 continue
 
     except Exception as e:
