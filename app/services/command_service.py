@@ -266,7 +266,7 @@ class CommandService:
         user_id = self.user.id if self.user else 0
         _flood_hash_map[user_id] = {}
 
-        lines = ["## Torrents\n"]
+        lines = ["## ◈ TORRENTS ◈\n"]
         for num, (hash_id, t) in enumerate(torrents.items(), 1):
             # Store mapping
             _flood_hash_map[user_id][num] = hash_id
@@ -294,9 +294,18 @@ class CommandService:
             filled = int(percent / 10)
             bar = "█" * filled + "░" * (10 - filled)
 
+            # Action buttons - Start for stopped, Stop for active
+            is_stopped = 'stopped' in status or 'paused' in status
+            if is_stopped:
+                toggle_btn = f"[Start](cmd:torrents start {num})"
+            else:
+                toggle_btn = f"[Stop](cmd:torrents stop {num})"
+            delete_btn = f"[Delete](cmd:torrents delete {num})"
+
             lines.append(f"**{num}.** {icon} **{name}**")
             lines.append(f"   [{bar}] {percent:.1f}% | {size}")
-            lines.append(f"   ↓ {down_rate} | ↑ {up_rate}\n")
+            lines.append(f"   ↓ {down_rate} | ↑ {up_rate}")
+            lines.append(f"   {toggle_btn} | {delete_btn}\n")
 
         return "\n".join(lines)
 
