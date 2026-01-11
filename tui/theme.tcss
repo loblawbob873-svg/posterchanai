@@ -341,19 +341,17 @@ Button.-warning:hover, Button.warning:hover {
 #message-buttons {
     height: auto;
     margin-top: 1;
-    layout: grid;
-    grid-size: 4;
-    grid-gutter: 1;
+    layout: horizontal;
 }
 
 .cmd-button {
     background: $cyan 15%;
     color: $cyan;
     padding: 0 1;
+    margin-right: 1;
     border: solid $cyan 40%;
     height: 3;
-    min-width: 0;
-    width: auto;
+    min-width: 10;
 }
 
 .cmd-button:hover {
