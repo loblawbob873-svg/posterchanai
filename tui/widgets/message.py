@@ -16,7 +16,7 @@ from tui.utils.markdown import parse_markdown, parse_cmd_links
 class MessageWidget(Widget):
     """Widget displaying a single chat message."""
 
-    class CommandClicked(TextualMessage):
+    class CommandClicked(TextualMessage, bubble=True):
         """Posted when a command button is clicked."""
         def __init__(self, command: str):
             self.command = command
