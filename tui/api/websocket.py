@@ -170,8 +170,28 @@ class ChatWebSocket:
                     self.on_stream_clear()
 
             case "response":
-                if self.on_response:
-                    self.on_response(data.get("data", data))
+                # Command results are wrapped in {"type": "response", "data": {...}}
+                inner_data = data.get("data", data)
+                inner_type = inner_data.get("type", "")
+
+                # Check for music commands inside response
+                if inner_type == "music_play":
+                    if self.on_music_play:
+                        self.on_music_play(inner_data)
+                elif inner_type == "music_playlist":
+                    if self.on_music_playlist:
+                        self.on_music_playlist(inner_data)
+                elif inner_type == "music_next":
+                    if self.on_music_next:
+                        self.on_music_next()
+                elif inner_type == "music_prev":
+                    if self.on_music_prev:
+                        self.on_music_prev()
+                elif inner_type == "music_stop":
+                    if self.on_music_stop:
+                        self.on_music_stop()
+                elif self.on_response:
+                    self.on_response(inner_data)
 
             case "error":
                 if self.on_error:

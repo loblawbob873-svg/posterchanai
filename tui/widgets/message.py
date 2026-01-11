@@ -5,16 +5,22 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.widget import Widget
-from textual.widgets import Static
-from textual.containers import Vertical
+from textual.widgets import Static, Button
+from textual.containers import Vertical, Horizontal
+from textual.message import Message as TextualMessage
 from rich.text import Text
-from rich.markdown import Markdown
 
 from tui.utils.markdown import parse_markdown, parse_cmd_links
 
 
 class MessageWidget(Widget):
     """Widget displaying a single chat message."""
+
+    class CommandClicked(TextualMessage):
+        """Posted when a command button is clicked."""
+        def __init__(self, command: str):
+            self.command = command
+            super().__init__()
 
     def __init__(
         self,
@@ -28,6 +34,7 @@ class MessageWidget(Widget):
         self.content = content
         self.message_id = message_id
         self.is_streaming = is_streaming
+        self._cmd_links = []
 
         # Set class based on role
         self.add_class(f"message-{role}")
@@ -39,6 +46,7 @@ class MessageWidget(Widget):
         yield Vertical(
             Static(role_label, classes="message-role"),
             Static(id="message-content", classes="message-body"),
+            Horizontal(id="message-buttons"),
             classes="message-inner"
         )
 
@@ -64,13 +72,42 @@ class MessageWidget(Widget):
         if self.is_streaming:
             content_widget.update(content + " _")
         else:
-            # Parse markdown for final display
+            # Parse and extract cmd links
+            self._cmd_links = parse_cmd_links(content)
+
+            # Parse markdown for display
             try:
                 rendered = parse_markdown(content)
                 content_widget.update(rendered)
             except Exception:
                 # Fallback to plain text
                 content_widget.update(content)
+
+            # Render action buttons
+            self._render_buttons()
+
+    def _render_buttons(self):
+        """Render cmd: link buttons."""
+        try:
+            button_container = self.query_one("#message-buttons", Horizontal)
+            button_container.remove_children()
+
+            if self._cmd_links:
+                for label, command, _, _ in self._cmd_links:
+                    # Create a button for each cmd link
+                    btn = Button(label, classes="cmd-button")
+                    btn.command = command  # Store command on button
+                    button_container.mount(btn)
+        except Exception:
+            pass
+
+    def on_button_pressed(self, event: Button.Pressed):
+        """Handle action button clicks."""
+        button = event.button
+        if hasattr(button, 'command') and button.command:
+            # Post command to be handled by main screen
+            self.post_message(self.CommandClicked(button.command))
+            event.stop()
 
     def finish_streaming(self):
         """Mark streaming as complete and re-render."""

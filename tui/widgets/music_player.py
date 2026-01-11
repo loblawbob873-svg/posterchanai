@@ -84,7 +84,7 @@ class MusicPlayerWidget(Widget):
         if not self.player:
             return
 
-        url = track.get("url", track.get("stream_url", ""))
+        url = track.get("url", track.get("stream_url", track.get("streamUrl", "")))
         if not url:
             self.notify("No URL for track", severity="error")
             return
@@ -211,9 +211,15 @@ class MusicPlayerWidget(Widget):
         self._update_play_button()
 
         # Reset displays
-        self.query_one("#time-current", Static).update("0:00")
-        progress_bar = self.query_one("#progress-bar", ProgressBar)
-        progress_bar.update(progress=0)
+        try:
+            self.query_one("#time-current", Static).update("0:00")
+            progress_bar = self.query_one("#progress-bar", ProgressBar)
+            progress_bar.update(progress=0)
+        except Exception:
+            pass
+
+        # Hide the player
+        self.add_class("--hidden")
 
     def next_track(self):
         """Play next track in playlist."""

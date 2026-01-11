@@ -250,6 +250,7 @@ class MainScreen(Screen):
         """Handle music stop command."""
         music_player = self.query_one("#music-player", MusicPlayerWidget)
         music_player.stop()
+        self.music_visible = False
 
     async def action_stop_generation(self):
         """Stop current generation."""
@@ -296,6 +297,13 @@ class MainScreen(Screen):
     def on_conversation_sidebar_delete_requested(self, event):
         """Handle delete request from sidebar."""
         self._delete_conversation_worker(event.conversation_id)
+
+    def on_message_widget_command_clicked(self, event):
+        """Handle command button clicks from messages."""
+        command = event.command
+        if command:
+            # Send the command as a message
+            self._send_message_worker(command)
 
     @work(exclusive=True)
     async def _delete_conversation_worker(self, conversation_id: int):
