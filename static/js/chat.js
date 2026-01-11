@@ -1870,10 +1870,10 @@ class ChatHandler {
             links.push({ text, url, external: false });
             return `\x00LINK${index}\x00`;
         });
-        // Match relative URL links (starting with /) - for attachments, downloads, etc.
+        // Match relative URL links (starting with /) - for attachments, etc.
         processed = processed.replace(/\[([^\]]+)\]\((\/[^)]+)\)/g, (match, text, url) => {
             const index = links.length;
-            links.push({ text, url, external: false, download: true });
+            links.push({ text, url, external: true });  // Open in new tab
             return `\x00LINK${index}\x00`;
         });
 
