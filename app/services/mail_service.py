@@ -360,24 +360,29 @@ def search_messages(
                 # Get list of all folders
                 status, folder_data = imap.list()
                 if status != "OK":
+                    logger.error(f"Failed to list folders: {status}")
                     return []
 
                 folders = []
                 for folder_line in folder_data:
                     # Parse folder name from IMAP LIST response
-                    # Format: (\\flags) "delimiter" "folder_name"
+                    # Format varies: (\\flags) "." "INBOX" or (\\flags) "/" "Folder"
                     try:
                         decoded = folder_line.decode() if isinstance(folder_line, bytes) else folder_line
-                        parts = decoded.split('"')
-                        if len(parts) >= 4:
-                            folder_name = parts[-2]
+                        # Try to extract folder name - it's usually the last quoted string
+                        import re
+                        # Match the last quoted string or unquoted name at end
+                        match = re.search(r'"([^"]+)"$|(\S+)$', decoded)
+                        if match:
+                            folder_name = match.group(1) or match.group(2)
                             # Skip special folders that can't be searched
-                            if folder_name.lower() not in ('[gmail]', '[google mail]'):
+                            if folder_name.lower() not in ('[gmail]', '[google mail]', 'straps'):
                                 folders.append(folder_name)
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Error parsing folder line: {folder_line} - {e}")
                         continue
 
-                # Search each folder - search FROM, TO, SUBJECT, and BODY
+                logger.info(f"Found folders: {folders}")
                 logger.info(f"Searching {len(folders)} folders for '{query}'")
 
                 for folder in folders:
@@ -392,12 +397,13 @@ def search_messages(
                         for criteria in [f'FROM "{query}"', f'TO "{query}"', f'SUBJECT "{query}"']:
                             try:
                                 status, data = imap.search(None, criteria)
+                                logger.debug(f"Search {criteria} in {folder}: status={status}, data={data}")
                                 if status == "OK" and data[0]:
                                     all_uids.update(data[0].split())
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"Search error for {criteria}: {e}")
 
-                        logger.debug(f"Search in {folder}: {len(all_uids)} results")
+                        logger.info(f"Search in {folder}: {len(all_uids)} results")
                         if not all_uids:
                             continue
 
