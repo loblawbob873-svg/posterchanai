@@ -688,8 +688,8 @@ ProgressBar > .bar--complete {
 #chat-input {
     dock: bottom;
     height: auto;
-    min-height: 3;
-    max-height: 8;
+    min-height: 7;
+    max-height: 12;
     background: $surface;
     border-top: solid $cyan 50%;
     padding: 1;
