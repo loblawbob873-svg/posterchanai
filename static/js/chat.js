@@ -2095,6 +2095,7 @@ class ChatHandler {
                     this.subcommands['mail read'] = accountHints;
                     this.subcommands['mail reply'] = accountHints;
                     this.subcommands['mail delete'] = accountHints;
+                    this.subcommands['mail deleteall'] = accountHints;
                     this.subcommands['mail archive'] = accountHints;
                 }
             }
@@ -2112,7 +2113,7 @@ class ChatHandler {
         'firewall': ['search', 'analyze'],
         'news': ['refresh'],
         'cal': ['today', 'week', 'add'],
-        'mail': ['inbox', 'unread', 'read', 'reply', 'delete', 'archive', 'send']
+        'mail': ['inbox', 'unread', 'read', 'reply', 'delete', 'deleteall', 'archive', 'send']
     };
 
     // Tab autocomplete for commands

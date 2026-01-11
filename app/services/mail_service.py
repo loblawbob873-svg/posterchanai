@@ -391,6 +391,54 @@ def delete_message(
     return False
 
 
+def delete_all_messages(
+    user_id: int,
+    db: Session,
+    account_email: str
+) -> int:
+    """Delete all messages in the INBOX. Returns count of deleted messages, or -1 on error."""
+    accounts = get_user_mail_accounts(user_id, db)
+
+    for account in accounts:
+        if account.email == account_email:
+            imap = connect_imap(account)
+            if not imap:
+                return -1
+
+            try:
+                imap.select("INBOX")
+                # Search for all messages
+                status, data = imap.search(None, "ALL")
+                if status != "OK":
+                    return -1
+
+                message_ids = data[0].split()
+                count = len(message_ids)
+
+                if count == 0:
+                    return 0
+
+                # Mark all for deletion
+                for uid in message_ids:
+                    imap.store(uid, '+FLAGS', '\\Deleted')
+
+                # Expunge to actually delete
+                imap.expunge()
+                logger.info(f"Deleted all {count} messages from {account_email}")
+                return count
+
+            except Exception as e:
+                logger.error(f"Error deleting all messages: {e}")
+                return -1
+            finally:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
+
+    return -1
+
+
 def archive_message(
     user_id: int,
     db: Session,

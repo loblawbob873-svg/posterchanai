@@ -18,8 +18,8 @@ from app.services.caldav_service import (
     add_event_to_calendar
 )
 from app.services.mail_service import (
-    fetch_all_accounts, get_message_by_id, delete_message, archive_message,
-    reply_to_message, send_email, get_user_mail_accounts,
+    fetch_all_accounts, get_message_by_id, delete_message, delete_all_messages,
+    archive_message, reply_to_message, send_email, get_user_mail_accounts,
     format_message_list, format_message_detail
 )
 # Lock now handled inside image_factory for fine-grained control
@@ -1042,6 +1042,28 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Message {uid} deleted."}
                 else:
                     return {"type": "text", "content": f"Failed to delete message {uid}."}
+
+            elif subcommand in ("deleteall", "purge", "clear"):
+                if len(parts) < 2:
+                    return {"type": "text", "content": "Usage: `mail deleteall <account>`\n\nExample: `mail deleteall verita84`\n\n**Warning:** This will delete ALL messages in the inbox!"}
+
+                account_hint = parts[1]
+
+                # Find matching account
+                account_email = None
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+
+                count = delete_all_messages(self.user.id, self.db, account_email)
+                if count >= 0:
+                    return {"type": "text", "content": f"🗑️ Deleted {count} messages from {account_email}"}
+                else:
+                    return {"type": "text", "content": f"Failed to delete messages from {account_email}."}
 
             elif subcommand == "archive":
                 if len(parts) < 3:
