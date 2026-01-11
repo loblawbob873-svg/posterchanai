@@ -8,6 +8,26 @@ from textual.widgets import Input, Button, Static
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.binding import Binding
+from textual.events import Key
+
+
+class AutocompleteInput(Input):
+    """Input that sends Tab key to parent for autocomplete."""
+
+    class TabPressed(Message):
+        """Posted when Tab is pressed."""
+        pass
+
+    def _on_key(self, event: Key) -> None:
+        """Handle key events."""
+        if event.key == "tab":
+            # Don't let Tab do default focus navigation
+            event.prevent_default()
+            event.stop()
+            # Tell parent to autocomplete
+            self.post_message(self.TabPressed())
+        else:
+            super()._on_key(event)
 
 
 # Available commands for autocomplete
@@ -42,7 +62,6 @@ class ChatInput(Widget):
     BINDINGS = [
         Binding("up", "history_prev", "Previous", show=False),
         Binding("down", "history_next", "Next", show=False),
-        Binding("tab", "autocomplete", "Complete", show=False),
     ]
 
     def __init__(self, **kwargs):
@@ -55,12 +74,16 @@ class ChatInput(Widget):
         yield Vertical(
             Static("", id="autocomplete-hint", classes="--hidden"),
             Horizontal(
-                Input(placeholder="Type a message or command...", id="message-input"),
+                AutocompleteInput(placeholder="Type a message or /command...", id="message-input"),
                 Button("SEND", id="send-btn", variant="primary"),
                 id="input-row"
             ),
             id="input-container"
         )
+
+    def on_autocomplete_input_tab_pressed(self, event: AutocompleteInput.TabPressed) -> None:
+        """Handle Tab key from input."""
+        self.action_autocomplete()
 
     def on_mount(self):
         """Focus input on mount."""
