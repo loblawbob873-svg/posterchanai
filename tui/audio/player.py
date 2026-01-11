@@ -173,12 +173,24 @@ class SubprocessPlayer(AudioPlayer):
         thread.start()
 
     def pause(self):
-        """Pause - not supported in subprocess mode."""
-        pass
+        """Pause playback using SIGSTOP."""
+        if self._process and self._playing:
+            import signal
+            try:
+                self._process.send_signal(signal.SIGSTOP)
+                self._playing = False
+            except Exception:
+                pass
 
     def resume(self):
-        """Resume - not supported in subprocess mode."""
-        pass
+        """Resume playback using SIGCONT."""
+        if self._process:
+            import signal
+            try:
+                self._process.send_signal(signal.SIGCONT)
+                self._playing = True
+            except Exception:
+                pass
 
     def stop(self):
         """Stop playback."""
