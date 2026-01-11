@@ -408,10 +408,12 @@ def search_messages(
                             continue
 
                         uids = list(all_uids)
-                        logger.info(f"Fetching up to {min(limit, len(uids))} messages from {folder}")
+                        logger.info(f"Fetching up to {min(limit, len(uids))} messages from {folder}, UIDs sample: {uids[:3]}")
                         # Get most recent matches first
                         fetched = 0
-                        for uid in reversed(uids[-limit:]):
+                        uids_to_fetch = list(reversed(uids[-limit:]))
+                        logger.info(f"Will fetch {len(uids_to_fetch)} UIDs: {uids_to_fetch[:5]}...")
+                        for uid in uids_to_fetch:
                             if len(messages) >= limit:
                                 break
                             try:
