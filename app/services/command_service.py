@@ -20,7 +20,7 @@ from app.services.caldav_service import (
 from app.services.mail_service import (
     fetch_all_accounts, get_message_by_id, delete_message, delete_all_messages,
     archive_message, reply_to_message, send_email, get_user_mail_accounts,
-    format_message_list, format_message_detail
+    format_message_list, format_message_detail, search_messages
 )
 # Lock now handled inside image_factory for fine-grained control
 
@@ -54,8 +54,8 @@ class CommandService:
         "logs": "System logs analysis (admin only): logs",
         "miniflux": "Fetch Miniflux articles now: miniflux",
         "cal": "Calendar: cal | cal today | cal week | cal add <event> <time>",
-        "contacts": "Search contacts: contacts <query>",
-        "mail": "Email: mail | mail <contact> <msg> | mail read/reply/delete/archive <account> <id>",
+        "contacts": "Contacts: contacts <query> | contacts add <name> <phone>",
+        "mail": "Email: mail | mail search <acct> <query> | mail read/reply/delete/archive <acct> <id>",
     }
 
     # Command aliases (alias -> canonical command)
@@ -1010,6 +1010,33 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": "No unread messages."}
                 return {"type": "text", "content": format_message_list(messages)}
 
+            elif subcommand == "search":
+                if len(parts) < 3:
+                    return {"type": "text", "content": "Usage: `mail search <account> <query>`\n\nExample: `mail search yummy invoice`"}
+
+                account_hint = parts[1]
+                # Get full query (may contain spaces)
+                query_parts = arg.strip().split(maxsplit=2)
+                query = query_parts[2] if len(query_parts) > 2 else ""
+
+                if not query:
+                    return {"type": "text", "content": "Please provide a search query."}
+
+                # Find matching account
+                account_email = None
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+
+                messages = search_messages(self.user.id, self.db, account_email, query)
+                if not messages:
+                    return {"type": "text", "content": f"No messages found matching '{query}'."}
+                return {"type": "text", "content": f"## Search results for '{query}'\n\n" + format_message_list(messages)}
+
             elif subcommand == "read":
                 if len(parts) < 3:
                     return {"type": "text", "content": "Usage: `mail read <account> <id>`\n\nExample: `mail read verita84 123`"}
@@ -1147,7 +1174,7 @@ Return ONLY valid JSON, no other text."""},
                     message_body = full_parts[1] if len(full_parts) > 1 else ""
                     return await self._send_new_mail(accounts, recipient, message_body, attachments)
 
-                return {"type": "text", "content": "Usage:\n- `mail` - Recent messages\n- `mail <contact> <message>` - Send new email (with attachments)\n- `mail read <account> <id>` - Read message\n- `mail reply <account> <id> <message>` - Reply\n- `mail archive <account> <id>` - Archive message\n- `mail delete <account> <id>` - Delete message"}
+                return {"type": "text", "content": "Usage:\n- `mail` - Recent messages\n- `mail search <account> <query>` - Search messages\n- `mail <contact> <message>` - Send email\n- `mail read <account> <id>` - Read message\n- `mail reply <account> <id> <message>` - Reply\n- `mail archive <account> <id>` - Archive\n- `mail delete <account> <id>` - Delete"}
 
         except Exception as e:
             logger.error(f"Mail command error: {e}")

@@ -2103,6 +2103,7 @@ class ChatHandler {
                     console.log('Mail account hints loaded:', accountHints);
 
                     // Update subcommands with account hints
+                    this.subcommands['mail search'] = accountHints;
                     this.subcommands['mail read'] = accountHints;
                     this.subcommands['mail reply'] = accountHints;
                     this.subcommands['mail delete'] = accountHints;
@@ -2129,8 +2130,9 @@ class ChatHandler {
         'news': ['refresh'],
         'cal': ['today', 'week', 'add'],
         'contacts': ['add'],
-        'mail': ['inbox', 'unread', 'read', 'reply', 'delete', 'deleteall', 'archive', 'send'],
+        'mail': ['inbox', 'unread', 'search', 'read', 'reply', 'delete', 'deleteall', 'archive', 'send'],
         // Mail subcommands - will be populated with account names dynamically
+        'mail search': [],
         'mail read': [],
         'mail reply': [],
         'mail delete': [],

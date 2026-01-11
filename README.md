@@ -914,6 +914,7 @@ The mail command provides full IMAP/SMTP email functionality:
 |------------|-------------|
 | `mail` | Show recent inbox messages from all accounts |
 | `mail unread` | Show unread messages only |
+| `mail search <account> <query>` | Search messages by subject, sender, or body |
 | `mail read <account> <id>` | Read a specific message (attachments open in new tab) |
 | `mail reply <account> <id> <message>` | Reply to a message |
 | `mail archive <account> <id>` | Archive a message (moves to Archive folder) |
@@ -923,8 +924,9 @@ The mail command provides full IMAP/SMTP email functionality:
 
 **Examples:**
 - `mail` - Show inbox from all accounts
-- `mail read yummy 5` - Read message #5 from yummy@... account
-- `mail linda Hey, how are you?` - Send email to Linda (looked up in contacts)
+- `mail search work invoice` - Search for "invoice" in work account
+- `mail read work 5` - Read message #5 from work@... account
+- `mail john Hey, how are you?` - Send email to John (looked up in contacts)
 
 **Tab Autocomplete:** Type `mail read ` and press Tab to see available accounts.
 

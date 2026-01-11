@@ -339,6 +339,63 @@ def fetch_all_accounts(
     return all_messages
 
 
+def search_messages(
+    user_id: int,
+    db: Session,
+    account_email: str,
+    query: str,
+    limit: int = 20
+) -> List[EmailMessage]:
+    """Search messages in an account using IMAP SEARCH."""
+    accounts = get_user_mail_accounts(user_id, db)
+    messages = []
+
+    for account in accounts:
+        if account.email == account_email:
+            imap = connect_imap(account)
+            if not imap:
+                return []
+
+            try:
+                imap.select("INBOX")
+                # Search in subject, from, and body
+                # IMAP search is case-insensitive
+                # Use OR to combine criteria
+                search_criteria = f'(OR OR SUBJECT "{query}" FROM "{query}" BODY "{query}")'
+                status, data = imap.search(None, search_criteria)
+
+                if status != "OK" or not data[0]:
+                    logger.debug(f"No results for search '{query}'")
+                    return []
+
+                uids = data[0].split()
+                # Get most recent matches first (reverse order)
+                uids = list(reversed(uids[-limit:]))
+
+                for uid in uids:
+                    status, msg_data = imap.fetch(uid, "(RFC822)")
+                    if status != "OK" or not msg_data[0]:
+                        continue
+
+                    raw_email = msg_data[0][1]
+                    msg = parse_email(raw_email, uid.decode(), account.email)
+                    if msg:
+                        messages.append(msg)
+
+                return messages
+
+            except Exception as e:
+                logger.error(f"Error searching messages: {e}")
+                return []
+            finally:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
+
+    return []
+
+
 def get_message_by_id(
     user_id: int,
     db: Session,
