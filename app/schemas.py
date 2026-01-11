@@ -209,11 +209,19 @@ class SettingsResponse(BaseModel):
     mcp_port: str = "8808"
     mcp_warmup: str = "true"
     # Miniflux news plugin settings
-    miniflux_enabled: str = "true"
+    miniflux_enabled: str = "false"
     miniflux_url: str = ""
     miniflux_username: str = ""
     miniflux_password: str = ""
     miniflux_interval: str = "30"
+    # Logs scheduler settings
+    logs_scheduler_enabled: str = "false"
+    logs_schedule: str = "1,12,18"
+    logs_drives: str = "sda,sdb,nvme0n1"
+    logs_exclude_patterns: str = ""
+
+    class Config:
+        extra = "allow"  # Allow arbitrary extra settings
 
 
 # TTS schema
