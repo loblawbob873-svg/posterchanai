@@ -896,13 +896,14 @@ The contacts command provides CardDAV address book functionality:
 
 | Subcommand | Description |
 |------------|-------------|
+| `contacts all` | List all contacts |
 | `contacts <query>` | Search contacts by name, email, or phone |
 | `contacts add <name> <phone>` | Add a new contact with phone number |
 
 **Examples:**
+- `contacts all` - List all contacts
 - `contacts john` - Search for contacts named John
 - `contacts add "John Doe" 555-1234` - Add a new contact (quotes for names with spaces)
-- `contacts add John 555-1234` - Add a contact with single name
 
 Configure CardDAV in User Settings > Calendar & Contacts tab.
 

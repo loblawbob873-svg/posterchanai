@@ -54,7 +54,7 @@ class CommandService:
         "logs": "System logs analysis (admin only): logs",
         "miniflux": "Fetch Miniflux articles now: miniflux",
         "cal": "Calendar: cal | cal today | cal week | cal add <event> <time>",
-        "contacts": "Contacts: contacts <query> | contacts add <name> <phone>",
+        "contacts": "Contacts: contacts all | contacts <query> | contacts add <name> <phone>",
         "mail": "Email: mail | mail search <acct> <query> | mail read/reply/delete/archive <acct> <id>",
     }
 
@@ -932,10 +932,22 @@ Return ONLY valid JSON, no other text."""},
             return {"type": "text", "content": "Please log in to use the contacts command."}
 
         if not arg.strip():
-            return {"type": "text", "content": "Usage:\n- `contacts <query>` - Search contacts\n- `contacts add <name> <phone>` - Add a new contact"}
+            return {"type": "text", "content": "Usage:\n- `contacts all` - List all contacts\n- `contacts <query>` - Search contacts\n- `contacts add <name> <phone>` - Add a new contact"}
 
         parts = arg.strip().split(maxsplit=2)
         subcommand = parts[0].lower()
+
+        # Handle all subcommand - list all contacts
+        if subcommand == "all":
+            try:
+                # Use empty query or wildcard to get all
+                contacts = get_user_contacts(self.user.id, "", self.db)
+                if not contacts:
+                    return {"type": "text", "content": "No contacts found. Add contacts in your CardDAV address book or use `contacts add <name> <phone>`."}
+                return {"type": "text", "content": format_contacts_for_display(contacts)}
+            except Exception as e:
+                logger.error(f"Contacts all error: {e}")
+                return {"type": "text", "content": f"Error listing contacts: {str(e)}"}
 
         # Handle add subcommand
         if subcommand == "add":

@@ -2129,7 +2129,7 @@ class ChatHandler {
         'firewall': ['search', 'analyze'],
         'news': ['refresh'],
         'cal': ['today', 'week', 'add'],
-        'contacts': ['add'],
+        'contacts': ['all', 'add'],
         'mail': ['inbox', 'unread', 'search', 'read', 'reply', 'delete', 'deleteall', 'archive', 'send'],
         // Mail subcommands - will be populated with account names dynamically
         'mail search': [],
