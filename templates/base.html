@@ -23,9 +23,9 @@
     {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
-    {% block content %}{% endblock %}
     <!-- CSRF protection - must load before other scripts -->
     <script src="/static/js/modules/csrf.js"></script>
+    {% block content %}{% endblock %}
     {% block scripts %}{% endblock %}
     <script>
         if ('serviceWorker' in navigator) {
