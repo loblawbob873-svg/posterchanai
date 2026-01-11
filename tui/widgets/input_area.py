@@ -29,7 +29,7 @@ COMMANDS = [
     "music stop", "music next", "music prev",
     "weather",
     "news",
-    "torrent", "torrent search", "torrent add", "torrent list",
+    "torrents", "torrents list", "torrents add", "torrents download",
     "reminder", "reminder add", "reminder list",
     "note", "note add", "note search",
     "help", "settings",
@@ -99,7 +99,7 @@ class ChatInput(Widget):
         elif btn_id == "quick-music":
             self.send_command("music")
         elif btn_id == "quick-torrent":
-            self.send_command("torrent list")
+            self.send_command("torrents list")
         elif btn_id == "quick-weather":
             self.send_command("weather")
         elif btn_id == "quick-cal":

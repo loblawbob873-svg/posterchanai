@@ -75,19 +75,14 @@ class MessageWidget(Widget):
             # Parse and extract cmd links
             self._cmd_links = parse_cmd_links(content)
 
-            # For performance: skip heavy markdown parsing if content has many cmd links
-            # (indicates it's a list like music tracks)
-            if len(self._cmd_links) > 20:
-                # Simple display without full markdown parsing
-                content_widget.update(content)
-            else:
-                # Parse markdown for display
-                try:
-                    rendered = parse_markdown(content)
-                    content_widget.update(rendered)
-                except Exception:
-                    # Fallback to plain text
-                    content_widget.update(content)
+            # Parse markdown for display
+            try:
+                rendered = parse_markdown(content)
+                content_widget.update(rendered)
+            except Exception:
+                # Fallback to plain text with cmd links cleaned up
+                from tui.utils.markdown import strip_markdown
+                content_widget.update(strip_markdown(content))
 
             # Render action buttons
             self._render_buttons()

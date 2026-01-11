@@ -74,6 +74,7 @@ class CommandService:
         "schedule": "cal",
         "sched": "cal",
         "flood": "torrents",  # Combine flood into torrents command
+        "torrent": "torrents",  # Allow singular form
     }
 
     def __init__(self, db: Session, user: Optional["User"] = None):
