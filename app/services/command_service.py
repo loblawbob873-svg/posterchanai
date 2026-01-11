@@ -238,17 +238,21 @@ class CommandService:
         # Generate image with load balancing support
         # Lock is handled inside image_factory for local generation only
         # Remote requests (load balanced or custom user endpoint) run in parallel
-        image_data = await generate_image_for_user(
-            db=self.db,
-            user=self.user,
-            prompt=prompt,
-        )
+        try:
+            image_data = await generate_image_for_user(
+                db=self.db,
+                user=self.user,
+                prompt=prompt,
+            )
+        except Exception as e:
+            logger.error(f"Image generation exception: {e}")
+            return {"type": "text", "content": f"Image generation error: {str(e)}"}
 
         if stop_check and stop_check():
             return {"type": "text", "content": "Generation cancelled."}
 
         if not image_data:
-            return {"type": "text", "content": "Failed to generate image. Please try again or check image generation settings."}
+            return {"type": "text", "content": "Failed to generate image. Check that ComfyUI/image server is running and configured in settings."}
 
         return {
             "type": "generated_image",
