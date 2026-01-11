@@ -29,6 +29,7 @@ class MainScreen(Screen):
         Binding("N", "prev_conversation", "Prev", show=False),
         Binding("h", "hide_sidebar", "Hide Sidebar", show=False),
         Binding("l", "show_sidebar", "Show Sidebar", show=False),
+        Binding("o", "open_urls", "Open URL", show=False),
     ]
 
     # Reactive state
@@ -388,3 +389,45 @@ class MainScreen(Screen):
         """Show sidebar (vim l)."""
         if not self.sidebar_visible:
             self.toggle_sidebar()
+
+    def action_open_urls(self):
+        """Open URLs from recent messages in browser."""
+        import webbrowser
+        from tui.utils.markdown import extract_urls
+
+        # Get chat view and find URLs in recent messages
+        try:
+            chat_view = self.query_one("#chat-view", ChatView)
+            container = chat_view.query_one("#messages-container")
+
+            all_urls = []
+            # Get last few messages
+            for widget in list(container.children)[-5:]:
+                if hasattr(widget, 'content'):
+                    urls = extract_urls(widget.content)
+                    all_urls.extend(urls)
+
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_urls = []
+            for url in all_urls:
+                if url not in seen:
+                    seen.add(url)
+                    unique_urls.append(url)
+
+            if not unique_urls:
+                self.notify("No URLs found in recent messages", severity="warning")
+                return
+
+            if len(unique_urls) == 1:
+                # Open single URL directly
+                webbrowser.open(unique_urls[0])
+                self.notify(f"Opened: {unique_urls[0][:50]}...")
+            else:
+                # Open all URLs and show count
+                for url in unique_urls[:5]:  # Limit to 5
+                    webbrowser.open(url)
+                self.notify(f"Opened {min(len(unique_urls), 5)} URLs in browser")
+
+        except Exception as e:
+            self.notify(f"Failed to open URLs: {e}", severity="error")

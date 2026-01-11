@@ -17,6 +17,9 @@ COPY_LINK_PATTERN = re.compile(r'\[([^\]]+)\]\(copy:([^)]+)\)')
 # Pattern for regular links: [Label](url)
 LINK_PATTERN = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
 
+# Pattern for bare URLs
+URL_PATTERN = re.compile(r'https?://[^\s<>\[\]()]+')
+
 # Pattern for code blocks
 CODE_BLOCK_PATTERN = re.compile(r'```(\w*)\n(.*?)```', re.DOTALL)
 
@@ -130,3 +133,25 @@ def extract_code_blocks(text: str) -> List[Tuple[str, str]]:
         code = match.group(2).strip()
         blocks.append((language, code))
     return blocks
+
+
+def extract_urls(text: str) -> List[str]:
+    """
+    Extract all URLs from text (both markdown links and bare URLs).
+
+    Returns:
+        List of unique URLs
+    """
+    urls = set()
+
+    # Extract from markdown links [label](url)
+    for match in LINK_PATTERN.finditer(text):
+        url = match.group(2)
+        if url.startswith(('http://', 'https://')):
+            urls.add(url)
+
+    # Extract bare URLs
+    for match in URL_PATTERN.finditer(text):
+        urls.add(match.group(0))
+
+    return list(urls)

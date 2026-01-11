@@ -54,6 +54,11 @@ HELP_TEXT = """
 | `/` | Focus input with `/` prefix (command mode) |
 | `Esc` | Exit input / stop generation |
 
+### Links
+| Key | Action |
+|-----|--------|
+| `o` | Open URLs from recent messages in browser |
+
 ## Commands
 
 Type these in the chat input to access features:

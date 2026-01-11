@@ -1,6 +1,7 @@
 """
 Settings screen with tabbed interface.
 """
+from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.screen import Screen
@@ -17,6 +18,10 @@ class SettingsScreen(Screen):
         Binding("escape", "close", "Close"),
     ]
 
+    def __init__(self):
+        super().__init__()
+        self.settings_data = {}
+
     def compose(self) -> ComposeResult:
         yield Container(
             Static("SETTINGS", id="settings-title"),
@@ -24,25 +29,15 @@ class SettingsScreen(Screen):
         )
 
         with TabbedContent(id="settings-tabs"):
-            with TabPane("Mail", id="tab-mail"):
-                yield ScrollableContainer(
-                    MailSettingsPane(),
-                    id="mail-settings-scroll"
-                )
-            with TabPane("Calendar", id="tab-calendar"):
-                yield ScrollableContainer(
-                    CalendarSettingsPane(),
-                    id="calendar-settings-scroll"
-                )
             with TabPane("Music", id="tab-music"):
                 yield ScrollableContainer(
                     MusicSettingsPane(),
                     id="music-settings-scroll"
                 )
-            with TabPane("AI", id="tab-ai"):
+            with TabPane("Calendar", id="tab-calendar"):
                 yield ScrollableContainer(
-                    AISettingsPane(),
-                    id="ai-settings-scroll"
+                    CalendarSettingsPane(),
+                    id="calendar-settings-scroll"
                 )
             with TabPane("App", id="tab-app"):
                 yield ScrollableContainer(
@@ -56,6 +51,56 @@ class SettingsScreen(Screen):
             id="settings-buttons"
         )
 
+    def on_mount(self):
+        """Load settings on mount."""
+        self.load_settings()
+
+    @work(exclusive=True)
+    async def load_settings(self):
+        """Load settings from API."""
+        try:
+            self.settings_data = await self.app.api.get_user_settings()
+            self.populate_fields()
+        except Exception as e:
+            self.notify(f"Failed to load settings: {e}", severity="error")
+
+    def populate_fields(self):
+        """Populate form fields with settings data."""
+        settings = self.settings_data
+
+        # Music settings
+        self._set_input("webdav-url", settings.get("webdav_url", ""))
+        self._set_input("webdav-music-path", settings.get("webdav_music_path", "/music"))
+        self._set_input("webdav-username", settings.get("webdav_username", ""))
+        self._set_input("webdav-password", settings.get("webdav_password", ""))
+
+        # Calendar settings
+        self._set_input("caldav-url", settings.get("caldav_url", ""))
+        self._set_input("caldav-username", settings.get("caldav_username", ""))
+        self._set_input("caldav-password", settings.get("caldav_password", ""))
+        self._set_input("carddav-url", settings.get("carddav_url", ""))
+        self._set_input("carddav-username", settings.get("carddav_username", ""))
+        self._set_input("carddav-password", settings.get("carddav_password", ""))
+
+        # App settings
+        self._set_input("server-url", self.app.config.server_url)
+
+    def _set_input(self, input_id: str, value: str):
+        """Safely set input value."""
+        try:
+            inp = self.query_one(f"#{input_id}", Input)
+            inp.value = value or ""
+        except Exception:
+            pass
+
+    def _get_input(self, input_id: str) -> str:
+        """Safely get input value."""
+        try:
+            inp = self.query_one(f"#{input_id}", Input)
+            return inp.value
+        except Exception:
+            return ""
+
     def on_button_pressed(self, event: Button.Pressed):
         """Handle button presses."""
         if event.button.id == "save-btn":
@@ -63,107 +108,45 @@ class SettingsScreen(Screen):
         elif event.button.id == "cancel-btn":
             self.action_close()
 
-    @work
+    @work(exclusive=True)
     async def save_settings(self):
-        """Save all settings."""
-        self.notify("Settings saved", severity="information")
-        self.action_close()
+        """Save settings to API."""
+        try:
+            # Collect settings from form
+            settings = {
+                "webdav_url": self._get_input("webdav-url"),
+                "webdav_music_path": self._get_input("webdav-music-path"),
+                "webdav_username": self._get_input("webdav-username"),
+                "webdav_password": self._get_input("webdav-password"),
+                "caldav_url": self._get_input("caldav-url"),
+                "caldav_username": self._get_input("caldav-username"),
+                "caldav_password": self._get_input("caldav-password"),
+                "carddav_url": self._get_input("carddav-url"),
+                "carddav_username": self._get_input("carddav-username"),
+                "carddav_password": self._get_input("carddav-password"),
+            }
+
+            # Filter out empty values
+            settings = {k: v for k, v in settings.items() if v}
+
+            await self.app.api.update_user_settings(settings)
+
+            # Update local config if server URL changed
+            new_server = self._get_input("server-url")
+            if new_server and new_server != self.app.config.server_url:
+                self.app.config.server_url = new_server
+                self.app.config.save()
+                self.app.api.base_url = new_server.rstrip("/")
+
+            self.notify("Settings saved", severity="information")
+            self.action_close()
+
+        except Exception as e:
+            self.notify(f"Failed to save: {e}", severity="error")
 
     def action_close(self):
         """Close settings screen."""
         self.app.pop_screen()
-
-
-class MailSettingsPane(Static):
-    """Mail account settings."""
-
-    def compose(self) -> ComposeResult:
-        yield Vertical(
-            Static("Email Accounts", classes="settings-section-title"),
-            Static("Configure IMAP/SMTP accounts for mail features.", classes="settings-description"),
-
-            # Account list placeholder
-            Container(
-                Static("No accounts configured", id="mail-accounts-list"),
-                id="mail-accounts-container"
-            ),
-
-            Button("+ Add Account", id="add-mail-account-btn"),
-
-            Static("", classes="settings-spacer"),
-
-            Static("Default Mail Settings", classes="settings-section-title"),
-
-            Horizontal(
-                Label("Check interval (min):", classes="settings-label"),
-                Input(placeholder="5", id="mail-check-interval", classes="settings-input-small"),
-                classes="settings-row"
-            ),
-
-            Horizontal(
-                Label("Show notifications:", classes="settings-label"),
-                Switch(value=True, id="mail-notifications"),
-                classes="settings-row"
-            ),
-
-            id="mail-settings-content"
-        )
-
-
-class CalendarSettingsPane(Static):
-    """Calendar settings."""
-
-    def compose(self) -> ComposeResult:
-        yield Vertical(
-            Static("CalDAV Settings", classes="settings-section-title"),
-            Static("Configure CalDAV server for calendar features.", classes="settings-description"),
-
-            Horizontal(
-                Label("Server URL:", classes="settings-label"),
-                Input(placeholder="https://caldav.example.com", id="caldav-url", classes="settings-input"),
-                classes="settings-row"
-            ),
-
-            Horizontal(
-                Label("Username:", classes="settings-label"),
-                Input(placeholder="username", id="caldav-username", classes="settings-input"),
-                classes="settings-row"
-            ),
-
-            Horizontal(
-                Label("Password:", classes="settings-label"),
-                Input(placeholder="password", password=True, id="caldav-password", classes="settings-input"),
-                classes="settings-row"
-            ),
-
-            Button("Test Connection", id="test-caldav-btn"),
-
-            Static("", classes="settings-spacer"),
-
-            Static("CardDAV Settings", classes="settings-section-title"),
-
-            Horizontal(
-                Label("Server URL:", classes="settings-label"),
-                Input(placeholder="https://carddav.example.com", id="carddav-url", classes="settings-input"),
-                classes="settings-row"
-            ),
-
-            Horizontal(
-                Label("Username:", classes="settings-label"),
-                Input(placeholder="username", id="carddav-username", classes="settings-input"),
-                classes="settings-row"
-            ),
-
-            Horizontal(
-                Label("Password:", classes="settings-label"),
-                Input(placeholder="password", password=True, id="carddav-password", classes="settings-input"),
-                classes="settings-row"
-            ),
-
-            Button("Test Connection", id="test-carddav-btn"),
-
-            id="calendar-settings-content"
-        )
 
 
 class MusicSettingsPane(Static):
@@ -198,78 +181,59 @@ class MusicSettingsPane(Static):
                 classes="settings-row"
             ),
 
-            Button("Test Connection", id="test-webdav-btn"),
-
-            Static("", classes="settings-spacer"),
-
-            Static("Playback Settings", classes="settings-section-title"),
-
-            Horizontal(
-                Label("Transcode audio:", classes="settings-label"),
-                Switch(value=True, id="transcode-enabled"),
-                classes="settings-row"
-            ),
-
-            Horizontal(
-                Label("Bitrate:", classes="settings-label"),
-                Input(placeholder="192", id="transcode-bitrate", classes="settings-input-small"),
-                Static("kbps", classes="settings-suffix"),
-                classes="settings-row"
-            ),
-
             id="music-settings-content"
         )
 
 
-class AISettingsPane(Static):
-    """AI model settings."""
+class CalendarSettingsPane(Static):
+    """Calendar settings."""
 
     def compose(self) -> ComposeResult:
         yield Vertical(
-            Static("AI Model Configuration", classes="settings-section-title"),
-            Static("Configure custom AI models and API keys.", classes="settings-description"),
+            Static("CalDAV Settings", classes="settings-section-title"),
+            Static("Configure CalDAV server for calendar features.", classes="settings-description"),
 
             Horizontal(
-                Label("Default Model:", classes="settings-label"),
-                Input(placeholder="gpt-4", id="default-model", classes="settings-input"),
+                Label("Server URL:", classes="settings-label"),
+                Input(placeholder="https://caldav.example.com", id="caldav-url", classes="settings-input"),
                 classes="settings-row"
             ),
 
             Horizontal(
-                Label("OpenAI API Key:", classes="settings-label"),
-                Input(placeholder="sk-...", password=True, id="openai-key", classes="settings-input"),
+                Label("Username:", classes="settings-label"),
+                Input(placeholder="username", id="caldav-username", classes="settings-input"),
                 classes="settings-row"
             ),
 
             Horizontal(
-                Label("Anthropic API Key:", classes="settings-label"),
-                Input(placeholder="sk-ant-...", password=True, id="anthropic-key", classes="settings-input"),
+                Label("Password:", classes="settings-label"),
+                Input(placeholder="password", password=True, id="caldav-password", classes="settings-input"),
                 classes="settings-row"
             ),
 
             Static("", classes="settings-spacer"),
 
-            Static("Generation Settings", classes="settings-section-title"),
+            Static("CardDAV Settings", classes="settings-section-title"),
 
             Horizontal(
-                Label("Max tokens:", classes="settings-label"),
-                Input(placeholder="4096", id="max-tokens", classes="settings-input-small"),
+                Label("Server URL:", classes="settings-label"),
+                Input(placeholder="https://carddav.example.com", id="carddav-url", classes="settings-input"),
                 classes="settings-row"
             ),
 
             Horizontal(
-                Label("Temperature:", classes="settings-label"),
-                Input(placeholder="0.7", id="temperature", classes="settings-input-small"),
+                Label("Username:", classes="settings-label"),
+                Input(placeholder="username", id="carddav-username", classes="settings-input"),
                 classes="settings-row"
             ),
 
             Horizontal(
-                Label("Stream responses:", classes="settings-label"),
-                Switch(value=True, id="stream-enabled"),
+                Label("Password:", classes="settings-label"),
+                Input(placeholder="password", password=True, id="carddav-password", classes="settings-input"),
                 classes="settings-row"
             ),
 
-            id="ai-settings-content"
+            id="calendar-settings-content"
         )
 
 
@@ -283,22 +247,6 @@ class AppSettingsPane(Static):
             Horizontal(
                 Label("Server URL:", classes="settings-label"),
                 Input(placeholder="http://localhost:3051", id="server-url", classes="settings-input"),
-                classes="settings-row"
-            ),
-
-            Static("", classes="settings-spacer"),
-
-            Static("Display Settings", classes="settings-section-title"),
-
-            Horizontal(
-                Label("Show timestamps:", classes="settings-label"),
-                Switch(value=True, id="show-timestamps"),
-                classes="settings-row"
-            ),
-
-            Horizontal(
-                Label("Compact messages:", classes="settings-label"),
-                Switch(value=False, id="compact-messages"),
                 classes="settings-row"
             ),
 

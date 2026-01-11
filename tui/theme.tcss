@@ -513,3 +513,144 @@ ProgressBar > .bar--complete {
     color: $magenta;
     padding: 0 1;
 }
+
+/* ======== CHAT INPUT ======== */
+#chat-input {
+    dock: bottom;
+    height: auto;
+    min-height: 3;
+    max-height: 8;
+    background: $surface;
+    border-top: solid $cyan 50%;
+    padding: 1;
+}
+
+#input-container {
+    height: auto;
+}
+
+#input-row {
+    height: 3;
+}
+
+#autocomplete-hint {
+    color: $cyan;
+    background: $surface-bright;
+    padding: 0 1;
+    height: 1;
+}
+
+#autocomplete-hint.--hidden {
+    display: none;
+}
+
+/* ======== SETTINGS SCREEN ======== */
+SettingsScreen {
+    align: center middle;
+}
+
+#settings-header {
+    dock: top;
+    height: 3;
+    background: $surface;
+    border-bottom: double $magenta;
+    content-align: center middle;
+}
+
+#settings-title {
+    color: $magenta;
+    text-style: bold;
+    text-align: center;
+}
+
+#settings-tabs {
+    height: 1fr;
+    background: $bg;
+}
+
+#settings-tabs > TabPane {
+    padding: 1 2;
+}
+
+#settings-buttons {
+    dock: bottom;
+    height: 3;
+    background: $surface;
+    border-top: solid $border;
+    align: center middle;
+    padding: 0 2;
+}
+
+#settings-buttons Button {
+    margin: 0 1;
+}
+
+.settings-section-title {
+    color: $cyan;
+    text-style: bold;
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
+.settings-description {
+    color: $text-dim;
+    margin-bottom: 1;
+}
+
+.settings-row {
+    height: 3;
+    margin-bottom: 1;
+}
+
+.settings-label {
+    width: 20;
+    padding-right: 1;
+}
+
+.settings-input {
+    width: 1fr;
+}
+
+.settings-input-small {
+    width: 15;
+}
+
+.settings-spacer {
+    height: 1;
+}
+
+/* ======== TABBED CONTENT ======== */
+TabbedContent {
+    background: $bg;
+}
+
+Tabs {
+    background: $surface;
+    border-bottom: solid $border;
+}
+
+Tab {
+    background: transparent;
+    color: $text-dim;
+    padding: 0 2;
+}
+
+Tab:hover {
+    background: $surface-bright;
+    color: $text;
+}
+
+Tab.-active {
+    background: $bg;
+    color: $cyan;
+    text-style: bold;
+}
+
+Underline {
+    color: $cyan;
+}
+
+TabPane {
+    background: $bg;
+    padding: 1;
+}
