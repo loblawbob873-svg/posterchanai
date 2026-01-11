@@ -45,6 +45,7 @@ HELP_TEXT = """
 | `N` | Previous conversation |
 | `h` | Hide sidebar |
 | `l` | Show sidebar |
+| `d` / `x` | Delete selected conversation |
 
 ### Input
 | Key | Action |

@@ -265,28 +265,20 @@ class MainScreen(Screen):
         """Toggle music player visibility."""
         self.music_visible = not self.music_visible
         music_player = self.query_one("#music-player", MusicPlayerWidget)
-        music_player.toggle_class("--hidden", not self.music_visible)
+        if self.music_visible:
+            music_player.remove_class("--hidden")
+        else:
+            music_player.add_class("--hidden")
 
     def show_settings(self):
-        """Show settings modal."""
-        # TODO: Implement settings screen
-        self.notify("Settings not yet implemented", severity="information")
+        """Show settings screen."""
+        from tui.screens.settings import SettingsScreen
+        self.app.push_screen(SettingsScreen())
 
     def show_help(self):
         """Show help screen."""
-        # TODO: Implement help screen
-        help_text = """
-Keyboard Shortcuts:
-  Ctrl+N  New conversation
-  Ctrl+B  Toggle sidebar
-  Ctrl+M  Toggle music player
-  Ctrl+S  Settings
-  Ctrl+H  Help
-  Ctrl+Q  Quit
-  Tab     Autocomplete command
-  Escape  Stop generation
-        """
-        self.notify(help_text.strip(), timeout=10)
+        from tui.screens.help import HelpScreen
+        self.app.push_screen(HelpScreen())
 
     def on_conversation_sidebar_conversation_selected(self, event):
         """Handle conversation selection from sidebar."""
@@ -299,6 +291,49 @@ Keyboard Shortcuts:
     def on_chat_input_message_submitted(self, event):
         """Handle message submission from input."""
         self._send_message_worker(event.content)
+
+    def on_conversation_sidebar_delete_requested(self, event):
+        """Handle delete request from sidebar."""
+        self._delete_conversation_worker(event.conversation_id)
+
+    @work(exclusive=True)
+    async def _delete_conversation_worker(self, conversation_id: int):
+        """Worker to delete conversation with confirmation."""
+        # Find conversation title for confirmation
+        conv_title = "this conversation"
+        for conv in self.conversations:
+            if conv.id == conversation_id:
+                conv_title = conv.title or "New Chat"
+                break
+
+        # Simple confirmation via notify - delete on 'd' press
+        try:
+            await self.app.api.delete_conversation(conversation_id)
+
+            # Remove from local list
+            self.conversations = [c for c in self.conversations if c.id != conversation_id]
+
+            # Update sidebar
+            sidebar = self.query_one("#sidebar", ConversationSidebar)
+            sidebar.update_conversations(self.conversations)
+
+            # If we deleted current conversation, clear the view
+            if self.current_conversation_id == conversation_id:
+                self.current_conversation_id = None
+                if self.chat_ws:
+                    await self.chat_ws.disconnect()
+                    self.chat_ws = None
+
+                # Clear chat view
+                title = self.query_one("#chat-title", Static)
+                title.update("Select or create a conversation")
+                chat_view = self.query_one("#chat-view", ChatView)
+                chat_view.load_messages([])
+
+            self.notify(f"Deleted: {conv_title}", severity="information")
+
+        except Exception as e:
+            self.notify(f"Failed to delete: {e}", severity="error")
 
     @work(exclusive=True)
     async def _select_conversation_worker(self, conversation_id: int):

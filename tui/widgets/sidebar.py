@@ -1,6 +1,7 @@
 """
 Conversation sidebar widget.
 """
+from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.widget import Widget
@@ -8,6 +9,7 @@ from textual.widgets import Static, Button, ListView, ListItem
 from textual.containers import Vertical, ScrollableContainer
 from textual.message import Message
 from textual.reactive import reactive
+from textual.binding import Binding
 
 from tui.api.models import Conversation
 
@@ -30,6 +32,12 @@ class ConversationItem(ListItem):
 class ConversationSidebar(Widget):
     """Sidebar showing conversation list."""
 
+    BINDINGS = [
+        Binding("d", "delete_selected", "Delete", show=False),
+        Binding("x", "delete_selected", "Delete", show=False),
+        Binding("delete", "delete_selected", "Delete", show=False),
+    ]
+
     class ConversationSelected(Message):
         """Posted when a conversation is selected."""
         def __init__(self, conversation_id: int):
@@ -39,6 +47,12 @@ class ConversationSidebar(Widget):
     class NewChatRequested(Message):
         """Posted when new chat is requested."""
         pass
+
+    class DeleteRequested(Message):
+        """Posted when delete is requested for selected conversation."""
+        def __init__(self, conversation_id: int):
+            self.conversation_id = conversation_id
+            super().__init__()
 
     selected_id = reactive(None)
 
@@ -87,3 +101,8 @@ class ConversationSidebar(Widget):
         item = event.item
         if isinstance(item, ConversationItem):
             self.post_message(self.ConversationSelected(item.conversation.id))
+
+    def action_delete_selected(self):
+        """Request deletion of selected conversation."""
+        if self.selected_id is not None:
+            self.post_message(self.DeleteRequested(self.selected_id))
