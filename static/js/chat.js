@@ -2160,7 +2160,8 @@ class ChatHandler {
             const lastPart = parts[parts.length - 1];
 
             // Try multi-level first (e.g., "torrents download" -> ["movies", "tv", ...])
-            if (this.subcommands[cmdPrefix]) {
+            console.debug('Autocomplete:', { cmdPrefix, lastPart, availableSubs: this.subcommands[cmdPrefix] });
+            if (this.subcommands[cmdPrefix] && this.subcommands[cmdPrefix].length > 0) {
                 const subs = this.subcommands[cmdPrefix];
                 const matches = subs.filter(s => s.startsWith(lastPart));
 
