@@ -54,14 +54,16 @@ class MusicPlayerWidget(Widget):
             id="player-container"
         )
 
-    async def on_mount(self):
+    def on_mount(self):
         """Initialize player on mount."""
         try:
             self.player = create_player()
-            self.player.on_progress = self.handle_progress
-            self.player.on_track_end = self.handle_track_end
+            if self.player:
+                self.player.on_progress = self.handle_progress
+                self.player.on_track_end = self.handle_track_end
         except Exception as e:
-            self.notify(f"Audio player not available: {e}", severity="warning")
+            self.player = None
+            # Don't notify on mount - will notify when user tries to play
 
     def play_track(self, track: dict):
         """Play a single track."""
@@ -82,11 +84,12 @@ class MusicPlayerWidget(Widget):
     def _start_playback(self, track: dict):
         """Start playing a track."""
         if not self.player:
+            self.notify("Audio player not initialized", severity="error")
             return
 
         url = track.get("url", track.get("stream_url", track.get("streamUrl", "")))
         if not url:
-            self.notify("No URL for track", severity="error")
+            self.notify("No stream URL for track", severity="error")
             return
 
         self.is_playing = True
@@ -98,8 +101,12 @@ class MusicPlayerWidget(Widget):
         self._update_play_button()
 
         # Start playback
-        self.player.play(url)
-        self._start_visualizer()
+        try:
+            self.player.play(url)
+            self._start_visualizer()
+        except Exception as e:
+            self.is_playing = False
+            self.notify(f"Playback failed: {e}", severity="error")
 
     def _update_track_display(self):
         """Update track info display."""

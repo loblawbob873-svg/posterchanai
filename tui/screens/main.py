@@ -229,12 +229,14 @@ class MainScreen(Screen):
         """Handle music play command."""
         self.music_visible = True
         music_player = self.query_one("#music-player", MusicPlayerWidget)
+        music_player.remove_class("--hidden")
         music_player.play_track(data.get("track", {}))
 
     def handle_music_playlist(self, data: dict):
         """Handle music playlist command."""
         self.music_visible = True
         music_player = self.query_one("#music-player", MusicPlayerWidget)
+        music_player.remove_class("--hidden")
         tracks = data.get("tracks", [])
         if tracks:
             music_player.load_playlist(tracks)
