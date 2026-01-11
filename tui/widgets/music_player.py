@@ -67,7 +67,7 @@ class MusicPlayerWidget(Widget):
         self._init_player_background()
         return False  # Not ready yet, will be ready after background init
 
-    @work(exclusive=True, thread=True)
+    @work(thread=True, group="player_init")
     def _init_player_background(self):
         """Initialize player in background thread."""
         try:
@@ -185,15 +185,19 @@ class MusicPlayerWidget(Widget):
         # Start playback in background thread to avoid blocking
         self._play_url_background(url, track.get("title", "Unknown"))
 
-    @work(thread=True)
+    @work(thread=True, group="playback")
     def _play_url_background(self, url: str, title: str):
         """Play URL in background thread."""
         try:
             self.player.play(url)
-            self.app.call_from_thread(self._run_visualizer)
-            self.app.call_from_thread(lambda: self.notify(f"Now playing: {title}", severity="information"))
+            self.app.call_from_thread(lambda: self._on_playback_started(title))
         except Exception as e:
             self.app.call_from_thread(lambda: self._on_playback_failed(str(e)))
+
+    def _on_playback_started(self, title: str):
+        """Called when playback starts successfully."""
+        self.notify(f"Now playing: {title}", severity="information")
+        self._run_visualizer()  # This is @work decorated, will run as worker
 
     def _on_playback_failed(self, error: str):
         """Handle playback failure on main thread."""
@@ -224,7 +228,7 @@ class MusicPlayerWidget(Widget):
         except Exception:
             pass
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="visualizer")
     async def _run_visualizer(self):
         """Run visualizer animation."""
         if not self.visualizer:
