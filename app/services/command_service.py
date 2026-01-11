@@ -1468,7 +1468,7 @@ Return ONLY valid JSON, no other text."""},
                     message_body = full_parts[1] if len(full_parts) > 1 else ""
                     return await self._send_new_mail(accounts, recipient, message_body, attachments)
 
-                return {"type": "text", "content": "Usage:\n- `mail` - Recent messages\n- `mail sum <account>` - AI summary of inbox\n- `mail search <account> <query>` - Search messages\n- `mail send [account] <contact> <message>` - Send email\n- `mail read <account> [folder:]<id>` - Read message\n- `mail reply <account> [folder:]<id> <message>` - Reply\n- `mail translate <account> [folder:]<id>` - Translate message\n- `mail archive <account> <id>` - Archive\n- `mail delete <account> [folder:]<id>` - Delete"}
+                return {"type": "text", "content": "Usage:\n- `mail` - Recent messages\n- `mail folders` - Browse IMAP folders\n- `mail folder <account> <folder>` - View folder contents\n- `mail sum <account>` - AI summary of inbox\n- `mail search <account> <query>` - Search messages\n- `mail send [account] <contact> <message>` - Send email\n- `mail read <account> [folder:]<id>` - Read message\n- `mail reply <account> [folder:]<id> <message>` - Reply\n- `mail translate <account> [folder:]<id>` - Translate message\n- `mail archive <account> <id>` - Archive\n- `mail delete <account> [folder:]<id>` - Delete"}
 
         except Exception as e:
             logger.error(f"Mail command error: {e}")
