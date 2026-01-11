@@ -338,6 +338,10 @@ class MainScreen(Screen):
             # Send the command as a message
             self._send_message_worker(command)
 
+    def on_chat_input_open_links_requested(self, event):
+        """Handle open links request from quick buttons."""
+        self.action_open_urls()
+
     @work(exclusive=True)
     async def _delete_conversation_worker(self, conversation_id: int):
         """Worker to delete conversation with confirmation."""

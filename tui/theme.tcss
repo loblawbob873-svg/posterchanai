@@ -505,6 +505,41 @@ Input.-invalid {
     background: $magenta 20%;
 }
 
+/* Minimized player */
+#player-minimized {
+    height: 3;
+    padding: 0 1;
+    background: $surface;
+    border-top: solid $magenta;
+}
+
+#player-minimized.--hidden {
+    display: none;
+}
+
+#player-container.--hidden {
+    display: none;
+}
+
+#track-info-mini {
+    width: 1fr;
+    color: $cyan;
+    padding: 0 1;
+}
+
+.player-btn-mini {
+    background: $surface-bright;
+    color: $magenta;
+    min-width: 4;
+    height: 3;
+    margin: 0;
+    border: none;
+}
+
+.player-btn-mini:hover {
+    background: $magenta 20%;
+}
+
 /* ======== SETTINGS ======== */
 #settings-container {
     padding: 2;
@@ -794,16 +829,17 @@ TabPane {
 #quick-actions {
     height: 3;
     dock: top;
-    padding: 0 1;
+    padding: 0;
 }
 
 .quick-btn {
-    min-width: 8;
+    min-width: 6;
     height: 3;
-    margin: 0 1 0 0;
+    margin: 0;
+    padding: 0 1;
     background: $surface;
     color: $cyan;
-    border: solid $cyan 50%;
+    border: solid $cyan 30%;
 }
 
 .quick-btn:hover {

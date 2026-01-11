@@ -19,6 +19,7 @@ class MusicPlayerWidget(Widget):
     current_track = reactive(None)
     progress = reactive(0.0)
     duration = reactive(0.0)
+    is_minimized = reactive(False)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -30,26 +31,40 @@ class MusicPlayerWidget(Widget):
 
     def compose(self) -> ComposeResult:
         yield Vertical(
-            Static("MUSIC PLAYER", id="player-title"),
+            # Minimized view - just track info and controls
             Horizontal(
-                Static("No track loaded", id="track-info"),
-                id="player-info"
+                Button("_", id="btn-minimize", classes="player-btn-mini"),
+                Static("No track", id="track-info-mini"),
+                Button(">", id="btn-play-mini", classes="player-btn-mini"),
+                Button(">>", id="btn-next-mini", classes="player-btn-mini"),
+                Button("X", id="btn-stop-mini", classes="player-btn-mini"),
+                id="player-minimized",
+                classes="--hidden"
             ),
-            Static("", id="visualizer"),
-            Horizontal(
-                Static("0:00", id="time-current"),
-                ProgressBar(total=100, show_eta=False, id="progress-bar"),
-                Static("0:00", id="time-total"),
-                id="progress-row"
+            # Full view
+            Vertical(
+                Static("MUSIC PLAYER", id="player-title"),
+                Horizontal(
+                    Static("No track loaded", id="track-info"),
+                    id="player-info"
+                ),
+                Static("", id="visualizer"),
+                Horizontal(
+                    Static("0:00", id="time-current"),
+                    ProgressBar(total=100, show_eta=False, id="progress-bar"),
+                    Static("0:00", id="time-total"),
+                    id="progress-row"
+                ),
+                Horizontal(
+                    Button("_", id="btn-min", classes="player-btn"),
+                    Button("<<", id="btn-prev", classes="player-btn"),
+                    Button(">", id="btn-play", classes="player-btn player-btn-main"),
+                    Button(">>", id="btn-next", classes="player-btn"),
+                    Button("X", id="btn-stop", classes="player-btn"),
+                    id="player-controls"
+                ),
+                id="player-container"
             ),
-            Horizontal(
-                Button("<<", id="btn-prev", classes="player-btn"),
-                Button(">", id="btn-play", classes="player-btn player-btn-main"),
-                Button(">>", id="btn-next", classes="player-btn"),
-                Button("X", id="btn-stop", classes="player-btn"),
-                id="player-controls"
-            ),
-            id="player-container"
         )
 
     def _ensure_player(self) -> bool:
@@ -197,13 +212,16 @@ class MusicPlayerWidget(Widget):
             title = self.current_track.get("title", "Unknown")
             artist = self.current_track.get("artist", "")
             info = f"{artist} - {title}" if artist else title
+            info_short = info[:30] + "..." if len(info) > 30 else info
             if len(info) > 40:
                 info = info[:37] + "..."
         else:
             info = "No track"
+            info_short = "No track"
 
         try:
             self.query_one("#track-info", Static).update(info)
+            self.query_one("#track-info-mini", Static).update(info_short)
         except Exception:
             pass
 
@@ -212,6 +230,24 @@ class MusicPlayerWidget(Widget):
         try:
             btn = self.query_one("#btn-play", Button)
             btn.label = "||" if self.is_playing else ">"
+            btn_mini = self.query_one("#btn-play-mini", Button)
+            btn_mini.label = "||" if self.is_playing else ">"
+        except Exception:
+            pass
+
+    def toggle_minimize(self):
+        """Toggle between minimized and full view."""
+        self.is_minimized = not self.is_minimized
+        try:
+            mini_view = self.query_one("#player-minimized", Horizontal)
+            full_view = self.query_one("#player-container", Vertical)
+
+            if self.is_minimized:
+                mini_view.remove_class("--hidden")
+                full_view.add_class("--hidden")
+            else:
+                mini_view.add_class("--hidden")
+                full_view.remove_class("--hidden")
         except Exception:
             pass
 
@@ -252,14 +288,16 @@ class MusicPlayerWidget(Widget):
         """Handle control button presses."""
         btn_id = event.button.id
 
-        if btn_id == "btn-play":
+        if btn_id in ("btn-play", "btn-play-mini"):
             self.toggle_playback()
-        elif btn_id == "btn-stop":
+        elif btn_id in ("btn-stop", "btn-stop-mini"):
             self.stop()
         elif btn_id == "btn-prev":
             self.prev_track()
-        elif btn_id == "btn-next":
+        elif btn_id in ("btn-next", "btn-next-mini"):
             self.next_track()
+        elif btn_id in ("btn-min", "btn-minimize"):
+            self.toggle_minimize()
 
     def toggle_playback(self):
         """Toggle play/pause."""

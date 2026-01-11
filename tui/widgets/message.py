@@ -93,27 +93,9 @@ class MessageWidget(Widget):
             self._render_buttons()
 
     def _render_buttons(self):
-        """Render cmd: link buttons."""
-        try:
-            button_container = self.query_one("#message-buttons", Horizontal)
-            button_container.remove_children()
-
-            # Skip buttons entirely for messages with many links (like search results)
-            if len(self._cmd_links) > 5:
-                return
-
-            if self._cmd_links:
-                buttons_to_mount = []
-                for label, command, _, _ in self._cmd_links[:5]:
-                    btn = Button(label, classes="cmd-button")
-                    btn.command = command  # Store command on button
-                    buttons_to_mount.append(btn)
-
-                # Batch mount all buttons at once for better performance
-                if buttons_to_mount:
-                    button_container.mount_all(buttons_to_mount)
-        except Exception:
-            pass
+        """Render cmd: link buttons - disabled, using quick action buttons instead."""
+        # Buttons are now stripped out - we use the quick action bar instead
+        pass
 
     def on_button_pressed(self, event: Button.Pressed):
         """Handle action button clicks."""

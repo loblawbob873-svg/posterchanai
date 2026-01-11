@@ -57,14 +57,20 @@ class ChatInput(Widget):
         self.history_index = -1
         self.autocomplete_suggestions: list[str] = []
 
+    class OpenLinksRequested(Message):
+        """Posted when user wants to open links."""
+        pass
+
     def compose(self) -> ComposeResult:
         yield Vertical(
             Horizontal(
                 Button("Mail", id="quick-mail", classes="quick-btn"),
                 Button("News", id="quick-news", classes="quick-btn"),
                 Button("Music", id="quick-music", classes="quick-btn"),
+                Button("Torrent", id="quick-torrent", classes="quick-btn"),
                 Button("Weather", id="quick-weather", classes="quick-btn"),
                 Button("Cal", id="quick-cal", classes="quick-btn"),
+                Button("Links", id="quick-links", classes="quick-btn"),
                 id="quick-actions"
             ),
             Static("", id="autocomplete-hint", classes="--hidden"),
@@ -92,10 +98,14 @@ class ChatInput(Widget):
             self.send_command("news")
         elif btn_id == "quick-music":
             self.send_command("music")
+        elif btn_id == "quick-torrent":
+            self.send_command("torrent list")
         elif btn_id == "quick-weather":
             self.send_command("weather")
         elif btn_id == "quick-cal":
             self.send_command("cal")
+        elif btn_id == "quick-links":
+            self.post_message(self.OpenLinksRequested())
 
     def send_command(self, command: str):
         """Send a command as a message."""
