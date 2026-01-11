@@ -881,14 +881,32 @@ Type these commands in the chat (or use the mode buttons):
 | `img2img <prompt>` | Transform an uploaded image with your prompt |
 | `regen` | Regenerate the last image with a new seed |
 | `yt <url>` | Summarize a YouTube video transcript |
-| `flood` | Torrent manager (list, add, start, stop, delete) |
+| `torrents` | Browse torrents + Flood manager (list, add, start, stop, delete) |
 | `budget` | Budget manager (summary, bills, add, pay) |
 | `firewall` | Firewall status and log search |
-| `cal` | Calendar: today's events, week view, add events |
-| `contacts <query>` | Search CalDAV contacts |
-| `mail` | Email: inbox, read, reply, delete messages |
+| `cal` | Calendar: today's events, week view, add events (aliases: sched, schedule) |
+| `contacts <query>` | Search CardDAV contacts (with clickable phone/email links) |
+| `mail` | Email: inbox, read, reply, archive, delete, send to contacts |
 | `news` | Get unread news from Miniflux |
 | `logs` | System logs analysis (admin only) |
+
+### Mail Command
+
+The mail command provides full IMAP/SMTP email functionality:
+
+| Subcommand | Description |
+|------------|-------------|
+| `mail` | Show recent inbox messages from all accounts |
+| `mail unread` | Show unread messages only |
+| `mail read <account> <id>` | Read a specific message |
+| `mail reply <account> <id> <message>` | Reply to a message |
+| `mail archive <account> <id>` | Archive a message |
+| `mail delete <account> <id>` | Delete a message |
+| `mail <contact> <message>` | Send new email (looks up contact in CardDAV) |
+
+**Example:** `mail linda Hey, how are you?` - Finds Linda in your contacts and sends the email.
+
+Configure email accounts in User Settings > Mail tab.
 
 ### Edit Image (img2img) with Face Swap
 

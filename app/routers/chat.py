@@ -482,9 +482,28 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             def should_stop_command():
                                 return manager.should_stop(user.id, conn_id)
 
+                            # Prepare attachments for mail command if image attached
+                            mail_attachments = None
+                            if command == "mail" and image_data:
+                                import base64
+                                try:
+                                    # Decode base64 image data
+                                    img_bytes = base64.b64decode(image_data)
+                                    # Determine content type from prefix or default to png
+                                    content_type = "image/png"
+                                    if image_data.startswith("/9j/"):
+                                        content_type = "image/jpeg"
+                                    elif image_data.startswith("R0lGOD"):
+                                        content_type = "image/gif"
+                                    ext = content_type.split("/")[1]
+                                    mail_attachments = [(f"image.{ext}", img_bytes, content_type)]
+                                except Exception as att_err:
+                                    logger.warning(f"Failed to process image attachment: {att_err}")
+
                             result = await command_service.execute_command(
                                 command, arg, last_prompt,
-                                stop_check=should_stop_command
+                                stop_check=should_stop_command,
+                                attachments=mail_attachments
                             )
 
                             # Check if stopped during execution

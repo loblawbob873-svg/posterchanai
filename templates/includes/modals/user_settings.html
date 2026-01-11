@@ -11,6 +11,7 @@
                 <button class="user-tab-btn active" data-tab="profile">Profile</button>
                 <button class="user-tab-btn" data-tab="ai">AI Services</button>
                 <button class="user-tab-btn" data-tab="calendar">Calendar & Contacts</button>
+                <button class="user-tab-btn" data-tab="mail">Mail</button>
                 <button class="user-tab-btn" data-tab="news">News & RSS</button>
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
             </div>
@@ -149,6 +150,26 @@
                                 <input type="password" id="carddavPassword" placeholder="Leave blank to keep current">
                             </div>
                         </div>
+                    </fieldset>
+                </div>
+
+                <!-- Mail Tab -->
+                <div class="user-tab-content" id="user-tab-mail">
+                    <fieldset>
+                        <legend>Email Accounts</legend>
+                        <p class="fieldset-info">Configure IMAP/SMTP email accounts for the mail command. Use <code>mail</code> to check inbox, <code>mail linda hello</code> to send.</p>
+                        <div id="mailAccountList">
+                            <!-- Accounts added here dynamically -->
+                        </div>
+                        <div class="form-group" style="margin-top: 15px;">
+                            <button type="button" class="btn-secondary" id="addMailAccount">+ Add Email Account</button>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend>Default Send Account</legend>
+                        <p class="fieldset-info">The first account in the list above is used for sending new emails.</p>
+                        <small class="form-hint">Use <code>mail &lt;contact&gt; &lt;message&gt;</code> to send a new email. The contact name is looked up in your CardDAV contacts.</small>
                     </fieldset>
                 </div>
 

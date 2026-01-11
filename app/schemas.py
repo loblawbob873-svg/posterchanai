@@ -356,6 +356,8 @@ class UserSettingsUpdate(BaseModel):
     carddav_url: Optional[str] = None
     carddav_username: Optional[str] = None
     carddav_password: Optional[str] = None
+    # Mail settings
+    mail_accounts: Optional[List[dict]] = None  # List of {email, imap_server, imap_port, smtp_server, smtp_port, password}
 
 
 class UserSettingsResponse(BaseModel):
@@ -385,6 +387,8 @@ class UserSettingsResponse(BaseModel):
     carddav_url: Optional[str] = None
     carddav_username: Optional[str] = None
     carddav_has_password: bool = False
+    # Mail settings
+    mail_accounts: List[dict] = []  # List of mail accounts (passwords masked)
 
 
 class TestConnectionRequest(BaseModel):

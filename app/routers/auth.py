@@ -429,6 +429,23 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         except json.JSONDecodeError:
             pass
 
+    # Get mail account settings
+    mail_accounts = []
+    mail_setting = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == "mail_accounts"
+    ).first()
+    if mail_setting and mail_setting.value:
+        try:
+            accounts = json.loads(mail_setting.value)
+            # Mask passwords
+            mail_accounts = [
+                {**acc, 'password': '********' if acc.get('password') else ''}
+                for acc in accounts
+            ]
+        except json.JSONDecodeError:
+            pass
+
     return UserSettingsResponse(
         notification_email=current_user.notification_email,
         avatar=avatar_url,
@@ -455,7 +472,9 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         caldav_calendars=caldav_calendars,
         carddav_url=carddav_url,
         carddav_username=carddav_username,
-        carddav_has_password=carddav_has_password
+        carddav_has_password=carddav_has_password,
+        # Mail settings
+        mail_accounts=mail_accounts
     )
 
 
@@ -594,6 +613,41 @@ def update_user_settings(
             existing_config['password'] = settings.carddav_password
 
         save_user_setting("carddav_config", json.dumps(existing_config))
+
+    # Save mail account settings
+    if settings.mail_accounts is not None:
+        # Get existing accounts to preserve passwords if not changed
+        existing_setting = db.query(UserSetting).filter(
+            UserSetting.user_id == current_user.id,
+            UserSetting.key == "mail_accounts"
+        ).first()
+        existing_accounts = []
+        if existing_setting and existing_setting.value:
+            try:
+                existing_accounts = json.loads(existing_setting.value)
+            except json.JSONDecodeError:
+                pass
+
+        # Merge new accounts with existing passwords
+        new_accounts = []
+        for acc in settings.mail_accounts:
+            new_acc = {
+                'email': acc.get('email', ''),
+                'imap_server': acc.get('imap_server', ''),
+                'imap_port': acc.get('imap_port', 993),
+                'smtp_server': acc.get('smtp_server', ''),
+                'smtp_port': acc.get('smtp_port', 587),
+                'password': acc.get('password') or ''
+            }
+            # If password is null/empty, try to keep existing password
+            if not new_acc['password']:
+                for existing in existing_accounts:
+                    if existing.get('email') == new_acc['email']:
+                        new_acc['password'] = existing.get('password', '')
+                        break
+            new_accounts.append(new_acc)
+
+        save_user_setting("mail_accounts", json.dumps(new_accounts))
 
     db.commit()
 

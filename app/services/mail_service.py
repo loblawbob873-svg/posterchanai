@@ -391,6 +391,74 @@ def delete_message(
     return False
 
 
+def archive_message(
+    user_id: int,
+    db: Session,
+    account_email: str,
+    uid: str
+) -> bool:
+    """Archive a message by moving to Archive folder."""
+    accounts = get_user_mail_accounts(user_id, db)
+
+    for account in accounts:
+        if account.email == account_email:
+            imap = connect_imap(account)
+            if not imap:
+                return False
+
+            try:
+                imap.select("INBOX")
+
+                # Try common archive folder names
+                archive_folders = ["Archive", "INBOX.Archive", "Archives", "[Gmail]/All Mail"]
+                archive_folder = None
+
+                # List available folders
+                status, folders = imap.list()
+                if status == "OK":
+                    folder_list = [f.decode() for f in folders]
+                    for af in archive_folders:
+                        for folder_line in folder_list:
+                            if af.lower() in folder_line.lower():
+                                # Extract folder name from IMAP response
+                                parts = folder_line.split('"')
+                                if len(parts) >= 4:
+                                    archive_folder = parts[-2]
+                                    break
+                        if archive_folder:
+                            break
+
+                # Create Archive folder if it doesn't exist
+                if not archive_folder:
+                    archive_folder = "Archive"
+                    imap.create(archive_folder)
+                    logger.info(f"Created Archive folder for {account_email}")
+
+                # Copy to archive folder
+                result = imap.copy(uid.encode(), archive_folder)
+                if result[0] != "OK":
+                    logger.error(f"Failed to copy message to {archive_folder}")
+                    return False
+
+                # Delete from inbox
+                imap.store(uid.encode(), '+FLAGS', '\\Deleted')
+                imap.expunge()
+
+                logger.info(f"Archived message {uid} from {account_email} to {archive_folder}")
+                return True
+
+            except Exception as e:
+                logger.error(f"Error archiving message: {e}")
+                return False
+            finally:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
+
+    return False
+
+
 def send_email(
     account: MailAccount,
     to: str,
@@ -525,6 +593,24 @@ def reply_to_message(
     )
 
 
+def get_attachment(
+    user_id: int,
+    db: Session,
+    account_email: str,
+    uid: str,
+    attachment_index: int
+) -> Optional[EmailAttachment]:
+    """Get a specific attachment from a message."""
+    msg = get_message_by_id(user_id, db, account_email, uid)
+    if not msg:
+        return None
+
+    if attachment_index < 0 or attachment_index >= len(msg.attachments):
+        return None
+
+    return msg.attachments[attachment_index]
+
+
 def format_message_list(messages: List[EmailMessage]) -> str:
     """Format messages for display."""
     if not messages:
@@ -569,9 +655,12 @@ def format_message_detail(msg: EmailMessage) -> str:
 
     if msg.attachments:
         lines.append(f"**Attachments:** {len(msg.attachments)} files")
-        for att in msg.attachments:
+        account_short = msg.account.split('@')[0]
+        for i, att in enumerate(msg.attachments):
             size_kb = att.size / 1024
-            lines.append(f"  - {att.filename} ({size_kb:.1f} KB)")
+            # Create download link
+            download_url = f"/api/mail/attachment/{account_short}/{msg.uid}/{i}"
+            lines.append(f"  - [{att.filename}]({download_url}) ({size_kb:.1f} KB)")
 
     lines.append("")
     lines.append("---")

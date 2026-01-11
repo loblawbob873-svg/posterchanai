@@ -79,25 +79,26 @@ async def generate_image_with_load_balancing(
     # If vram_mode is llm_only, always use remote servers (no local image generation)
     force_remote = vram_mode == "llm_only"
 
-    # Check if we should use remote server
-    if servers and (force_remote or await should_use_remote_image(len(servers))):
-        # Use remote server - NO LOCK, allows parallel requests to different servers
+    # If remote image servers are configured, use them exclusively
+    if servers:
         timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
         load_balancer = ImageLoadBalancer(servers, timeout=timeout)
-        if force_remote:
-            logger.info("Using remote server for image generation (vram_mode=llm_only)")
-        else:
-            logger.info("Using remote server for image generation (parallel allowed)")
-        return await load_balancer.generate_image(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            width=width,
-            height=height,
-            steps=steps,
-            cfg=cfg,
-        )
+        logger.info(f"Using remote image server(s) from load balancer: {servers}")
+        try:
+            result = await load_balancer.generate_image(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                steps=steps,
+                cfg=cfg,
+            )
+            return result  # Return even if None - don't fall back to local
+        except Exception as e:
+            logger.error(f"Remote image generation failed: {e}")
+            return None  # Return None instead of falling back to local
 
-    # Use local backend - WITH LOCK to prevent GPU overload
+    # No remote servers - use local backend with LOCK to prevent GPU overload
     logger.info("Using local backend for image generation (serialized)")
     result = None
     try:

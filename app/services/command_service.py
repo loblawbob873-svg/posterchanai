@@ -18,7 +18,7 @@ from app.services.caldav_service import (
     add_event_to_calendar
 )
 from app.services.mail_service import (
-    fetch_all_accounts, get_message_by_id, delete_message,
+    fetch_all_accounts, get_message_by_id, delete_message, archive_message,
     reply_to_message, send_email, get_user_mail_accounts,
     format_message_list, format_message_detail
 )
@@ -45,9 +45,8 @@ class CommandService:
         "images": "Search for images",
         "geni": "Generate an AI image from your prompt",
         "yt": "Summarize a YouTube video: yt <url>",
-        "torrents": "Browse torrents: torrents | torrents download <category> <#>",
+        "torrents": "Torrents: torrents | torrents <category> | torrents dl <#> | torrents list | torrents add <url>",
         "nyaa": "Search nyaa.si: nyaa <query> | nyaa download <#>",
-        "flood": "Torrent manager: flood list | flood add <url> | flood start/stop/delete <#>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
         "firewall": "Firewall: firewall | firewall search <ip> [date] | firewall analyze <ip>",
         "news": "Get unread news from Miniflux: news | news refresh",
@@ -56,13 +55,14 @@ class CommandService:
         "miniflux": "Fetch Miniflux articles now: miniflux",
         "cal": "Calendar: cal | cal today | cal week | cal add <event> <time>",
         "contacts": "Search contacts: contacts <query>",
-        "mail": "Email: mail | mail read <account> <id> | mail reply <account> <id> <msg> | mail delete <account> <id>",
+        "mail": "Email: mail | mail <contact> <msg> | mail read/reply/delete/archive <account> <id>",
     }
 
     # Command aliases (alias -> canonical command)
     COMMAND_ALIASES = {
         "schedule": "cal",
         "sched": "cal",
+        "flood": "torrents",  # Combine flood into torrents command
     }
 
     def __init__(self, db: Session, user: Optional["User"] = None):
@@ -92,8 +92,17 @@ class CommandService:
         return None, message
 
     async def execute_command(self, command: str, arg: str, last_prompt: Optional[str] = None,
-                              stop_check: Optional[Callable[[], bool]] = None) -> dict:
-        """Execute a command and return the result"""
+                              stop_check: Optional[Callable[[], bool]] = None,
+                              attachments: Optional[list] = None) -> dict:
+        """Execute a command and return the result.
+
+        Args:
+            command: The command name
+            arg: Command arguments
+            last_prompt: Last image generation prompt (for regeneration)
+            stop_check: Callable to check if execution should stop
+            attachments: List of (filename, data_bytes, content_type) tuples for mail
+        """
         if command == "help":
             return await self._help_command()
         elif command == "search":
@@ -102,8 +111,6 @@ class CommandService:
             return await self._images_command(arg)
         elif command == "geni":
             return await self._geni_command(arg, stop_check)
-        elif command == "flood":
-            return await self._flood_command(arg)
         elif command == "budget":
             return await self._budget_command(arg)
         elif command == "firewall":
@@ -127,7 +134,7 @@ class CommandService:
         elif command == "contacts":
             return await self._contacts_command(arg)
         elif command == "mail":
-            return await self._mail_command(arg)
+            return await self._mail_command(arg, attachments=attachments)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -441,12 +448,28 @@ class CommandService:
         return {"type": "text", "content": result}
 
     async def _torrents_command(self, arg: str) -> dict:
-        """Browse torrents from configured torrent site"""
+        """Browse torrents and manage Flood client"""
         global _torrent_cache
 
         parts = arg.strip().split()
         subcommand = parts[0].lower() if parts else ""
         categories = ("movies", "tv", "music", "anime")
+
+        # Flood client management subcommands
+        if subcommand in ("list", "ls"):
+            return await self._flood_command("list")
+        elif subcommand == "add" and len(parts) > 1:
+            url = parts[1]
+            return await self._flood_command(f"add {url}")
+        elif subcommand in ("start", "resume") and len(parts) > 1:
+            num = parts[1]
+            return await self._flood_command(f"start {num}")
+        elif subcommand in ("stop", "pause") and len(parts) > 1:
+            num = parts[1]
+            return await self._flood_command(f"stop {num}")
+        elif subcommand in ("del", "delete", "rm") and len(parts) > 1:
+            num = parts[1]
+            return await self._flood_command(f"delete {num}")
 
         # Handle download subcommand: torrents download <category> <number>
         if subcommand in ("download", "dl", "get"):
@@ -925,8 +948,8 @@ Return ONLY valid JSON, no other text."""},
             logger.error(f"Contacts command error: {e}")
             return {"type": "text", "content": f"Error searching contacts: {str(e)}"}
 
-    async def _mail_command(self, arg: str) -> dict:
-        """Email commands - inbox, read, reply, delete"""
+    async def _mail_command(self, arg: str, attachments: Optional[list] = None) -> dict:
+        """Email commands - inbox, read, reply, delete, send"""
         if not self.user:
             return {"type": "text", "content": "Please log in to use the mail command."}
 
@@ -1020,12 +1043,109 @@ Return ONLY valid JSON, no other text."""},
                 else:
                     return {"type": "text", "content": f"Failed to delete message {uid}."}
 
+            elif subcommand == "archive":
+                if len(parts) < 3:
+                    return {"type": "text", "content": "Usage: `mail archive <account> <id>`\n\nExample: `mail archive verita84 123`"}
+
+                account_hint = parts[1]
+                uid = parts[2]
+
+                # Find matching account
+                account_email = None
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+
+                success = archive_message(self.user.id, self.db, account_email, uid)
+                if success:
+                    return {"type": "text", "content": f"📦 Message {uid} archived."}
+                else:
+                    return {"type": "text", "content": f"Failed to archive message {uid}."}
+
+            elif subcommand == "send":
+                # Explicit send: mail send <recipient> <message>
+                if len(parts) < 3:
+                    return {"type": "text", "content": "Usage: `mail send <recipient> <message>`\n\nExample: `mail send linda Hey, how are you?`"}
+                recipient = parts[1]
+                message_body = parts[2] if len(parts) > 2 else ""
+                # Re-split to get full message after recipient
+                full_parts = arg.strip().split(maxsplit=2)
+                if len(full_parts) > 2:
+                    message_body = full_parts[2]
+                return await self._send_new_mail(accounts, recipient, message_body, attachments)
+
             else:
-                return {"type": "text", "content": "Usage:\n- `mail` or `mail inbox` - Recent messages\n- `mail unread` - Unread messages\n- `mail read <account> <id>` - Read message\n- `mail reply <account> <id> <message>` - Reply\n- `mail delete <account> <id>` - Delete message"}
+                # Check if this is a shorthand send: mail <recipient> <message>
+                # First word is not a known subcommand, treat as recipient
+                if len(parts) >= 2:
+                    recipient = parts[0]
+                    # Get the full message after the recipient
+                    full_parts = arg.strip().split(maxsplit=1)
+                    message_body = full_parts[1] if len(full_parts) > 1 else ""
+                    return await self._send_new_mail(accounts, recipient, message_body, attachments)
+
+                return {"type": "text", "content": "Usage:\n- `mail` - Recent messages\n- `mail <contact> <message>` - Send new email (with attachments)\n- `mail read <account> <id>` - Read message\n- `mail reply <account> <id> <message>` - Reply\n- `mail archive <account> <id>` - Archive message\n- `mail delete <account> <id>` - Delete message"}
 
         except Exception as e:
             logger.error(f"Mail command error: {e}")
             return {"type": "text", "content": f"Error: {str(e)}"}
+
+    async def _send_new_mail(self, accounts: list, recipient: str, message_body: str,
+                              attachments: Optional[list] = None) -> dict:
+        """Send a new email, resolving contact name to email if needed."""
+        import re
+
+        if not message_body:
+            return {"type": "text", "content": "Please provide a message. Example: `mail linda Hey, how are you?`"}
+
+        # Determine if recipient is an email or a contact name
+        to_email = None
+        contact_name = None
+
+        if '@' in recipient:
+            # It's already an email address
+            to_email = recipient
+        else:
+            # Search contacts for matching name
+            contacts = get_user_contacts(self.user.id, recipient, self.db)
+            if not contacts:
+                return {"type": "text", "content": f"No contact found matching '{recipient}'. Try:\n- `mail linda hello` (contact name)\n- `mail linda@example.com hello` (email address)"}
+
+            # Find first contact with an email
+            for contact in contacts:
+                if contact.email:
+                    to_email = contact.email
+                    contact_name = contact.name
+                    break
+
+            if not to_email:
+                return {"type": "text", "content": f"Contact '{recipient}' found but has no email address."}
+
+        # Use first configured account to send
+        from_account = accounts[0]
+
+        # Generate subject from first part of message (up to 50 chars or first sentence)
+        subject_text = message_body[:50].split('.')[0].split('!')[0].split('?')[0]
+        if len(subject_text) < len(message_body):
+            subject_text = subject_text.strip() + "..."
+        else:
+            subject_text = subject_text.strip()
+
+        success = send_email(from_account, to_email, subject_text, message_body,
+                             attachments=attachments)
+
+        if success:
+            attachment_note = f" with {len(attachments)} attachment(s)" if attachments else ""
+            if contact_name:
+                return {"type": "text", "content": f"✅ Email sent to **{contact_name}** ({to_email}){attachment_note}"}
+            else:
+                return {"type": "text", "content": f"✅ Email sent to {to_email}{attachment_note}"}
+        else:
+            return {"type": "text", "content": f"❌ Failed to send email to {to_email}"}
 
 
 def get_command_service(db: Session) -> CommandService:

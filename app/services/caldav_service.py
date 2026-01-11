@@ -350,7 +350,12 @@ def search_contacts(
                     name = str(vcard.n.value)
 
                 email = None
-                if hasattr(vcard, 'email'):
+                # Try to get email from vcard - may be list or single value
+                if hasattr(vcard, 'email_list'):
+                    for em in vcard.email_list:
+                        email = str(em.value)
+                        break  # Get first email
+                elif hasattr(vcard, 'email'):
                     email = str(vcard.email.value)
 
                 phone = None
@@ -364,6 +369,18 @@ def search_contacts(
                 note = None
                 if hasattr(vcard, 'note'):
                     note = str(vcard.note.value)
+
+                # If no email found, try to extract from note field
+                if not email and note:
+                    # Try "EMail (preferred) : email@example.com" format first
+                    email_label_match = re.search(r'EMail[^:]*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', note, re.IGNORECASE)
+                    if email_label_match:
+                        email = email_label_match.group(1)
+                    else:
+                        # Fall back to any email pattern in note
+                        email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', note)
+                        if email_match:
+                            email = email_match.group(0)
 
                 # Check if query matches (empty query matches all)
                 searchable = f"{name} {email or ''} {phone or ''} {org or ''} {note or ''}".lower()

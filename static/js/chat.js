@@ -60,7 +60,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'flood', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'miniflux', 'cal', 'contacts', 'mail'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'miniflux', 'cal', 'contacts', 'mail'];
         this.pluginActions = []; // Will be populated with plugin action hints
 
         // Load plugins for autocomplete
@@ -248,6 +248,81 @@ class ChatHandler {
                     name: item.querySelector('.cal-name').value.trim(),
                     url: item.querySelector('.cal-url').value.trim(),
                     username: item.querySelector('.cal-username').value.trim(),
+                    password: password === '********' ? null : password  // null means keep existing
+                };
+            });
+        }
+
+        // Mail account elements
+        const mailAccountList = document.getElementById('mailAccountList');
+        const addMailAccount = document.getElementById('addMailAccount');
+
+        // Mail account list management
+        let mailAccounts = [];
+
+        function renderMailAccountList() {
+            if (!mailAccountList) return;
+            mailAccountList.innerHTML = mailAccounts.map((acc, idx) => `
+                <div class="mail-account-item" data-index="${idx}">
+                    <div class="form-group">
+                        <label>Email Address</label>
+                        <input type="email" class="mail-email" value="${acc.email || ''}" placeholder="user@example.com">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>IMAP Server</label>
+                            <input type="text" class="mail-imap-server" value="${acc.imap_server || ''}" placeholder="imap.example.com">
+                        </div>
+                        <div class="form-group" style="max-width: 100px;">
+                            <label>IMAP Port</label>
+                            <input type="number" class="mail-imap-port" value="${acc.imap_port || 993}" placeholder="993">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>SMTP Server</label>
+                            <input type="text" class="mail-smtp-server" value="${acc.smtp_server || ''}" placeholder="smtp.example.com">
+                        </div>
+                        <div class="form-group" style="max-width: 100px;">
+                            <label>SMTP Port</label>
+                            <input type="number" class="mail-smtp-port" value="${acc.smtp_port || 587}" placeholder="587">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" class="mail-password" value="${acc.password ? '********' : ''}" placeholder="Email password">
+                    </div>
+                    <button type="button" class="btn-danger btn-small remove-mail-account" data-index="${idx}">Remove</button>
+                </div>
+            `).join('') || '<p class="empty-list">No email accounts configured. Click "+ Add Email Account" to add one.</p>';
+
+            // Add remove handlers
+            mailAccountList.querySelectorAll('.remove-mail-account').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const idx = parseInt(btn.dataset.index);
+                    mailAccounts.splice(idx, 1);
+                    renderMailAccountList();
+                });
+            });
+        }
+
+        if (addMailAccount) {
+            addMailAccount.addEventListener('click', () => {
+                mailAccounts.push({ email: '', imap_server: '', imap_port: 993, smtp_server: '', smtp_port: 587, password: '' });
+                renderMailAccountList();
+            });
+        }
+
+        function collectMailAccountData() {
+            const items = mailAccountList?.querySelectorAll('.mail-account-item') || [];
+            return Array.from(items).map(item => {
+                const password = item.querySelector('.mail-password').value;
+                return {
+                    email: item.querySelector('.mail-email').value.trim(),
+                    imap_server: item.querySelector('.mail-imap-server').value.trim(),
+                    imap_port: parseInt(item.querySelector('.mail-imap-port').value) || 993,
+                    smtp_server: item.querySelector('.mail-smtp-server').value.trim(),
+                    smtp_port: parseInt(item.querySelector('.mail-smtp-port').value) || 587,
                     password: password === '********' ? null : password  // null means keep existing
                 };
             });
@@ -462,6 +537,12 @@ class ChatHandler {
                         if (carddavUrl) carddavUrl.value = data.carddav_url || '';
                         if (carddavUsername) carddavUsername.value = data.carddav_username || '';
                         if (carddavPassword) carddavPassword.value = data.carddav_has_password ? '********' : '';
+
+                        // Load Mail account settings
+                        if (data.mail_accounts) {
+                            mailAccounts = data.mail_accounts;
+                            renderMailAccountList();
+                        }
                     }
                 } catch (e) {
                     console.error('Failed to load settings:', e);
@@ -587,6 +668,9 @@ class ChatHandler {
                 if (carddavPassword && carddavPassword.value !== '********') {
                     settingsData.carddav_password = carddavPassword.value;
                 }
+
+                // Add Mail account settings
+                settingsData.mail_accounts = collectMailAccountData();
 
                 try {
                     const response = await csrfFetch('/api/auth/settings', {
@@ -1996,15 +2080,14 @@ class ChatHandler {
 
     // Subcommands that can be autocompleted
     subcommands = {
-        'torrents': ['download'],
+        'torrents': ['download', 'list', 'add', 'start', 'stop', 'delete', 'movies', 'tv', 'music', 'anime'],
         'torrents download': ['movies', 'tv', 'music', 'anime'],
         'nyaa': ['download'],
-        'flood': ['list', 'add', 'start', 'stop', 'delete'],
         'budget': ['bills', 'add', 'pay'],
         'firewall': ['search', 'analyze'],
         'news': ['refresh'],
         'cal': ['today', 'week', 'add'],
-        'mail': ['inbox', 'unread', 'read', 'reply', 'delete']
+        'mail': ['inbox', 'unread', 'read', 'reply', 'delete', 'archive', 'send']
     };
 
     // Tab autocomplete for commands
