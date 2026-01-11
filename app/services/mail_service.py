@@ -377,9 +377,7 @@ def search_messages(
                     except Exception:
                         continue
 
-                # Search each folder
-                # Use TEXT which searches headers and body - more widely supported
-                search_criteria = f'TEXT "{query}"'
+                # Search each folder - search FROM, TO, SUBJECT, and BODY
                 logger.info(f"Searching {len(folders)} folders for '{query}'")
 
                 for folder in folders:
@@ -389,12 +387,21 @@ def search_messages(
                             logger.debug(f"Could not select folder: {folder}")
                             continue
 
-                        status, data = imap.search(None, search_criteria)
-                        logger.debug(f"Search in {folder}: status={status}, results={len(data[0].split()) if data[0] else 0}")
-                        if status != "OK" or not data[0]:
+                        # Search multiple criteria and combine results
+                        all_uids = set()
+                        for criteria in [f'FROM "{query}"', f'TO "{query}"', f'SUBJECT "{query}"']:
+                            try:
+                                status, data = imap.search(None, criteria)
+                                if status == "OK" and data[0]:
+                                    all_uids.update(data[0].split())
+                            except Exception:
+                                pass
+
+                        logger.debug(f"Search in {folder}: {len(all_uids)} results")
+                        if not all_uids:
                             continue
 
-                        uids = data[0].split()
+                        uids = list(all_uids)
                         # Get most recent matches first
                         for uid in reversed(uids[-limit:]):
                             if len(messages) >= limit:
