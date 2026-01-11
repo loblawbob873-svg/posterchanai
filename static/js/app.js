@@ -15,11 +15,12 @@ class App {
     }
 
     async init() {
+        // Set up event listeners FIRST (before async operations)
+        // so buttons are interactive immediately on page load
+        this.setupEventListeners();
+
         // Load conversations
         await this.loadConversations();
-
-        // Set up event listeners
-        this.setupEventListeners();
 
         // Check for search engine query parameter (?q=...)
         const urlParams = new URLSearchParams(window.location.search);
