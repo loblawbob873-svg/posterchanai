@@ -23,11 +23,11 @@ from app.services.caldav_service import (
 from app.services.mail_service import (
     fetch_all_accounts, fetch_messages, get_message_by_id, delete_message, delete_all_messages,
     archive_message, reply_to_message, send_email, get_user_mail_accounts,
-    format_message_list, format_message_detail, search_messages
+    format_message_list, format_message_detail, search_messages, list_folders, format_folder_list
 )
 from app.services.webdav_music_service import (
     get_user_webdav_config, list_folder, search_tracks, get_stream_url,
-    generate_mood_playlist, format_music_browse, format_music_tracks
+    generate_mood_playlist, format_music_browse, format_music_tracks, scan_all_tracks
 )
 # Lock now handled inside image_factory for fine-grained control
 
@@ -64,7 +64,7 @@ class CommandService:
         "miniflux": "Fetch Miniflux articles now: miniflux",
         "cal": "Calendar: cal | cal today | cal week | cal add <event> <time>",
         "contacts": "Contacts: contacts all | contacts <query> | contacts add <name> <phone>",
-        "mail": "Email: mail | mail search/read/summary/translate/reply/delete/archive <acct> <id>",
+        "mail": "Email: mail | mail folders/folder/search/read/reply/delete/archive <acct> <id>",
         "todo": "Todo list (CalDAV): todo | todo add <task> | todo rm <#>",
         "music": "Music: music | music browse | music search <query> | music play <#> | music random | music skip | music mood <vibe>",
     }
@@ -1069,6 +1069,64 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": "No unread messages."}
                 return {"type": "text", "content": format_message_list(messages)}
 
+            elif subcommand == "folders":
+                # List folders for an account
+                if len(parts) < 2:
+                    # Show account selection buttons
+                    lines = ["## Select Account\n"]
+                    for acc in accounts:
+                        account_short = acc.email.split('@')[0]
+                        cmd = f"mail folders {account_short}"
+                        lines.append(f"[{acc.email}](cmd:{cmd})")
+                    return {"type": "text", "content": "\n\n".join(lines)}
+
+                account_hint = parts[1]
+                account_email = None
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+
+                folders = list_folders(self.user.id, self.db, account_email)
+                if not folders:
+                    return {"type": "text", "content": f"No folders found for {account_email}."}
+
+                return {"type": "text", "content": format_folder_list(folders, account_email)}
+
+            elif subcommand == "folder":
+                # Browse a specific folder
+                if len(parts) < 3:
+                    return {"type": "text", "content": "Usage: `mail folder <account> <folder>`\n\nExample: `mail folder work INBOX.Sent`"}
+
+                account_hint = parts[1]
+                # Get folder name (may contain spaces)
+                folder_parts = arg.strip().split(maxsplit=2)
+                folder_name = folder_parts[2] if len(folder_parts) > 2 else ""
+
+                if not folder_name:
+                    return {"type": "text", "content": "Please provide a folder name."}
+
+                # Find matching account
+                account_email = None
+                account = None
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        account = acc
+                        break
+
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+
+                messages = fetch_messages(account, folder=folder_name, limit=20)
+                if not messages:
+                    return {"type": "text", "content": f"No messages in folder '{folder_name}'."}
+
+                return {"type": "text", "content": format_message_list(messages, folder=folder_name, account_email=account_email)}
+
             elif subcommand == "sum":
                 # Summarize all inbox messages
                 account_hint = parts[1] if len(parts) > 1 else None
@@ -1676,8 +1734,25 @@ Return ONLY valid JSON, no other text."""},
                 cache = _music_cache.get(self.user.id, {})
                 tracks = cache.get('tracks', [])
 
+                # Auto-scan library if no tracks loaded
                 if not tracks:
-                    return {"type": "text", "content": "No tracks loaded. Browse or search music first to load tracks for mood selection."}
+                    config = get_user_webdav_config(self.user.id, self.db)
+                    if not config:
+                        return {"type": "text", "content": "WebDAV music not configured. Set up in User Settings > Music."}
+
+                    # Scan all tracks (this may take a moment)
+                    tracks = scan_all_tracks(
+                        config['url'],
+                        config['username'],
+                        config['password'],
+                        max_tracks=500
+                    )
+
+                    if not tracks:
+                        return {"type": "text", "content": "No tracks found in music library."}
+
+                    # Cache the scanned tracks
+                    _music_cache[self.user.id] = {'tracks': tracks, 'folders': [], 'current_path': '/'}
 
                 playlist = await generate_mood_playlist(tracks, param, self.chat_service)
 

@@ -2373,6 +2373,8 @@ class ChatHandler {
                     const folderHints = ['INBOX:', 'INBOX.Archive:', 'INBOX.Sent:', 'INBOX.Drafts:', 'INBOX.spam:', 'Sent Messages:', 'Trash:'];
 
                     // Update subcommands with account hints
+                    this.subcommands['mail folders'] = accountHints;
+                    this.subcommands['mail folder'] = accountHints;
                     this.subcommands['mail search'] = accountHints;
                     this.subcommands['mail read'] = accountHints;
                     this.subcommands['mail summary'] = accountHints;
@@ -2384,8 +2386,9 @@ class ChatHandler {
                     this.subcommands['mail archive'] = accountHints;
                     this.subcommands['mail send'] = accountHints;
 
-                    // Add folder hints after account for read/summary/translate
+                    // Add folder hints after account for folder/read/summary/translate
                     for (const account of accountHints) {
+                        this.subcommands[`mail folder ${account}`] = folderHints.map(f => f.replace(':', ''));
                         this.subcommands[`mail read ${account}`] = folderHints;
                         this.subcommands[`mail summary ${account}`] = folderHints;
                     }
@@ -2412,8 +2415,10 @@ class ChatHandler {
         'news': ['refresh'],
         'cal': ['today', 'week', 'add'],
         'contacts': ['all', 'add'],
-        'mail': ['inbox', 'unread', 'sum', 'search', 'read', 'summary', 'translate', 'reply', 'delete', 'deleteall', 'archive', 'send'],
+        'mail': ['inbox', 'unread', 'folders', 'folder', 'sum', 'search', 'read', 'summary', 'translate', 'reply', 'delete', 'deleteall', 'archive', 'send'],
         // Mail subcommands - will be populated with account names dynamically
+        'mail folders': [],
+        'mail folder': [],
         'mail search': [],
         'mail read': [],
         'mail summary': [],

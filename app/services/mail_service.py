@@ -546,6 +546,71 @@ def fetch_all_accounts(
     return all_messages
 
 
+def list_folders(
+    user_id: int,
+    db: Session,
+    account_email: str
+) -> List[str]:
+    """List all IMAP folders for an account."""
+    accounts = get_user_mail_accounts(user_id, db)
+
+    for account in accounts:
+        if account.email == account_email:
+            imap = connect_imap(account)
+            if not imap:
+                return []
+
+            try:
+                status, folder_data = imap.list()
+                if status != "OK":
+                    logger.error(f"Failed to list folders: {status}")
+                    return []
+
+                folders = []
+                for folder_line in folder_data:
+                    try:
+                        decoded = folder_line.decode() if isinstance(folder_line, bytes) else folder_line
+                        # Extract folder name from IMAP LIST response
+                        match = re.search(r'"([^"]+)"$|(\S+)$', decoded)
+                        if match:
+                            folder_name = match.group(1) or match.group(2)
+                            # Skip special folders that can't be selected
+                            if folder_name.lower() not in ('[gmail]', '[google mail]'):
+                                folders.append(folder_name)
+                    except Exception as e:
+                        logger.debug(f"Error parsing folder line: {folder_line} - {e}")
+                        continue
+
+                return sorted(folders)
+            except Exception as e:
+                logger.error(f"Error listing folders: {e}")
+                return []
+            finally:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
+
+    return []
+
+
+def format_folder_list(folders: List[str], account_email: str) -> str:
+    """Format folder list for display with browse buttons."""
+    if not folders:
+        return "No folders found."
+
+    account_short = account_email.split('@')[0]
+
+    lines = [f"## ◈ FOLDERS ({account_email}) ◈\n"]
+
+    for folder in folders:
+        # Show folder with browse button
+        browse_cmd = f"mail folder {account_short} {folder}"
+        lines.append(f"- **{folder}** [Browse](cmd:{browse_cmd})")
+
+    return "\n".join(lines)
+
+
 def search_messages(
     user_id: int,
     db: Session,
@@ -1115,12 +1180,20 @@ def get_attachment(
     return msg.attachments[attachment_index]
 
 
-def format_message_list(messages: List[EmailMessage], show_header: bool = True) -> str:
+def format_message_list(messages: List[EmailMessage], show_header: bool = True, folder: str = None, account_email: str = None) -> str:
     """Format messages for display with action buttons."""
     if not messages:
         return "No messages found."
 
-    lines = ["## ◈ INBOX ◈\n"] if show_header else []
+    # Build header based on context
+    if show_header:
+        if folder and account_email:
+            account_short = account_email.split('@')[0]
+            lines = [f"## ◈ {folder.upper()} ({account_short}) ◈\n"]
+        else:
+            lines = ["## ◈ INBOX ◈\n"]
+    else:
+        lines = []
 
     for i, msg in enumerate(messages, 1):
         # Unread indicator
@@ -1139,21 +1212,25 @@ def format_message_list(messages: List[EmailMessage], show_header: bool = True) 
         account_part = msg.account.split(' (')[0] if ' (' in msg.account else msg.account
         account_short = account_part.split('@')[0]
 
-        # Extract folder if present (for search results)
-        folder = ""
+        # Extract folder from msg.account if present (for search results), otherwise use passed folder
+        msg_folder = folder
         if ' (' in msg.account and msg.account.endswith(')'):
-            folder = msg.account.split(' (')[1].rstrip(')')
+            msg_folder = msg.account.split(' (')[1].rstrip(')')
 
-        # Build message ID with folder if present
-        msg_id = f"{folder}:{msg.uid}" if folder else str(msg.uid)
+        # Build message ID with folder if present (and not INBOX)
+        if msg_folder and msg_folder != "INBOX":
+            msg_id = f"{msg_folder}:{msg.uid}"
+        else:
+            msg_id = str(msg.uid)
 
         lines.append(f"{i}. {unread}**{msg.sender}** - {subject}")
         lines.append(f"   {date_str} | {account_short}{attach}")
         # Action buttons using cmd: prefix links
         read_cmd = f"mail read {account_short} {msg_id}"
         reply_cmd = f"mail reply {account_short} {msg_id} "
+        archive_cmd = f"mail archive {account_short} {msg_id}"
         delete_cmd = f"mail delete {account_short} {msg_id}"
-        lines.append(f"   [Read](cmd:{read_cmd}) | [Reply All](cmd:{reply_cmd}) | [Delete](cmd:{delete_cmd})")
+        lines.append(f"   [Read](cmd:{read_cmd}) | [Reply All](cmd:{reply_cmd}) | [Archive](cmd:{archive_cmd}) | [Delete](cmd:{delete_cmd})")
         lines.append("")
 
     return "\n".join(lines)

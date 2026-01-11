@@ -893,7 +893,7 @@ Type these commands in the chat (or use the mode buttons):
 | `firewall` | Firewall status and log search |
 | `cal` | Calendar: today's events, week view, add events (aliases: sched, schedule) |
 | `contacts` | Search or add CardDAV contacts (with clickable phone/email links) |
-| `mail` | Email: inbox, read, reply, archive, delete, deleteall, send to contacts |
+| `mail` | Email: inbox, folders, folder, read, reply, archive, delete, send to contacts |
 | `music` | WebDAV music streaming: browse, search, play, queue, mood playlists |
 | `todo` | CalDAV task management: list, add, remove tasks |
 | `news` | Get unread news from Miniflux |
@@ -924,6 +924,8 @@ The mail command provides full IMAP/SMTP email functionality with encrypted pass
 |------------|-------------|
 | `mail` | Show recent inbox messages from all accounts |
 | `mail unread` | Show unread messages only |
+| `mail folders <account>` | List all IMAP folders with browse buttons |
+| `mail folder <account> <folder>` | Browse messages in a specific folder |
 | `mail sum <account>` | AI summary of all inbox messages |
 | `mail search <account> <query>` | Search messages by from, to, or subject |
 | `mail read <account> [folder:]<id>` | Read a specific message |
@@ -937,6 +939,8 @@ The mail command provides full IMAP/SMTP email functionality with encrypted pass
 
 **Examples:**
 - `mail` - Show inbox from all accounts
+- `mail folders work` - List all folders for work account (with browse buttons)
+- `mail folder work INBOX.Sent` - Browse sent messages
 - `mail sum work` - AI summary of work inbox
 - `mail search work invoice` - Search for "invoice" in work account
 - `mail read work 5` - Read message #5 from work@... account
@@ -945,7 +949,7 @@ The mail command provides full IMAP/SMTP email functionality with encrypted pass
 - `mail send work john Hey!` - Send from work account to John
 - `mail reply work INBOX:456 Thanks!` - Reply to message #456
 
-**Tab Autocomplete:** Type `mail read ` and press Tab to see available accounts, then Tab again for folder hints.
+**Tab Autocomplete:** Type `mail folders ` or `mail folder ` and press Tab to see available accounts, then Tab again for folder hints.
 
 **Security:** Passwords are encrypted at rest using Fernet. SSRF protection blocks connections to internal IPs.
 

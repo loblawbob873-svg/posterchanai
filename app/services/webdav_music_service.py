@@ -315,6 +315,39 @@ def get_stream_url(path: str) -> str:
     return f"/api/music/stream?path={quote(path, safe='')}"
 
 
+def scan_all_tracks(url: str, username: str, password: str,
+                    base_path: str = "/", max_tracks: int = 500) -> List[AudioTrack]:
+    """Recursively scan all tracks in the music library."""
+    results = []
+
+    def scan_folder(path: str, depth: int = 0):
+        if depth > 6 or len(results) >= max_tracks:
+            return
+
+        contents = list_folder(url, username, password, path)
+
+        # Skip if error
+        if contents.get('error'):
+            logger.warning(f"Scan skipping {path}: {contents.get('error')}")
+            return
+
+        # Add all tracks
+        for track in contents.get('tracks', []):
+            if len(results) >= max_tracks:
+                return
+            results.append(track)
+
+        # Recurse into folders
+        for folder in contents.get('folders', []):
+            if len(results) >= max_tracks:
+                return
+            scan_folder(folder.path, depth + 1)
+
+    scan_folder(base_path)
+    logger.info(f"Scanned {len(results)} tracks from music library")
+    return results
+
+
 # LLM-enhanced functions
 
 async def generate_mood_playlist(tracks: List[AudioTrack], mood: str,
