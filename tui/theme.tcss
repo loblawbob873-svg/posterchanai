@@ -126,23 +126,39 @@ FooterKey > .footer-key--key {
 }
 
 /* ======== MESSAGES ======== */
-.message {
-    margin: 1 2;
+MessageWidget {
+    height: auto;
+    margin: 0 1 1 1;
+}
+
+.message-inner {
+    height: auto;
     padding: 1;
-    max-width: 80%;
 }
 
 .message-user {
     background: $cyan 12%;
     border: solid $cyan 40%;
-    margin-left: 10;
+    margin-left: 20;
+}
+
+.message-user .message-role {
+    color: $cyan;
+    text-align: right;
+}
+
+.message-user .message-body {
     text-align: right;
 }
 
 .message-assistant {
     background: $magenta 12%;
     border: solid $magenta 40%;
-    margin-right: 10;
+    margin-right: 20;
+}
+
+.message-assistant .message-role {
+    color: $magenta;
 }
 
 .message-system {
@@ -150,7 +166,17 @@ FooterKey > .footer-key--key {
     text-align: center;
     color: $text-dim;
     border: solid $border;
-    margin: 1 5;
+    margin: 1 10;
+}
+
+.message-role {
+    text-style: bold;
+    height: 1;
+    margin-bottom: 1;
+}
+
+.message-body {
+    height: auto;
 }
 
 .message-content {
