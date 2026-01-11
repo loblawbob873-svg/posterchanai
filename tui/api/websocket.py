@@ -60,8 +60,9 @@ class ChatWebSocket:
         try:
             self.ws = await websockets.connect(
                 url,
-                ping_interval=60,
-                ping_timeout=120,  # Allow long operations like image generation
+                ping_interval=30,
+                ping_timeout=300,  # Allow long operations like image generation (5 min)
+                close_timeout=10,
             )
             self._connected = True
             logger.info("WebSocket connected")

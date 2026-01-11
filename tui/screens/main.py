@@ -206,6 +206,10 @@ class MainScreen(Screen):
         msg_type = data.get("type", "text")
         content = data.get("content", "")
 
+        # Debug logging
+        import logging
+        logging.getLogger("tui").info(f"Response type={msg_type}, content_len={len(content)}")
+
         # Defer the expensive message rendering to not block the event loop
         def add_msg():
             if msg_type == "text":
