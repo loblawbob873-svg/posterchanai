@@ -1870,6 +1870,12 @@ class ChatHandler {
             links.push({ text, url, external: false });
             return `\x00LINK${index}\x00`;
         });
+        // Match relative URL links (starting with /) - for attachments, downloads, etc.
+        processed = processed.replace(/\[([^\]]+)\]\((\/[^)]+)\)/g, (match, text, url) => {
+            const index = links.length;
+            links.push({ text, url, external: false, download: true });
+            return `\x00LINK${index}\x00`;
+        });
 
         // Escape HTML
         let html = processed
@@ -1881,7 +1887,9 @@ class ChatHandler {
         html = html.replace(/\x00LINK(\d+)\x00/g, (match, index) => {
             const link = links[parseInt(index)];
             const target = link.external ? ' target="_blank"' : '';
-            return `<a href="${link.url}"${target}>${link.text}</a>`;
+            const download = link.download ? ' download' : '';
+            const safeUrl = link.url.startsWith('/') ? link.url : encodeURI(link.url);
+            return `<a href="${safeUrl}"${target}${download}>${this.escapeHtml(link.text)}</a>`;
         });
 
         // Bold **text**
@@ -2091,6 +2099,8 @@ class ChatHandler {
                         return email.split('@')[0].toLowerCase();
                     }).filter(h => h);
 
+                    console.debug('Mail account hints loaded:', accountHints);
+
                     // Update subcommands with account hints
                     this.subcommands['mail read'] = accountHints;
                     this.subcommands['mail reply'] = accountHints;
@@ -2113,7 +2123,14 @@ class ChatHandler {
         'firewall': ['search', 'analyze'],
         'news': ['refresh'],
         'cal': ['today', 'week', 'add'],
-        'mail': ['inbox', 'unread', 'read', 'reply', 'delete', 'deleteall', 'archive', 'send']
+        'contacts': ['add'],
+        'mail': ['inbox', 'unread', 'read', 'reply', 'delete', 'deleteall', 'archive', 'send'],
+        // Mail subcommands - will be populated with account names dynamically
+        'mail read': [],
+        'mail reply': [],
+        'mail delete': [],
+        'mail deleteall': [],
+        'mail archive': []
     };
 
     // Tab autocomplete for commands
