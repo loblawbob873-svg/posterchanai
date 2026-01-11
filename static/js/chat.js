@@ -2092,6 +2092,7 @@ class ChatHandler {
             const response = await csrfFetch('/api/auth/settings');
             if (response.ok) {
                 const settings = await response.json();
+                console.debug('Settings loaded for autocomplete:', { mail_accounts: settings.mail_accounts });
                 if (settings.mail_accounts && settings.mail_accounts.length > 0) {
                     // Extract account hints (first part of email before @)
                     const accountHints = settings.mail_accounts.map(acc => {
@@ -2099,7 +2100,7 @@ class ChatHandler {
                         return email.split('@')[0].toLowerCase();
                     }).filter(h => h);
 
-                    console.debug('Mail account hints loaded:', accountHints);
+                    console.log('Mail account hints loaded:', accountHints);
 
                     // Update subcommands with account hints
                     this.subcommands['mail read'] = accountHints;
@@ -2107,10 +2108,14 @@ class ChatHandler {
                     this.subcommands['mail delete'] = accountHints;
                     this.subcommands['mail deleteall'] = accountHints;
                     this.subcommands['mail archive'] = accountHints;
+                } else {
+                    console.debug('No mail accounts configured');
                 }
+            } else {
+                console.warn('Failed to load settings:', response.status);
             }
         } catch (e) {
-            console.debug('Failed to load mail accounts for autocomplete:', e);
+            console.error('Error loading mail accounts for autocomplete:', e);
         }
     }
 
