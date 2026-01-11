@@ -23,11 +23,24 @@
 
     <div class="quick-actions" id="quickActions">
         <button class="quick-btn mode-btn active" data-mode="">Chat</button>
-        <button class="quick-btn mode-btn" data-mode="search">Web Search</button>
-        <button class="quick-btn mode-btn" data-mode="images">Images</button>
+        <div class="quick-btn-dropdown">
+            <button class="quick-btn dropdown-toggle" id="pimDropdownBtn">PIM ▾</button>
+            <div class="dropdown-menu" id="pimDropdownMenu">
+                <button class="dropdown-item cmd-item" data-cmd="mail">Mail</button>
+                <button class="dropdown-item cmd-item" data-cmd="cal week">Calendar</button>
+                <button class="dropdown-item cmd-item" data-cmd="contacts all">Contacts</button>
+            </div>
+        </div>
+        <div class="quick-btn-dropdown">
+            <button class="quick-btn dropdown-toggle" id="searchDropdownBtn">Web ▾</button>
+            <div class="dropdown-menu" id="searchDropdownMenu">
+                <button class="dropdown-item mode-btn" data-mode="search">Web Search</button>
+                <button class="dropdown-item mode-btn" data-mode="images">Images</button>
+                <button class="dropdown-item" id="newsDropdownBtn">News</button>
+            </div>
+        </div>
         <button class="quick-btn mode-btn" data-mode="geni">Generate</button>
         <button class="quick-btn" id="translateBtn">Translate</button>
-        <button class="quick-btn" id="newsBtn">News</button>
         <button class="quick-btn" id="ragBtn" title="RAG Context">RAG</button>
     </div>
 

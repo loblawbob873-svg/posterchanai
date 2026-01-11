@@ -18,7 +18,7 @@ from app.services.caldav_service import (
     add_event_to_calendar, add_user_contact
 )
 from app.services.mail_service import (
-    fetch_all_accounts, get_message_by_id, delete_message, delete_all_messages,
+    fetch_all_accounts, fetch_messages, get_message_by_id, delete_message, delete_all_messages,
     archive_message, reply_to_message, send_email, get_user_mail_accounts,
     format_message_list, format_message_detail, search_messages
 )
@@ -1022,6 +1022,40 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": "No unread messages."}
                 return {"type": "text", "content": format_message_list(messages)}
 
+            elif subcommand == "sum":
+                # Summarize all inbox messages
+                account_hint = parts[1] if len(parts) > 1 else None
+
+                if account_hint:
+                    # Find matching account
+                    account_email = None
+                    for acc in accounts:
+                        if account_hint.lower() in acc.email.lower():
+                            account_email = acc.email
+                            messages = fetch_messages(acc, limit=20)
+                            break
+                    if not account_email:
+                        return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                else:
+                    # Fetch from all accounts
+                    messages = fetch_all_accounts(self.user.id, self.db, limit_per_account=10)
+
+                if not messages:
+                    return {"type": "text", "content": "No messages to summarize."}
+
+                # Build summary of all messages for AI
+                msg_list = []
+                for msg in messages:
+                    msg_list.append(f"- From: {msg.sender} | Subject: {msg.subject} | Date: {msg.date.strftime('%b %d')}")
+
+                # Use AI to summarize
+                ai_messages = [
+                    {"role": "system", "content": "Summarize this inbox. Group by sender or topic. Highlight urgent items, action items, and important dates. Be concise."},
+                    {"role": "user", "content": f"Inbox ({len(messages)} messages):\n" + "\n".join(msg_list)}
+                ]
+                summary = await self.chat_service.chat(ai_messages)
+                return {"type": "text", "content": f"## Inbox Summary ({len(messages)} messages)\n\n{summary}"}
+
             elif subcommand == "search":
                 if len(parts) < 3:
                     return {"type": "text", "content": "Usage: `mail search <account> <query>`\n\nExample: `mail search yummy invoice`"}
@@ -1047,14 +1081,21 @@ Return ONLY valid JSON, no other text."""},
                 messages = search_messages(self.user.id, self.db, account_email, query)
                 if not messages:
                     return {"type": "text", "content": f"No messages found matching '{query}'."}
-                return {"type": "text", "content": f"## Search results for '{query}'\n\n" + format_message_list(messages)}
+                return {"type": "text", "content": f"## ◈ SEARCH: {query.upper()} ◈\n\n" + format_message_list(messages, show_header=False)}
 
             elif subcommand == "read":
                 if len(parts) < 3:
-                    return {"type": "text", "content": "Usage: `mail read <account> <id>`\n\nExample: `mail read verita84 123`"}
+                    return {"type": "text", "content": "Usage: `mail read <account> <id>`\n\nExample: `mail read verita84 123` or `mail read verita84 INBOX.Archive:123`"}
 
                 account_hint = parts[1]
-                uid = parts[2]
+                uid_part = parts[2]
+
+                # Parse folder:uid format (e.g., "INBOX.Archive:123")
+                folder = None
+                if ':' in uid_part:
+                    folder, uid = uid_part.rsplit(':', 1)
+                else:
+                    uid = uid_part
 
                 # Find matching account
                 account_email = None
@@ -1066,18 +1107,25 @@ Return ONLY valid JSON, no other text."""},
                 if not account_email:
                     return {"type": "text", "content": f"Account '{account_hint}' not found."}
 
-                msg = get_message_by_id(self.user.id, self.db, account_email, uid)
+                msg = get_message_by_id(self.user.id, self.db, account_email, uid, folder=folder)
                 if not msg:
                     return {"type": "text", "content": f"Message {uid} not found."}
 
-                return {"type": "text", "content": format_message_detail(msg)}
+                return {"type": "text", "content": format_message_detail(msg, folder=folder)}
 
             elif subcommand == "summary":
                 if len(parts) < 3:
                     return {"type": "text", "content": "Usage: `mail summary <account> <id>`\n\nExample: `mail summary work 123`"}
 
                 account_hint = parts[1]
-                uid = parts[2]
+                uid_part = parts[2]
+
+                # Parse folder:uid format
+                folder = None
+                if ':' in uid_part:
+                    folder, uid = uid_part.rsplit(':', 1)
+                else:
+                    uid = uid_part
 
                 # Find matching account
                 account_email = None
@@ -1089,14 +1137,14 @@ Return ONLY valid JSON, no other text."""},
                 if not account_email:
                     return {"type": "text", "content": f"Account '{account_hint}' not found."}
 
-                msg = get_message_by_id(self.user.id, self.db, account_email, uid)
+                msg = get_message_by_id(self.user.id, self.db, account_email, uid, folder=folder)
                 if not msg:
                     return {"type": "text", "content": f"Message {uid} not found."}
 
                 # Use AI to summarize
                 messages = [
                     {"role": "system", "content": "Summarize this email concisely. Include key points, action items, and important dates if any."},
-                    {"role": "user", "content": f"From: {msg.sender}\nSubject: {msg.subject}\n\n{msg.body}"}
+                    {"role": "user", "content": f"From: {msg.sender}\nSubject: {msg.subject}\n\n{msg.body_text}"}
                 ]
                 summary = await self.chat_service.chat(messages)
                 return {"type": "text", "content": f"## Summary of: {msg.subject}\n\n{summary}"}
@@ -1107,7 +1155,14 @@ Return ONLY valid JSON, no other text."""},
 
                 language = parts[1]
                 account_hint = parts[2]
-                uid = parts[3]
+                uid_part = parts[3]
+
+                # Parse folder:uid format
+                folder = None
+                if ':' in uid_part:
+                    folder, uid = uid_part.rsplit(':', 1)
+                else:
+                    uid = uid_part
 
                 # Find matching account
                 account_email = None
@@ -1119,25 +1174,31 @@ Return ONLY valid JSON, no other text."""},
                 if not account_email:
                     return {"type": "text", "content": f"Account '{account_hint}' not found."}
 
-                msg = get_message_by_id(self.user.id, self.db, account_email, uid)
+                msg = get_message_by_id(self.user.id, self.db, account_email, uid, folder=folder)
                 if not msg:
                     return {"type": "text", "content": f"Message {uid} not found."}
 
                 # Use AI to translate
                 messages = [
                     {"role": "system", "content": f"Translate this email to {language}. Preserve the formatting."},
-                    {"role": "user", "content": f"From: {msg.sender}\nSubject: {msg.subject}\n\n{msg.body}"}
+                    {"role": "user", "content": f"From: {msg.sender}\nSubject: {msg.subject}\n\n{msg.body_text}"}
                 ]
                 translation = await self.chat_service.chat(messages)
                 return {"type": "text", "content": f"## {msg.subject} ({language})\n\n{translation}"}
 
             elif subcommand == "reply":
                 if len(parts) < 4:
-                    return {"type": "text", "content": "Usage: `mail reply <account> <id> <message>`\n\nExample: `mail reply verita84 123 Thanks for the info!`"}
+                    return {"type": "text", "content": "Usage: `mail reply <account> [folder:]<id> <message>`\n\nExample: `mail reply verita84 123 Thanks for the info!` or `mail reply verita84 INBOX.Archive:456 Thanks!`"}
 
                 account_hint = parts[1]
-                uid = parts[2]
+                uid_part = parts[2]
                 reply_body = parts[3]
+
+                # Parse folder:uid format (e.g., "INBOX.Archive:456")
+                folder = "INBOX"
+                uid = uid_part
+                if ':' in uid_part:
+                    folder, uid = uid_part.rsplit(':', 1)
 
                 # Find matching account
                 account_email = None
@@ -1149,7 +1210,7 @@ Return ONLY valid JSON, no other text."""},
                 if not account_email:
                     return {"type": "text", "content": f"Account '{account_hint}' not found."}
 
-                success = reply_to_message(self.user.id, self.db, account_email, uid, reply_body)
+                success = reply_to_message(self.user.id, self.db, account_email, uid, reply_body, folder=folder)
                 if success:
                     return {"type": "text", "content": "Reply sent successfully."}
                 else:
@@ -1157,10 +1218,16 @@ Return ONLY valid JSON, no other text."""},
 
             elif subcommand == "delete":
                 if len(parts) < 3:
-                    return {"type": "text", "content": "Usage: `mail delete <account> <id>`\n\nExample: `mail delete verita84 123`"}
+                    return {"type": "text", "content": "Usage: `mail delete <account> [folder:]<id>`\n\nExample: `mail delete verita84 123` or `mail delete verita84 INBOX.Archive:456`"}
 
                 account_hint = parts[1]
-                uid = parts[2]
+                uid_part = parts[2]
+
+                # Parse folder:uid format (e.g., "INBOX.Archive:456")
+                folder = "INBOX"
+                uid = uid_part
+                if ':' in uid_part:
+                    folder, uid = uid_part.rsplit(':', 1)
 
                 # Find matching account
                 account_email = None
@@ -1172,11 +1239,11 @@ Return ONLY valid JSON, no other text."""},
                 if not account_email:
                     return {"type": "text", "content": f"Account '{account_hint}' not found."}
 
-                success = delete_message(self.user.id, self.db, account_email, uid)
+                success = delete_message(self.user.id, self.db, account_email, uid, folder)
                 if success:
-                    return {"type": "text", "content": f"Message {uid} deleted."}
+                    return {"type": "text", "content": f"Message {uid} deleted from {folder}."}
                 else:
-                    return {"type": "text", "content": f"Failed to delete message {uid}."}
+                    return {"type": "text", "content": f"Failed to delete message {uid} from {folder}."}
 
             elif subcommand in ("deleteall", "purge", "clear"):
                 if len(parts) < 2:
@@ -1224,16 +1291,31 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Failed to archive message {uid}."}
 
             elif subcommand == "send":
-                # Explicit send: mail send <recipient> <message>
+                # Explicit send: mail send [account] <recipient> <message>
                 if len(parts) < 3:
-                    return {"type": "text", "content": "Usage: `mail send <recipient> <message>`\n\nExample: `mail send linda Hey, how are you?`"}
-                recipient = parts[1]
-                message_body = parts[2] if len(parts) > 2 else ""
+                    return {"type": "text", "content": "Usage: `mail send [account] <recipient> <message>`\n\nExamples:\n- `mail send linda Hey!` - uses first account\n- `mail send work linda Hey!` - uses 'work' account"}
+
+                # Check if parts[1] is an account hint or recipient
+                from_account = None
+                recipient_idx = 1
+
+                # Check if first arg matches an account
+                for acc in accounts:
+                    if parts[1].lower() in acc.email.lower():
+                        from_account = acc
+                        recipient_idx = 2
+                        break
+
+                if recipient_idx == 2 and len(parts) < 4:
+                    return {"type": "text", "content": "Usage: `mail send <account> <recipient> <message>`\n\nExample: `mail send work linda@example.com Hey, how are you?`"}
+
+                recipient = parts[recipient_idx]
+
                 # Re-split to get full message after recipient
-                full_parts = arg.strip().split(maxsplit=2)
-                if len(full_parts) > 2:
-                    message_body = full_parts[2]
-                return await self._send_new_mail(accounts, recipient, message_body, attachments)
+                full_parts = arg.strip().split(maxsplit=recipient_idx + 1)
+                message_body = full_parts[recipient_idx + 1] if len(full_parts) > recipient_idx + 1 else ""
+
+                return await self._send_new_mail(accounts, recipient, message_body, attachments, from_account=from_account)
 
             else:
                 # Check if this is a shorthand send: mail <recipient> <message>
@@ -1245,14 +1327,14 @@ Return ONLY valid JSON, no other text."""},
                     message_body = full_parts[1] if len(full_parts) > 1 else ""
                     return await self._send_new_mail(accounts, recipient, message_body, attachments)
 
-                return {"type": "text", "content": "Usage:\n- `mail` - Recent messages\n- `mail search <account> <query>` - Search messages\n- `mail <contact> <message>` - Send email\n- `mail read <account> <id>` - Read message\n- `mail reply <account> <id> <message>` - Reply\n- `mail archive <account> <id>` - Archive\n- `mail delete <account> <id>` - Delete"}
+                return {"type": "text", "content": "Usage:\n- `mail` - Recent messages\n- `mail sum <account>` - AI summary of inbox\n- `mail search <account> <query>` - Search messages\n- `mail send [account] <contact> <message>` - Send email\n- `mail read <account> [folder:]<id>` - Read message\n- `mail reply <account> [folder:]<id> <message>` - Reply\n- `mail translate <account> [folder:]<id>` - Translate message\n- `mail archive <account> <id>` - Archive\n- `mail delete <account> [folder:]<id>` - Delete"}
 
         except Exception as e:
             logger.error(f"Mail command error: {e}")
             return {"type": "text", "content": f"Error: {str(e)}"}
 
     async def _send_new_mail(self, accounts: list, recipient: str, message_body: str,
-                              attachments: Optional[list] = None) -> dict:
+                              attachments: Optional[list] = None, from_account=None) -> dict:
         """Send a new email, resolving contact name to email if needed."""
         import re
 
@@ -1282,8 +1364,9 @@ Return ONLY valid JSON, no other text."""},
             if not to_email:
                 return {"type": "text", "content": f"Contact '{recipient}' found but has no email address."}
 
-        # Use first configured account to send
-        from_account = accounts[0]
+        # Use specified account or first configured account
+        if from_account is None:
+            from_account = accounts[0]
 
         # Generate subject from first part of message (up to 50 chars or first sentence)
         subject_text = message_body[:50].split('.')[0].split('!')[0].split('?')[0]

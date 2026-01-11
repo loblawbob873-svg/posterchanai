@@ -227,18 +227,10 @@ class ImageLoadBalancer:
         """
         Generate image from a load-balanced server.
         Returns base64 encoded image or None on error.
+        Retries with other servers if one fails.
         """
         if not self.servers:
             raise ValueError("No servers configured for image load balancing")
-
-        # Get a healthy server
-        server = await get_healthy_image_server(self.servers)
-        if not server:
-            logger.warning("No healthy image servers available")
-            raise NoHealthyImageServersError("No healthy image servers available")
-
-        start_time = time.time()
-        logger.info(f"IMAGE REQUEST to {server} | prompt={prompt[:50]}...")
 
         # Build request payload
         payload = {
@@ -254,41 +246,68 @@ class ImageLoadBalancer:
         if cfg is not None:
             payload["cfg"] = cfg
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                response = await client.post(
-                    f"{server}/api/generate-image",
-                    json=payload
-                )
-                logger.info(f"IMAGE RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
-                response.raise_for_status()
+        # Try each server until one succeeds
+        tried_servers = set()
+        last_error = None
 
-                result = response.json()
+        while len(tried_servers) < len(self.servers):
+            # Get a healthy server
+            server = await get_healthy_image_server(self.servers)
+            if not server or server in tried_servers:
+                # No more healthy servers to try
+                break
 
-                if result.get("error"):
-                    logger.error(f"IMAGE ERROR from {server} | error={result['error']}")
-                    await mark_image_server_unhealthy(server)
-                    return None
+            tried_servers.add(server)
+            start_time = time.time()
+            logger.info(f"IMAGE REQUEST to {server} | prompt={prompt[:50]}...")
 
-                image_data = result.get("image")
-                if image_data:
-                    logger.info(f"IMAGE COMPLETE from {server} | total_time={time.time()-start_time:.2f}s")
-                    return image_data
-                else:
-                    logger.error(f"IMAGE ERROR from {server} | no image in response")
-                    await mark_image_server_unhealthy(server)
-                    return None
-
-            except httpx.HTTPStatusError as e:
-                error_body = ""
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 try:
-                    error_body = e.response.text[:500]
-                except Exception:
-                    pass
-                logger.error(f"IMAGE ERROR from {server} | status={e.response.status_code} | body={error_body}")
-                await mark_image_server_unhealthy(server)
-                return None
-            except Exception as e:
-                logger.error(f"IMAGE EXCEPTION | server={server} | error={str(e)}")
-                await mark_image_server_unhealthy(server)
-                return None
+                    response = await client.post(
+                        f"{server}/api/generate-image",
+                        json=payload
+                    )
+                    logger.info(f"IMAGE RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
+                    response.raise_for_status()
+
+                    result = response.json()
+
+                    if result.get("error"):
+                        logger.error(f"IMAGE ERROR from {server} | error={result['error']}")
+                        await mark_image_server_unhealthy(server)
+                        last_error = result['error']
+                        continue  # Try next server
+
+                    image_data = result.get("image")
+                    if image_data:
+                        logger.info(f"IMAGE COMPLETE from {server} | total_time={time.time()-start_time:.2f}s")
+                        return image_data
+                    else:
+                        logger.error(f"IMAGE ERROR from {server} | no image in response")
+                        await mark_image_server_unhealthy(server)
+                        last_error = "no image in response"
+                        continue  # Try next server
+
+                except httpx.HTTPStatusError as e:
+                    error_body = ""
+                    try:
+                        error_body = e.response.text[:500]
+                    except Exception:
+                        pass
+                    logger.error(f"IMAGE ERROR from {server} | status={e.response.status_code} | body={error_body}")
+                    await mark_image_server_unhealthy(server)
+                    last_error = f"HTTP {e.response.status_code}"
+                    continue  # Try next server
+
+                except Exception as e:
+                    logger.error(f"IMAGE EXCEPTION | server={server} | error={str(e)}")
+                    await mark_image_server_unhealthy(server)
+                    last_error = str(e)
+                    continue  # Try next server
+
+        # All servers failed
+        if tried_servers:
+            logger.warning(f"All {len(tried_servers)} image servers failed. Last error: {last_error}")
+        else:
+            logger.warning("No healthy image servers available")
+        raise NoHealthyImageServersError(f"No healthy image servers available (tried {len(tried_servers)}, last error: {last_error})")

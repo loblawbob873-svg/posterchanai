@@ -1106,6 +1106,21 @@ class ChatHandler {
         this.showTypingIndicator();
     }
 
+    executeCommand(cmd) {
+        // Execute a command from a button click
+        // If command ends with space, put in input for user to complete (e.g., reply)
+        if (cmd.endsWith(' ')) {
+            this.messageInput.value = cmd;
+            this.messageInput.focus();
+            // Place cursor at end
+            this.messageInput.setSelectionRange(cmd.length, cmd.length);
+        } else {
+            // Execute immediately
+            this.messageInput.value = cmd;
+            this.sendMessage();
+        }
+    }
+
     handleMessage(data) {
         switch (data.type) {
             case 'stream':
@@ -1223,8 +1238,19 @@ class ChatHandler {
             }
 
             // Speak if TTS enabled
-            if (window.ttsController && window.ttsController.isEnabled()) {
-                window.ttsController.speak(content);
+            if (window.ttsController && window.ttsController.isEnabled() && content) {
+                // Strip markdown formatting for TTS
+                let ttsText = content
+                    .replace(/^##?\s+[^\n]+\n+/gm, '')  // Remove markdown headers
+                    .replace(/\*\*([^*]+)\*\*/g, '$1')   // Remove bold
+                    .replace(/\*([^*]+)\*/g, '$1')       // Remove italic
+                    .replace(/`([^`]+)`/g, '$1')         // Remove inline code
+                    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // Remove links, keep text
+                    .replace(/^---+$/gm, '')             // Remove horizontal rules
+                    .trim();
+                if (ttsText) {
+                    window.ttsController.speak(ttsText);
+                }
             }
 
             // Reset streaming state
@@ -1314,7 +1340,18 @@ class ChatHandler {
 
         // Speak if TTS enabled
         if (window.ttsController && window.ttsController.isEnabled() && data.content) {
-            window.ttsController.speak(data.content);
+            // Strip markdown formatting for TTS
+            let ttsText = data.content
+                .replace(/^##?\s+[^\n]+\n+/gm, '')  // Remove markdown headers
+                .replace(/\*\*([^*]+)\*\*/g, '$1')   // Remove bold
+                .replace(/\*([^*]+)\*/g, '$1')       // Remove italic
+                .replace(/`([^`]+)`/g, '$1')         // Remove inline code
+                .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // Remove links, keep text
+                .replace(/^---+$/gm, '')             // Remove horizontal rules
+                .trim();
+            if (ttsText) {
+                window.ttsController.speak(ttsText);
+            }
         }
     }
 
@@ -1876,6 +1913,12 @@ class ChatHandler {
             links.push({ text, url, external: true });  // Open in new tab
             return `\x00LINK${index}\x00`;
         });
+        // Match cmd: links (command execution buttons)
+        processed = processed.replace(/\[([^\]]+)\]\(cmd:([^)]+)\)/g, (match, text, cmd) => {
+            const index = links.length;
+            links.push({ text, cmd, isCommand: true });
+            return `\x00LINK${index}\x00`;
+        });
 
         // Escape HTML
         let html = processed
@@ -1886,6 +1929,11 @@ class ChatHandler {
         // Restore markdown links as HTML
         html = html.replace(/\x00LINK(\d+)\x00/g, (match, index) => {
             const link = links[parseInt(index)];
+            if (link.isCommand) {
+                // Command button - clicking executes the command
+                const escapedCmd = this.escapeHtml(link.cmd);
+                return `<button class="cmd-btn" data-cmd="${escapedCmd}" onclick="window.chatHandler.executeCommand('${escapedCmd.replace(/'/g, "\\'")}')">${this.escapeHtml(link.text)}</button>`;
+            }
             const target = link.external ? ' target="_blank"' : '';
             const download = link.download ? ' download' : '';
             const safeUrl = link.url.startsWith('/') ? link.url : encodeURI(link.url);
@@ -2102,14 +2150,28 @@ class ChatHandler {
 
                     console.log('Mail account hints loaded:', accountHints);
 
+                    // Common IMAP folder prefixes for folder:uid format
+                    const folderHints = ['INBOX:', 'INBOX.Archive:', 'INBOX.Sent:', 'INBOX.Drafts:', 'INBOX.spam:', 'Sent Messages:', 'Trash:'];
+
                     // Update subcommands with account hints
                     this.subcommands['mail search'] = accountHints;
                     this.subcommands['mail read'] = accountHints;
                     this.subcommands['mail summary'] = accountHints;
+                    this.subcommands['mail sum'] = accountHints;
+                    this.subcommands['mail translate'] = accountHints;
                     this.subcommands['mail reply'] = accountHints;
                     this.subcommands['mail delete'] = accountHints;
                     this.subcommands['mail deleteall'] = accountHints;
                     this.subcommands['mail archive'] = accountHints;
+                    this.subcommands['mail send'] = accountHints;
+
+                    // Add folder hints after account for read/summary/translate
+                    for (const account of accountHints) {
+                        this.subcommands[`mail read ${account}`] = folderHints;
+                        this.subcommands[`mail summary ${account}`] = folderHints;
+                    }
+                    this.subcommands['mail translate'] = accountHints; // language first, then account
+                    console.log('Mail subcommands set:', Object.keys(this.subcommands).filter(k => k.startsWith('mail')));
                 } else {
                     console.debug('No mail accounts configured');
                 }
@@ -2131,16 +2193,18 @@ class ChatHandler {
         'news': ['refresh'],
         'cal': ['today', 'week', 'add'],
         'contacts': ['all', 'add'],
-        'mail': ['inbox', 'unread', 'search', 'read', 'summary', 'translate', 'reply', 'delete', 'deleteall', 'archive', 'send'],
+        'mail': ['inbox', 'unread', 'sum', 'search', 'read', 'summary', 'translate', 'reply', 'delete', 'deleteall', 'archive', 'send'],
         // Mail subcommands - will be populated with account names dynamically
         'mail search': [],
         'mail read': [],
         'mail summary': [],
+        'mail sum': [],
         'mail translate': [],
         'mail reply': [],
         'mail delete': [],
         'mail deleteall': [],
-        'mail archive': []
+        'mail archive': [],
+        'mail send': []
     };
 
     // Tab autocomplete for commands
@@ -2165,21 +2229,41 @@ class ChatHandler {
             const lastPart = parts[parts.length - 1];
 
             // Try multi-level first (e.g., "torrents download" -> ["movies", "tv", ...])
-            console.debug('Autocomplete:', { cmdPrefix, lastPart, availableSubs: this.subcommands[cmdPrefix] });
+            console.log('Autocomplete lookup:', { cmdPrefix, lastPart, hasSubs: !!this.subcommands[cmdPrefix], subs: this.subcommands[cmdPrefix] });
             if (this.subcommands[cmdPrefix] && this.subcommands[cmdPrefix].length > 0) {
                 const subs = this.subcommands[cmdPrefix];
-                const matches = subs.filter(s => s.startsWith(lastPart));
+                // Case-insensitive matching for folder hints etc.
+                const matches = subs.filter(s => s.toLowerCase().startsWith(lastPart.toLowerCase()));
 
+                console.log('Autocomplete matches:', matches.length, matches);
                 if (matches.length === 1) {
-                    const completed = cmdPrefix + ' ' + matches[0] + ' ';
+                    // Don't add trailing space if match ends with : (like folder hints)
+                    const trailingSpace = matches[0].endsWith(':') ? '' : ' ';
+                    const completed = cmdPrefix + ' ' + matches[0] + trailingSpace;
                     this.messageInput.value = completed + input.substring(cursorPos);
                     this.messageInput.setSelectionRange(completed.length, completed.length);
                     return;
                 } else if (matches.length > 1) {
-                    this.showToast(`${cmdPrefix}: ${matches.join(' | ')}`);
+                    // Find common prefix among matches
+                    let commonPrefix = matches[0];
+                    for (let i = 1; i < matches.length; i++) {
+                        while (!matches[i].toLowerCase().startsWith(commonPrefix.toLowerCase())) {
+                            commonPrefix = commonPrefix.slice(0, -1);
+                            if (!commonPrefix) break;
+                        }
+                    }
+                    // Fill in common prefix if longer than what user typed
+                    if (commonPrefix.length > lastPart.length) {
+                        // Don't add trailing space if prefix ends with : (folder hints)
+                        const trailingSpace = commonPrefix.endsWith(':') ? '' : '';
+                        const completed = cmdPrefix + ' ' + commonPrefix + trailingSpace;
+                        this.messageInput.value = completed + input.substring(cursorPos);
+                        this.messageInput.setSelectionRange(completed.length, completed.length);
+                    }
+                    this.showToast(`${matches.join(' | ')}`);
                     return;
                 } else if (lastPart === '') {
-                    this.showToast(`${cmdPrefix}: ${subs.join(' | ')}`);
+                    this.showToast(`${subs.join(' | ')}`);
                     return;
                 }
             }

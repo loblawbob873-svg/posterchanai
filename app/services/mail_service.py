@@ -27,6 +27,7 @@ import json
 
 from sqlalchemy.orm import Session
 from app.models import UserSetting
+from app.services.crypto_service import encrypt_string, decrypt_string, is_encrypted
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ class MailAccount:
 
 
 def get_user_mail_accounts(user_id: int, db: Session) -> List[MailAccount]:
-    """Get user's configured mail accounts."""
+    """Get user's configured mail accounts. Passwords are decrypted automatically."""
     setting = db.query(UserSetting).filter(
         UserSetting.user_id == user_id,
         UserSetting.key == "mail_accounts"
@@ -83,14 +84,19 @@ def get_user_mail_accounts(user_id: int, db: Session) -> List[MailAccount]:
 
     try:
         accounts_data = json.loads(setting.value)
-        return [MailAccount(**acc) for acc in accounts_data]
+        accounts = []
+        for acc in accounts_data:
+            # Decrypt password (handles both encrypted and legacy plaintext)
+            acc['password'] = decrypt_string(acc.get('password', ''))
+            accounts.append(MailAccount(**acc))
+        return accounts
     except (json.JSONDecodeError, TypeError) as e:
         logger.error(f"Invalid mail_accounts JSON for user {user_id}: {e}")
         return []
 
 
 def save_user_mail_accounts(user_id: int, accounts: List[MailAccount], db: Session):
-    """Save user's mail accounts."""
+    """Save user's mail accounts. Passwords are encrypted before storage."""
     setting = db.query(UserSetting).filter(
         UserSetting.user_id == user_id,
         UserSetting.key == "mail_accounts"
@@ -99,7 +105,7 @@ def save_user_mail_accounts(user_id: int, accounts: List[MailAccount], db: Sessi
     accounts_data = [
         {
             "email": acc.email,
-            "password": acc.password,
+            "password": encrypt_string(acc.password),  # Encrypt password
             "imap_server": acc.imap_server,
             "imap_port": acc.imap_port,
             "smtp_server": acc.smtp_server,
@@ -120,6 +126,76 @@ def save_user_mail_accounts(user_id: int, accounts: List[MailAccount], db: Sessi
         db.add(setting)
 
     db.commit()
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize filename for use in HTTP headers and MIME parts.
+    Removes/replaces characters that could cause header injection or path traversal.
+    """
+    if not filename:
+        return "attachment"
+
+    # Remove path components (prevent path traversal)
+    filename = filename.replace('\\', '/').split('/')[-1]
+
+    # Remove characters that could break headers or cause issues
+    # Remove: quotes, newlines, carriage returns, null bytes
+    dangerous_chars = ['"', "'", '\n', '\r', '\x00', '\t']
+    for char in dangerous_chars:
+        filename = filename.replace(char, '_')
+
+    # Limit length
+    if len(filename) > 200:
+        name, ext = filename.rsplit('.', 1) if '.' in filename else (filename, '')
+        filename = name[:195] + ('.' + ext if ext else '')
+
+    # Ensure we have a valid filename
+    filename = filename.strip()
+    if not filename or filename in ('.', '..'):
+        filename = "attachment"
+
+    return filename
+
+
+def html_to_text(html: str) -> str:
+    """Convert HTML to readable plain text."""
+    import re
+    import html as html_module
+
+    if not html:
+        return ""
+
+    text = html
+
+    # Replace common block elements with newlines
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</p>', '\n\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</div>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</li>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</tr>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<hr\s*/?>', '\n---\n', text, flags=re.IGNORECASE)
+
+    # Extract link URLs: <a href="url">text</a> -> text (url)
+    text = re.sub(r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>([^<]*)</a>',
+                  r'\2 (\1)', text, flags=re.IGNORECASE)
+
+    # Remove style and script content entirely
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.IGNORECASE | re.DOTALL)
+
+    # Remove all remaining HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+
+    # Decode HTML entities
+    text = html_module.unescape(text)
+
+    # Clean up whitespace
+    text = re.sub(r'[ \t]+', ' ', text)  # Multiple spaces to single
+    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)  # Multiple newlines to double
+    text = '\n'.join(line.strip() for line in text.split('\n'))  # Strip each line
+
+    return text.strip()
 
 
 def decode_mime_header(header_value: str) -> str:
@@ -184,9 +260,15 @@ def get_email_body(msg: email.message.Message) -> Tuple[str, Optional[str]]:
     return text_body, html_body
 
 
+# Attachment size limits
+MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024  # 25 MB per attachment
+MAX_TOTAL_ATTACHMENT_SIZE = 50 * 1024 * 1024  # 50 MB total
+
+
 def get_attachments(msg: email.message.Message) -> List[EmailAttachment]:
-    """Extract attachments from email message."""
+    """Extract attachments from email message with size limits."""
     attachments = []
+    total_size = 0
 
     if not msg.is_multipart():
         return attachments
@@ -201,10 +283,29 @@ def get_attachments(msg: email.message.Message) -> List[EmailAttachment]:
 
                 try:
                     data = part.get_payload(decode=True) or b""
+                    size = len(data)
+
+                    # Check size limits
+                    if size > MAX_ATTACHMENT_SIZE:
+                        logger.warning(f"Attachment {filename} exceeds size limit ({size} > {MAX_ATTACHMENT_SIZE})")
+                        # Still add metadata but without data
+                        attachments.append(EmailAttachment(
+                            filename=f"{filename} (too large - {size // 1024 // 1024}MB)",
+                            content_type=part.get_content_type(),
+                            size=size,
+                            data=b""  # Don't load oversized attachments
+                        ))
+                        continue
+
+                    if total_size + size > MAX_TOTAL_ATTACHMENT_SIZE:
+                        logger.warning(f"Total attachment size exceeded, skipping {filename}")
+                        continue
+
+                    total_size += size
                     attachments.append(EmailAttachment(
                         filename=filename,
                         content_type=part.get_content_type(),
-                        size=len(data),
+                        size=size,
                         data=data
                     ))
                 except Exception as e:
@@ -213,13 +314,112 @@ def get_attachments(msg: email.message.Message) -> List[EmailAttachment]:
     return attachments
 
 
+def parse_email(raw_email: bytes, uid: str, account_email: str) -> Optional[EmailMessage]:
+    """Parse raw email bytes into an EmailMessage object."""
+    try:
+        msg = email.message_from_bytes(raw_email)
+
+        # Parse date
+        date_str = msg.get("Date", "")
+        try:
+            from email.utils import parsedate_to_datetime
+            msg_date = parsedate_to_datetime(date_str)
+        except Exception:
+            msg_date = datetime.now()
+
+        # Parse sender
+        sender_raw = msg.get("From", "")
+        sender_name, sender_email_addr = parseaddr(sender_raw)
+        sender_name = decode_mime_header(sender_name) or sender_email_addr
+
+        # Get body and attachments
+        text_body, html_body = get_email_body(msg)
+        attachments = get_attachments(msg)
+
+        return EmailMessage(
+            uid=uid,
+            account=account_email,
+            subject=decode_mime_header(msg.get("Subject", "(No Subject)")),
+            sender=sender_name,
+            sender_email=sender_email_addr,
+            to=decode_mime_header(msg.get("To", "")),
+            date=msg_date,
+            body_text=text_body,
+            body_html=html_body,
+            attachments=attachments,
+            is_read=True,  # Can't determine from RFC822 alone
+            message_id=msg.get("Message-ID", ""),
+            references=msg.get("References", ""),
+            in_reply_to=msg.get("In-Reply-To", "")
+        )
+    except Exception as e:
+        logger.error(f"Error parsing email {uid}: {e}")
+        return None
+
+
+def validate_mail_server(hostname: str, port: int) -> bool:
+    """
+    Validate mail server address to prevent SSRF attacks.
+    Blocks internal IPs, localhost, cloud metadata endpoints, etc.
+    """
+    import socket
+    import ipaddress
+
+    # Block obvious localhost references
+    blocked_hostnames = {'localhost', 'localhost.localdomain', '127.0.0.1', '0.0.0.0', '::1'}
+    if hostname.lower() in blocked_hostnames:
+        logger.warning(f"SSRF blocked: localhost reference {hostname}")
+        return False
+
+    # Resolve hostname to IP and validate
+    try:
+        ip_str = socket.gethostbyname(hostname)
+        ip = ipaddress.ip_address(ip_str)
+
+        # Block private/reserved ranges
+        if ip.is_private:
+            logger.warning(f"SSRF blocked: private IP {ip_str} for {hostname}")
+            return False
+        if ip.is_loopback:
+            logger.warning(f"SSRF blocked: loopback IP {ip_str} for {hostname}")
+            return False
+        if ip.is_link_local:
+            logger.warning(f"SSRF blocked: link-local IP {ip_str} for {hostname}")
+            return False
+        if ip.is_reserved:
+            logger.warning(f"SSRF blocked: reserved IP {ip_str} for {hostname}")
+            return False
+
+        # Block AWS/cloud metadata endpoint specifically
+        if ip_str == "169.254.169.254":
+            logger.warning(f"SSRF blocked: cloud metadata endpoint {hostname}")
+            return False
+
+        return True
+    except socket.gaierror as e:
+        logger.error(f"DNS resolution failed for {hostname}: {e}")
+        return False
+    except ValueError as e:
+        logger.error(f"Invalid IP address for {hostname}: {e}")
+        return False
+
+
+# Connection timeout in seconds
+MAIL_CONNECTION_TIMEOUT = 30
+
+
 def connect_imap(account: MailAccount) -> Optional[imaplib.IMAP4_SSL]:
-    """Connect to IMAP server."""
+    """Connect to IMAP server with SSRF protection and timeout."""
+    # Validate server address first (SSRF protection)
+    if not validate_mail_server(account.imap_server, account.imap_port):
+        logger.error(f"IMAP connection blocked for {account.email}: invalid server address")
+        return None
+
     try:
         if account.use_ssl:
-            imap = imaplib.IMAP4_SSL(account.imap_server, account.imap_port)
+            imap = imaplib.IMAP4_SSL(account.imap_server, account.imap_port, timeout=MAIL_CONNECTION_TIMEOUT)
         else:
-            imap = imaplib.IMAP4(account.imap_server, account.imap_port)
+            imap = imaplib.IMAP4(account.imap_server, account.imap_port, timeout=MAIL_CONNECTION_TIMEOUT)
 
         imap.login(account.email, account.password)
         return imap
@@ -244,31 +444,38 @@ def fetch_messages(
     try:
         imap.select(folder)
 
-        # Search criteria
+        # Search criteria - use UID SEARCH to get actual UIDs
         if unread_only:
-            status, data = imap.search(None, "UNSEEN")
+            status, data = imap.uid('search', None, "UNSEEN")
         else:
-            status, data = imap.search(None, "ALL")
+            status, data = imap.uid('search', None, "ALL")
 
         if status != "OK":
             return messages
 
         # Get message UIDs (newest first)
         uids = data[0].split()
+        logger.info(f"fetch_messages: found {len(uids)} UIDs, sample: {[u.decode() if isinstance(u, bytes) else u for u in uids[-5:]]}")
         uids = uids[-limit:] if len(uids) > limit else uids
         uids.reverse()  # Newest first
 
         for uid in uids:
             try:
-                status, msg_data = imap.fetch(uid, "(RFC822 FLAGS)")
-                if status != "OK":
+                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+                # Use UID FETCH to get by actual UID
+                status, msg_data = imap.uid('fetch', uid_str, "(RFC822 FLAGS)")
+                if status != "OK" or not msg_data or not msg_data[0]:
+                    continue
+
+                # Handle response format
+                if not isinstance(msg_data[0], tuple) or len(msg_data[0]) < 2:
                     continue
 
                 raw_email = msg_data[0][1]
                 msg = email.message_from_bytes(raw_email)
 
-                # Parse flags
-                flags_data = msg_data[0][0].decode() if msg_data[0][0] else ""
+                # Parse flags from response
+                flags_data = msg_data[0][0].decode() if isinstance(msg_data[0][0], bytes) else str(msg_data[0][0])
                 is_read = "\\Seen" in flags_data
 
                 # Parse date
@@ -289,7 +496,7 @@ def fetch_messages(
                 attachments = get_attachments(msg)
 
                 messages.append(EmailMessage(
-                    uid=uid.decode(),
+                    uid=uid_str,
                     account=account.email,
                     subject=decode_mime_header(msg.get("Subject", "(No Subject)")),
                     sender=sender_name,
@@ -475,17 +682,81 @@ def get_message_by_id(
     user_id: int,
     db: Session,
     account_email: str,
-    uid: str
+    uid: str,
+    folder: str = None
 ) -> Optional[EmailMessage]:
-    """Get a specific message by account and UID."""
+    """Get a specific message by account and UID. Searches all folders if not found in INBOX."""
+    logger.info(f"get_message_by_id: account={account_email}, uid={uid}, folder={folder}")
     accounts = get_user_mail_accounts(user_id, db)
 
     for account in accounts:
         if account.email == account_email:
-            messages = fetch_messages(account, limit=100)
-            for msg in messages:
-                if msg.uid == uid:
-                    return msg
+            imap = connect_imap(account)
+            if not imap:
+                return None
+
+            try:
+                # If folder specified, search there first
+                folders_to_check = []
+                if folder:
+                    folders_to_check.append(folder)
+                else:
+                    # Try INBOX first, then get all folders
+                    folders_to_check.append("INBOX")
+
+                # Try specified/INBOX first
+                for check_folder in folders_to_check:
+                    try:
+                        status, _ = imap.select(check_folder, readonly=True)
+                        if status == "OK":
+                            # Use UID FETCH
+                            status, msg_data = imap.uid('fetch', uid, "(RFC822)")
+                            if status == "OK" and msg_data and msg_data[0]:
+                                if isinstance(msg_data[0], tuple) and len(msg_data[0]) >= 2:
+                                    raw_email = msg_data[0][1]
+                                    msg = parse_email(raw_email, uid, account.email)
+                                    if msg:
+                                        msg.account = f"{account.email} ({check_folder})"
+                                        return msg
+                    except Exception as e:
+                        logger.debug(f"Error checking folder {check_folder}: {e}")
+
+                # If not found in INBOX, search all folders
+                if not folder:
+                    status, folder_data = imap.list()
+                    if status == "OK":
+                        for folder_line in folder_data:
+                            try:
+                                decoded = folder_line.decode() if isinstance(folder_line, bytes) else folder_line
+                                import re
+                                match = re.search(r'"([^"]+)"$|(\S+)$', decoded)
+                                if match:
+                                    folder_name = match.group(1) or match.group(2)
+                                    if folder_name == "INBOX" or folder_name.lower() in ('[gmail]', '[google mail]'):
+                                        continue
+
+                                    status, _ = imap.select(folder_name, readonly=True)
+                                    if status == "OK":
+                                        status, msg_data = imap.uid('fetch', uid, "(RFC822)")
+                                        if status == "OK" and msg_data and msg_data[0]:
+                                            if isinstance(msg_data[0], tuple) and len(msg_data[0]) >= 2:
+                                                raw_email = msg_data[0][1]
+                                                msg = parse_email(raw_email, uid, account.email)
+                                                if msg:
+                                                    msg.account = f"{account.email} ({folder_name})"
+                                                    return msg
+                            except Exception as e:
+                                logger.debug(f"Error searching folder: {e}")
+                                continue
+
+            except Exception as e:
+                logger.error(f"Error getting message by ID: {e}")
+                return None
+            finally:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
 
     return None
 
@@ -494,9 +765,10 @@ def delete_message(
     user_id: int,
     db: Session,
     account_email: str,
-    uid: str
+    uid: str,
+    folder: str = "INBOX"
 ) -> bool:
-    """Delete a message by UID."""
+    """Delete a message by UID from specified folder."""
     accounts = get_user_mail_accounts(user_id, db)
 
     for account in accounts:
@@ -506,10 +778,19 @@ def delete_message(
                 return False
 
             try:
-                imap.select("INBOX")
-                imap.store(uid.encode(), '+FLAGS', '\\Deleted')
+                status, _ = imap.select(folder)
+                if status != 'OK':
+                    logger.error(f"Failed to select folder {folder}")
+                    return False
+
+                # Use UID STORE to mark for deletion
+                status, _ = imap.uid('store', uid, '+FLAGS', '\\Deleted')
+                if status != 'OK':
+                    logger.error(f"Failed to mark message {uid} for deletion")
+                    return False
+
                 imap.expunge()
-                logger.info(f"Deleted message {uid} from {account_email}")
+                logger.info(f"Deleted message {uid} from {folder} in {account_email}")
                 return True
             except Exception as e:
                 logger.error(f"Error deleting message: {e}")
@@ -661,13 +942,24 @@ def send_email(
             else:
                 msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
-            # Add attachments
+            # Add attachments with size limits and filename sanitization
             if attachments:
+                total_size = 0
                 for filename, data, content_type in attachments:
+                    # Check size limits
+                    if len(data) > MAX_ATTACHMENT_SIZE:
+                        logger.warning(f"Attachment {filename} too large ({len(data)} bytes), skipping")
+                        continue
+                    if total_size + len(data) > MAX_TOTAL_ATTACHMENT_SIZE:
+                        logger.warning(f"Total attachment size exceeded, skipping {filename}")
+                        continue
+
+                    total_size += len(data)
+                    safe_filename = sanitize_filename(filename)
                     part = MIMEBase(*content_type.split('/', 1))
                     part.set_payload(data)
                     encoders.encode_base64(part)
-                    part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
+                    part.add_header('Content-Disposition', f'attachment; filename="{safe_filename}"')
                     msg.attach(part)
         else:
             msg = MIMEText(body, 'plain', 'utf-8')
@@ -697,10 +989,15 @@ def send_email(
         smtp_server = account.smtp_server or account.imap_server
         smtp_port = account.smtp_port or 587
 
+        # SSRF protection
+        if not validate_mail_server(smtp_server, smtp_port):
+            logger.error(f"SMTP connection blocked: invalid server address {smtp_server}")
+            return False
+
         if smtp_port == 465:
-            smtp = smtplib.SMTP_SSL(smtp_server, smtp_port)
+            smtp = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=MAIL_CONNECTION_TIMEOUT)
         else:
-            smtp = smtplib.SMTP(smtp_server, smtp_port)
+            smtp = smtplib.SMTP(smtp_server, smtp_port, timeout=MAIL_CONNECTION_TIMEOUT)
             smtp.starttls()
 
         smtp.login(account.email, account.password)
@@ -716,6 +1013,36 @@ def send_email(
         smtp.quit()
 
         logger.info(f"Sent email from {account.email} to {to}: {subject}")
+
+        # Save to Sent folder via IMAP
+        try:
+            imap = connect_imap(account)
+            if imap:
+                # Try common sent folder names
+                sent_folders = ['INBOX.Sent', 'Sent', 'Sent Messages', 'Sent Items', '[Gmail]/Sent Mail']
+                msg_bytes = msg.as_bytes()
+
+                for folder in sent_folders:
+                    try:
+                        # Try to select the folder to verify it exists
+                        status, _ = imap.select(folder)
+                        if status == "OK":
+                            # Append message with \Seen flag
+                            import time
+                            result = imap.append(folder, '\\Seen', imaplib.Time2Internaldate(time.time()), msg_bytes)
+                            if result[0] == 'OK':
+                                logger.info(f"Saved sent email to {folder}")
+                                break
+                    except Exception:
+                        continue
+
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"Failed to save to Sent folder: {e}")
+
         return True
 
     except Exception as e:
@@ -730,11 +1057,12 @@ def reply_to_message(
     uid: str,
     body: str,
     reply_all: bool = False,
-    attachments: List[Tuple[str, bytes, str]] = None
+    attachments: List[Tuple[str, bytes, str]] = None,
+    folder: str = "INBOX"
 ) -> bool:
     """Reply to a message."""
     # Get the original message
-    original = get_message_by_id(user_id, db, account_email, uid)
+    original = get_message_by_id(user_id, db, account_email, uid, folder=folder)
     if not original:
         logger.error(f"Original message not found: {account_email}/{uid}")
         return False
@@ -787,12 +1115,12 @@ def get_attachment(
     return msg.attachments[attachment_index]
 
 
-def format_message_list(messages: List[EmailMessage]) -> str:
-    """Format messages for display."""
+def format_message_list(messages: List[EmailMessage], show_header: bool = True) -> str:
+    """Format messages for display with action buttons."""
     if not messages:
         return "No messages found."
 
-    lines = ["## Inbox\n"]
+    lines = ["## ◈ INBOX ◈\n"] if show_header else []
 
     for i, msg in enumerate(messages, 1):
         # Unread indicator
@@ -807,21 +1135,37 @@ def format_message_list(messages: List[EmailMessage]) -> str:
         # Attachment indicator
         attach = f" [{len(msg.attachments)} files]" if msg.attachments else ""
 
-        # Account indicator (short)
-        account_short = msg.account.split('@')[0]
+        # Account indicator (short) - handle folder suffix like "email@example.com (INBOX.Archive)"
+        account_part = msg.account.split(' (')[0] if ' (' in msg.account else msg.account
+        account_short = account_part.split('@')[0]
+
+        # Extract folder if present (for search results)
+        folder = ""
+        if ' (' in msg.account and msg.account.endswith(')'):
+            folder = msg.account.split(' (')[1].rstrip(')')
+
+        # Build message ID with folder if present
+        msg_id = f"{folder}:{msg.uid}" if folder else str(msg.uid)
 
         lines.append(f"{i}. {unread}**{msg.sender}** - {subject}")
         lines.append(f"   {date_str} | {account_short}{attach}")
-        lines.append(f"   `mail read {account_short} {msg.uid}`")
+        # Action buttons using cmd: prefix links
+        read_cmd = f"mail read {account_short} {msg_id}"
+        reply_cmd = f"mail reply {account_short} {msg_id} "
+        delete_cmd = f"mail delete {account_short} {msg_id}"
+        lines.append(f"   [Read](cmd:{read_cmd}) | [Reply All](cmd:{reply_cmd}) | [Delete](cmd:{delete_cmd})")
         lines.append("")
 
     return "\n".join(lines)
 
 
-def format_message_detail(msg: EmailMessage) -> str:
-    """Format a single message for detailed view."""
+def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
+    """Format a single message for detailed view with action buttons."""
+    account_short = msg.account.split('@')[0]
+    msg_id = f"{folder}:{msg.uid}" if folder and folder != "INBOX" else str(msg.uid)
+
     lines = [
-        f"## {msg.subject}",
+        f"## ◈ {msg.subject} ◈",
         "",
         f"**From:** {msg.sender} <{msg.sender_email}>",
         f"**To:** {msg.to}",
@@ -831,7 +1175,6 @@ def format_message_detail(msg: EmailMessage) -> str:
 
     if msg.attachments:
         lines.append(f"**Attachments:** {len(msg.attachments)} files")
-        account_short = msg.account.split('@')[0]
         for i, att in enumerate(msg.attachments):
             size_kb = att.size / 1024
             # Create download link
@@ -843,14 +1186,11 @@ def format_message_detail(msg: EmailMessage) -> str:
     lines.append("")
 
     # Body (prefer text, fall back to stripped HTML)
-    if msg.body_text:
+    if msg.body_text and msg.body_text.strip():
         lines.append(msg.body_text)
     elif msg.body_html:
-        # Simple HTML stripping
-        import re
-        text = re.sub(r'<[^>]+>', '', msg.body_html)
-        text = re.sub(r'\s+', ' ', text).strip()
-        lines.append(text)
+        # Better HTML to text conversion
+        lines.append(html_to_text(msg.body_html))
     else:
         lines.append("(No message body)")
 
@@ -858,9 +1198,12 @@ def format_message_detail(msg: EmailMessage) -> str:
     lines.append("---")
     lines.append("")
 
-    # Reply commands
-    account_short = msg.account.split('@')[0]
-    lines.append(f"**Reply:** `mail reply {account_short} {msg.uid} <message>`")
-    lines.append(f"**Delete:** `mail delete {account_short} {msg.uid}`")
+    # Action buttons
+    reply_cmd = f"mail reply {account_short} {msg_id} "
+    archive_cmd = f"mail archive {account_short} {msg_id}"
+    delete_cmd = f"mail delete {account_short} {msg_id}"
+    translate_cmd = f"mail translate {account_short} {msg_id}"
+
+    lines.append(f"[Reply All](cmd:{reply_cmd}) | [Archive](cmd:{archive_cmd}) | [Translate](cmd:{translate_cmd}) | [Delete](cmd:{delete_cmd})")
 
     return "\n".join(lines)

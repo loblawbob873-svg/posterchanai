@@ -108,6 +108,48 @@ class App {
             });
         });
 
+        // Initialize all dropdowns
+        document.querySelectorAll('.quick-btn-dropdown').forEach(dropdown => {
+            const toggleBtn = dropdown.querySelector('.dropdown-toggle');
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    // Close other dropdowns
+                    document.querySelectorAll('.quick-btn-dropdown.open').forEach(d => {
+                        if (d !== dropdown) d.classList.remove('open');
+                    });
+                    dropdown.classList.toggle('open');
+                });
+            }
+
+            // Handle command items (mail, cal, contacts)
+            dropdown.querySelectorAll('.cmd-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    dropdown.classList.remove('open');
+                    const cmd = item.dataset.cmd;
+                    if (window.chatHandler && cmd) {
+                        window.chatHandler.executeCommand(cmd);
+                    }
+                });
+            });
+
+            // Handle mode items (search, images)
+            dropdown.querySelectorAll('.dropdown-item.mode-btn').forEach(item => {
+                item.addEventListener('click', () => {
+                    dropdown.classList.remove('open');
+                });
+            });
+        });
+
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.quick-btn-dropdown')) {
+                document.querySelectorAll('.quick-btn-dropdown.open').forEach(d => {
+                    d.classList.remove('open');
+                });
+            }
+        });
+
         // Close sidebar on overlay click (mobile)
         document.addEventListener('click', (e) => {
             if (e.target.classList.contains('sidebar-overlay')) {
@@ -298,6 +340,20 @@ class App {
             btn.classList.toggle('active', btn.dataset.mode === mode);
         });
 
+        // Update search dropdown button state
+        const searchDropdownBtn = document.getElementById('searchDropdownBtn');
+        if (searchDropdownBtn) {
+            const isSearchMode = mode === 'search' || mode === 'images';
+            searchDropdownBtn.classList.toggle('active', isSearchMode);
+            if (mode === 'search') {
+                searchDropdownBtn.textContent = 'Web ▾';
+            } else if (mode === 'images') {
+                searchDropdownBtn.textContent = 'Images ▾';
+            } else {
+                searchDropdownBtn.textContent = 'Search ▾';
+            }
+        }
+
         // Update placeholder
         const placeholders = {
             '': 'Type a message...',
@@ -405,7 +461,7 @@ function initTranslateModal() {
 
 // Initialize news modal
 function initNewsModal() {
-    const newsBtn = document.getElementById('newsBtn');
+    const newsBtn = document.getElementById('newsBtn') || document.getElementById('newsDropdownBtn');
     const newsModal = document.getElementById('newsModal');
     const closeBtn = document.getElementById('closeNewsModal');
     const sourcesContainer = document.querySelector('.news-sources');
@@ -550,6 +606,9 @@ function initNewsModal() {
     newsBtn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        // Close dropdown if in one
+        const dropdown = newsBtn.closest('.quick-btn-dropdown');
+        if (dropdown) dropdown.classList.remove('open');
         loadNewsSources();
         newsModal.style.display = 'flex';
     });

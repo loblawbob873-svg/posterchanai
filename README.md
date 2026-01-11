@@ -909,29 +909,36 @@ Configure CardDAV in User Settings > Calendar & Contacts tab.
 
 ### Mail Command
 
-The mail command provides full IMAP/SMTP email functionality:
+The mail command provides full IMAP/SMTP email functionality with encrypted password storage:
 
 | Subcommand | Description |
 |------------|-------------|
 | `mail` | Show recent inbox messages from all accounts |
 | `mail unread` | Show unread messages only |
+| `mail sum <account>` | AI summary of all inbox messages |
 | `mail search <account> <query>` | Search messages by from, to, or subject |
-| `mail read <account> <id>` | Read a specific message (attachments open in new tab) |
-| `mail summary <account> <id>` | AI summary of a message with key points |
-| `mail translate <lang> <account> <id>` | Translate a message to another language |
-| `mail reply <account> <id> <message>` | Reply to a message |
+| `mail read <account> [folder:]<id>` | Read a specific message |
+| `mail summary <account> [folder:]<id>` | AI summary of a message with key points |
+| `mail translate <account> [folder:]<id>` | Translate a message to English |
+| `mail reply <account> [folder:]<id> <message>` | Reply to a message |
+| `mail send [account] <recipient> <message>` | Send new email |
 | `mail archive <account> <id>` | Archive a message (moves to INBOX.Archive) |
-| `mail delete <account> <id>` | Delete a message |
+| `mail delete <account> [folder:]<id>` | Delete a message |
 | `mail deleteall <account>` | Delete ALL messages in an account's inbox |
-| `mail <contact> <message>` | Send new email (looks up contact in CardDAV) |
 
 **Examples:**
 - `mail` - Show inbox from all accounts
+- `mail sum work` - AI summary of work inbox
 - `mail search work invoice` - Search for "invoice" in work account
 - `mail read work 5` - Read message #5 from work@... account
-- `mail john Hey, how are you?` - Send email to John (looked up in contacts)
+- `mail read work INBOX.Archive:123` - Read archived message #123
+- `mail send john Hey!` - Send email to John (uses first account)
+- `mail send work john Hey!` - Send from work account to John
+- `mail reply work INBOX:456 Thanks!` - Reply to message #456
 
-**Tab Autocomplete:** Type `mail read ` and press Tab to see available accounts.
+**Tab Autocomplete:** Type `mail read ` and press Tab to see available accounts, then Tab again for folder hints.
+
+**Security:** Passwords are encrypted at rest using Fernet. SSRF protection blocks connections to internal IPs.
 
 Configure email accounts in User Settings > Mail tab.
 

@@ -669,6 +669,84 @@ body {
     box-shadow: var(--glow-cyan);
 }
 
+/* Quick button dropdown */
+.quick-btn-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.quick-btn-dropdown .dropdown-toggle {
+    min-width: 90px;
+}
+
+.quick-btn-dropdown .dropdown-menu {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-secondary);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 4px 0;
+    min-width: 140px;
+    z-index: 1000;
+    box-shadow: var(--glow-cyan), 0 4px 12px rgba(0, 0, 0, 0.5);
+    margin-bottom: 8px;
+}
+
+.quick-btn-dropdown .dropdown-menu::after {
+    content: '';
+    position: absolute;
+    bottom: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 8px solid transparent;
+    border-right: 8px solid transparent;
+    border-top: 8px solid var(--accent);
+}
+
+.quick-btn-dropdown.open .dropdown-menu {
+    display: block;
+    animation: dropdownSlide 0.2s ease;
+}
+
+@keyframes dropdownSlide {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+.dropdown-item {
+    display: block;
+    width: 100%;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    transition: all 0.2s;
+}
+
+.dropdown-item:hover {
+    background: rgba(0, 255, 255, 0.2);
+    color: var(--accent);
+}
+
+.dropdown-item.active {
+    background: linear-gradient(135deg, var(--accent), #00cccc);
+    color: #0a0a0f;
+}
+
 /* Input Area */
 .input-area {
     display: flex;
@@ -1215,6 +1293,33 @@ fieldset legend {
 }
 .btn-action:hover {
     background: rgba(0, 0, 0, 0.9);
+}
+
+/* Command buttons (mail actions, etc) */
+.cmd-btn {
+    background: linear-gradient(135deg, rgba(0, 255, 255, 0.2) 0%, rgba(0, 200, 200, 0.15) 100%);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.2s ease;
+    margin: 2px 4px 2px 0;
+}
+
+.cmd-btn:hover {
+    background: linear-gradient(135deg, rgba(0, 255, 255, 0.4) 0%, rgba(0, 200, 200, 0.3) 100%);
+    box-shadow: var(--glow-cyan);
+    transform: translateY(-1px);
+}
+
+.cmd-btn:active {
+    transform: translateY(0);
 }
 
 /* Copy button for messages */
