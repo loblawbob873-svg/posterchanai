@@ -420,6 +420,102 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
     return search_contacts(url, username, password, query)
 
 
+def add_contact(
+    url: str,
+    username: str,
+    password: str,
+    name: str,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+    organization: Optional[str] = None,
+    note: Optional[str] = None
+) -> bool:
+    """Add a new contact to CardDAV address book."""
+    import uuid
+
+    try:
+        logger.info(f"Adding contact '{name}' to {url}")
+
+        # Build vCard
+        uid = str(uuid.uuid4())
+        vcard_lines = [
+            "BEGIN:VCARD",
+            "VERSION:3.0",
+            f"UID:{uid}",
+            f"FN:{name}",
+        ]
+
+        # Parse name into N field (last;first;middle;prefix;suffix)
+        name_parts = name.split()
+        if len(name_parts) >= 2:
+            vcard_lines.append(f"N:{name_parts[-1]};{' '.join(name_parts[:-1])};;;")
+        else:
+            vcard_lines.append(f"N:{name};;;;")
+
+        if phone:
+            # Clean phone number
+            clean_phone = re.sub(r'[^\d+]', '', phone)
+            vcard_lines.append(f"TEL;TYPE=CELL:{phone}")
+
+        if email:
+            vcard_lines.append(f"EMAIL;TYPE=INTERNET:{email}")
+
+        if organization:
+            vcard_lines.append(f"ORG:{organization}")
+
+        if note:
+            vcard_lines.append(f"NOTE:{note}")
+
+        vcard_lines.append("END:VCARD")
+        vcard_data = "\r\n".join(vcard_lines)
+
+        # Upload to CardDAV
+        vcf_url = f"{url.rstrip('/')}/{uid}.vcf"
+
+        response = requests.put(
+            vcf_url,
+            data=vcard_data,
+            auth=(username, password),
+            headers={
+                "Content-Type": "text/vcard; charset=utf-8",
+            },
+            timeout=30
+        )
+
+        if response.status_code in (200, 201, 204):
+            logger.info(f"Contact '{name}' added successfully")
+            return True
+        else:
+            logger.error(f"Failed to add contact: {response.status_code} - {response.text}")
+            return False
+
+    except Exception as e:
+        logger.error(f"Error adding contact: {e}")
+        return False
+
+
+def add_user_contact(
+    user_id: int,
+    db: Session,
+    name: str,
+    phone: Optional[str] = None,
+    email: Optional[str] = None
+) -> bool:
+    """Add a new contact using user's CardDAV configuration."""
+    config = get_user_contacts_config(user_id, db)
+    if not config:
+        return False
+
+    url = config.get('url', '')
+    username = config.get('username', '')
+    password = config.get('password', '')
+
+    if not url or not username:
+        return False
+
+    return add_contact(url, username, password, name, phone, email)
+
+
 def format_events_for_display(events: List[CalendarEvent], include_description: bool = False) -> str:
     """Format events for display with clickable map links for locations."""
     import urllib.parse

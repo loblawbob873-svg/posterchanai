@@ -15,7 +15,7 @@ from app.routers.news import fetch_news_from_source, get_user_news_sources
 from app.services.caldav_service import (
     get_all_user_events, get_user_calendars, get_user_contacts,
     format_events_for_display, format_contacts_for_display,
-    add_event_to_calendar
+    add_event_to_calendar, add_user_contact
 )
 from app.services.mail_service import (
     fetch_all_accounts, get_message_by_id, delete_message, delete_all_messages,
@@ -927,13 +927,50 @@ Return ONLY valid JSON, no other text."""},
             return {"type": "text", "content": f"Error: {str(e)}"}
 
     async def _contacts_command(self, arg: str) -> dict:
-        """Search contacts"""
+        """Search or add contacts"""
         if not self.user:
             return {"type": "text", "content": "Please log in to use the contacts command."}
 
         if not arg.strip():
-            return {"type": "text", "content": "Usage: `contacts <search query>`\n\nExample: `contacts John` or `contacts @company.com`"}
+            return {"type": "text", "content": "Usage:\n- `contacts <query>` - Search contacts\n- `contacts add <name> <phone>` - Add a new contact"}
 
+        parts = arg.strip().split(maxsplit=2)
+        subcommand = parts[0].lower()
+
+        # Handle add subcommand
+        if subcommand == "add":
+            if len(parts) < 3:
+                return {"type": "text", "content": "Usage: `contacts add <name> <phone>`\n\nExample: `contacts add \"John Doe\" 555-1234`"}
+
+            # Parse name and phone - support quoted names
+            remaining = arg.strip()[4:].strip()  # Remove "add "
+
+            # Check for quoted name
+            if remaining.startswith('"'):
+                end_quote = remaining.find('"', 1)
+                if end_quote > 0:
+                    name = remaining[1:end_quote]
+                    phone = remaining[end_quote+1:].strip()
+                else:
+                    return {"type": "text", "content": "Unclosed quote in name. Example: `contacts add \"John Doe\" 555-1234`"}
+            else:
+                # No quotes - assume last word is phone
+                name_parts = remaining.rsplit(maxsplit=1)
+                if len(name_parts) < 2:
+                    return {"type": "text", "content": "Usage: `contacts add <name> <phone>`\n\nExample: `contacts add John 555-1234`"}
+                name = name_parts[0]
+                phone = name_parts[1]
+
+            if not name or not phone:
+                return {"type": "text", "content": "Both name and phone are required."}
+
+            success = add_user_contact(self.user.id, self.db, name, phone=phone)
+            if success:
+                return {"type": "text", "content": f"✅ Contact **{name}** added with phone {phone}"}
+            else:
+                return {"type": "text", "content": f"❌ Failed to add contact. Check CardDAV settings in User Settings > Calendar & Contacts."}
+
+        # Otherwise treat as search query
         query = arg.strip()
 
         try:
