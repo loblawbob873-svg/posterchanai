@@ -35,7 +35,10 @@ async function loadSettings() {
                     } else if (el.tagName === 'SELECT') {
                         el.value = value || el.options[0].value;
                     } else {
-                        el.value = value || '';
+                        // Only update if there's a value - preserve HTML defaults
+                        if (value !== null && value !== undefined && value !== '') {
+                            el.value = value;
+                        }
                     }
                 }
             }
