@@ -59,9 +59,17 @@ class ChatInput(Widget):
 
     def compose(self) -> ComposeResult:
         yield Vertical(
+            Horizontal(
+                Button("Mail", id="quick-mail", classes="quick-btn"),
+                Button("News", id="quick-news", classes="quick-btn"),
+                Button("Music", id="quick-music", classes="quick-btn"),
+                Button("Weather", id="quick-weather", classes="quick-btn"),
+                Button("Cal", id="quick-cal", classes="quick-btn"),
+                id="quick-actions"
+            ),
             Static("", id="autocomplete-hint", classes="--hidden"),
             Horizontal(
-                AutocompleteInput(placeholder="Type a message or /command...", id="message-input"),
+                AutocompleteInput(placeholder="Type a message or command...", id="message-input"),
                 Button("SEND", id="send-btn", variant="primary"),
                 id="input-row"
             ),
@@ -74,9 +82,24 @@ class ChatInput(Widget):
         self.query_one("#message-input", Input).focus()
 
     def on_button_pressed(self, event: Button.Pressed):
-        """Handle send button press."""
-        if event.button.id == "send-btn":
+        """Handle button presses."""
+        btn_id = event.button.id
+        if btn_id == "send-btn":
             self.submit_message()
+        elif btn_id == "quick-mail":
+            self.send_command("mail")
+        elif btn_id == "quick-news":
+            self.send_command("news")
+        elif btn_id == "quick-music":
+            self.send_command("music")
+        elif btn_id == "quick-weather":
+            self.send_command("weather")
+        elif btn_id == "quick-cal":
+            self.send_command("cal")
+
+    def send_command(self, command: str):
+        """Send a command as a message."""
+        self.post_message(self.MessageSubmitted(command))
 
     def on_input_submitted(self, event: Input.Submitted):
         """Handle Enter key in input."""

@@ -789,3 +789,27 @@ TabPane {
     background: $bg;
     padding: 1;
 }
+
+/* Quick action buttons */
+#quick-actions {
+    height: 3;
+    dock: top;
+    padding: 0 1;
+}
+
+.quick-btn {
+    min-width: 8;
+    height: 3;
+    margin: 0 1 0 0;
+    background: $surface;
+    color: $cyan;
+    border: solid $cyan 50%;
+}
+
+.quick-btn:hover {
+    background: $cyan 30%;
+}
+
+.quick-btn:focus {
+    background: $cyan 40%;
+}
