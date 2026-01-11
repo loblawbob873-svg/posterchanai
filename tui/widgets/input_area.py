@@ -18,13 +18,15 @@ class AutocompleteInput(Input):
         """Posted when Tab is pressed."""
         pass
 
-    BINDINGS = [
-        Binding("tab", "do_autocomplete", "Autocomplete", show=False),
-    ]
-
-    def action_do_autocomplete(self) -> None:
-        """Handle Tab key press."""
-        self.post_message(self.TabPressed())
+    async def _on_key(self, event: Key) -> None:
+        """Intercept Tab before default handling."""
+        if event.key == "tab":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.TabPressed())
+            return
+        # Let parent handle other keys
+        await super()._on_key(event)
 
 
 # Available commands for autocomplete
