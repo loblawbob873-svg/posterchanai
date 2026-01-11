@@ -59,6 +59,13 @@ HELP_TEXT = """
 |-----|--------|
 | `o` | Open URLs from recent messages in browser |
 
+### Music Controls
+| Key | Action |
+|-----|--------|
+| `Alt+P` | Play/Pause |
+| `Alt+F` | Skip forward (next track) |
+| `Alt+R` | Skip back (previous track) |
+
 ## Commands
 
 Type these in the chat input to access features:

@@ -30,6 +30,10 @@ class MainScreen(Screen):
         Binding("h", "hide_sidebar", "Hide Sidebar", show=False),
         Binding("l", "show_sidebar", "Show Sidebar", show=False),
         Binding("o", "open_urls", "Open URL", show=False),
+        # Music controls
+        Binding("alt+p", "music_play_pause", "Play/Pause", show=False),
+        Binding("alt+f", "music_next", "Next Track", show=False),
+        Binding("alt+r", "music_prev", "Prev Track", show=False),
     ]
 
     # Reactive state
@@ -439,3 +443,19 @@ class MainScreen(Screen):
 
         except Exception as e:
             self.notify(f"Failed to open URLs: {e}", severity="error")
+
+    # Music control actions
+    def action_music_play_pause(self):
+        """Toggle music play/pause (Alt+P)."""
+        music_player = self.query_one("#music-player", MusicPlayerWidget)
+        music_player.toggle_playback()
+
+    def action_music_next(self):
+        """Skip to next track (Alt+F)."""
+        music_player = self.query_one("#music-player", MusicPlayerWidget)
+        music_player.next_track()
+
+    def action_music_prev(self):
+        """Skip to previous track (Alt+R)."""
+        music_player = self.query_one("#music-player", MusicPlayerWidget)
+        music_player.prev_track()
