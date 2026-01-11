@@ -1632,8 +1632,51 @@ Return ONLY valid JSON, no other text."""},
         param = parts[1] if len(parts) > 1 else ""
 
         try:
-            # Browse folder (default)
-            if not subcommand or subcommand == "browse":
+            # Default: shuffle and play music (quick mode - limited scan)
+            if not subcommand:
+                import random as rand_module
+
+                # Check for cached tracks first (much faster)
+                cached = _music_cache.get(self.user.id, {})
+                all_tracks = cached.get('tracks', [])
+
+                # If no cache, do a quick shallow scan (limit to 100 tracks, don't recurse too deep)
+                if not all_tracks:
+                    all_tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=100)
+
+                if not all_tracks:
+                    return {"type": "text", "content": "No tracks found. Try `music browse` to explore your library first."}
+
+                # Shuffle tracks
+                all_tracks = list(all_tracks)
+                rand_module.shuffle(all_tracks)
+
+                # Cache shuffled playlist
+                _music_cache[self.user.id] = {
+                    'tracks': all_tracks,
+                    'folders': [],
+                    'current_path': '/'
+                }
+
+                # Build track list for playlist (limit to 25 for faster response)
+                playlist = []
+                for track in all_tracks[:25]:
+                    playlist.append({
+                        "path": track.path,
+                        "title": track.title,
+                        "artist": track.artist or "",
+                        "album": track.album or "",
+                        "streamUrl": get_stream_url(track.path)
+                    })
+
+                return {
+                    "type": "music_playlist",
+                    "content": f"🔀 Shuffling {len(all_tracks)} tracks...\n\nNow playing: **{all_tracks[0].title}**" + (f" - {all_tracks[0].artist}" if all_tracks[0].artist else ""),
+                    "tracks": playlist
+                }
+
+            # Browse folder
+            if subcommand == "browse":
                 path = param if param else "/"
                 contents = list_folder(config['url'], config['username'], config['password'], path)
 

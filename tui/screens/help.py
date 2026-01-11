@@ -94,7 +94,7 @@ Type these in the chat input to access features:
 - `/contacts add` - Add new contact
 
 ### Music
-- `/music` - Music menu
+- `/music` - Shuffle and play all music
 - `/music browse` - Browse library
 - `/music search <query>` - Search songs
 - `/music play <song>` - Play a song
