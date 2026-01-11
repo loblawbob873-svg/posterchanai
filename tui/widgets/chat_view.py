@@ -58,17 +58,17 @@ class ChatView(Widget):
         """Start streaming a new assistant message."""
         container = self.query_one("#messages-container", ScrollableContainer)
 
-        # Create streaming message widget
+        # Create streaming message widget with thinking indicator
         self.streaming_message = MessageWidget(
             role="assistant",
-            content="",
+            content="Thinking...",
             is_streaming=True
         )
         container.mount(self.streaming_message)
 
-        # Show typing indicator
+        # Show typing indicator bar at bottom
         indicator = self.query_one("#typing-indicator", Static)
-        indicator.update("AI is thinking...")
+        indicator.update("[ AI is generating response... ]")
         indicator.remove_class("--hidden")
 
         self.scroll_to_bottom()

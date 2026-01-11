@@ -137,6 +137,10 @@ FooterKey > .footer-key--key {
     text-style: bold;
 }
 
+#chat-view {
+    height: 1fr;
+}
+
 #messages-container {
     height: 1fr;
     padding: 1;
