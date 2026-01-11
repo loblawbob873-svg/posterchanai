@@ -408,23 +408,33 @@ def search_messages(
                             continue
 
                         uids = list(all_uids)
+                        logger.info(f"Fetching up to {min(limit, len(uids))} messages from {folder}")
                         # Get most recent matches first
+                        fetched = 0
                         for uid in reversed(uids[-limit:]):
                             if len(messages) >= limit:
                                 break
-                            status, msg_data = imap.fetch(uid, "(RFC822)")
-                            if status != "OK" or not msg_data[0]:
-                                continue
+                            try:
+                                status, msg_data = imap.fetch(uid, "(RFC822)")
+                                if status != "OK" or not msg_data[0]:
+                                    logger.debug(f"Failed to fetch uid {uid}: status={status}")
+                                    continue
 
-                            raw_email = msg_data[0][1]
-                            msg = parse_email(raw_email, uid.decode(), account.email)
-                            if msg:
-                                # Add folder info to message
-                                msg.account = f"{account.email} ({folder})"
-                                messages.append(msg)
+                                raw_email = msg_data[0][1]
+                                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+                                msg = parse_email(raw_email, uid_str, account.email)
+                                if msg:
+                                    # Add folder info to message
+                                    msg.account = f"{account.email} ({folder})"
+                                    messages.append(msg)
+                                    fetched += 1
+                            except Exception as e:
+                                logger.debug(f"Error fetching message {uid}: {e}")
+                                continue
+                        logger.info(f"Fetched {fetched} messages from {folder}")
 
                     except Exception as e:
-                        logger.debug(f"Error searching folder {folder}: {e}")
+                        logger.error(f"Error searching folder {folder}: {e}")
                         continue
 
                 # Sort by date (newest first)
