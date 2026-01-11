@@ -27,6 +27,9 @@ async function loadSettings() {
         const response = await fetch('/api/admin/settings');
         if (response.ok) {
             const settings = await response.json();
+            // Debug: log scheduler settings
+            console.log('Loading logs_scheduler_enabled:', settings.logs_scheduler_enabled);
+            console.log('Loading miniflux_enabled:', settings.miniflux_enabled);
             for (const [key, value] of Object.entries(settings)) {
                 const el = document.getElementById(key);
                 if (el) {
@@ -67,6 +70,9 @@ document.getElementById('settingsForm').addEventListener('submit', async (e) => 
             }
         }
     }
+    // Debug: log scheduler settings
+    console.log('Saving logs_scheduler_enabled:', settings.logs_scheduler_enabled);
+    console.log('Saving miniflux_enabled:', settings.miniflux_enabled);
 
     try {
         const response = await csrfFetch('/api/admin/settings', {
