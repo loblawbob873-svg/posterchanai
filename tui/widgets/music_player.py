@@ -266,16 +266,20 @@ class MusicPlayerWidget(Widget):
     def toggle_playback(self):
         """Toggle play/pause."""
         if not self._player_ready or not self.player:
+            self.notify("Type 'music' in chat to load tracks first", severity="warning")
+            return
+
+        if not self.current_track:
+            self.notify("No track loaded. Type 'music' in chat.", severity="warning")
             return
 
         if self.is_playing:
             self.player.pause()
             self.is_playing = False
         else:
-            if self.current_track:
-                self.player.resume()
-                self.is_playing = True
-                self._run_visualizer()
+            self.player.resume()
+            self.is_playing = True
+            self._run_visualizer()
 
         self._update_play_button()
 
