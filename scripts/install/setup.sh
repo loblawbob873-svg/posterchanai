@@ -168,3 +168,55 @@ setup_mcp_server() {
     echo ""
     print_success "MCP server will start automatically with the main app"
 }
+
+setup_tui() {
+    # Skip if not installing TUI
+    if [ "$INSTALL_TUI" != "1" ]; then
+        return
+    fi
+
+    print_step "Setting up Terminal UI (TUI)..."
+
+    local TUI_DIR="$SCRIPT_DIR/tui"
+
+    if [ ! -d "$TUI_DIR" ]; then
+        print_error "TUI directory not found at $TUI_DIR"
+        return 1
+    fi
+
+    # Create isolated venv for TUI
+    if [ ! -d "$TUI_DIR/.venv" ]; then
+        print_step "Creating TUI virtual environment..."
+        python3 -m venv "$TUI_DIR/.venv"
+        print_success "Created $TUI_DIR/.venv"
+    else
+        print_success "TUI virtual environment exists"
+    fi
+
+    # Install TUI dependencies
+    print_step "Installing TUI dependencies..."
+    "$TUI_DIR/.venv/bin/pip" install --upgrade pip -q
+    "$TUI_DIR/.venv/bin/pip" install -r "$TUI_DIR/requirements.txt" -q
+    print_success "TUI dependencies installed"
+
+    # Check for mpv
+    if ! command -v mpv &>/dev/null; then
+        print_warning "mpv not found - music player won't work"
+        echo "  Install with: sudo apt install mpv (Debian/Ubuntu)"
+        echo "             or: sudo pacman -S mpv (Arch)"
+        echo "             or: brew install mpv (macOS)"
+    else
+        print_success "mpv found - music player available"
+    fi
+
+    echo ""
+    print_success "TUI installed successfully!"
+    echo ""
+    echo "  To run the Terminal UI:"
+    echo "    cd tui"
+    echo "    source .venv/bin/activate"
+    echo "    python -m tui --server http://localhost:3051"
+    echo ""
+    echo "  Or use the shortcut:"
+    echo "    ./run-tui.sh"
+}

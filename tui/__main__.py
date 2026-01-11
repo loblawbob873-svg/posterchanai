@@ -12,6 +12,14 @@ Options:
 
 import argparse
 import sys
+import os
+
+# Add parent directory to path if running from within tui/
+# This allows both `python -m tui` from parent and `python -m tui` from tui/
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+_parent_dir = os.path.dirname(_this_dir)
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
 
 
 def main():
