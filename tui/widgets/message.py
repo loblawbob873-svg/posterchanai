@@ -89,13 +89,19 @@ class MessageWidget(Widget):
 
     def _render_buttons(self):
         """Render cmd: link buttons for essential actions."""
+        import logging
+        logger = logging.getLogger("tui")
+
         try:
             button_container = self.query_one("#message-buttons", Horizontal)
             button_container.remove_children()
 
+            logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")
+
             # Only show buttons for actionable commands (mail, calendar, torrents)
             # Skip if too many links (like music/search results)
-            if len(self._cmd_links) > 8:
+            if len(self._cmd_links) > 10:
+                logger.info(f"Skipping buttons: too many links ({len(self._cmd_links)})")
                 return
 
             # Filter to essential action buttons
@@ -105,17 +111,21 @@ class MessageWidget(Widget):
                 if any(cmd.startswith(p) for p in essential_prefixes)
             ]
 
+            logger.info(f"Actionable buttons: {actionable}")
+
             if actionable:
                 buttons_to_mount = []
                 for label, command in actionable[:6]:  # Max 6 buttons
                     btn = Button(label, classes="cmd-button")
                     btn.command = command
                     buttons_to_mount.append(btn)
+                    logger.info(f"Creating button: {label} -> {command}")
 
                 if buttons_to_mount:
                     button_container.mount_all(buttons_to_mount)
-        except Exception:
-            pass
+                    logger.info(f"Mounted {len(buttons_to_mount)} buttons")
+        except Exception as e:
+            logger.error(f"Button render error: {e}")
 
     def on_button_pressed(self, event: Button.Pressed):
         """Handle action button clicks."""
