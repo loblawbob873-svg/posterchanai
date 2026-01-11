@@ -18,7 +18,7 @@ class AutocompleteInput(Input):
         """Posted when Tab is pressed."""
         pass
 
-    def _on_key(self, event: Key) -> None:
+    def on_key(self, event: Key) -> None:
         """Handle key events."""
         if event.key == "tab":
             # Don't let Tab do default focus navigation
@@ -26,8 +26,6 @@ class AutocompleteInput(Input):
             event.stop()
             # Tell parent to autocomplete
             self.post_message(self.TabPressed())
-        else:
-            super()._on_key(event)
 
 
 # Available commands for autocomplete
