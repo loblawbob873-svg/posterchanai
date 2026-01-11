@@ -63,8 +63,9 @@ class ChatHandler {
         this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'miniflux', 'cal', 'contacts', 'mail'];
         this.pluginActions = []; // Will be populated with plugin action hints
 
-        // Load plugins for autocomplete
+        // Load plugins and mail accounts for autocomplete
         this.loadPluginsForAutocomplete();
+        this.loadMailAccountsForAutocomplete();
 
         // Enter to send (Shift+Enter for new line)
         this.messageInput.addEventListener('keydown', (e) => {
@@ -2075,6 +2076,30 @@ class ChatHandler {
             }
         } catch (e) {
             console.error('Failed to load plugins for autocomplete:', e);
+        }
+    }
+
+    async loadMailAccountsForAutocomplete() {
+        try {
+            const response = await csrfFetch('/api/auth/settings');
+            if (response.ok) {
+                const settings = await response.json();
+                if (settings.mail_accounts && settings.mail_accounts.length > 0) {
+                    // Extract account hints (first part of email before @)
+                    const accountHints = settings.mail_accounts.map(acc => {
+                        const email = acc.email || '';
+                        return email.split('@')[0].toLowerCase();
+                    }).filter(h => h);
+
+                    // Update subcommands with account hints
+                    this.subcommands['mail read'] = accountHints;
+                    this.subcommands['mail reply'] = accountHints;
+                    this.subcommands['mail delete'] = accountHints;
+                    this.subcommands['mail archive'] = accountHints;
+                }
+            }
+        } catch (e) {
+            console.debug('Failed to load mail accounts for autocomplete:', e);
         }
     }
 
