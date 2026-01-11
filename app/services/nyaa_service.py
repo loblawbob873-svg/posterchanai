@@ -146,8 +146,8 @@ def format_nyaa_results(results: list[NyaaResult], query: str) -> str:
         else:
             title_display = title
 
-        # Download button with magnet link
-        dl_cmd = f"torrents add {t.magnet}"
+        # Download button with numbered reference
+        dl_cmd = f"nyaa download {i}"
 
         lines.append(f"**{i}. {title_display}**")
         lines.append(f"   [Download](cmd:{dl_cmd}) | S:{t.seeders} L:{t.leechers} | {t.size}\n")

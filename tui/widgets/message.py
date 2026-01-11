@@ -99,7 +99,7 @@ class MessageWidget(Widget):
                 return
 
             # Filter to essential action buttons
-            essential_prefixes = ("mail ", "cal ", "torrents ", "todo ", "news ", "miniflux ")
+            essential_prefixes = ("mail ", "cal ", "torrents ", "todo ", "news ", "miniflux ", "nyaa ", "music ")
             actionable = [
                 (label, cmd) for label, cmd, _, _ in self._cmd_links
                 if any(cmd.startswith(p) for p in essential_prefixes)

@@ -5,7 +5,6 @@ Provides both /v1/* and /api/* endpoints for maximum compatibility.
 """
 import json
 import logging
-import os
 import re
 from datetime import datetime
 from typing import Optional, AsyncGenerator
@@ -296,8 +295,7 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
     # Inject/prepend system prompt for API calls
     api_inject_system = settings.get("api_inject_system_prompt", "true").lower() == "true"
     if api_inject_system:
-        # Environment variable takes priority over database setting
-        system_prompt = os.environ.get("POSTERCHANAI_SYSTEM_PROMPT") or settings.get("ollama_system_prompt", "")
+        system_prompt = settings.get("ollama_system_prompt", "")
         if system_prompt:
             has_system = messages and messages[0].get("role") == "system"
             if has_system:

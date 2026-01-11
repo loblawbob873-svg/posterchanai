@@ -1,7 +1,6 @@
 import json
 import asyncio
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, Optional, TYPE_CHECKING
 from sqlalchemy.orm import Session
@@ -40,9 +39,7 @@ class ChatService:
         """Load settings - inference factory handles all backend-specific settings"""
         self._settings = {s.key: s.value for s in self.db.query(Setting).all()}
         default_prompt = "You are a helpful, friendly AI assistant. When writing code, always use markdown code blocks with the language specified (```python, ```bash, etc.) for proper syntax highlighting."
-        # Environment variable takes priority over database setting
-        env_prompt = os.environ.get("POSTERCHANAI_SYSTEM_PROMPT")
-        self.system_prompt = env_prompt or self._settings.get("ollama_system_prompt") or default_prompt
+        self.system_prompt = self._settings.get("ollama_system_prompt") or default_prompt
         # These are used for chat_stream kwargs
         self.temperature = float(self._settings.get("ollama_temperature", "0.7"))
         self.top_p = float(self._settings.get("ollama_top_p", "0.9"))

@@ -189,8 +189,8 @@ def format_torrent_results(results: list[TorrentResult], category: str) -> str:
         else:
             title_display = title
 
-        # Download button with magnet link
-        dl_cmd = f"torrents add {t.magnet}"
+        # Download button with numbered reference (magnet stored in cache)
+        dl_cmd = f"torrents download {category} {i}"
 
         lines.append(f"**{i}. {title_display}**")
         lines.append(f"   [Download](cmd:{dl_cmd}) | S:{t.seeders} L:{t.leechers} | {t.size}\n")
@@ -262,8 +262,8 @@ def format_all_categories(all_results: dict[str, list[TorrentResult]]) -> str:
             else:
                 title_display = title
 
-            # Download button with magnet link
-            dl_cmd = f"torrents add {t.magnet}"
+            # Download button with numbered reference
+            dl_cmd = f"torrents download {category} {i}"
 
             lines.append(f"{i}. {title_display} ({t.size})")
             lines.append(f"   [Download](cmd:{dl_cmd})")
