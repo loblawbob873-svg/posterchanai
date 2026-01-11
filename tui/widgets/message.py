@@ -98,12 +98,6 @@ class MessageWidget(Widget):
 
             logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")
 
-            # Only show buttons for actionable commands (mail, calendar, torrents)
-            # Skip if too many links (like music/search results)
-            if len(self._cmd_links) > 10:
-                logger.info(f"Skipping buttons: too many links ({len(self._cmd_links)})")
-                return
-
             # Filter to essential action buttons
             essential_prefixes = ("mail ", "cal ", "torrents ", "todo ", "news ", "miniflux ", "nyaa ", "music ")
             actionable = [
