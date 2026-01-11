@@ -371,57 +371,78 @@ Input.-invalid {
 /* ======== MUSIC PLAYER ======== */
 #music-player {
     dock: bottom;
-    height: 7;
+    height: 10;
     background: $surface;
     border-top: double $magenta;
-    padding: 1;
 }
 
 #music-player.--hidden {
     display: none;
 }
 
-#music-header {
+#player-container {
+    height: auto;
+    padding: 1;
+}
+
+#player-title {
     color: $magenta;
     text-style: bold;
     text-align: center;
-}
-
-#music-title {
-    color: $cyan;
-    text-style: bold;
-    text-align: center;
-}
-
-#music-artist {
-    color: $text-dim;
-    text-align: center;
-}
-
-#music-progress {
-    margin: 0 2;
-}
-
-#music-visualizer {
-    text-align: center;
-    color: $cyan;
-}
-
-#music-controls {
-    layout: horizontal;
-    align: center middle;
     height: 1;
 }
 
-.music-btn {
-    background: transparent;
-    color: $magenta;
-    border: none;
-    min-width: 5;
+#player-info {
+    height: 1;
 }
 
-.music-btn:hover {
+#track-info {
     color: $cyan;
+    text-align: center;
+    width: 1fr;
+}
+
+#visualizer {
+    text-align: center;
+    color: $cyan;
+    height: 1;
+}
+
+#progress-row {
+    height: 1;
+    margin: 0 2;
+}
+
+#time-current, #time-total {
+    width: 6;
+    color: $text-dim;
+}
+
+#progress-bar {
+    width: 1fr;
+}
+
+#player-controls {
+    height: 3;
+    align: center middle;
+}
+
+.player-btn {
+    background: $surface-bright;
+    color: $magenta;
+    border: solid $magenta 50%;
+    min-width: 6;
+    margin: 0 1;
+}
+
+.player-btn:hover {
+    background: $magenta 20%;
+    color: $cyan;
+}
+
+.player-btn-main {
+    min-width: 8;
+    background: $magenta 20%;
 }
 
 /* ======== SETTINGS ======== */
