@@ -1242,7 +1242,30 @@ fieldset legend {
         font-size: 12px;
     }
     .input-area {
-        padding: 12px;
+        padding: 8px;
+    }
+    .input-row {
+        gap: 6px;
+    }
+    .input-row .btn-icon {
+        min-width: 36px;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        font-size: 16px;
+    }
+    .input-area textarea {
+        padding: 8px 12px;
+        font-size: 15px;
+    }
+    .btn-send {
+        padding: 8px 12px;
+        font-size: 0;
+        min-width: 44px;
+    }
+    .btn-send::after {
+        content: "➤";
+        font-size: 18px;
     }
     .message-content {
         max-width: 90%;

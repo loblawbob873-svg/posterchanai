@@ -94,6 +94,24 @@ async def run_daily_schedule_for_user(user_id: int):
             logger.debug(f"Schedule disabled for user {user_id}")
             return
 
+        # Check if today's schedule has already been sent (prevent duplicates)
+        date_str = datetime.now().strftime("%A, %B %d, %Y")
+        today_header = f"## Daily Schedule - {date_str}"
+
+        today_chat = db.query(Conversation).filter(
+            Conversation.user_id == user_id,
+            Conversation.title == TODAY_CHAT_TITLE
+        ).first()
+
+        if today_chat:
+            existing_msg = db.query(Message).filter(
+                Message.conversation_id == today_chat.id,
+                Message.content.like(f"{today_header}%")
+            ).first()
+            if existing_msg:
+                logger.info(f"Daily schedule already sent today for user {user_id}, skipping")
+                return
+
         logger.info(f"Generating daily schedule for user {user_id}...")
 
         # Get today's events
@@ -112,9 +130,8 @@ async def run_daily_schedule_for_user(user_id: int):
         # Get or create Today chat
         today_chat = get_or_create_today_chat(db, user_id)
 
-        # Format the message
+        # Format the message (date_str already set above for dedup check)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        date_str = datetime.now().strftime("%A, %B %d, %Y")
         message_text = f"## Daily Schedule - {date_str}\n*{timestamp}*\n\n{summary}"
 
         # Add message to chat
