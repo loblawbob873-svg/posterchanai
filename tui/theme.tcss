@@ -142,6 +142,21 @@ FooterKey > .footer-key--key {
     padding: 1;
 }
 
+#typing-indicator {
+    dock: bottom;
+    height: 2;
+    background: $magenta 20%;
+    color: $magenta;
+    text-align: center;
+    text-style: bold italic;
+    padding: 0 1;
+    border: solid $magenta 50%;
+}
+
+#typing-indicator.--hidden {
+    display: none;
+}
+
 /* ======== MESSAGES ======== */
 MessageWidget {
     height: auto;
@@ -172,6 +187,10 @@ MessageWidget {
     background: $magenta 12%;
     border: solid $magenta 40%;
     margin-right: 20;
+}
+
+.message-assistant.message-streaming {
+    border: solid $magenta 80%;
 }
 
 .message-assistant .message-role {

@@ -27,6 +27,8 @@ class MusicPlayerWidget(Widget):
         self.playlist: list[dict] = []
         self.playlist_index = 0
         self._player_initialized = False
+        self._player_ready = False
+        self._pending_track = None  # Track waiting for player init
         self.add_class("--hidden")  # Start hidden
 
     def compose(self) -> ComposeResult:
@@ -59,6 +61,15 @@ class MusicPlayerWidget(Widget):
             return self.player is not None
 
         self._player_initialized = True
+        self._player_ready = False
+
+        # Initialize in background to avoid blocking UI
+        self._init_player_background()
+        return False  # Not ready yet, will be ready after background init
+
+    @work(exclusive=True, thread=True)
+    def _init_player_background(self):
+        """Initialize player in background thread."""
         try:
             from tui.audio import create_player, ASCIIVisualizer
             self.visualizer = ASCIIVisualizer()
@@ -67,10 +78,18 @@ class MusicPlayerWidget(Widget):
                 # Wrap callbacks to use call_from_thread for thread safety
                 self.player.on_progress = self._on_progress_callback
                 self.player.on_track_end = self._on_track_end_callback
-            return self.player is not None
+            self._player_ready = True
+            self.app.call_from_thread(self._on_player_ready)
         except Exception as e:
-            self.notify(f"Audio player failed: {e}", severity="error")
-            return False
+            self.app.call_from_thread(lambda: self.notify(f"Audio player failed: {e}", severity="error"))
+
+    def _on_player_ready(self):
+        """Called when player is ready after background init."""
+        # If we have a pending track, start playing it
+        if self._pending_track:
+            track = self._pending_track
+            self._pending_track = None
+            self._start_playback(track)
 
     def _on_progress_callback(self, position: float, duration: float):
         """Thread-safe progress callback."""
@@ -113,16 +132,27 @@ class MusicPlayerWidget(Widget):
 
     def play_track(self, track: dict):
         """Play a single track."""
-        if not self._init_player():
-            self.notify("Audio player not available. Install mpv.", severity="error")
-            return
-
         if not track:
             return
 
         self.current_track = track
         self.playlist = [track]
         self.playlist_index = 0
+
+        # Check if player is ready
+        if not self._player_initialized:
+            # Start initialization and queue the track
+            self._pending_track = track
+            self._init_player()
+            self._update_track_display()  # Show what's loading
+            return
+
+        if not self._player_ready:
+            # Still initializing, queue the track
+            self._pending_track = track
+            self._update_track_display()
+            return
+
         self._start_playback(track)
 
     def load_playlist(self, tracks: list[dict]):
@@ -230,7 +260,7 @@ class MusicPlayerWidget(Widget):
 
     def toggle_playback(self):
         """Toggle play/pause."""
-        if not self._init_player():
+        if not self._player_ready or not self.player:
             return
 
         if self.is_playing:
