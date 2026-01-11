@@ -417,26 +417,25 @@ def search_messages(
                             if len(messages) >= limit:
                                 break
                             try:
+                                # Decode UID if bytes
+                                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+
                                 # Use UID FETCH to fetch by UID
-                                status, msg_data = imap.uid('fetch', uid, "(RFC822)")
+                                status, msg_data = imap.uid('fetch', uid_str, "(RFC822)")
                                 if status != "OK" or not msg_data or not msg_data[0]:
-                                    logger.info(f"Fetch failed for UID {uid}: status={status}, data={msg_data}")
                                     continue
 
                                 # Handle different response formats
                                 if isinstance(msg_data[0], tuple) and len(msg_data[0]) >= 2:
                                     raw_email = msg_data[0][1]
                                 elif isinstance(msg_data[0], bytes):
-                                    # Some servers return just bytes
-                                    logger.info(f"UID {uid}: msg_data[0] is bytes, trying msg_data[1]")
+                                    # Some servers return flags then data
                                     if len(msg_data) > 1 and isinstance(msg_data[1], tuple):
                                         raw_email = msg_data[1][1]
                                     else:
                                         continue
                                 else:
-                                    logger.info(f"Unexpected format for UID {uid}: {type(msg_data[0])} - {msg_data[:2]}")
                                     continue
-                                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
                                 msg = parse_email(raw_email, uid_str, account.email)
                                 if msg:
                                     # Add folder info to message
