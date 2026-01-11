@@ -404,7 +404,9 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
 
 
 def format_events_for_display(events: List[CalendarEvent], include_description: bool = False) -> str:
-    """Format events for display."""
+    """Format events for display with clickable map links for locations."""
+    import urllib.parse
+
     if not events:
         return "No events found."
 
@@ -423,7 +425,9 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
 
         line = f"- {time_str}: {event.summary}"
         if event.location:
-            line += f" @ {event.location}"
+            # Create Google Maps link for mobile
+            maps_url = f"https://maps.google.com/maps?q={urllib.parse.quote(event.location)}"
+            line += f" @ [{event.location}]({maps_url})"
         lines.append(line)
 
         if include_description and event.description:
@@ -433,17 +437,25 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
 
 
 def format_contacts_for_display(contacts: List[Contact]) -> str:
-    """Format contacts for display."""
+    """Format contacts for display with clickable phone and email links."""
+    import re
+
     if not contacts:
         return "No contacts found."
+
+    def format_phone_link(phone: str) -> str:
+        """Create tel: link from phone number."""
+        # Remove all non-digit characters except + for international
+        clean = re.sub(r'[^\d+]', '', phone)
+        return f"[{phone}](tel:{clean})"
 
     lines = []
     for contact in contacts:
         lines.append(f"\n**{contact.name}**")
         if contact.email:
-            lines.append(f"  Email: {contact.email}")
+            lines.append(f"  Email: [{contact.email}](mailto:{contact.email})")
         if contact.phone:
-            lines.append(f"  Phone: {contact.phone}")
+            lines.append(f"  Phone: {format_phone_link(contact.phone)}")
         if contact.organization:
             lines.append(f"  Organization: {contact.organization}")
         if contact.note:
