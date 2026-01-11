@@ -80,13 +80,19 @@ async def startup():
     # Start health check if enabled
     from app.services.health_check import start_health_check
     start_health_check()
-    # Start news scheduler
-    from app.services.news_scheduler import start_scheduler
-    start_scheduler()
 
-    # Start Miniflux news scheduler
-    from app.services.miniflux_scheduler import start_miniflux_scheduler
-    start_miniflux_scheduler()
+    # Only start schedulers on main instance (port 3051) to avoid database locks
+    app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
+    if app_port == 3051:
+        # Start news scheduler
+        from app.services.news_scheduler import start_scheduler
+        start_scheduler()
+
+        # Start Miniflux news scheduler
+        from app.services.miniflux_scheduler import start_miniflux_scheduler
+        start_miniflux_scheduler()
+    else:
+        logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 
     # Auto-warmup RAG cache if enabled (only if MCP server is not handling it)
     db2 = SessionLocal()
@@ -117,12 +123,17 @@ async def shutdown():
     # Stop health check
     from app.services.health_check import stop_health_check
     stop_health_check()
-    # Stop news scheduler
-    from app.services.news_scheduler import stop_scheduler
-    stop_scheduler()
-    # Stop Miniflux news scheduler
-    from app.services.miniflux_scheduler import stop_miniflux_scheduler
-    stop_miniflux_scheduler()
+
+    # Only stop schedulers on main instance (port 3051)
+    app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
+    if app_port == 3051:
+        # Stop news scheduler
+        from app.services.news_scheduler import stop_scheduler
+        stop_scheduler()
+        # Stop Miniflux news scheduler
+        from app.services.miniflux_scheduler import stop_miniflux_scheduler
+        stop_miniflux_scheduler()
+
     # Stop MCP server
     from app.services.mcp_service import stop_mcp_server
     stop_mcp_server()

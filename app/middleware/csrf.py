@@ -18,8 +18,9 @@ CSRF_TOKEN_LENGTH = 32
 
 # Paths that don't require CSRF protection
 CSRF_EXEMPT_PATHS: Set[str] = {
-    "/api/v1/",  # OpenAI-compatible API uses API key auth
+    "/v1/",      # OpenAI-compatible API uses API key auth
     "/api/tts",  # API key authenticated
+    "/api/generate-image",  # Image API for load balancing (API key/JWT auth)
     "/mcp/",     # MCP server endpoints
     "/ws/",      # WebSocket connections
 }

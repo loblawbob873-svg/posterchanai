@@ -5,6 +5,10 @@
 setup_llama_cpp() {
     print_step "Installing llama-cpp-python..."
 
+    # Activate the appropriate venv
+    local VENV_NAME="${CHAT_VENV_NAME:-venv}"
+    source "$SCRIPT_DIR/$VENV_NAME/bin/activate"
+
     case "$BACKEND" in
         intel)
             setup_llama_cpp_intel
@@ -19,11 +23,13 @@ setup_llama_cpp() {
             setup_llama_cpp_cpu
             ;;
         ollama)
+            deactivate
             print_success "Using Ollama backend (no llama-cpp-python needed)"
             return
             ;;
     esac
 
+    deactivate
     print_success "llama-cpp-python installed"
 }
 
@@ -89,33 +95,39 @@ setup_llama_cpp_intel() {
     source "$ONEAPI_PATH" --force >/dev/null 2>&1
     print_success "Intel oneAPI loaded from $ONEAPI_PATH"
 
+    # Get oneAPI root directory and set CMAKE_PREFIX_PATH for the build
+    # This is required for CMake to find MKL, DNNL, and IntelSYCL
+    local ONEAPI_ROOT
+    ONEAPI_ROOT=$(detect_oneapi_root)
+    export CMAKE_PREFIX_PATH="$ONEAPI_ROOT/lib/cmake:$ONEAPI_ROOT:${CMAKE_PREFIX_PATH:-}"
+    export MKLROOT="$ONEAPI_ROOT"
+    export DNNLROOT="$ONEAPI_ROOT"
+
     # Create libittnotify stub if not exists
     create_vtune_stub
 
-    # Install PyTorch with XPU support from Intel's index
-    echo "  Installing PyTorch with XPU support..."
-    pip install torch torchvision \
-        --index-url https://download.pytorch.org/whl/xpu \
-        -q 2>/dev/null || {
-        print_warning "XPU PyTorch not available, trying CPU fallback..."
-        pip install torch torchvision -q
-    }
+    # Install IPEX-LLM with cpp support (includes torch 2.2.0 and intel-extension-for-pytorch)
+    # This provides GPU-accelerated GGML inference for Intel Arc GPUs
+    echo "  Installing IPEX-LLM with cpp support..."
+    echo "  This includes PyTorch 2.2.0 and Intel Extension for PyTorch..."
+    pip install --pre --upgrade "ipex-llm[cpp]" -q
 
-    # Install Intel Extension for PyTorch (provides XPU device support)
-    echo "  Installing Intel Extension for PyTorch..."
-    pip install --upgrade intel-extension-for-pytorch \
-        --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ \
-        -q 2>/dev/null || print_warning "IPEX install failed, GPU acceleration may not work"
-
-    # Install IPEX-LLM (provides optimized llama.cpp bindings for Intel GPUs)
-    echo "  Installing IPEX-LLM..."
-    pip install --pre --upgrade ipex-llm[cpp] -q
+    # Install compatible torchvision
+    echo "  Installing compatible torchvision..."
+    pip install torchvision==0.17.0 -q 2>/dev/null || pip install torchvision -q
 
     # Verify IPEX installation
     if python -c "import intel_extension_for_pytorch" 2>/dev/null; then
         print_success "Intel Extension for PyTorch installed successfully"
     else
         print_warning "Intel Extension for PyTorch import failed - GPU may not be used"
+    fi
+
+    # Verify IPEX-LLM GGML
+    if python -c "from ipex_llm.ggml.model.llama import Llama" 2>/dev/null; then
+        print_success "IPEX-LLM GGML backend installed successfully"
+    else
+        print_warning "IPEX-LLM GGML not available - will fall back to llama-cpp-python"
     fi
 
     # Fix executable stack issue on modern glibc (2.41+)
@@ -136,12 +148,26 @@ setup_llama_cpp_intel() {
         fi
     fi
 
-    # Install llama-cpp-python with SYCL
-    local LLAMA_CPP_VERSION="0.3.16"
-    echo "  Building llama-cpp-python==$LLAMA_CPP_VERSION with Intel SYCL..."
-    echo "  This may take 5-10 minutes..."
-    export CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx"
-    pip install "llama-cpp-python==$LLAMA_CPP_VERSION" --force-reinstall --no-cache-dir -q
+    # Install llama-cpp-python with SYCL support for Intel Arc GPU
+    # This is the primary backend for GGUF models on Intel Arc
+    # IMPORTANT: Must use icx/icpx compilers from oneAPI for SYCL support
+    # Use full paths to compilers to ensure they're found during pip build
+    echo "  Building llama-cpp-python with SYCL backend for Intel Arc..."
+    echo "  Using Intel compilers (icx/icpx) for SYCL support..."
+    echo "  This compiles with GPU support - may take 5-10 minutes..."
+    CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=$ONEAPI_ROOT/bin/icx -DCMAKE_CXX_COMPILER=$ONEAPI_ROOT/bin/icpx" \
+        pip install llama-cpp-python --force-reinstall --no-cache-dir -q || {
+        print_warning "SYCL build failed, installing pre-built (may be CPU-only)..."
+        pip install llama-cpp-python -q
+    }
+
+    # Verify SYCL support (need LD_LIBRARY_PATH for runtime libs like libsvml.so)
+    export LD_LIBRARY_PATH="$ONEAPI_ROOT/lib:${LD_LIBRARY_PATH:-}"
+    if python -c "import llama_cpp; print('GPU offload:', llama_cpp.llama_supports_gpu_offload())" 2>/dev/null | grep -q "True"; then
+        print_success "llama-cpp-python installed with GPU (SYCL) support"
+    else
+        print_warning "llama-cpp-python may be CPU-only - check SYCL compilation"
+    fi
 }
 
 setup_llama_cpp_nvidia() {

@@ -8,6 +8,17 @@ setup_image_deps() {
         return
     fi
 
+    # Intel Arc with native image: all deps go into venv-xpu via setup_xpu_image_instance()
+    # Skip this function entirely for Intel - venv-xpu handles everything
+    if [ "$BACKEND" = "intel" ] && [ "$IMAGE_BACKEND" = "native" ]; then
+        print_step "Intel Arc: Image deps will be installed in venv-xpu"
+        return
+    fi
+
+    # Activate the chat venv for non-Intel backends
+    local VENV_NAME="${CHAT_VENV_NAME:-venv}"
+    source "$SCRIPT_DIR/$VENV_NAME/bin/activate"
+
     print_step "Installing image processing dependencies..."
 
     # Always install face detection dependencies
@@ -17,6 +28,7 @@ setup_image_deps() {
 
     # Skip diffusers if using ComfyUI backend
     if [ "$IMAGE_BACKEND" != "native" ]; then
+        deactivate
         print_success "Using ComfyUI backend - skipping diffusers installation"
         return
     fi
@@ -31,10 +43,6 @@ setup_image_deps() {
     case "$GPU_TYPE" in
         nvidia)
             setup_pytorch_nvidia
-            ;;
-        intel)
-            echo "  Intel XPU: Using existing IPEX PyTorch from venv-ipex"
-            print_success "PyTorch XPU ready"
             ;;
         amd)
             setup_pytorch_amd
@@ -54,6 +62,7 @@ setup_image_deps() {
         fi
     fi
 
+    deactivate
     print_success "Image generation dependencies installed"
 }
 
@@ -113,7 +122,7 @@ setup_pytorch_cpu() {
 }
 
 setup_xpu_image_instance() {
-    # Only for Intel Arc using IPEX-LLM for chat
+    # Only for Intel Arc using IPEX-LLM for chat with native image generation
     if [ "$BACKEND" != "intel" ] || [ "$IMAGE_BACKEND" != "native" ]; then
         return
     fi
@@ -121,47 +130,53 @@ setup_xpu_image_instance() {
     echo ""
     print_step "Intel Arc Dual-Instance Setup"
     echo ""
-    echo "  You're using IPEX-LLM for chat on Intel Arc."
-    echo "  For image generation, you can run a separate instance using PyTorch XPU."
+    echo "  Setting up separate venvs for Intel Arc:"
+    echo "    - venv-ipex: Chat (IPEX-LLM) - uses IPEX optimizations"
+    echo "    - venv-xpu:  Images (PyTorch XPU) - uses native PyTorch XPU"
     echo ""
-    echo "  This sets up:"
-    echo "    - Port 3051: Chat (IPEX-LLM) - current instance"
-    echo "    - Port 3052: Images (PyTorch XPU) - separate instance"
+    echo "  Two systemd services will be created:"
+    echo "    - posterchanai-ipex.service (port 3051) - Chat"
+    echo "    - posterchanai-xpu-image.service (port 3052) - Images"
     echo ""
-    read -p "Set up XPU image generation instance? [y/N]: " SETUP_XPU_IMAGE
-    SETUP_XPU_IMAGE=${SETUP_XPU_IMAGE:-N}
 
-    if [[ ! "$SETUP_XPU_IMAGE" =~ ^[Yy] ]]; then
-        print_warning "Skipping XPU image instance setup"
-        echo "  You can set this up later with: ./scripts/setup-image-instance.sh"
-        return
-    fi
+    print_step "Setting up venv-xpu for image generation..."
 
-    print_step "Setting up XPU image instance..."
+    # Export for use by systemd.sh
+    export IMAGE_VENV_NAME="venv-xpu"
 
     # Create venv-xpu
     if [ ! -d "$SCRIPT_DIR/venv-xpu" ]; then
         echo "  Creating venv-xpu..."
         python3 -m venv "$SCRIPT_DIR/venv-xpu"
+        print_success "Created venv-xpu"
+    else
+        print_success "venv-xpu already exists"
     fi
 
-    # Install PyTorch XPU
+    # Install PyTorch XPU and dependencies
+    # NOTE: venv-xpu uses standard numpy (not numpy<2 like venv-ipex)
+    # This avoids version conflicts between IPEX-LLM and PyTorch XPU
     echo "  Installing PyTorch XPU..."
     source "$SCRIPT_DIR/venv-xpu/bin/activate"
     pip install --upgrade pip -q
+
+    # Install PyTorch XPU (from test channel for Intel Arc support)
     pip install torch torchvision --index-url https://download.pytorch.org/whl/test/xpu -q
+
+    # Install image generation libraries
     pip install diffusers transformers accelerate safetensors -q
+
+    # Install base app requirements (for the web server)
     pip install -r "$SCRIPT_DIR/requirements.txt" -q
-    pip install -r "$SCRIPT_DIR/requirements-image.txt" -q 2>/dev/null || true
+
+    # Install face detection dependencies
+    pip install onnxruntime huggingface_hub insightface opencv-python-headless mkl -q
+
     deactivate
 
-    # Install systemd service
-    if [ -d "$HOME/.config/systemd/user" ]; then
-        cp "$SCRIPT_DIR/posterchanai-xpu-image.service" "$HOME/.config/systemd/user/" 2>/dev/null || true
-        systemctl --user daemon-reload 2>/dev/null || true
-        print_success "XPU image instance installed!"
-        echo ""
-        echo "  To enable: systemctl --user enable posterchanai-xpu-image"
-        echo "  To start:  systemctl --user start posterchanai-xpu-image"
-    fi
+    print_success "venv-xpu configured with PyTorch XPU and diffusers"
+    echo ""
+    echo "  Version isolation:"
+    echo "    venv-ipex: IPEX-LLM with numpy<2 (chat/LLM)"
+    echo "    venv-xpu:  PyTorch XPU with standard numpy (image gen)"
 }

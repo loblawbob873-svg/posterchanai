@@ -108,23 +108,40 @@ async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) 
     return None
 
 
+def is_self_url(url: str, current_port: int = 3051) -> bool:
+    """Check if a URL points to THIS instance (same host AND port)."""
+    import os
+    import socket
+    from urllib.parse import urlparse
+
+    current_port = int(os.environ.get("POSTERCHANAI_PORT", str(current_port)))
+
+    # Get local IPs
+    local_ips = {'127.0.0.1', 'localhost', '0.0.0.0'}
+    try:
+        hostname = socket.gethostname()
+        local_ips.add(hostname)
+        local_ips.add(socket.gethostbyname(hostname))
+        for info in socket.getaddrinfo(hostname, None):
+            local_ips.add(info[4][0])
+    except Exception:
+        pass
+
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+        return host in local_ips and port == current_port
+    except Exception:
+        return False
+
+
 async def should_use_remote(num_remote_servers: int) -> bool:
     """
-    Decide if this request should go to a remote server or stay local.
-    Distributes requests evenly: with 1 remote server, alternates 50/50.
-    With 2 remote servers, goes remote 2/3 of the time, local 1/3.
+    Always use remote/load-balanced path when servers configured.
+    The actual local vs remote decision happens in get_healthy_server.
     """
-    global _request_counter
-    async with _counter_lock:
-        count = _request_counter
-        _request_counter += 1
-
-    # Total slots = local (1) + remote servers
-    total_slots = 1 + num_remote_servers
-    use_remote = (count % total_slots) != 0  # Slot 0 = local, others = remote
-
-    logger.info(f"Request #{count}: {'REMOTE' if use_remote else 'LOCAL'} (total_slots={total_slots})")
-    return use_remote
+    return num_remote_servers > 0
 
 
 async def _get_next_server(servers: List[str]) -> str:
@@ -140,7 +157,7 @@ async def _get_next_server(servers: List[str]) -> str:
         return server
 
 
-def parse_server_urls(urls_string: str, exclude_self: bool = True, current_port: int = 3051) -> List[str]:
+def parse_server_urls(urls_string: str, exclude_self: bool = False, current_port: int = 3051) -> List[str]:
     """Parse comma-separated server URLs into a list.
 
     If exclude_self is True, removes URLs pointing to THIS instance (same host AND port).

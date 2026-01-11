@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Global scheduler instance
 miniflux_scheduler: Optional[AsyncIOScheduler] = None
 
-# Name of the News chat
+# Name of the Miniflux RSS chat
 NEWS_CHAT_TITLE = "News"
 
 
@@ -68,7 +68,8 @@ def get_or_create_news_chat(db: Session, user_id: int) -> Conversation:
         title=NEWS_CHAT_TITLE
     )
     db.add(news_chat)
-    db.flush()  # Get the ID
+    db.commit()  # Commit immediately to ensure it's saved
+    db.refresh(news_chat)  # Refresh to get the ID
     logger.info(f"Created News chat for user {user_id}")
     return news_chat
 
@@ -151,17 +152,13 @@ async def process_miniflux_news_for_user(user_id: int):
         # Get or create News chat
         news_chat = get_or_create_news_chat(db, user.id)
 
-        # Process each entry
-        processed_ids: List[int] = []
-        summaries: List[str] = []
-
+        # Process each entry one by one
         for entry in entries:
             entry_id = entry.get("id")
             title = entry.get("title", "Untitled")
             url = entry.get("url", "")
             content = entry.get("content", "")
             feed_title = entry.get("feed", {}).get("title", "Unknown Feed")
-            published = entry.get("published_at", "")
 
             # Convert HTML content to text
             text_content = html_to_text(content)
@@ -175,31 +172,27 @@ async def process_miniflux_news_for_user(user_id: int):
             # Generate summary
             summary = await summarize_article(db, user, title, text_content, url)
 
-            # Format the message
-            summary_text = f"**{title}**\n*Source: {feed_title}*\n{url}\n\n{summary}"
-            summaries.append(summary_text)
-            processed_ids.append(entry_id)
+            # Format with clickable markdown link
+            if url:
+                summary_text = f"**[{title}]({url})**\n*Source: {feed_title}*\n\n{summary}"
+            else:
+                summary_text = f"**{title}**\n*Source: {feed_title}*\n\n{summary}"
 
-        # Add all summaries as a single message to the News chat
-        if summaries:
-            timestamp = datetime.now().strftime("%B %d, %Y %H:%M")
-            full_content = f"**News Update - {timestamp}**\n\n" + "\n\n---\n\n".join(summaries)
-
+            # Add message immediately after processing each entry
             news_msg = Message(
                 conversation_id=news_chat.id,
                 role="assistant",
-                content=full_content
+                content=summary_text
             )
             db.add(news_msg)
 
             # Update conversation timestamp
             news_chat.updated_at = datetime.utcnow()
-
             db.commit()
-            logger.info(f"Added {len(summaries)} news summaries to News chat for user {user.username}")
 
-            # Mark entries as read in Miniflux
-            await miniflux.mark_entries_as_read(processed_ids)
+            # Mark this entry as read in Miniflux immediately
+            await miniflux.mark_entries_as_read([entry_id])
+            logger.info(f"Added summary for '{title[:50]}...' to News chat")
 
     except Exception as e:
         logger.error(f"Error processing Miniflux news for user {user_id}: {e}")

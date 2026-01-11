@@ -1,12 +1,13 @@
 """
 Image Load Balancer Service - Round-robin load balancing for image generation across posterchanai servers.
+With health checking to avoid sending requests to failing servers.
 """
 import asyncio
 import httpx
 import logging
 import time
 from itertools import cycle
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -19,28 +20,118 @@ _image_cycle_lock = asyncio.Lock()
 _image_request_counter: int = 0
 _image_counter_lock = asyncio.Lock()
 
+# Server health tracking
+_image_server_health: Dict[str, Tuple[bool, float]] = {}  # server -> (is_healthy, last_check_time)
+_image_health_lock = asyncio.Lock()
+IMAGE_HEALTH_CHECK_INTERVAL = 60  # Re-check unhealthy servers after 60 seconds
+IMAGE_HEALTH_CHECK_TIMEOUT = 5.0  # Quick timeout for health checks
+
+
+async def check_image_server_health(server: str) -> bool:
+    """
+    Quick health check - verify server responds to /api/generate-image endpoint.
+    Returns True if healthy, False otherwise.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=IMAGE_HEALTH_CHECK_TIMEOUT) as client:
+            # Just check if the endpoint exists (OPTIONS or quick GET)
+            response = await client.get(f"{server}/api/health")
+            if response.status_code in (200, 404, 405):  # 404/405 means endpoint exists but wrong method
+                return True
+            logger.warning(f"Image health check failed for {server}: status {response.status_code}")
+            return False
+    except Exception as e:
+        logger.warning(f"Image health check failed for {server}: {str(e)[:100]}")
+        return False
+
+
+async def get_healthy_image_server(servers: List[str]) -> Optional[str]:
+    """
+    Get next healthy image server using round-robin.
+    Skips unhealthy servers, re-checks them after IMAGE_HEALTH_CHECK_INTERVAL.
+    Returns None if no healthy servers available.
+    """
+    global _image_server_cycle, _image_server_list, _image_server_health
+
+    if not servers:
+        return None
+
+    current_time = time.time()
+
+    async with _image_cycle_lock:
+        # Reset cycle if server list changed
+        if _image_server_cycle is None or _image_server_list != servers:
+            _image_server_list = servers.copy()
+            _image_server_cycle = cycle(servers)
+            logger.info(f"Image load balancer initialized with {len(servers)} server(s): {servers}")
+
+    # Try each server in round-robin order
+    tried = set()
+    while len(tried) < len(servers):
+        async with _image_cycle_lock:
+            server = next(_image_server_cycle)
+
+        if server in tried:
+            continue
+        tried.add(server)
+
+        # Check cached health status
+        async with _image_health_lock:
+            if server in _image_server_health:
+                is_healthy, last_check = _image_server_health[server]
+
+                # If healthy, use it
+                if is_healthy:
+                    logger.info(f"Selected healthy image server: {server}")
+                    return server
+
+                # If unhealthy but check is stale, re-check
+                if current_time - last_check < IMAGE_HEALTH_CHECK_INTERVAL:
+                    logger.info(f"Skipping unhealthy image server: {server} (checked {current_time - last_check:.0f}s ago)")
+                    continue
+            else:
+                # First time seeing this server, assume healthy
+                _image_server_health[server] = (True, current_time)
+                logger.info(f"Selected image server (first use): {server}")
+                return server
+
+        # Do health check for previously failed server
+        logger.info(f"Health checking image server {server}...")
+        is_healthy = await check_image_server_health(server)
+
+        async with _image_health_lock:
+            _image_server_health[server] = (is_healthy, current_time)
+
+        if is_healthy:
+            logger.info(f"Image server {server} is now healthy")
+            return server
+        else:
+            logger.warning(f"Image server {server} still unhealthy")
+
+    logger.warning("No healthy image servers available")
+    return None
+
+
+async def mark_image_server_unhealthy(server: str):
+    """Mark an image server as unhealthy (call after a failed request)"""
+    global _image_server_health
+    async with _image_health_lock:
+        _image_server_health[server] = (False, time.time())
+    logger.warning(f"Marked image server unhealthy: {server}")
+
 
 async def should_use_remote_image(num_remote_servers: int) -> bool:
     """
-    Decide if this request should go to a remote server or stay local.
-    Distributes requests evenly: with 1 remote server, alternates 50/50.
-    With 2 remote servers, goes remote 2/3 of the time, local 1/3.
+    Always use remote servers when configured - pure load balancing.
+    All requests go to the configured image_server_urls.
     """
-    global _image_request_counter
-    async with _image_counter_lock:
-        _image_request_counter += 1
-        count = _image_request_counter
-
-    # Total slots = local (1) + remote servers
-    total_slots = 1 + num_remote_servers
-    use_remote = (count % total_slots) != 0  # Slot 0 = local, others = remote
-
-    logger.info(f"Image Request #{count}: {'REMOTE' if use_remote else 'LOCAL'} (total_slots={total_slots})")
-    return use_remote
+    if num_remote_servers > 0:
+        return True
+    return False
 
 
 async def _get_next_image_server(servers: List[str]) -> str:
-    """Get next image server using round-robin (async-safe)"""
+    """Get next image server using round-robin (async-safe) - legacy, use get_healthy_image_server instead"""
     global _image_server_cycle, _image_server_list
     async with _image_cycle_lock:
         if _image_server_cycle is None or _image_server_list != servers:
@@ -52,7 +143,7 @@ async def _get_next_image_server(servers: List[str]) -> str:
         return server
 
 
-def parse_image_server_urls(urls_string: str, exclude_self: bool = True, current_port: int = 3051) -> List[str]:
+def parse_image_server_urls(urls_string: str, exclude_self: bool = False, current_port: int = 3051) -> List[str]:
     """Parse comma-separated server URLs into a list.
 
     If exclude_self is True, removes URLs pointing to THIS instance (same host AND port).
@@ -112,8 +203,13 @@ def parse_image_server_urls(urls_string: str, exclude_self: bool = True, current
     return servers
 
 
+class NoHealthyImageServersError(Exception):
+    """Raised when no healthy image servers are available"""
+    pass
+
+
 class ImageLoadBalancer:
-    """Simple round-robin load balancer for image generation on posterchanai servers"""
+    """Round-robin load balancer for image generation on posterchanai servers with health checking"""
 
     def __init__(self, servers: List[str], timeout: float = 300.0):
         self.servers = servers
@@ -135,7 +231,12 @@ class ImageLoadBalancer:
         if not self.servers:
             raise ValueError("No servers configured for image load balancing")
 
-        server = await _get_next_image_server(self.servers)
+        # Get a healthy server
+        server = await get_healthy_image_server(self.servers)
+        if not server:
+            logger.warning("No healthy image servers available")
+            raise NoHealthyImageServersError("No healthy image servers available")
+
         start_time = time.time()
         logger.info(f"IMAGE REQUEST to {server} | prompt={prompt[:50]}...")
 
@@ -166,6 +267,7 @@ class ImageLoadBalancer:
 
                 if result.get("error"):
                     logger.error(f"IMAGE ERROR from {server} | error={result['error']}")
+                    await mark_image_server_unhealthy(server)
                     return None
 
                 image_data = result.get("image")
@@ -174,6 +276,7 @@ class ImageLoadBalancer:
                     return image_data
                 else:
                     logger.error(f"IMAGE ERROR from {server} | no image in response")
+                    await mark_image_server_unhealthy(server)
                     return None
 
             except httpx.HTTPStatusError as e:
@@ -183,7 +286,9 @@ class ImageLoadBalancer:
                 except Exception:
                     pass
                 logger.error(f"IMAGE ERROR from {server} | status={e.response.status_code} | body={error_body}")
+                await mark_image_server_unhealthy(server)
                 return None
             except Exception as e:
                 logger.error(f"IMAGE EXCEPTION | server={server} | error={str(e)}")
+                await mark_image_server_unhealthy(server)
                 return None

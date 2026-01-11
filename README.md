@@ -717,13 +717,26 @@ gpu_type: intel
 
 #### Load Balancing
 
-Posterchanai supports load balancing for both chat and image generation across multiple servers.
+Posterchanai supports round-robin load balancing for both chat and image generation across multiple servers.
 
 **Admin > Site Settings > Load Balancing:**
-- `Chat Server URLs` - Comma-separated list of posterchanai servers for chat
-- `Image Server URLs` - Comma-separated list of posterchanai servers for images
+- `Chat Server URLs` - Comma-separated list of posterchanai servers for LLM/chat requests
+- `Image Server URLs` - Comma-separated list of posterchanai servers for image generation
 
-Requests alternate between the local server and configured remote servers. Local URLs on different ports (e.g., `localhost:3052`) are supported for dual-instance setups.
+**How it works:**
+- All configured servers receive requests in round-robin order (50/50 split per server)
+- Health checks skip unresponsive servers (re-checked after 30 seconds)
+- **Local URLs use local inference directly** (no HTTP loop) - if the selected server is "self", the request is processed locally using the GPU
+- Remote URLs are called via HTTP
+
+**Example multi-server setup:**
+```
+Chat Server URLs: http://192.168.0.1:3051,http://192.168.0.85:3051
+Image Server URLs: http://192.168.0.1:3052,http://192.168.0.85:3051
+```
+
+With 2 servers: 50% local (uses local GPU), 50% remote (HTTP to other server).
+With 3 servers: ~33% each, with local URLs using direct GPU inference.
 
 #### Intel Arc Dual-Instance Setup
 
@@ -1357,24 +1370,25 @@ echo "deb [signed-by=/usr/share/keyrings/intel.gpg] https://apt.repos.intel.com/
   sudo tee /etc/apt/sources.list.d/intel-oneapi.list
 sudo apt update && sudo apt install intel-oneapi-base-toolkit
 
-# Build llama-cpp-python with SYCL
+# Build llama-cpp-python with SYCL (MUST use icx/icpx compilers)
 source /opt/intel/oneapi/setvars.sh
-CMAKE_ARGS="-DGGML_SYCL=on -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
-    pip install llama-cpp-python==0.2.90 --force-reinstall --no-cache-dir
+CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
+    pip install llama-cpp-python --force-reinstall --no-cache-dir
 ```
 
 **Gentoo:**
 ```bash
-# Download and install Intel oneAPI Base Toolkit
+# Download and install Intel oneAPI Base Toolkit (get latest from Intel)
+# https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html
 cd /tmp
-wget https://registrationcenter-download.intel.com/akdlm/IRC_NAS/e6ff8e9c-ee28-47fb-abd7-5c524c983e1c/l_BaseKit_p_2024.2.1.100_offline.sh
-chmod +x l_BaseKit_p_2024.2.1.100_offline.sh
-sudo ./l_BaseKit_p_2024.2.1.100_offline.sh -a --silent --eula accept
+wget https://registrationcenter-download.intel.com/akdlm/.../l_BaseKit_p_VERSION_offline.sh
+chmod +x l_BaseKit_p_*.sh
+sudo ./l_BaseKit_p_*.sh -a --silent --eula accept
 
-# Build llama-cpp-python with SYCL
-source /opt/intel/oneapi/2024.2/oneapi-vars.sh
-CMAKE_ARGS="-DGGML_SYCL=on -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
-    pip install llama-cpp-python==0.2.90 --force-reinstall --no-cache-dir
+# Build llama-cpp-python with SYCL (MUST use icx/icpx compilers)
+source /opt/intel/oneapi/2025.0/oneapi-vars.sh  # or 2024.2
+CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx" \
+    pip install llama-cpp-python --force-reinstall --no-cache-dir
 ```
 
 #### NVIDIA GPU (CUDA)

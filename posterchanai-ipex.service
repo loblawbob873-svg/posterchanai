@@ -1,35 +1,36 @@
+# Posterchan AI Chat Service - IPEX-LLM on Intel Arc GPU
+# NOTE: This is a template file. The installer generates the actual service
+# file with the correct user and paths in /etc/systemd/system/
+#
+# To use this template manually, replace:
+#   - YOUR_USER with your username
+#   - /path/to/posterchanai with the actual installation path
+
 [Unit]
-Description=Posterchan AI (IPEX-LLM)
+Description=Posterchan AI Chat (IPEX-LLM Intel Arc GPU)
 After=network.target
 
 [Service]
 Type=simple
-User=verita84
-WorkingDirectory=/home/verita84/posterchanai
+User=YOUR_USER
+WorkingDirectory=/path/to/posterchanai
 
-# Python virtual environment
-Environment="PATH=/home/verita84/posterchanai/venv-ipex/bin:/opt/intel/oneapi/2025.0/bin:/usr/local/bin:/usr/bin"
-Environment="VIRTUAL_ENV=/home/verita84/posterchanai/venv-ipex"
+# Minimal environment - the run script sets up oneAPI and IPEX environment
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=/home/YOUR_USER"
 
-# Intel oneAPI libraries - CRITICAL for SYCL/llama.cpp
-# These must be set explicitly since 'source oneapi-vars.sh' doesn't work in systemd
-Environment="LD_LIBRARY_PATH=/opt/intel/oneapi/2025.0/lib:/usr/local/lib"
-Environment="OCL_ICD_FILENAMES=/opt/intel/oneapi/2025.0/lib/libintelocl.so"
-Environment="ONEAPI_ROOT=/opt/intel/oneapi/2025.0"
+# The run script (run-intel.sh) handles:
+# - Detecting and configuring Intel oneAPI
+# - Setting LD_LIBRARY_PATH with all required library paths
+# - IPEX-LLM optimization environment variables
+# - Sourcing oneapi-vars.sh for SYCL compiler support
+ExecStart=/path/to/posterchanai/run-intel.sh
 
-# IPEX-LLM optimizations
-Environment="ENABLE_SDP_FUSION=1"
-Environment="SYCL_CACHE_PERSISTENT=1"
-Environment="BIGDL_LLM_XMX_DISABLED=1"
-Environment="ZES_ENABLE_SYSMAN=1"
-Environment="TORCH_DEVICE_BACKEND_AUTOLOAD=0"
-
-# Preload VTune stub to suppress symbol warnings
-Environment="LD_PRELOAD=/usr/local/lib/libittnotify.so"
-
-ExecStart=/home/verita84/posterchanai/run-ipex.sh
 Restart=always
 RestartSec=5
+
+# Give extra time for model loading on restart
+TimeoutStartSec=120
 
 [Install]
 WantedBy=multi-user.target

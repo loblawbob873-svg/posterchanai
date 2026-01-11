@@ -1,20 +1,34 @@
+# Posterchan AI Image Service - PyTorch XPU on Intel Arc GPU
+# NOTE: This is a template file. The installer generates the actual service
+# file with the correct user and paths in /etc/systemd/system/
+#
+# To use this template manually, replace:
+#   - YOUR_USER with your username
+#   - /path/to/posterchanai with the actual installation path
+
 [Unit]
-Description=Posterchanai Image Generation Service (Intel XPU)
+Description=Posterchan AI Image Generation (Intel XPU PyTorch)
 After=network.target
 
 [Service]
 Type=simple
-User=verita84
-WorkingDirectory=/home/verita84/posterchanai
-Environment="LD_LIBRARY_PATH=/home/verita84/posterchanai/venv-xpu/lib/python3.13/site-packages/torch/lib"
-Environment="SYCL_CACHE_PERSISTENT=1"
-Environment="ZES_ENABLE_SYSMAN=1"
+User=YOUR_USER
+WorkingDirectory=/path/to/posterchanai
+
+# Minimal environment - the run script sets up oneAPI environment
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=/home/YOUR_USER"
+
 # Use separate database and port for image-only instance
 Environment="POSTERCHANAI_DB=posterchanai-image.db"
 Environment="POSTERCHANAI_PORT=3052"
-ExecStart=/home/verita84/posterchanai/venv-xpu/bin/python run.py --port 3052
-Restart=on-failure
-RestartSec=10
+
+# The run script (run-xpu-image.sh) handles oneAPI setup
+ExecStart=/path/to/posterchanai/run-xpu-image.sh
+
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

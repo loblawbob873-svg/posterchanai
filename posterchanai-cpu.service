@@ -1,14 +1,22 @@
+# Posterchan AI CPU-only Image Instance
+# NOTE: This is a template file. The installer generates the actual service
+# file with the correct user and paths in /etc/systemd/system/
+#
+# To use this template manually, replace:
+#   - YOUR_USER with your username
+#   - /path/to/posterchanai with the actual installation path
+
 [Unit]
 Description=Posterchanai CPU-only Image Instance
 After=network.target
 
 [Service]
 Type=simple
-User=verita84
-WorkingDirectory=/home/verita84/posterchanai
+User=YOUR_USER
+WorkingDirectory=/path/to/posterchanai
 Environment="POSTERCHANAI_DB=posterchanai-cpu.db"
 Environment="POSTERCHANAI_PORT=3053"
-ExecStart=/home/verita84/posterchanai/venv/bin/python run.py --port 3053
+ExecStart=/path/to/posterchanai/venv/bin/python run.py --port 3053
 Restart=always
 RestartSec=5
 

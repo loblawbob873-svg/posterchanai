@@ -56,14 +56,13 @@ class PluginService:
         if not plugins:
             return ""
 
-        prompt = "\n\n## Available Plugins - IMPORTANT\n"
-        prompt += "You MUST use these plugins when the user asks about their capabilities. "
+        prompt = "\n\n## Available Plugins\n"
+        prompt += "Use these plugins ONLY when the user EXPLICITLY asks about them. "
+        prompt += "Do NOT assume the user wants to use a plugin unless they clearly ask.\n"
         prompt += "Output EXACTLY ONE tool call in this format:\n\n"
         prompt += "<tool name=\"PLUGIN\" action=\"ACTION\">{}</tool>\n\n"
-        prompt += "Examples:\n"
-        prompt += "- User asks 'show my torrents' -> <tool name=\"flood\" action=\"list\">{}</tool>\n"
-        prompt += "- User asks 'add this magnet' -> <tool name=\"flood\" action=\"add\">{\"url\": \"magnet:...\"}</tool>\n\n"
         prompt += "Rules:\n"
+        prompt += "- Only use plugins when explicitly requested by the user\n"
         prompt += "- Use `{}` for actions with no parameters\n"
         prompt += "- Use `{\"key\": \"value\"}` when parameters are needed\n"
         prompt += "- Output the tool tag ONCE, then STOP. Do not explain or add text after.\n\n"
@@ -86,7 +85,7 @@ class PluginService:
 
             prompt += "\n"
 
-        prompt += "ALWAYS use these plugins when relevant. After the tool call, wait for results.\n"
+        prompt += "Only use these plugins when the user explicitly asks. After a tool call, wait for results.\n"
 
         return prompt
 

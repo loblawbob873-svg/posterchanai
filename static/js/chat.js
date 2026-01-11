@@ -281,6 +281,13 @@ class ChatHandler {
             });
         }
 
+        // Toggle Miniflux settings visibility
+        if (minifluxEnabled && minifluxSettings) {
+            minifluxEnabled.addEventListener('change', () => {
+                minifluxSettings.style.display = minifluxEnabled.checked ? 'flex' : 'none';
+            });
+        }
+
         // Test custom AI connection
         if (testCustomAi) {
             testCustomAi.addEventListener('click', async () => {
@@ -387,6 +394,34 @@ class ChatHandler {
 
             closeBtn.addEventListener('click', () => {
                 settingsModal.style.display = 'none';
+            });
+
+            // User Settings Tab Switching
+            const userTabs = settingsModal.querySelectorAll('.user-tab-btn');
+            const userTabContents = settingsModal.querySelectorAll('.user-tab-content');
+            console.log('User Settings tabs found:', userTabs.length, 'contents:', userTabContents.length);
+
+            userTabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    const targetTab = tab.dataset.tab;
+                    console.log('Tab clicked:', targetTab);
+
+                    // Remove active from all tabs and content
+                    userTabs.forEach(t => t.classList.remove('active'));
+                    userTabContents.forEach(c => c.classList.remove('active'));
+
+                    // Add active to clicked tab and corresponding content
+                    tab.classList.add('active');
+                    const targetContent = document.getElementById(`user-tab-${targetTab}`);
+                    if (targetContent) {
+                        targetContent.classList.add('active');
+                    }
+
+                    // Load API keys when switching to that tab
+                    if (targetTab === 'apikeys' && typeof apiKeysManager !== 'undefined') {
+                        apiKeysManager.loadKeys();
+                    }
+                });
             });
 
             settingsModal.addEventListener('click', (e) => {

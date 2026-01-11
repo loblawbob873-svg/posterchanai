@@ -34,10 +34,14 @@ setup_directories() {
 setup_python_env() {
     print_step "Setting up Python environment..."
 
+    # Intel Arc uses venv-ipex for chat (IPEX-LLM), others use venv
     local VENV_NAME="venv"
     if [ "$BACKEND" = "intel" ]; then
         VENV_NAME="venv-ipex"
     fi
+
+    # Export for use by other modules
+    export CHAT_VENV_NAME="$VENV_NAME"
 
     if [ ! -d "$VENV_NAME" ]; then
         python3 -m venv "$VENV_NAME"
@@ -64,6 +68,7 @@ setup_python_env() {
     fi
 
     print_success "Base dependencies installed"
+    deactivate
 }
 
 configure_database_settings() {

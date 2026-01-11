@@ -125,10 +125,10 @@ def check_xpu_available() -> tuple[bool, str]:
     except Exception as e:
         pass
 
-    # Check if we can at least load llama.cpp with SYCL support
+    # Check if llama-cpp-python is available for GGUF models
     try:
-        from ipex_llm.llama_cpp import Llama
-        return True, "IPEX-LLM llama.cpp backend available"
+        from llama_cpp import Llama
+        return True, "llama-cpp-python backend available"
     except ImportError as e:
         error_msg = str(e)
         if "libsvml.so" in error_msg or "cannot open shared object" in error_msg:
@@ -299,47 +299,30 @@ class IPEXService:
             logger.info(f"  CPU mode: {self.cpu_mode}, mmap: {self.use_mmap}, mlock: {self.use_mlock}")
 
             try:
-                # Check if GGUF model - use llama.cpp backend
+                # Check if GGUF model - use llama-cpp-python
+                # Note: llama-cpp-python needs to be compiled with SYCL for Intel Arc GPU
+                # Install with: CMAKE_ARGS="-DGGML_SYCL=ON" pip install llama-cpp-python
                 if self.model_path.endswith('.gguf'):
-                    # Try ipex_llm.llama_cpp first, fall back to regular llama_cpp
-                    Llama = None
-                    ipex_error = None
                     try:
-                        from ipex_llm.llama_cpp import Llama
-                        logger.info("Using IPEX-LLM llama.cpp backend (Intel GPU accelerated)")
+                        from llama_cpp import Llama
+                        import llama_cpp
+                        gpu_offload = llama_cpp.llama_supports_gpu_offload()
+                        logger.info(f"Using llama-cpp-python for GGUF model (GPU offload support: {gpu_offload})")
+                        if gpu_layers != 0 and not self.cpu_mode:
+                            logger.info(f"GPU layers requested: {gpu_layers}")
+                            if not gpu_offload:
+                                logger.warning("GPU layers requested but llama-cpp-python has no GPU support!")
+                                logger.warning("Rebuild with: CMAKE_ARGS='-DGGML_SYCL=ON' pip install llama-cpp-python --force-reinstall")
                     except ImportError as e:
-                        ipex_error = str(e)
-                        logger.warning(f"IPEX-LLM llama.cpp not available: {e}")
-
-                    # If IPEX failed, try standard llama_cpp
-                    if Llama is None:
-                        try:
-                            from llama_cpp import Llama
-                            logger.info("Using standard llama-cpp-python (CPU mode)")
-                            # Force CPU mode since IPEX isn't available
-                            if gpu_layers != 0:
-                                logger.warning("Forcing CPU mode (gpu_layers=0) since IPEX-LLM is not available")
-                                gpu_layers = 0
-                        except ImportError as e:
-                            # Both failed - provide helpful error
-                            error_parts = []
-                            if ipex_error:
-                                if "libsvml.so" in ipex_error or "cannot open shared object" in ipex_error:
-                                    error_parts.append("Intel oneAPI environment not loaded")
-                                elif "intel_extension_for_pytorch" in ipex_error:
-                                    error_parts.append("intel_extension_for_pytorch not installed")
-                                else:
-                                    error_parts.append(f"IPEX error: {ipex_error}")
-                            error_parts.append(f"llama-cpp-python error: {e}")
-                            raise ImportError(
-                                f"No LLM backend available. {' | '.join(error_parts)}. "
-                                f"Start with ./run-ipex.sh or install llama-cpp-python."
-                            )
+                        raise ImportError(
+                            f"llama-cpp-python not available: {e}. "
+                            f"Install with: pip install llama-cpp-python"
+                        )
 
                     self._model = Llama(
                         model_path=self.model_path,
                         n_ctx=self.num_ctx,
-                        n_gpu_layers=gpu_layers,  # Force 0 if CPU mode
+                        n_gpu_layers=gpu_layers if not self.cpu_mode else 0,
                         n_batch=self.n_batch,
                         n_threads=self.n_threads,
                         n_threads_batch=self.n_threads,

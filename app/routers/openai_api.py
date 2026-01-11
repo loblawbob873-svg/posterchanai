@@ -313,57 +313,64 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
     top_p = request.top_p if request.top_p is not None else float(settings.get("ollama_top_p", "0.9"))
     max_tokens = request.max_tokens if request.max_tokens is not None else int(settings.get("ollama_num_predict", "2048"))
 
-    # Use load balancer if configured (alternates between local and remote)
+    # Use load balancer if configured - picks server round-robin, uses local inference for "self" URLs
     if servers:
-        from app.services.load_balancer import should_use_remote, NoHealthyServersError
+        from app.services.load_balancer import get_healthy_server, is_self_url, NoHealthyServersError
 
-        if await should_use_remote(len(servers)):
-            # This request goes to a remote server
-            timeout = int(settings.get("ollama_timeout", "120000")) / 1000
-            model = settings.get("ollama_model", "default")
-            load_balancer = LoadBalancer(servers, timeout=timeout, model=model)
+        api_key = settings.get("chat_server_api_key", "")
+        selected_server = await get_healthy_server(servers, api_key if api_key else None)
 
-            try:
-                if request.stream:
-                    lb_stream = load_balancer.chat_stream(
-                        messages=messages,
-                        temperature=temperature,
-                        top_p=top_p,
-                        max_tokens=max_tokens
-                    )
-                    return StreamingResponse(
-                        filter_thinking_stream(lb_stream),
-                        media_type="text/event-stream",
-                        headers={
-                            "Cache-Control": "no-cache",
-                            "Connection": "keep-alive",
-                            "X-Accel-Buffering": "no",
-                        }
-                    )
-                else:
-                    result = await load_balancer.chat(
-                        messages=messages,
-                        temperature=temperature,
-                        top_p=top_p,
-                        max_tokens=max_tokens
-                    )
-                    if "error" in result:
-                        raise HTTPException(
-                            status_code=500,
-                            detail=result["error"].get("message", "Unknown error")
+        if selected_server:
+            # Check if selected server is THIS instance
+            if is_self_url(selected_server):
+                logger.info(f"Load balancer: selected {selected_server} -> LOCAL inference")
+                # Fall through to local inference below
+            else:
+                # Remote server - make HTTP request
+                logger.info(f"Load balancer: selected {selected_server} -> REMOTE")
+                timeout = int(settings.get("ollama_timeout", "120000")) / 1000
+                model = settings.get("ollama_model", "default")
+                load_balancer = LoadBalancer([selected_server], timeout=timeout, model=model, api_key=api_key if api_key else None)
+
+                try:
+                    if request.stream:
+                        lb_stream = load_balancer.chat_stream(
+                            messages=messages,
+                            temperature=temperature,
+                            top_p=top_p,
+                            max_tokens=max_tokens
                         )
-                    # Strip thinking tags from load balancer response
-                    if result.get("choices"):
-                        for choice in result["choices"]:
-                            if choice.get("message", {}).get("content"):
-                                choice["message"]["content"] = strip_thinking_tags(choice["message"]["content"])
-                    return result
-            except NoHealthyServersError:
-                # No healthy remote servers, fall through to local processing
-                logger.info("No healthy remote servers, processing locally")
+                        return StreamingResponse(
+                            filter_thinking_stream(lb_stream),
+                            media_type="text/event-stream",
+                            headers={
+                                "Cache-Control": "no-cache",
+                                "Connection": "keep-alive",
+                                "X-Accel-Buffering": "no",
+                            }
+                        )
+                    else:
+                        result = await load_balancer.chat(
+                            messages=messages,
+                            temperature=temperature,
+                            top_p=top_p,
+                            max_tokens=max_tokens
+                        )
+                        if "error" in result:
+                            raise HTTPException(
+                                status_code=500,
+                                detail=result["error"].get("message", "Unknown error")
+                            )
+                        # Strip thinking tags from load balancer response
+                        if result.get("choices"):
+                            for choice in result["choices"]:
+                                if choice.get("message", {}).get("content"):
+                                    choice["message"]["content"] = strip_thinking_tags(choice["message"]["content"])
+                        return result
+                except NoHealthyServersError:
+                    logger.info("Remote server failed, falling back to local")
         else:
-            # should_use_remote returned False, use local
-            logger.info("Load balancer: using LOCAL inference")
+            logger.info("No healthy servers, using local inference")
 
     # Fall back to local inference service
     logger.info("Processing with local inference service")

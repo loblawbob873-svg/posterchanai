@@ -1,35 +1,36 @@
-// API Keys Management
+// API Keys Management - Integrated into User Settings
 class APIKeysManager {
     constructor() {
-        this.modal = document.getElementById('apiKeysModal');
         this.keyList = document.getElementById('apiKeyList');
-        this.init();
+        this.initialized = false;
     }
 
     init() {
-        // Open modal button
-        document.getElementById('apiKeysBtn').addEventListener('click', () => this.openModal());
+        if (this.initialized) return;
+        this.initialized = true;
 
-        // Close modal
-        document.getElementById('closeApiKeysModal').addEventListener('click', () => this.closeModal());
-        this.modal.addEventListener('click', (e) => {
-            if (e.target === this.modal) this.closeModal();
+        // Create key button (now in User Settings)
+        const createBtn = document.getElementById('createApiKey');
+        if (createBtn) {
+            createBtn.addEventListener('click', () => this.createKey());
+        }
+
+        // Listen for tab changes to load keys when API Keys tab is shown
+        document.querySelectorAll('.user-tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (btn.dataset.tab === 'apikeys') {
+                    this.loadKeys();
+                }
+            });
         });
-
-        // Create key button
-        document.getElementById('createApiKey').addEventListener('click', () => this.createKey());
-    }
-
-    openModal() {
-        this.modal.style.display = 'flex';
-        this.loadKeys();
-    }
-
-    closeModal() {
-        this.modal.style.display = 'none';
     }
 
     async loadKeys() {
+        if (!this.keyList) {
+            this.keyList = document.getElementById('apiKeyList');
+        }
+        if (!this.keyList) return;
+
         try {
             const response = await fetch('/api/auth/api-keys');
             if (response.ok) {
@@ -42,6 +43,8 @@ class APIKeysManager {
     }
 
     renderKeys(keys) {
+        if (!this.keyList) return;
+
         if (keys.length === 0) {
             this.keyList.innerHTML = '<p class="no-keys">No API keys yet. Create one to get started.</p>';
             return;
@@ -94,6 +97,11 @@ class APIKeysManager {
     }
 
     showNewKey(key) {
+        if (!this.keyList) {
+            this.keyList = document.getElementById('apiKeyList');
+        }
+        if (!this.keyList) return;
+
         const keyDisplay = document.createElement('div');
         keyDisplay.className = 'new-key-display';
         keyDisplay.innerHTML = `
@@ -214,3 +222,8 @@ class APIKeysManager {
 
 // Initialize
 const apiKeysManager = new APIKeysManager();
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    apiKeysManager.init();
+});
