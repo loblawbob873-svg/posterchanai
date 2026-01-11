@@ -30,6 +30,7 @@ class ChatWebSocket:
         self.ws: Optional[WebSocketClientProtocol] = None
         self._receive_task: Optional[asyncio.Task] = None
         self._connected = False
+        self._conversation_id: Optional[int] = None
 
         # Callbacks
         self.on_stream_chunk: Optional[Callable[[str], Any]] = None
@@ -52,6 +53,7 @@ class ChatWebSocket:
 
     async def connect(self, conversation_id: int):
         """Connect to chat WebSocket."""
+        self._conversation_id = conversation_id
         url = f"{self.ws_url}/api/ws/chat/{conversation_id}?token={self.token}"
         logger.info(f"Connecting to WebSocket: {url[:50]}...")
 
@@ -135,7 +137,10 @@ class ChatWebSocket:
         except websockets.ConnectionClosed as e:
             logger.warning(f"WebSocket closed: {e}")
             self._connected = False
-            if self.on_disconnect:
+            # Try to reconnect
+            if self._conversation_id:
+                await self._try_reconnect()
+            elif self.on_disconnect:
                 self.on_disconnect()
         except asyncio.CancelledError:
             pass
@@ -144,6 +149,22 @@ class ChatWebSocket:
             self._connected = False
             if self.on_error:
                 self.on_error(str(e))
+
+    async def _try_reconnect(self, max_attempts: int = 3):
+        """Try to reconnect to WebSocket."""
+        for attempt in range(max_attempts):
+            try:
+                logger.info(f"Reconnect attempt {attempt + 1}/{max_attempts}")
+                await asyncio.sleep(1)  # Wait before retry
+                await self.connect(self._conversation_id)
+                logger.info("Reconnected successfully")
+                return
+            except Exception as e:
+                logger.warning(f"Reconnect failed: {e}")
+
+        # All attempts failed
+        if self.on_disconnect:
+            self.on_disconnect()
 
     async def _handle_message(self, raw_message: str):
         """Handle incoming WebSocket message."""
