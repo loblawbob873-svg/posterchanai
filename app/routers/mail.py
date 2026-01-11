@@ -37,10 +37,15 @@ async def download_attachment(
     if not attachment:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
+    # Use inline for viewable files (PDFs, images), attachment for others
+    content_type = attachment.content_type.lower() if attachment.content_type else ''
+    viewable_types = ['application/pdf', 'image/', 'text/plain', 'text/html']
+    disposition = 'inline' if any(t in content_type for t in viewable_types) else 'attachment'
+
     return Response(
         content=attachment.data,
         media_type=attachment.content_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{attachment.filename}"'
+            "Content-Disposition": f'{disposition}; filename="{attachment.filename}"'
         }
     )

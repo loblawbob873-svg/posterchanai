@@ -885,10 +885,26 @@ Type these commands in the chat (or use the mode buttons):
 | `budget` | Budget manager (summary, bills, add, pay) |
 | `firewall` | Firewall status and log search |
 | `cal` | Calendar: today's events, week view, add events (aliases: sched, schedule) |
-| `contacts <query>` | Search CardDAV contacts (with clickable phone/email links) |
-| `mail` | Email: inbox, read, reply, archive, delete, send to contacts |
+| `contacts` | Search or add CardDAV contacts (with clickable phone/email links) |
+| `mail` | Email: inbox, read, reply, archive, delete, deleteall, send to contacts |
 | `news` | Get unread news from Miniflux |
 | `logs` | System logs analysis (admin only) |
+
+### Contacts Command
+
+The contacts command provides CardDAV address book functionality:
+
+| Subcommand | Description |
+|------------|-------------|
+| `contacts <query>` | Search contacts by name, email, or phone |
+| `contacts add <name> <phone>` | Add a new contact with phone number |
+
+**Examples:**
+- `contacts john` - Search for contacts named John
+- `contacts add "John Doe" 555-1234` - Add a new contact (quotes for names with spaces)
+- `contacts add John 555-1234` - Add a contact with single name
+
+Configure CardDAV in User Settings > Calendar & Contacts tab.
 
 ### Mail Command
 
@@ -898,13 +914,19 @@ The mail command provides full IMAP/SMTP email functionality:
 |------------|-------------|
 | `mail` | Show recent inbox messages from all accounts |
 | `mail unread` | Show unread messages only |
-| `mail read <account> <id>` | Read a specific message |
+| `mail read <account> <id>` | Read a specific message (attachments open in new tab) |
 | `mail reply <account> <id> <message>` | Reply to a message |
-| `mail archive <account> <id>` | Archive a message |
+| `mail archive <account> <id>` | Archive a message (moves to Archive folder) |
 | `mail delete <account> <id>` | Delete a message |
+| `mail deleteall <account>` | Delete ALL messages in an account's inbox |
 | `mail <contact> <message>` | Send new email (looks up contact in CardDAV) |
 
-**Example:** `mail linda Hey, how are you?` - Finds Linda in your contacts and sends the email.
+**Examples:**
+- `mail` - Show inbox from all accounts
+- `mail read yummy 5` - Read message #5 from yummy@... account
+- `mail linda Hey, how are you?` - Send email to Linda (looked up in contacts)
+
+**Tab Autocomplete:** Type `mail read ` and press Tab to see available accounts.
 
 Configure email accounts in User Settings > Mail tab.
 
