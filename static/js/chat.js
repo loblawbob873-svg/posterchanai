@@ -1761,14 +1761,28 @@ class ChatHandler {
 
         // Process markdown links BEFORE escaping (preserve URLs)
         const links = [];
+        // Match http/https links
         processed = processed.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (match, text, url) => {
             const index = links.length;
-            links.push({ text, url });
+            links.push({ text, url, external: true });
             return `\x00LINK${index}\x00`;
         });
+        // Match www. links
         processed = processed.replace(/\[([^\]]+)\]\((www\.[^)]+)\)/g, (match, text, url) => {
             const index = links.length;
-            links.push({ text, url: 'https://' + url });
+            links.push({ text, url: 'https://' + url, external: true });
+            return `\x00LINK${index}\x00`;
+        });
+        // Match tel: links (phone numbers)
+        processed = processed.replace(/\[([^\]]+)\]\((tel:[^)]+)\)/g, (match, text, url) => {
+            const index = links.length;
+            links.push({ text, url, external: false });
+            return `\x00LINK${index}\x00`;
+        });
+        // Match mailto: links (email addresses)
+        processed = processed.replace(/\[([^\]]+)\]\((mailto:[^)]+)\)/g, (match, text, url) => {
+            const index = links.length;
+            links.push({ text, url, external: false });
             return `\x00LINK${index}\x00`;
         });
 
@@ -1781,7 +1795,8 @@ class ChatHandler {
         // Restore markdown links as HTML
         html = html.replace(/\x00LINK(\d+)\x00/g, (match, index) => {
             const link = links[parseInt(index)];
-            return `<a href="${link.url}" target="_blank">${link.text}</a>`;
+            const target = link.external ? ' target="_blank"' : '';
+            return `<a href="${link.url}"${target}>${link.text}</a>`;
         });
 
         // Bold **text**
