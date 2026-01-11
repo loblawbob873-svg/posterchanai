@@ -60,7 +60,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'flood', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'miniflux', 'sched', 'contacts'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'flood', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'miniflux', 'sched', 'contacts', 'mail'];
         this.pluginActions = []; // Will be populated with plugin action hints
 
         // Load plugins for autocomplete
@@ -1988,7 +1988,8 @@ class ChatHandler {
         'budget': ['bills', 'add', 'pay'],
         'firewall': ['search', 'analyze'],
         'news': ['refresh'],
-        'sched': ['today', 'week', 'add']
+        'sched': ['today', 'week', 'add'],
+        'mail': ['inbox', 'unread', 'read', 'reply', 'delete']
     };
 
     // Tab autocomplete for commands

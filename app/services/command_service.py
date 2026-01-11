@@ -17,6 +17,11 @@ from app.services.caldav_service import (
     format_events_for_display, format_contacts_for_display,
     add_event_to_calendar
 )
+from app.services.mail_service import (
+    fetch_all_accounts, get_message_by_id, delete_message,
+    reply_to_message, send_email, get_user_mail_accounts,
+    format_message_list, format_message_detail
+)
 # Lock now handled inside image_factory for fine-grained control
 
 if TYPE_CHECKING:
@@ -51,6 +56,7 @@ class CommandService:
         "miniflux": "Fetch Miniflux articles now: miniflux",
         "sched": "Calendar: sched | sched today | sched week | sched add <event> <time>",
         "contacts": "Search contacts: contacts <query>",
+        "mail": "Email: mail | mail read <account> <id> | mail reply <account> <id> <msg> | mail delete <account> <id>",
     }
 
     # Command aliases (alias -> canonical command)
@@ -120,6 +126,8 @@ class CommandService:
             return await self._schedule_command(arg)
         elif command == "contacts":
             return await self._contacts_command(arg)
+        elif command == "mail":
+            return await self._mail_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -916,6 +924,108 @@ Return ONLY valid JSON, no other text."""},
         except Exception as e:
             logger.error(f"Contacts command error: {e}")
             return {"type": "text", "content": f"Error searching contacts: {str(e)}"}
+
+    async def _mail_command(self, arg: str) -> dict:
+        """Email commands - inbox, read, reply, delete"""
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use the mail command."}
+
+        accounts = get_user_mail_accounts(self.user.id, self.db)
+        if not accounts:
+            return {"type": "text", "content": "No email accounts configured. Add accounts in User Settings > Mail."}
+
+        parts = arg.strip().split(maxsplit=3)
+        subcommand = parts[0].lower() if parts else "inbox"
+
+        try:
+            if subcommand in ("inbox", ""):
+                # List recent messages from all accounts
+                messages = fetch_all_accounts(self.user.id, self.db, limit_per_account=10)
+                return {"type": "text", "content": format_message_list(messages)}
+
+            elif subcommand == "unread":
+                # List unread messages only
+                messages = fetch_all_accounts(self.user.id, self.db, limit_per_account=20, unread_only=True)
+                if not messages:
+                    return {"type": "text", "content": "No unread messages."}
+                return {"type": "text", "content": format_message_list(messages)}
+
+            elif subcommand == "read":
+                if len(parts) < 3:
+                    return {"type": "text", "content": "Usage: `mail read <account> <id>`\n\nExample: `mail read verita84 123`"}
+
+                account_hint = parts[1]
+                uid = parts[2]
+
+                # Find matching account
+                account_email = None
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+
+                msg = get_message_by_id(self.user.id, self.db, account_email, uid)
+                if not msg:
+                    return {"type": "text", "content": f"Message {uid} not found."}
+
+                return {"type": "text", "content": format_message_detail(msg)}
+
+            elif subcommand == "reply":
+                if len(parts) < 4:
+                    return {"type": "text", "content": "Usage: `mail reply <account> <id> <message>`\n\nExample: `mail reply verita84 123 Thanks for the info!`"}
+
+                account_hint = parts[1]
+                uid = parts[2]
+                reply_body = parts[3]
+
+                # Find matching account
+                account_email = None
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+
+                success = reply_to_message(self.user.id, self.db, account_email, uid, reply_body)
+                if success:
+                    return {"type": "text", "content": "Reply sent successfully."}
+                else:
+                    return {"type": "text", "content": "Failed to send reply."}
+
+            elif subcommand == "delete":
+                if len(parts) < 3:
+                    return {"type": "text", "content": "Usage: `mail delete <account> <id>`\n\nExample: `mail delete verita84 123`"}
+
+                account_hint = parts[1]
+                uid = parts[2]
+
+                # Find matching account
+                account_email = None
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+
+                success = delete_message(self.user.id, self.db, account_email, uid)
+                if success:
+                    return {"type": "text", "content": f"Message {uid} deleted."}
+                else:
+                    return {"type": "text", "content": f"Failed to delete message {uid}."}
+
+            else:
+                return {"type": "text", "content": "Usage:\n- `mail` or `mail inbox` - Recent messages\n- `mail unread` - Unread messages\n- `mail read <account> <id>` - Read message\n- `mail reply <account> <id> <message>` - Reply\n- `mail delete <account> <id>` - Delete message"}
+
+        except Exception as e:
+            logger.error(f"Mail command error: {e}")
+            return {"type": "text", "content": f"Error: {str(e)}"}
 
 
 def get_command_service(db: Session) -> CommandService:
