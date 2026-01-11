@@ -55,7 +55,7 @@ class CommandService:
         "miniflux": "Fetch Miniflux articles now: miniflux",
         "cal": "Calendar: cal | cal today | cal week | cal add <event> <time>",
         "contacts": "Contacts: contacts all | contacts <query> | contacts add <name> <phone>",
-        "mail": "Email: mail | mail search <acct> <query> | mail read/reply/delete/archive <acct> <id>",
+        "mail": "Email: mail | mail search/read/summary/translate/reply/delete/archive <acct> <id>",
     }
 
     # Command aliases (alias -> canonical command)
@@ -1071,6 +1071,65 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Message {uid} not found."}
 
                 return {"type": "text", "content": format_message_detail(msg)}
+
+            elif subcommand == "summary":
+                if len(parts) < 3:
+                    return {"type": "text", "content": "Usage: `mail summary <account> <id>`\n\nExample: `mail summary work 123`"}
+
+                account_hint = parts[1]
+                uid = parts[2]
+
+                # Find matching account
+                account_email = None
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+
+                msg = get_message_by_id(self.user.id, self.db, account_email, uid)
+                if not msg:
+                    return {"type": "text", "content": f"Message {uid} not found."}
+
+                # Use AI to summarize
+                messages = [
+                    {"role": "system", "content": "Summarize this email concisely. Include key points, action items, and important dates if any."},
+                    {"role": "user", "content": f"From: {msg.sender}\nSubject: {msg.subject}\n\n{msg.body}"}
+                ]
+                summary = await self.chat_service.chat(messages)
+                return {"type": "text", "content": f"## Summary of: {msg.subject}\n\n{summary}"}
+
+            elif subcommand == "translate":
+                if len(parts) < 4:
+                    return {"type": "text", "content": "Usage: `mail translate <language> <account> <id>`\n\nExample: `mail translate spanish work 123`"}
+
+                language = parts[1]
+                account_hint = parts[2]
+                uid = parts[3]
+
+                # Find matching account
+                account_email = None
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+
+                msg = get_message_by_id(self.user.id, self.db, account_email, uid)
+                if not msg:
+                    return {"type": "text", "content": f"Message {uid} not found."}
+
+                # Use AI to translate
+                messages = [
+                    {"role": "system", "content": f"Translate this email to {language}. Preserve the formatting."},
+                    {"role": "user", "content": f"From: {msg.sender}\nSubject: {msg.subject}\n\n{msg.body}"}
+                ]
+                translation = await self.chat_service.chat(messages)
+                return {"type": "text", "content": f"## {msg.subject} ({language})\n\n{translation}"}
 
             elif subcommand == "reply":
                 if len(parts) < 4:

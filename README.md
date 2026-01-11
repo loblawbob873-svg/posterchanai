@@ -915,10 +915,12 @@ The mail command provides full IMAP/SMTP email functionality:
 |------------|-------------|
 | `mail` | Show recent inbox messages from all accounts |
 | `mail unread` | Show unread messages only |
-| `mail search <account> <query>` | Search messages by subject, sender, or body |
+| `mail search <account> <query>` | Search messages by from, to, or subject |
 | `mail read <account> <id>` | Read a specific message (attachments open in new tab) |
+| `mail summary <account> <id>` | AI summary of a message with key points |
+| `mail translate <lang> <account> <id>` | Translate a message to another language |
 | `mail reply <account> <id> <message>` | Reply to a message |
-| `mail archive <account> <id>` | Archive a message (moves to Archive folder) |
+| `mail archive <account> <id>` | Archive a message (moves to INBOX.Archive) |
 | `mail delete <account> <id>` | Delete a message |
 | `mail deleteall <account>` | Delete ALL messages in an account's inbox |
 | `mail <contact> <message>` | Send new email (looks up contact in CardDAV) |

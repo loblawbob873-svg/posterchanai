@@ -392,12 +392,12 @@ def search_messages(
                             logger.debug(f"Could not select folder: {folder}")
                             continue
 
-                        # Search multiple criteria and combine results
+                        # Search multiple criteria and combine results using UID commands
                         all_uids = set()
                         for criteria in [f'FROM "{query}"', f'TO "{query}"', f'SUBJECT "{query}"']:
                             try:
-                                status, data = imap.search(None, criteria)
-                                logger.debug(f"Search {criteria} in {folder}: status={status}, data={data}")
+                                # Use UID SEARCH to get actual UIDs
+                                status, data = imap.uid('search', None, criteria)
                                 if status == "OK" and data[0]:
                                     all_uids.update(data[0].split())
                             except Exception as e:
@@ -415,9 +415,9 @@ def search_messages(
                             if len(messages) >= limit:
                                 break
                             try:
-                                status, msg_data = imap.fetch(uid, "(RFC822)")
-                                if status != "OK" or not msg_data[0]:
-                                    logger.debug(f"Failed to fetch uid {uid}: status={status}")
+                                # Use UID FETCH to fetch by UID
+                                status, msg_data = imap.uid('fetch', uid, "(RFC822)")
+                                if status != "OK" or not msg_data or not msg_data[0]:
                                     continue
 
                                 raw_email = msg_data[0][1]

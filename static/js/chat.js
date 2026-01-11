@@ -2105,6 +2105,7 @@ class ChatHandler {
                     // Update subcommands with account hints
                     this.subcommands['mail search'] = accountHints;
                     this.subcommands['mail read'] = accountHints;
+                    this.subcommands['mail summary'] = accountHints;
                     this.subcommands['mail reply'] = accountHints;
                     this.subcommands['mail delete'] = accountHints;
                     this.subcommands['mail deleteall'] = accountHints;
@@ -2130,10 +2131,12 @@ class ChatHandler {
         'news': ['refresh'],
         'cal': ['today', 'week', 'add'],
         'contacts': ['all', 'add'],
-        'mail': ['inbox', 'unread', 'search', 'read', 'reply', 'delete', 'deleteall', 'archive', 'send'],
+        'mail': ['inbox', 'unread', 'search', 'read', 'summary', 'translate', 'reply', 'delete', 'deleteall', 'archive', 'send'],
         // Mail subcommands - will be populated with account names dynamically
         'mail search': [],
         'mail read': [],
+        'mail summary': [],
+        'mail translate': [],
         'mail reply': [],
         'mail delete': [],
         'mail deleteall': [],
