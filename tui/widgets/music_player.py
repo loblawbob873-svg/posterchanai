@@ -22,13 +22,10 @@ class MusicPlayerWidget(Widget):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.player = None  # Lazy init
+        self.player = None
         self.visualizer = None
         self.playlist: list[dict] = []
         self.playlist_index = 0
-        self._player_initialized = False
-        self._player_ready = False
-        self._pending_track = None  # Track waiting for player init
         self.add_class("--hidden")  # Start hidden
 
     def compose(self) -> ComposeResult:
@@ -55,49 +52,29 @@ class MusicPlayerWidget(Widget):
             id="player-container"
         )
 
-    def _init_player(self):
-        """Initialize player lazily when needed."""
-        if self._player_initialized:
-            return self.player is not None
+    def _ensure_player(self) -> bool:
+        """Ensure player is initialized. Returns True if ready."""
+        if self.player is not None:
+            return True
 
-        self._player_initialized = True
-        self._player_ready = False
-
-        # Initialize in background to avoid blocking UI
-        self._init_player_background()
-        return False  # Not ready yet, will be ready after background init
-
-    @work(thread=True, group="player_init")
-    def _init_player_background(self):
-        """Initialize player in background thread."""
         try:
             from tui.audio import create_player, ASCIIVisualizer
             self.visualizer = ASCIIVisualizer()
             self.player = create_player()
             if self.player:
-                # Wrap callbacks to use call_from_thread for thread safety
                 self.player.on_progress = self._on_progress_callback
                 self.player.on_track_end = self._on_track_end_callback
-            self._player_ready = True
-            self.app.call_from_thread(self._on_player_ready)
+            return self.player is not None
         except Exception as e:
-            self.app.call_from_thread(lambda: self.notify(f"Audio player failed: {e}", severity="error"))
-
-    def _on_player_ready(self):
-        """Called when player is ready after background init."""
-        self.notify("Audio player ready", severity="information")
-        # If we have a pending track, start playing it
-        if self._pending_track:
-            track = self._pending_track
-            self._pending_track = None
-            self._start_playback(track)
+            self.notify(f"Audio player failed: {e}", severity="error")
+            return False
 
     def _on_progress_callback(self, position: float, duration: float):
         """Thread-safe progress callback."""
         try:
             self.app.call_from_thread(self._update_progress, position, duration)
         except Exception:
-            pass  # Ignore if app not available
+            pass
 
     def _on_track_end_callback(self):
         """Thread-safe track end callback."""
@@ -141,19 +118,8 @@ class MusicPlayerWidget(Widget):
         self.playlist = [track]
         self.playlist_index = 0
 
-        # Check if player is ready
-        if not self._player_initialized:
-            # Start initialization and queue the track
-            self._pending_track = track
-            self._init_player()
-            self._update_track_display()  # Show what's loading
-            self.notify("Initializing audio player...", severity="information")
-            return
-
-        if not self._player_ready:
-            # Still initializing, queue the track
-            self._pending_track = track
-            self._update_track_display()
+        if not self._ensure_player():
+            self.notify("Could not initialize audio player", severity="error")
             return
 
         self._start_playback(track)
@@ -182,27 +148,15 @@ class MusicPlayerWidget(Widget):
         self._update_track_display()
         self._update_play_button()
 
-        # Start playback in background thread to avoid blocking
-        self._play_url_background(url, track.get("title", "Unknown"))
-
-    @work(thread=True, group="playback")
-    def _play_url_background(self, url: str, title: str):
-        """Play URL in background thread."""
+        # Start playback - subprocess player doesn't block
         try:
             self.player.play(url)
-            self.app.call_from_thread(lambda: self._on_playback_started(title))
+            title = track.get("title", "Unknown")
+            self.notify(f"Now playing: {title}", severity="information")
+            self._run_visualizer()
         except Exception as e:
-            self.app.call_from_thread(lambda: self._on_playback_failed(str(e)))
-
-    def _on_playback_started(self, title: str):
-        """Called when playback starts successfully."""
-        self.notify(f"Now playing: {title}", severity="information")
-        self._run_visualizer()  # This is @work decorated, will run as worker
-
-    def _on_playback_failed(self, error: str):
-        """Handle playback failure on main thread."""
-        self.is_playing = False
-        self.notify(f"Playback failed: {error}", severity="error")
+            self.is_playing = False
+            self.notify(f"Playback failed: {e}", severity="error")
 
     def _update_track_display(self):
         """Update track info display."""
@@ -242,14 +196,13 @@ class MusicPlayerWidget(Widget):
         import random
         while self.is_playing:
             try:
-                # Generate visual effect levels
                 levels = [random.random() * 0.8 for _ in range(32)]
                 viz_text = self.visualizer.render(levels)
                 viz_widget.update(viz_text)
             except Exception:
                 break
 
-            await asyncio.sleep(0.1)  # 10fps to reduce CPU usage
+            await asyncio.sleep(0.1)
 
         try:
             viz_widget.update("")
@@ -277,7 +230,7 @@ class MusicPlayerWidget(Widget):
 
     def toggle_playback(self):
         """Toggle play/pause."""
-        if not self._player_ready or not self.player:
+        if not self.player:
             self.notify("Type 'music' in chat to load tracks first", severity="warning")
             return
 
@@ -314,7 +267,6 @@ class MusicPlayerWidget(Widget):
         except Exception:
             pass
 
-        # Hide the player
         self.add_class("--hidden")
 
     def next_track(self):

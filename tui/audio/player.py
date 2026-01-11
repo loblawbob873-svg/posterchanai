@@ -201,10 +201,5 @@ class SubprocessPlayer(AudioPlayer):
 
 def create_player() -> AudioPlayer:
     """Create the best available audio player."""
-    try:
-        return MPVPlayer()
-    except ImportError:
-        # python-mpv not installed, try subprocess
-        return SubprocessPlayer()
-    except Exception:
-        return SubprocessPlayer()
+    # Always use subprocess player - python-mpv has threading issues with Textual
+    return SubprocessPlayer()
