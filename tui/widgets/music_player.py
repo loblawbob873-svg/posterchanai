@@ -118,6 +118,12 @@ class MusicPlayerWidget(Widget):
         self.playlist = [track]
         self.playlist_index = 0
 
+        # Use worker to avoid blocking UI
+        self._play_track_async(track)
+
+    @work(exclusive=True, group="playback")
+    async def _play_track_async(self, track: dict):
+        """Async worker to initialize player and start playback."""
         if not self._ensure_player():
             self.notify("Could not initialize audio player", severity="error")
             return
@@ -247,8 +253,7 @@ class MusicPlayerWidget(Widget):
             if self.playlist:
                 self.current_track = self.playlist[0]
                 self.playlist_index = 0
-                if self._ensure_player():
-                    self._start_playback(self.playlist[0])
+                self._play_track_async(self.playlist[0])
                 return
             else:
                 self.notify("Type 'music' in chat to load tracks first", severity="warning")
@@ -294,7 +299,7 @@ class MusicPlayerWidget(Widget):
             self.playlist_index += 1
             track = self.playlist[self.playlist_index]
             self.current_track = track
-            self._start_playback(track)
+            self._play_track_async(track)
 
     def prev_track(self):
         """Play previous track in playlist."""
@@ -305,4 +310,4 @@ class MusicPlayerWidget(Widget):
             self.playlist_index -= 1
             track = self.playlist[self.playlist_index]
             self.current_track = track
-            self._start_playback(track)
+            self._play_track_async(track)
