@@ -177,21 +177,11 @@ def format_torrent_results(results: list[TorrentResult], category: str) -> str:
         return f"No {category} torrents found. The site may be temporarily unavailable or not configured."
 
     category_title = category.upper()
-    lines = [f"## {category_title} Torrents\n"]
+    lines = [f"## ◈ {category_title} TORRENTS ◈\n"]
 
     for i, t in enumerate(results, 1):
         # Truncate long titles
         title = t.title[:70] + "..." if len(t.title) > 70 else t.title
-
-        # Seeder indicator
-        if t.seeders >= 50:
-            seed_icon = "🟢"
-        elif t.seeders >= 10:
-            seed_icon = "🟡"
-        elif t.seeders > 0:
-            seed_icon = "🟠"
-        else:
-            seed_icon = "🔴"
 
         # Make title a clickable link if URL available
         if t.url:
@@ -199,12 +189,11 @@ def format_torrent_results(results: list[TorrentResult], category: str) -> str:
         else:
             title_display = title
 
-        lines.append(f"**{i}. {title_display}**")
-        lines.append(f"   {seed_icon} S:{t.seeders} L:{t.leechers} | {t.size}")
-        lines.append(f"   `{t.magnet[:80]}...`\n")
+        # Download button with magnet link
+        dl_cmd = f"torrents add {t.magnet}"
 
-    lines.append("---")
-    lines.append("*Use `flood add <magnet>` to download a torrent*")
+        lines.append(f"**{i}. {title_display}**")
+        lines.append(f"   [Download](cmd:{dl_cmd}) | S:{t.seeders} L:{t.leechers} | {t.size}\n")
 
     return "\n".join(lines)
 
@@ -254,7 +243,7 @@ async def scrape_all_categories(db: Session, limit_per_category: int = 5) -> dic
 
 def format_all_categories(all_results: dict[str, list[TorrentResult]]) -> str:
     """Format results from all categories for display"""
-    lines = ["## Torrents\n"]
+    lines = ["## ◈ TORRENTS ◈\n"]
 
     for category, results in all_results.items():
         cat_title = category.upper()
@@ -267,28 +256,18 @@ def format_all_categories(all_results: dict[str, list[TorrentResult]]) -> str:
         for i, t in enumerate(results, 1):
             title = t.title[:60] + "..." if len(t.title) > 60 else t.title
 
-            # Seeder indicator
-            if t.seeders >= 50:
-                seed_icon = "🟢"
-            elif t.seeders >= 10:
-                seed_icon = "🟡"
-            elif t.seeders > 0:
-                seed_icon = "🟠"
-            else:
-                seed_icon = "🔴"
-
             # Make title a clickable link if URL available
             if t.url:
                 title_display = f"[{title}]({t.url})"
             else:
                 title_display = title
 
-            lines.append(f"{i}. {seed_icon} {title_display} ({t.size})")
+            # Download button with magnet link
+            dl_cmd = f"torrents add {t.magnet}"
+
+            lines.append(f"{i}. {title_display} ({t.size})")
+            lines.append(f"   [Download](cmd:{dl_cmd})")
 
         lines.append("")
-
-    lines.append("---")
-    lines.append("*Use `torrents download <category> <#>` to add to Flood*")
-    lines.append("*Example: `torrents download anime 5`*")
 
     return "\n".join(lines)

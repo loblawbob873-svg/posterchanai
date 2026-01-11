@@ -543,8 +543,6 @@ class CommandService:
             _torrent_cache[user_id][category] = results
 
             formatted = format_torrent_results(results, category)
-            formatted += f"\n\n*Use `torrents download {category} <#>` to add to Flood*"
-
             return {"type": "text", "content": formatted}
 
         except Exception as e:

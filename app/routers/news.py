@@ -310,12 +310,25 @@ async def summarize_article(
 ):
     """Summarize a specific article URL"""
     import httpx
+    import json
+    import re
     from bs4 import BeautifulSoup
 
     try:
-        # Fetch the article
+        # Fetch the article with full browser-like headers
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
         }
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(url, headers=headers)
@@ -325,25 +338,92 @@ async def summarize_article(
         # Parse and extract main content
         soup = BeautifulSoup(html, "html.parser")
 
-        # Remove scripts, styles, nav, footer, ads
-        for el in soup(["script", "style", "nav", "footer", "aside", "header", "form", "noscript"]):
-            el.decompose()
+        # Log response info for debugging
+        logger.info(f"Article fetch: {url} - status={response.status_code}, content_length={len(html)}")
 
-        # Try to find article content in common containers
-        article = soup.find("article") or soup.find(class_=["article", "post", "content", "story", "entry"])
-        if article:
-            text = article.get_text(separator="\n", strip=True)
-        else:
-            # Fallback to body
-            body = soup.find("body")
-            text = body.get_text(separator="\n", strip=True) if body else ""
+        # Try to extract from JSON-LD (common in JS-heavy sites like MSN)
+        text = ""
+        json_ld_scripts = soup.find_all("script", type="application/ld+json")
+        for script in json_ld_scripts:
+            try:
+                data = json.loads(script.string)
+                # Handle array of objects
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict) and item.get("@type") in ["NewsArticle", "Article", "WebPage"]:
+                            data = item
+                            break
+                if isinstance(data, dict):
+                    # Extract article body from JSON-LD
+                    body = data.get("articleBody") or data.get("description") or ""
+                    if body and len(body) > 200:
+                        text = body
+                        logger.info(f"Extracted {len(text)} chars from JSON-LD")
+                        break
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        # Also try extracting from embedded JavaScript data (MSN-style)
+        if not text:
+            # Look for __NEXT_DATA__ or similar
+            next_data = soup.find("script", id="__NEXT_DATA__")
+            if next_data:
+                try:
+                    data = json.loads(next_data.string)
+                    # Navigate through common Next.js structures
+                    props = data.get("props", {}).get("pageProps", {})
+                    article = props.get("article") or props.get("content") or props.get("story") or {}
+                    body = article.get("body") or article.get("content") or article.get("text") or ""
+                    if body and len(body) > 200:
+                        text = body
+                        logger.info(f"Extracted {len(text)} chars from __NEXT_DATA__")
+                except (json.JSONDecodeError, TypeError, AttributeError):
+                    pass
+
+        # Only do HTML extraction if JSON-LD didn't find content
+        if not text:
+            # Remove scripts, styles, nav, footer, ads
+            for el in soup(["script", "style", "nav", "footer", "aside", "header", "form", "noscript", "iframe"]):
+                el.decompose()
+
+            # Try to find article content in common containers (expanded list)
+            article = None
+            selectors = [
+                ("article", {}),
+                (None, {"class_": ["article", "post", "content", "story", "entry", "article-body", "post-content", "entry-content", "article-content", "story-body"]}),
+                (None, {"id": ["article", "content", "main-content", "article-body", "story"]}),
+                ("main", {}),
+                (None, {"role": "main"}),
+                (None, {"class_": ["body", "text", "article-text"]}),
+            ]
+
+            for tag, attrs in selectors:
+                if tag:
+                    article = soup.find(tag, **attrs) if attrs else soup.find(tag)
+                else:
+                    article = soup.find(**attrs)
+                if article:
+                    logger.info(f"Found article content using: tag={tag}, attrs={attrs}")
+                    break
+
+            if article:
+                text = article.get_text(separator="\n", strip=True)
+            else:
+                # Fallback to body
+                logger.info("No article container found, falling back to body")
+                body = soup.find("body")
+                text = body.get_text(separator="\n", strip=True) if body else ""
 
         # Clean up and limit text
         lines = [line.strip() for line in text.split("\n") if line.strip() and len(line.strip()) > 20]
         text = "\n".join(lines[:100])  # Max 100 lines
 
+        logger.info(f"Extracted text length: {len(text)} chars, {len(lines)} lines")
+
         if len(text) < 100:
-            return {"summary": "Could not extract article content."}
+            logger.warning(f"Article extraction failed - only {len(text)} chars extracted from {url}")
+            # Return first 500 chars of raw HTML for debugging
+            return {"summary": f"Could not extract article content. HTML length: {len(html)}. Site may use JavaScript rendering."}
 
         # Get AI service - use inference factory (same as news headlines)
         prepare_vram_for_llm(db)

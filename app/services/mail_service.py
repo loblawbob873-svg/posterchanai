@@ -1200,10 +1200,11 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
 
     # Action buttons
     reply_cmd = f"mail reply {account_short} {msg_id} "
+    summary_cmd = f"mail summary {account_short} {msg_id}"
     archive_cmd = f"mail archive {account_short} {msg_id}"
     delete_cmd = f"mail delete {account_short} {msg_id}"
     translate_cmd = f"mail translate {account_short} {msg_id}"
 
-    lines.append(f"[Reply All](cmd:{reply_cmd}) | [Archive](cmd:{archive_cmd}) | [Translate](cmd:{translate_cmd}) | [Delete](cmd:{delete_cmd})")
+    lines.append(f"[Reply All](cmd:{reply_cmd}) | [Summary](cmd:{summary_cmd}) | [Archive](cmd:{archive_cmd}) | [Translate](cmd:{translate_cmd}) | [Delete](cmd:{delete_cmd})")
 
     return "\n".join(lines)

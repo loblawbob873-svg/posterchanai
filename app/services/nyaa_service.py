@@ -134,21 +134,11 @@ def format_nyaa_results(results: list[NyaaResult], query: str) -> str:
     if not results:
         return f"No results found for '{query}' on nyaa.si"
 
-    lines = [f"## Nyaa.si: {query}\n"]
+    lines = [f"## ◈ NYAA: {query.upper()} ◈\n"]
 
     for i, t in enumerate(results, 1):
         # Truncate long titles
         title = t.title[:70] + "..." if len(t.title) > 70 else t.title
-
-        # Seeder indicator
-        if t.seeders >= 50:
-            seed_icon = "🟢"
-        elif t.seeders >= 10:
-            seed_icon = "🟡"
-        elif t.seeders > 0:
-            seed_icon = "🟠"
-        else:
-            seed_icon = "🔴"
 
         # Make title a clickable link
         if t.url:
@@ -156,11 +146,10 @@ def format_nyaa_results(results: list[NyaaResult], query: str) -> str:
         else:
             title_display = title
 
-        lines.append(f"**{i}. {title_display}**")
-        lines.append(f"   {seed_icon} S:{t.seeders} L:{t.leechers} | {t.size}")
-        lines.append(f"   `{t.magnet[:80]}...`\n")
+        # Download button with magnet link
+        dl_cmd = f"torrents add {t.magnet}"
 
-    lines.append("---")
-    lines.append("*Use `nyaa download <#>` to add to Flood*")
+        lines.append(f"**{i}. {title_display}**")
+        lines.append(f"   [Download](cmd:{dl_cmd}) | S:{t.seeders} L:{t.leechers} | {t.size}\n")
 
     return "\n".join(lines)
