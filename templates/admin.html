@@ -38,11 +38,11 @@
     </div>
 </div>
 
-<link rel="stylesheet" href="/static/css/admin-tabs.css">
+<link rel="stylesheet" href="/static/css/admin-tabs.css?v={{ cache_bust }}">
 
 <script>
 // Set isAdmin flag for JavaScript
 window.isAdmin = {{ 'true' if user.is_admin else 'false' }};
 </script>
-<script src="/static/js/admin.js"></script>
+<script src="/static/js/admin.js?v={{ cache_bust }}"></script>
 {% endblock %}

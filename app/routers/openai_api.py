@@ -292,14 +292,17 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
     # Convert messages to dict format
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
-    # Inject system prompt for API calls if NO system message present (for external tools like Continue)
+    # Inject/prepend system prompt for API calls
     api_inject_system = settings.get("api_inject_system_prompt", "true").lower() == "true"
     if api_inject_system:
         system_prompt = settings.get("ollama_system_prompt", "")
         if system_prompt:
-            # Only inject if there's NO system message (external tools often don't send one)
             has_system = messages and messages[0].get("role") == "system"
-            if not has_system:
+            if has_system:
+                # Append database prompt to existing system message (bot personality takes priority)
+                messages[0]["content"] = messages[0]["content"] + "\n\n" + system_prompt
+            else:
+                # No system message - inject database prompt
                 messages.insert(0, {"role": "system", "content": system_prompt})
 
     # Inject RAG context if enabled

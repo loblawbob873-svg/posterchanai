@@ -380,9 +380,55 @@ def toggle_api_key(
 # ============== User Settings ==============
 
 @router.get("/settings", response_model=UserSettingsResponse)
-def get_user_settings(current_user: User = Depends(get_current_user)):
+def get_user_settings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Get current user's settings including custom AI service configuration"""
+    import json
+    from app.models import UserSetting
+
     avatar_url = f"/api/auth/avatar/{current_user.username}" if current_user.avatar else None
+
+    # Get calendar/contacts settings from UserSetting table
+    schedule_enabled = False
+    caldav_calendars = []
+    carddav_url = None
+    carddav_username = None
+    carddav_has_password = False
+
+    schedule_setting = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == "schedule_enabled"
+    ).first()
+    if schedule_setting:
+        schedule_enabled = schedule_setting.value.lower() == "true"
+
+    calendars_setting = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == "caldav_calendars"
+    ).first()
+    if calendars_setting and calendars_setting.value:
+        try:
+            calendars = json.loads(calendars_setting.value)
+            # Mask passwords
+            caldav_calendars = [
+                {**c, 'password': '********' if c.get('password') else ''}
+                for c in calendars
+            ]
+        except json.JSONDecodeError:
+            pass
+
+    carddav_setting = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == "carddav_config"
+    ).first()
+    if carddav_setting and carddav_setting.value:
+        try:
+            carddav = json.loads(carddav_setting.value)
+            carddav_url = carddav.get('url')
+            carddav_username = carddav.get('username')
+            carddav_has_password = bool(carddav.get('password'))
+        except json.JSONDecodeError:
+            pass
+
     return UserSettingsResponse(
         notification_email=current_user.notification_email,
         avatar=avatar_url,
@@ -403,7 +449,13 @@ def get_user_settings(current_user: User = Depends(get_current_user)):
         miniflux_enabled=current_user.miniflux_enabled if current_user.miniflux_enabled is not None else True,
         miniflux_url=current_user.miniflux_url,
         miniflux_username=current_user.miniflux_username,
-        miniflux_has_password=bool(current_user.miniflux_password)
+        miniflux_has_password=bool(current_user.miniflux_password),
+        # Calendar & Contacts settings
+        schedule_enabled=schedule_enabled,
+        caldav_calendars=caldav_calendars,
+        carddav_url=carddav_url,
+        carddav_username=carddav_username,
+        carddav_has_password=carddav_has_password
     )
 
 
@@ -470,6 +522,78 @@ def update_user_settings(
     if settings.miniflux_password is not None:
         # Allow clearing the password with empty string
         current_user.miniflux_password = settings.miniflux_password if settings.miniflux_password else None
+
+    # Update Calendar & Contacts settings (stored in UserSetting table)
+    import json
+    from app.models import UserSetting
+
+    def save_user_setting(key: str, value: str):
+        setting = db.query(UserSetting).filter(
+            UserSetting.user_id == current_user.id,
+            UserSetting.key == key
+        ).first()
+        if setting:
+            setting.value = value
+        else:
+            db.add(UserSetting(user_id=current_user.id, key=key, value=value))
+
+    if settings.schedule_enabled is not None:
+        save_user_setting("schedule_enabled", "true" if settings.schedule_enabled else "false")
+
+    if settings.caldav_calendars is not None:
+        # Get existing calendars to preserve passwords if not changed
+        existing_setting = db.query(UserSetting).filter(
+            UserSetting.user_id == current_user.id,
+            UserSetting.key == "caldav_calendars"
+        ).first()
+        existing_calendars = []
+        if existing_setting and existing_setting.value:
+            try:
+                existing_calendars = json.loads(existing_setting.value)
+            except json.JSONDecodeError:
+                pass
+
+        # Merge new calendars with existing passwords
+        new_calendars = []
+        for cal in settings.caldav_calendars:
+            new_cal = {
+                'name': cal.get('name', ''),
+                'url': cal.get('url', ''),
+                'username': cal.get('username', ''),
+                'password': cal.get('password') or ''
+            }
+            # If password is null (meaning keep existing), try to find it
+            if cal.get('password') is None:
+                for existing in existing_calendars:
+                    if existing.get('url') == new_cal['url']:
+                        new_cal['password'] = existing.get('password', '')
+                        break
+            new_calendars.append(new_cal)
+
+        save_user_setting("caldav_calendars", json.dumps(new_calendars))
+
+    if settings.carddav_url is not None or settings.carddav_username is not None or settings.carddav_password is not None:
+        # Get existing config
+        existing_setting = db.query(UserSetting).filter(
+            UserSetting.user_id == current_user.id,
+            UserSetting.key == "carddav_config"
+        ).first()
+        existing_config = {}
+        if existing_setting and existing_setting.value:
+            try:
+                existing_config = json.loads(existing_setting.value)
+            except json.JSONDecodeError:
+                pass
+
+        # Update only provided fields
+        if settings.carddav_url is not None:
+            existing_config['url'] = settings.carddav_url
+        if settings.carddav_username is not None:
+            existing_config['username'] = settings.carddav_username
+        if settings.carddav_password is not None:
+            existing_config['password'] = settings.carddav_password
+
+        save_user_setting("carddav_config", json.dumps(existing_config))
 
     db.commit()
 

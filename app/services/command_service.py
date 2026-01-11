@@ -54,15 +54,15 @@ class CommandService:
         "dailynews": "Get news from configured sources: dailynews",
         "logs": "System logs analysis (admin only): logs",
         "miniflux": "Fetch Miniflux articles now: miniflux",
-        "sched": "Calendar: sched | sched today | sched week | sched add <event> <time>",
+        "cal": "Calendar: cal | cal today | cal week | cal add <event> <time>",
         "contacts": "Search contacts: contacts <query>",
         "mail": "Email: mail | mail read <account> <id> | mail reply <account> <id> <msg> | mail delete <account> <id>",
     }
 
     # Command aliases (alias -> canonical command)
     COMMAND_ALIASES = {
-        "schedule": "sched",
-        "cal": "sched",
+        "schedule": "cal",
+        "sched": "cal",
     }
 
     def __init__(self, db: Session, user: Optional["User"] = None):
@@ -122,7 +122,7 @@ class CommandService:
             return await self._logs_command(arg)
         elif command == "miniflux":
             return await self._miniflux_command(arg)
-        elif command == "sched":
+        elif command == "cal":
             return await self._schedule_command(arg)
         elif command == "contacts":
             return await self._contacts_command(arg)
@@ -791,7 +791,7 @@ class CommandService:
         from dateutil import parser as date_parser
 
         if not self.user:
-            return {"type": "text", "content": "Please log in to use the sched command."}
+            return {"type": "text", "content": "Please log in to use the cal command."}
 
         # Check if user has calendars configured
         calendars = get_user_calendars(self.user.id, self.db)
@@ -824,7 +824,7 @@ class CommandService:
 
             elif subcommand == "add":
                 if not param:
-                    return {"type": "text", "content": "Usage: `sched add <event name> <time>`\n\nExample: `sched add Meeting with John tomorrow at 3pm`"}
+                    return {"type": "text", "content": "Usage: `cal add <event name> <time>`\n\nExample: `cal add Meeting with John tomorrow at 3pm`"}
 
                 # Use AI to parse the event
                 messages = [
@@ -891,13 +891,13 @@ Return ONLY valid JSON, no other text."""},
                         return {"type": "text", "content": "❌ Failed to add event to calendar."}
 
                 except json.JSONDecodeError:
-                    return {"type": "text", "content": "Could not parse event details. Try: `sched add Meeting tomorrow at 3pm`"}
+                    return {"type": "text", "content": "Could not parse event details. Try: `cal add Meeting tomorrow at 3pm`"}
                 except Exception as e:
                     logger.error(f"Error adding event: {e}")
                     return {"type": "text", "content": f"Error adding event: {str(e)}"}
 
             else:
-                return {"type": "text", "content": "Usage:\n- `sched` or `sched today` - Today's events\n- `sched week` - This week's events\n- `sched add <event> <time>` - Add an event"}
+                return {"type": "text", "content": "Usage:\n- `cal` or `cal today` - Today's events\n- `cal week` - This week's events\n- `cal add <event> <time>` - Add an event"}
 
         except Exception as e:
             logger.error(f"Schedule command error: {e}")

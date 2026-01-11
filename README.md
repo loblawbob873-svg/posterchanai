@@ -884,7 +884,7 @@ Type these commands in the chat (or use the mode buttons):
 | `flood` | Torrent manager (list, add, start, stop, delete) |
 | `budget` | Budget manager (summary, bills, add, pay) |
 | `firewall` | Firewall status and log search |
-| `sched` | Calendar: today's events, week view, add events |
+| `cal` | Calendar: today's events, week view, add events |
 | `contacts <query>` | Search CalDAV contacts |
 | `mail` | Email: inbox, read, reply, delete messages |
 | `news` | Get unread news from Miniflux |

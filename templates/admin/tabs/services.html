@@ -25,6 +25,11 @@
             <small>Comma-separated drive names for SMART checks</small>
         </div>
         <div class="form-group">
+            <label for="logs_hosts">Remote Hosts (SSH)</label>
+            <input type="text" id="logs_hosts" name="logs_hosts" placeholder="host1,host2,host3">
+            <small>Comma-separated hostnames to collect logs from via SSH (empty = local only)</small>
+        </div>
+        <div class="form-group">
             <label for="logs_exclude_patterns">Exclude Patterns</label>
             <textarea id="logs_exclude_patterns" name="logs_exclude_patterns" rows="6">HTTP Error when pushing to|aibot|misskey|python|python-firewall|searx|Ran out of input|vaultwarden::api::icons|nats|webui.sh|ssl:default|reqwest|Unable to download icon|Invalid claim|Token has expired|is not a global IP!|kf.bluezqt|SDL|ToolTip|miniflux|gameoverlayrenderer|i915|steam|kdecoectd|sr0|proxy|traceid|Vulkan|xkbcommon|kwin_wayland_wrapper|PipeWire|shpchp|logwatcher-ai|usb-backup|machine-snapshot|handshake|certbot|clam|cuda|llama|open-webui|synapse|synctl|fail2ban|php|nextcloud|relay|bundle|mastodon|deno|node|amdgpu|drm|setup_data|dcc_collect|sasl|npm|emaint|bash|killed|tinyproxy|pm2|woff2|dnsmasq|su|veth|ntp|containerd|airflow|wpa|redis|NetworkManager|dhcp4|Temperature_Celsius|minio|dcc_readx|dcc_r_token_int|Current Time|#######################################|tor|sleeping|bitcoin|mix|rsync|litd|pleroma|gitea|strfry|jellyfin|postgres|lnd|cron|blossom|journal|poetry|postfix|ssh|signal|target|slice|dbus|ollama|docker|systemd|dcc_job_summary|pam|Timeout when pushing</textarea>
             <small>Pipe-separated patterns to exclude from syslog (grep -Evi)</small>

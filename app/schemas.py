@@ -219,6 +219,7 @@ class SettingsResponse(BaseModel):
     logs_schedule: str = "1,12,18"
     logs_drives: str = "sda,sdb,nvme0n1"
     logs_exclude_patterns: str = ""
+    logs_hosts: str = ""  # Comma-separated hostnames for remote log collection via SSH
 
     class Config:
         extra = "allow"  # Allow arbitrary extra settings
@@ -349,6 +350,12 @@ class UserSettingsUpdate(BaseModel):
     miniflux_url: Optional[str] = None
     miniflux_username: Optional[str] = None
     miniflux_password: Optional[str] = None
+    # Calendar & Contacts settings
+    schedule_enabled: Optional[bool] = None
+    caldav_calendars: Optional[List[dict]] = None  # List of {name, url, username, password}
+    carddav_url: Optional[str] = None
+    carddav_username: Optional[str] = None
+    carddav_password: Optional[str] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -372,6 +379,12 @@ class UserSettingsResponse(BaseModel):
     miniflux_url: Optional[str] = None
     miniflux_username: Optional[str] = None
     miniflux_has_password: bool = False  # Don't expose actual password
+    # Calendar & Contacts settings
+    schedule_enabled: bool = False
+    caldav_calendars: List[dict] = []  # List of calendars (passwords masked)
+    carddav_url: Optional[str] = None
+    carddav_username: Optional[str] = None
+    carddav_has_password: bool = False
 
 
 class TestConnectionRequest(BaseModel):

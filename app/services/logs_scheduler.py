@@ -6,12 +6,11 @@ Runs at noon (12:00), 18:00, and 01:00 to:
 2. Generate AI summary
 3. Store in a "Logs" conversation for admin
 """
-import asyncio
 import logging
 import socket
 import subprocess
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
@@ -55,7 +54,8 @@ def get_logs_settings(db: Session = None) -> dict:
     settings = {
         'drives': DEFAULT_DRIVES,
         'exclude_patterns': DEFAULT_EXCLUDE_PATTERNS,
-        'schedule': '1,12,18'
+        'schedule': '1,12,18',
+        'hosts': []
     }
 
     if db is None:
@@ -79,6 +79,11 @@ def get_logs_settings(db: Session = None) -> dict:
         schedule_setting = db.query(Setting).filter(Setting.key == "logs_schedule").first()
         if schedule_setting and schedule_setting.value:
             settings['schedule'] = schedule_setting.value
+
+        # Get remote hosts setting
+        hosts_setting = db.query(Setting).filter(Setting.key == "logs_hosts").first()
+        if hosts_setting and hosts_setting.value:
+            settings['hosts'] = [h.strip() for h in hosts_setting.value.split(',') if h.strip()]
     finally:
         if close_db:
             db.close()
@@ -104,6 +109,75 @@ def run_command(cmd: str, sudo: bool = False) -> str:
     except Exception as e:
         logger.debug(f"Command failed: {cmd} - {e}")
         return ""
+
+
+def run_ssh_command(host: str, cmd: str) -> str:
+    """Run a command on a remote host via SSH."""
+    try:
+        ssh_cmd = f"ssh -o ConnectTimeout=10 -o BatchMode=yes {host} '{cmd}'"
+        result = subprocess.run(
+            ssh_cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        return result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        logger.warning(f"SSH timeout for {host}")
+        return ""
+    except Exception as e:
+        logger.warning(f"SSH failed for {host}: {e}")
+        return ""
+
+
+def collect_remote_logs(host: str, settings: dict) -> str:
+    """Collect logs from a remote host via SSH."""
+    exclude_patterns = settings['exclude_patterns']
+    drives = settings['drives']
+
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    dmesg_date = datetime.now().strftime("%b %d")
+
+    log_parts = []
+    log_parts.append(f"[Server Name: {host} - System Report {date_str}]")
+
+    # Collect syslog
+    syslog = run_ssh_command(
+        host,
+        f"sudo journalctl -S '6 hours ago' 2>/dev/null | grep -Ei 'warn|error' | grep -Evi '{exclude_patterns}' | head -100"
+    )
+    if syslog:
+        log_parts.append(f"[SysLog] {syslog[:2000]}")
+
+    # Collect dmesg
+    dmesg = run_ssh_command(
+        host,
+        f"sudo dmesg -T 2>/dev/null | grep -Ei 'warn|error' | grep -viE 'vfio-pci|shpchp|sdl|i915|amdgpu|iptables' | grep -i '{dmesg_date}' | head -50"
+    )
+    if dmesg:
+        log_parts.append(f"[DMESG] {dmesg[:1000]}")
+
+    # Disk usage
+    root_usage = run_ssh_command(host, "df -h / | awk '{ print $5 }' | tail -1")
+    if root_usage:
+        log_parts.append(f"[Root Disk Usage] {root_usage}")
+
+    # Failed services
+    failed = run_ssh_command(host, "systemctl list-units --state failed --no-pager")
+    if failed and "0 loaded" not in failed:
+        log_parts.append(f"[Failed Services] {failed[:500]}")
+
+    # SMART data for drives
+    smart_data = []
+    for drive in drives:
+        smart = run_ssh_command(host, f"sudo smartctl -a /dev/{drive} 2>/dev/null | grep -i result | cut -d ':' -f2")
+        if smart:
+            smart_data.append(f"Drive {drive}: {smart}")
+    if smart_data:
+        log_parts.append(f"[SMART] {' '.join(smart_data)}")
+
+    return " ".join(log_parts)
 
 
 def collect_system_logs(db: Session = None) -> str:
@@ -241,8 +315,21 @@ async def run_logs_for_admin():
 
         logger.info("Collecting system logs...")
 
-        # Collect logs (pass db for settings)
+        # Get settings
+        settings = get_logs_settings(db)
+
+        # Collect local logs
         log_data = collect_system_logs(db)
+
+        # Collect logs from remote hosts
+        remote_hosts = settings.get('hosts', [])
+        for host in remote_hosts:
+            if host:
+                logger.info(f"Collecting logs from remote host: {host}")
+                remote_log_data = collect_remote_logs(host, settings)
+                if remote_log_data:
+                    log_data += " " + remote_log_data
+
         if not log_data:
             logger.info("No log data collected")
             return

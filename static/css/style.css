@@ -1900,6 +1900,37 @@ fieldset legend {
     gap: 10px;
 }
 
+/* CalDAV Calendar List */
+.caldav-calendar-item {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+.caldav-calendar-item .form-group {
+    margin-bottom: 12px;
+}
+.caldav-calendar-item .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.caldav-calendar-item .btn-danger {
+    margin-top: 8px;
+}
+.btn-small {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+.empty-list {
+    color: var(--text-secondary);
+    font-style: italic;
+    padding: 12px;
+    text-align: center;
+}
+
 /* Quick AI Toggle in User Menu */
 .ai-toggle-item {
     display: flex !important;
