@@ -176,7 +176,13 @@ class ChatWebSocket:
             return
 
         msg_type = data.get("type", "")
-        logger.info(f"WS received: type={msg_type}, keys={list(data.keys())}")
+        # Log all message types for debugging
+        if msg_type == "response":
+            inner = data.get("data", {})
+            inner_type = inner.get("type", "unknown")
+            logger.info(f"WS received: type={msg_type}, inner_type={inner_type}, keys={list(inner.keys())}")
+        else:
+            logger.info(f"WS received: type={msg_type}, keys={list(data.keys())}")
 
         match msg_type:
             case "stream":

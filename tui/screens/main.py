@@ -220,7 +220,14 @@ class MainScreen(Screen):
             elif msg_type == "images":
                 chat_view.add_message("assistant", content)
             elif msg_type == "generated_image":
-                chat_view.add_message("assistant", f"{content}\n\n[Image generated - view in web UI]")
+                # Get image URL if available
+                image_data = data.get("image", "")
+                prompt = data.get("prompt", "")
+                if image_data:
+                    chat_view.add_message("assistant", f"{content}\n\n**Image generated!** View in web UI or check uploads folder.\nPrompt: {prompt}")
+                    self.notify("Image generated successfully!", severity="information")
+                else:
+                    chat_view.add_message("assistant", f"{content}\n\n[Image generation completed]")
             else:
                 chat_view.add_message("assistant", content)
 
