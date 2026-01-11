@@ -378,15 +378,19 @@ def search_messages(
                         continue
 
                 # Search each folder
-                search_criteria = f'(OR OR SUBJECT "{query}" FROM "{query}" BODY "{query}")'
+                # Use TEXT which searches headers and body - more widely supported
+                search_criteria = f'TEXT "{query}"'
+                logger.info(f"Searching {len(folders)} folders for '{query}'")
 
                 for folder in folders:
                     try:
                         status, _ = imap.select(folder, readonly=True)
                         if status != "OK":
+                            logger.debug(f"Could not select folder: {folder}")
                             continue
 
                         status, data = imap.search(None, search_criteria)
+                        logger.debug(f"Search in {folder}: status={status}, results={len(data[0].split()) if data[0] else 0}")
                         if status != "OK" or not data[0]:
                             continue
 
