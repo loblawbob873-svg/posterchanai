@@ -1,10 +1,10 @@
 """
 Miniflux News Scheduler
 
-Runs every N minutes (configurable) to:
+Runs at :00 and :30 every hour to:
 1. Fetch unread articles from Miniflux
-2. Find or create a "News" conversation for each user
-3. Summarize each article using AI
+2. Get or create a "Miniflux" conversation for each user
+3. Summarize each article using AI and add to the conversation
 4. Mark articles as read in Miniflux after summarization
 """
 import logging
@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 # Global scheduler instance
 miniflux_scheduler: Optional[AsyncIOScheduler] = None
 
-# Name of the Miniflux RSS chat
-NEWS_CHAT_TITLE = "News"
+# Name of the Miniflux conversation
+MINIFLUX_CHAT_TITLE = "Miniflux"
 
 
 def html_to_text(html: str) -> str:
@@ -48,30 +48,29 @@ def html_to_text(html: str) -> str:
     return text
 
 
-def get_or_create_news_chat(db: Session, user_id: int) -> Conversation:
+def get_or_create_miniflux_chat(db: Session, user_id: int) -> Conversation:
     """
-    Get the News chat for a user, creating it if it doesn't exist.
-    If the chat was deleted, create a new one.
+    Get the Miniflux chat for a user, creating it if it doesn't exist.
     """
-    # Look for existing News chat
-    news_chat = db.query(Conversation).filter(
+    # Look for existing Miniflux chat
+    miniflux_chat = db.query(Conversation).filter(
         Conversation.user_id == user_id,
-        Conversation.title == NEWS_CHAT_TITLE
+        Conversation.title == MINIFLUX_CHAT_TITLE
     ).first()
 
-    if news_chat:
-        return news_chat
+    if miniflux_chat:
+        return miniflux_chat
 
-    # Create new News chat
-    news_chat = Conversation(
+    # Create new Miniflux chat
+    miniflux_chat = Conversation(
         user_id=user_id,
-        title=NEWS_CHAT_TITLE
+        title=MINIFLUX_CHAT_TITLE
     )
-    db.add(news_chat)
-    db.commit()  # Commit immediately to ensure it's saved
-    db.refresh(news_chat)  # Refresh to get the ID
-    logger.info(f"Created News chat for user {user_id}")
-    return news_chat
+    db.add(miniflux_chat)
+    db.commit()
+    db.refresh(miniflux_chat)
+    logger.info(f"Created Miniflux chat for user {user_id}")
+    return miniflux_chat
 
 
 async def summarize_article(db: Session, user: User, title: str, content: str, url: str) -> str:
@@ -119,9 +118,9 @@ async def process_miniflux_news_for_user(user_id: int):
     Process Miniflux news for a specific user.
 
     1. Fetch unread articles from Miniflux
-    2. Get or create the News chat
-    3. For each article, generate an AI summary and add to chat
-    4. Mark all processed articles as read in Miniflux
+    2. Get or create the "Miniflux" conversation
+    3. For each article, generate an AI summary and add to the conversation
+    4. Mark article as read in Miniflux
     """
     db = SessionLocal()
     try:
@@ -149,10 +148,10 @@ async def process_miniflux_news_for_user(user_id: int):
 
         logger.info(f"Processing {len(entries)} unread entries for user {user.username}")
 
-        # Get or create News chat
-        news_chat = get_or_create_news_chat(db, user.id)
+        # Get or create the Miniflux chat
+        miniflux_chat = get_or_create_miniflux_chat(db, user.id)
 
-        # Process each entry one by one
+        # Process each entry
         for entry in entries:
             entry_id = entry.get("id")
             title = entry.get("title", "Untitled")
@@ -172,27 +171,27 @@ async def process_miniflux_news_for_user(user_id: int):
             # Generate summary
             summary = await summarize_article(db, user, title, text_content, url)
 
-            # Format with clickable markdown link
+            # Format with clickable markdown link and source info
             if url:
                 summary_text = f"**[{title}]({url})**\n*Source: {feed_title}*\n\n{summary}"
             else:
                 summary_text = f"**{title}**\n*Source: {feed_title}*\n\n{summary}"
 
-            # Add message immediately after processing each entry
+            # Add the summary to the Miniflux chat
             news_msg = Message(
-                conversation_id=news_chat.id,
+                conversation_id=miniflux_chat.id,
                 role="assistant",
                 content=summary_text
             )
             db.add(news_msg)
 
             # Update conversation timestamp
-            news_chat.updated_at = datetime.utcnow()
+            miniflux_chat.updated_at = datetime.utcnow()
             db.commit()
 
             # Mark this entry as read in Miniflux immediately
             await miniflux.mark_entries_as_read([entry_id])
-            logger.info(f"Added summary for '{title[:50]}...' to News chat")
+            logger.info(f"Added summary for '{title[:50]}...' to Miniflux chat")
 
     except Exception as e:
         logger.error(f"Error processing Miniflux news for user {user_id}: {e}")

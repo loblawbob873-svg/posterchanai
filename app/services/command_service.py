@@ -42,6 +42,8 @@ class CommandService:
         "firewall": "Firewall: firewall | firewall search <ip> [date] | firewall analyze <ip>",
         "news": "Get unread news from Miniflux: news | news refresh",
         "dailynews": "Get news from configured sources: dailynews",
+        "logs": "System logs analysis (admin only): logs",
+        "miniflux": "Fetch Miniflux articles now: miniflux",
     }
 
     def __init__(self, db: Session, user: Optional["User"] = None):
@@ -89,6 +91,10 @@ class CommandService:
             return await self._news_command(arg)
         elif command == "dailynews":
             return await self._dailynews_command(arg)
+        elif command == "logs":
+            return await self._logs_command(arg)
+        elif command == "miniflux":
+            return await self._miniflux_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -667,6 +673,70 @@ class CommandService:
         except Exception as e:
             logger.error(f"Daily news command error: {e}")
             return {"type": "text", "content": f"Error fetching daily news: {str(e)}"}
+
+    async def _logs_command(self, arg: str) -> dict:
+        """Collect system logs and generate AI summary (admin only)"""
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use the logs command."}
+
+        # Admin only (user ID 1)
+        if self.user.id != 1:
+            return {"type": "text", "content": "The logs command is only available to administrators."}
+
+        try:
+            from app.services.logs_scheduler import collect_system_logs, generate_log_summary, get_or_create_logs_chat
+            from app.models import Message
+            from datetime import datetime
+            import socket
+
+            # Collect logs (pass db for settings)
+            log_data = collect_system_logs(self.db)
+            if not log_data:
+                return {"type": "text", "content": "No log data collected."}
+
+            # Generate AI summary
+            summary = await generate_log_summary(self.db, self.user, log_data)
+
+            # Store in Logs conversation
+            logs_chat = get_or_create_logs_chat(self.db, self.user.id)
+
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+            hostname = socket.gethostname()
+            message_text = f"## System Log Report - {hostname}\n*{timestamp}*\n\n{summary}"
+
+            log_msg = Message(
+                conversation_id=logs_chat.id,
+                role="assistant",
+                content=message_text
+            )
+            self.db.add(log_msg)
+            logs_chat.updated_at = datetime.utcnow()
+            self.db.commit()
+
+            return {"type": "text", "content": message_text}
+
+        except Exception as e:
+            logger.error(f"Logs command error: {e}")
+            return {"type": "text", "content": f"Error collecting logs: {str(e)}"}
+
+    async def _miniflux_command(self, arg: str) -> dict:
+        """Manually trigger Miniflux article fetch"""
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use the miniflux command."}
+
+        # Check if user has Miniflux enabled
+        if not self.user.miniflux_enabled:
+            return {"type": "text", "content": "Miniflux is disabled for your account. Enable it in settings."}
+
+        try:
+            from app.services.miniflux_scheduler import process_miniflux_news_for_user
+
+            await process_miniflux_news_for_user(self.user.id)
+            return {"type": "text", "content": "Miniflux articles fetched and added to your Miniflux conversation."}
+
+        except Exception as e:
+            logger.error(f"Miniflux command error: {e}")
+            return {"type": "text", "content": f"Error fetching Miniflux articles: {str(e)}"}
 
     async def check_youtube_url(self, message: str) -> Optional[dict]:
         """Check if message contains a YouTube URL and summarize it"""

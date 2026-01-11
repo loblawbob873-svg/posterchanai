@@ -91,6 +91,10 @@ async def startup():
         # Start Miniflux news scheduler
         from app.services.miniflux_scheduler import start_miniflux_scheduler
         start_miniflux_scheduler()
+
+        # Start Logs scheduler
+        from app.services.logs_scheduler import start_logs_scheduler
+        start_logs_scheduler()
     else:
         logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 
@@ -133,6 +137,10 @@ async def shutdown():
         # Stop Miniflux news scheduler
         from app.services.miniflux_scheduler import stop_miniflux_scheduler
         stop_miniflux_scheduler()
+
+        # Stop Logs scheduler
+        from app.services.logs_scheduler import stop_logs_scheduler
+        stop_logs_scheduler()
 
     # Stop MCP server
     from app.services.mcp_service import stop_mcp_server

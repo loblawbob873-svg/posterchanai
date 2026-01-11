@@ -60,7 +60,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'flood', 'budget', 'firewall', 'news', 'dailynews'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'flood', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'miniflux'];
         this.pluginActions = []; // Will be populated with plugin action hints
 
         // Load plugins for autocomplete

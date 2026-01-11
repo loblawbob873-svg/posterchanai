@@ -1,6 +1,40 @@
 <!-- Services Tab -->
 <div class="tab-content" id="tab-services">
     <fieldset>
+        <legend>Schedulers</legend>
+        <div class="form-group">
+            <label for="miniflux_enabled">
+                <input type="checkbox" id="miniflux_enabled" name="miniflux_enabled"> Enable Miniflux Scheduler
+            </label>
+            <small>Fetch RSS articles at :00 and :30 every hour, store in "Miniflux" conversation</small>
+        </div>
+        <div class="form-group">
+            <label for="logs_scheduler_enabled">
+                <input type="checkbox" id="logs_scheduler_enabled" name="logs_scheduler_enabled"> Enable Logs Scheduler
+            </label>
+            <small>Collect system logs at 01:00, 12:00, and 18:00, store in "Logs" conversation (admin only)</small>
+        </div>
+        <div class="form-group">
+            <label for="logs_schedule">Schedule (cron hours)</label>
+            <input type="text" id="logs_schedule" name="logs_schedule" value="1,12,18" placeholder="1,12,18">
+            <small>Hours to run (comma-separated, 24h format). Default: 1,12,18</small>
+        </div>
+        <div class="form-group">
+            <label for="logs_drives">Drives to Check</label>
+            <input type="text" id="logs_drives" name="logs_drives" value="sda,sdb,nvme0n1" placeholder="sda,sdb,nvme0n1">
+            <small>Comma-separated drive names for SMART checks</small>
+        </div>
+        <div class="form-group">
+            <label for="logs_exclude_patterns">Exclude Patterns</label>
+            <textarea id="logs_exclude_patterns" name="logs_exclude_patterns" rows="4" placeholder="pattern1|pattern2|pattern3"></textarea>
+            <small>Pipe-separated patterns to exclude from syslog (grep -Evi)</small>
+        </div>
+        <div class="form-group" style="margin-top: 10px;">
+            <small><strong>Note:</strong> Restart the service after changing scheduler settings.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>MCP Server (RAG API)</legend>
         <div class="form-group">
             <label for="mcp_enabled">
