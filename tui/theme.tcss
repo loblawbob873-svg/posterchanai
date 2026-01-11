@@ -135,14 +135,14 @@ FooterKey > .footer-key--key {
 .message-user {
     background: $cyan 12%;
     border: solid $cyan 40%;
-    margin-left: 20%;
+    margin-left: 10;
     text-align: right;
 }
 
 .message-assistant {
     background: $magenta 12%;
     border: solid $magenta 40%;
-    margin-right: 20%;
+    margin-right: 10;
 }
 
 .message-system {
@@ -150,7 +150,7 @@ FooterKey > .footer-key--key {
     text-align: center;
     color: $text-dim;
     border: solid $border;
-    margin: 1 10%;
+    margin: 1 5;
 }
 
 .message-content {
