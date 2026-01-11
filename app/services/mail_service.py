@@ -346,7 +346,7 @@ def search_messages(
     query: str,
     limit: int = 20
 ) -> List[EmailMessage]:
-    """Search messages in an account using IMAP SEARCH."""
+    """Search messages in all folders of an account using IMAP SEARCH."""
     accounts = get_user_mail_accounts(user_id, db)
     messages = []
 
@@ -357,32 +357,62 @@ def search_messages(
                 return []
 
             try:
-                imap.select("INBOX")
-                # Search in subject, from, and body
-                # IMAP search is case-insensitive
-                # Use OR to combine criteria
-                search_criteria = f'(OR OR SUBJECT "{query}" FROM "{query}" BODY "{query}")'
-                status, data = imap.search(None, search_criteria)
-
-                if status != "OK" or not data[0]:
-                    logger.debug(f"No results for search '{query}'")
+                # Get list of all folders
+                status, folder_data = imap.list()
+                if status != "OK":
                     return []
 
-                uids = data[0].split()
-                # Get most recent matches first (reverse order)
-                uids = list(reversed(uids[-limit:]))
-
-                for uid in uids:
-                    status, msg_data = imap.fetch(uid, "(RFC822)")
-                    if status != "OK" or not msg_data[0]:
+                folders = []
+                for folder_line in folder_data:
+                    # Parse folder name from IMAP LIST response
+                    # Format: (\\flags) "delimiter" "folder_name"
+                    try:
+                        decoded = folder_line.decode() if isinstance(folder_line, bytes) else folder_line
+                        parts = decoded.split('"')
+                        if len(parts) >= 4:
+                            folder_name = parts[-2]
+                            # Skip special folders that can't be searched
+                            if folder_name.lower() not in ('[gmail]', '[google mail]'):
+                                folders.append(folder_name)
+                    except Exception:
                         continue
 
-                    raw_email = msg_data[0][1]
-                    msg = parse_email(raw_email, uid.decode(), account.email)
-                    if msg:
-                        messages.append(msg)
+                # Search each folder
+                search_criteria = f'(OR OR SUBJECT "{query}" FROM "{query}" BODY "{query}")'
 
-                return messages
+                for folder in folders:
+                    try:
+                        status, _ = imap.select(folder, readonly=True)
+                        if status != "OK":
+                            continue
+
+                        status, data = imap.search(None, search_criteria)
+                        if status != "OK" or not data[0]:
+                            continue
+
+                        uids = data[0].split()
+                        # Get most recent matches first
+                        for uid in reversed(uids[-limit:]):
+                            if len(messages) >= limit:
+                                break
+                            status, msg_data = imap.fetch(uid, "(RFC822)")
+                            if status != "OK" or not msg_data[0]:
+                                continue
+
+                            raw_email = msg_data[0][1]
+                            msg = parse_email(raw_email, uid.decode(), account.email)
+                            if msg:
+                                # Add folder info to message
+                                msg.account = f"{account.email} ({folder})"
+                                messages.append(msg)
+
+                    except Exception as e:
+                        logger.debug(f"Error searching folder {folder}: {e}")
+                        continue
+
+                # Sort by date (newest first)
+                messages.sort(key=lambda m: m.date, reverse=True)
+                return messages[:limit]
 
             except Exception as e:
                 logger.error(f"Error searching messages: {e}")
@@ -502,7 +532,7 @@ def archive_message(
     account_email: str,
     uid: str
 ) -> bool:
-    """Archive a message by moving to Archive folder."""
+    """Archive a message by moving to INBOX.Archive folder."""
     accounts = get_user_mail_accounts(user_id, db)
 
     for account in accounts:
@@ -514,30 +544,26 @@ def archive_message(
             try:
                 imap.select("INBOX")
 
-                # Try common archive folder names
-                archive_folders = ["Archive", "INBOX.Archive", "Archives", "[Gmail]/All Mail"]
-                archive_folder = None
+                # Use INBOX.Archive as the standard archive folder
+                archive_folder = "INBOX.Archive"
 
-                # List available folders
+                # Check if it exists, create if not
                 status, folders = imap.list()
+                folder_exists = False
                 if status == "OK":
-                    folder_list = [f.decode() for f in folders]
-                    for af in archive_folders:
-                        for folder_line in folder_list:
-                            if af.lower() in folder_line.lower():
-                                # Extract folder name from IMAP response
-                                parts = folder_line.split('"')
-                                if len(parts) >= 4:
-                                    archive_folder = parts[-2]
-                                    break
-                        if archive_folder:
+                    for folder_line in folders:
+                        decoded = folder_line.decode() if isinstance(folder_line, bytes) else folder_line
+                        if "INBOX.Archive" in decoded or '"INBOX.Archive"' in decoded:
+                            folder_exists = True
                             break
 
-                # Create Archive folder if it doesn't exist
-                if not archive_folder:
-                    archive_folder = "Archive"
-                    imap.create(archive_folder)
-                    logger.info(f"Created Archive folder for {account_email}")
+                if not folder_exists:
+                    result = imap.create(archive_folder)
+                    if result[0] != "OK":
+                        # Try without INBOX prefix as fallback
+                        archive_folder = "Archive"
+                        imap.create(archive_folder)
+                    logger.info(f"Created {archive_folder} folder for {account_email}")
 
                 # Copy to archive folder
                 result = imap.copy(uid.encode(), archive_folder)
