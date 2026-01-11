@@ -51,6 +51,19 @@ FooterKey > .footer-key--key {
     border-right: solid $border;
 }
 
+#sidebar-content {
+    height: 1fr;
+}
+
+#sidebar-title {
+    height: 2;
+    background: $surface-bright;
+    padding: 0 1;
+    text-style: bold;
+    color: $cyan;
+    border-bottom: solid $border;
+}
+
 #sidebar-header {
     height: 3;
     background: $surface-bright;
@@ -61,12 +74,11 @@ FooterKey > .footer-key--key {
 }
 
 #new-chat-btn {
-    dock: right;
-    width: auto;
-    min-width: 5;
+    width: 100%;
     background: $cyan;
     color: $bg;
     text-style: bold;
+    margin: 1;
 }
 
 #new-chat-btn:hover {
@@ -267,24 +279,34 @@ Button:focus {
     border: solid $cyan;
 }
 
-Button.primary {
+Button.primary, Button.-primary {
     background: $cyan;
     color: $bg;
     border: none;
 }
 
-Button.primary:hover {
+Button.primary:hover, Button.-primary:hover {
     background: $cyan 80%;
 }
 
-Button.danger {
+Button.danger, Button.-danger {
     background: $error;
     color: $text;
     border: none;
 }
 
-Button.danger:hover {
+Button.danger:hover, Button.-danger:hover {
     background: $error 80%;
+}
+
+Button.-warning, Button.warning {
+    background: $warning;
+    color: $bg;
+    border: none;
+}
+
+Button.-warning:hover, Button.warning:hover {
+    background: $warning 80%;
 }
 
 /* ======== CMD BUTTONS (inline command links) ======== */

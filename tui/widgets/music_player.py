@@ -11,8 +11,6 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual import work
 
-from tui.audio import AudioPlayer, create_player, ASCIIVisualizer
-
 
 class MusicPlayerWidget(Widget):
     """Music player with controls and visualizer."""
@@ -24,17 +22,18 @@ class MusicPlayerWidget(Widget):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.player: AudioPlayer | None = None
-        self.visualizer = ASCIIVisualizer()
+        self.player = None  # Lazy init
+        self.visualizer = None
         self.playlist: list[dict] = []
         self.playlist_index = 0
+        self._player_initialized = False
         self.add_class("--hidden")  # Start hidden
 
     def compose(self) -> ComposeResult:
         yield Vertical(
             Static("MUSIC PLAYER", id="player-title"),
             Horizontal(
-                Static("", id="track-info"),
+                Static("No track loaded", id="track-info"),
                 id="player-info"
             ),
             Static("", id="visualizer"),
@@ -46,7 +45,7 @@ class MusicPlayerWidget(Widget):
             ),
             Horizontal(
                 Button("<<", id="btn-prev", classes="player-btn"),
-                Button("||", id="btn-play", classes="player-btn player-btn-main"),
+                Button(">", id="btn-play", classes="player-btn player-btn-main"),
                 Button(">>", id="btn-next", classes="player-btn"),
                 Button("X", id="btn-stop", classes="player-btn"),
                 id="player-controls"
@@ -54,21 +53,71 @@ class MusicPlayerWidget(Widget):
             id="player-container"
         )
 
-    def on_mount(self):
-        """Initialize player on mount."""
+    def _init_player(self):
+        """Initialize player lazily when needed."""
+        if self._player_initialized:
+            return self.player is not None
+
+        self._player_initialized = True
         try:
+            from tui.audio import create_player, ASCIIVisualizer
+            self.visualizer = ASCIIVisualizer()
             self.player = create_player()
             if self.player:
-                self.player.on_progress = self.handle_progress
-                self.player.on_track_end = self.handle_track_end
+                # Wrap callbacks to use call_from_thread for thread safety
+                self.player.on_progress = self._on_progress_callback
+                self.player.on_track_end = self._on_track_end_callback
+            return self.player is not None
         except Exception as e:
-            self.player = None
-            # Don't notify on mount - will notify when user tries to play
+            self.notify(f"Audio player failed: {e}", severity="error")
+            return False
+
+    def _on_progress_callback(self, position: float, duration: float):
+        """Thread-safe progress callback."""
+        try:
+            self.app.call_from_thread(self._update_progress, position, duration)
+        except Exception:
+            pass  # Ignore if app not available
+
+    def _on_track_end_callback(self):
+        """Thread-safe track end callback."""
+        try:
+            self.app.call_from_thread(self._handle_track_end)
+        except Exception:
+            pass
+
+    def _update_progress(self, position: float, duration: float):
+        """Update progress on main thread."""
+        self.progress = position
+        self.duration = duration
+
+        try:
+            if duration > 0:
+                pct = (position / duration) * 100
+                progress_bar = self.query_one("#progress-bar", ProgressBar)
+                progress_bar.update(progress=pct)
+
+            self.query_one("#time-current", Static).update(self._format_time(position))
+            self.query_one("#time-total", Static).update(self._format_time(duration))
+        except Exception:
+            pass
+
+    def _handle_track_end(self):
+        """Handle track end on main thread."""
+        self.is_playing = False
+        self._update_play_button()
+
+        # Auto-play next in playlist
+        if self.playlist and self.playlist_index < len(self.playlist) - 1:
+            self.next_track()
 
     def play_track(self, track: dict):
         """Play a single track."""
-        if not self.player:
-            self.notify("Audio player not available", severity="error")
+        if not self._init_player():
+            self.notify("Audio player not available. Install mpv.", severity="error")
+            return
+
+        if not track:
             return
 
         self.current_track = track
@@ -103,7 +152,7 @@ class MusicPlayerWidget(Widget):
         # Start playback
         try:
             self.player.play(url)
-            self._start_visualizer()
+            self._run_visualizer()
         except Exception as e:
             self.is_playing = False
             self.notify(f"Playback failed: {e}", severity="error")
@@ -114,64 +163,51 @@ class MusicPlayerWidget(Widget):
             title = self.current_track.get("title", "Unknown")
             artist = self.current_track.get("artist", "")
             info = f"{artist} - {title}" if artist else title
-            # Truncate if too long
             if len(info) > 40:
                 info = info[:37] + "..."
         else:
             info = "No track"
 
-        self.query_one("#track-info", Static).update(info)
+        try:
+            self.query_one("#track-info", Static).update(info)
+        except Exception:
+            pass
 
     def _update_play_button(self):
         """Update play/pause button."""
-        btn = self.query_one("#btn-play", Button)
-        btn.label = "||" if self.is_playing else ">"
+        try:
+            btn = self.query_one("#btn-play", Button)
+            btn.label = "||" if self.is_playing else ">"
+        except Exception:
+            pass
 
     @work(exclusive=True)
-    async def _start_visualizer(self):
+    async def _run_visualizer(self):
         """Run visualizer animation."""
-        viz_widget = self.query_one("#visualizer", Static)
+        if not self.visualizer:
+            return
 
+        try:
+            viz_widget = self.query_one("#visualizer", Static)
+        except Exception:
+            return
+
+        import random
         while self.is_playing:
-            # Get audio levels if available
-            if self.player and hasattr(self.player, 'get_levels'):
-                levels = self.player.get_levels()
-            else:
-                # Generate fake levels for visual effect
-                import random
+            try:
+                # Generate visual effect levels
                 levels = [random.random() * 0.8 for _ in range(32)]
+                viz_text = self.visualizer.render(levels)
+                viz_widget.update(viz_text)
+            except Exception:
+                break
 
-            # Render visualizer
-            viz_text = self.visualizer.render(levels)
-            viz_widget.update(viz_text)
+            await asyncio.sleep(0.1)  # 10fps to reduce CPU usage
 
-            await asyncio.sleep(0.05)  # ~20fps
-
-        viz_widget.update("")
-
-    def handle_progress(self, position: float, duration: float):
-        """Handle playback progress update."""
-        self.progress = position
-        self.duration = duration
-
-        # Update progress bar
-        if duration > 0:
-            pct = (position / duration) * 100
-            progress_bar = self.query_one("#progress-bar", ProgressBar)
-            progress_bar.update(progress=pct)
-
-        # Update time displays
-        self.query_one("#time-current", Static).update(self._format_time(position))
-        self.query_one("#time-total", Static).update(self._format_time(duration))
-
-    def handle_track_end(self):
-        """Handle track ending."""
-        self.is_playing = False
-        self._update_play_button()
-
-        # Auto-play next in playlist
-        if self.playlist and self.playlist_index < len(self.playlist) - 1:
-            self.next_track()
+        try:
+            viz_widget.update("")
+        except Exception:
+            pass
 
     def _format_time(self, seconds: float) -> str:
         """Format seconds as M:SS."""
@@ -194,7 +230,7 @@ class MusicPlayerWidget(Widget):
 
     def toggle_playback(self):
         """Toggle play/pause."""
-        if not self.player:
+        if not self._init_player():
             return
 
         if self.is_playing:
@@ -204,20 +240,22 @@ class MusicPlayerWidget(Widget):
             if self.current_track:
                 self.player.resume()
                 self.is_playing = True
-                self._start_visualizer()
+                self._run_visualizer()
 
         self._update_play_button()
 
     def stop(self):
         """Stop playback."""
         if self.player:
-            self.player.stop()
+            try:
+                self.player.stop()
+            except Exception:
+                pass
 
         self.is_playing = False
         self.progress = 0.0
         self._update_play_button()
 
-        # Reset displays
         try:
             self.query_one("#time-current", Static).update("0:00")
             progress_bar = self.query_one("#progress-bar", ProgressBar)
