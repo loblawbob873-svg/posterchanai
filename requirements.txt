@@ -41,3 +41,8 @@ chromadb>=0.4.0
 sentence-transformers>=2.2.0
 mcp
 youtube-transcript-api
+# CalDAV/CardDAV support
+caldav>=1.3.0
+vobject>=0.9.6
+icalendar>=5.0.0
+python-dateutil>=2.8.0

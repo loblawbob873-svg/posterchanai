@@ -12,6 +12,11 @@ from app.services.torrent_service import scrape_torrents, format_torrent_results
 from app.services.nyaa_service import search_nyaa, format_nyaa_results, NyaaResult
 from app.services.miniflux_service import MinifluxService
 from app.routers.news import fetch_news_from_source, get_user_news_sources
+from app.services.caldav_service import (
+    get_all_user_events, get_user_calendars, get_user_contacts,
+    format_events_for_display, format_contacts_for_display,
+    add_event_to_calendar
+)
 # Lock now handled inside image_factory for fine-grained control
 
 if TYPE_CHECKING:
@@ -44,6 +49,14 @@ class CommandService:
         "dailynews": "Get news from configured sources: dailynews",
         "logs": "System logs analysis (admin only): logs",
         "miniflux": "Fetch Miniflux articles now: miniflux",
+        "sched": "Calendar: sched | sched today | sched week | sched add <event> <time>",
+        "contacts": "Search contacts: contacts <query>",
+    }
+
+    # Command aliases (alias -> canonical command)
+    COMMAND_ALIASES = {
+        "schedule": "sched",
+        "cal": "sched",
     }
 
     def __init__(self, db: Session, user: Optional["User"] = None):
@@ -56,11 +69,19 @@ class CommandService:
         """Parse message for commands, return (command, argument)"""
         lower = message.lower().strip()
 
+        # Check canonical commands first
         for cmd in self.COMMANDS:
             if lower.startswith(f"{cmd} "):
                 return cmd, message[len(cmd)+1:].strip()
             if lower == cmd:
                 return cmd, ""
+
+        # Check aliases
+        for alias, canonical in self.COMMAND_ALIASES.items():
+            if lower.startswith(f"{alias} "):
+                return canonical, message[len(alias)+1:].strip()
+            if lower == alias:
+                return canonical, ""
 
         return None, message
 
@@ -95,6 +116,10 @@ class CommandService:
             return await self._logs_command(arg)
         elif command == "miniflux":
             return await self._miniflux_command(arg)
+        elif command == "sched":
+            return await self._schedule_command(arg)
+        elif command == "contacts":
+            return await self._contacts_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -751,6 +776,146 @@ class CommandService:
         success, result = await summarize_youtube(urls[0], self.chat_service)
         # Return result whether success or failure (so user sees error messages)
         return {"type": "text", "content": result}
+
+    async def _schedule_command(self, arg: str) -> dict:
+        """Calendar/Schedule commands"""
+        from datetime import datetime, timedelta
+        from dateutil import parser as date_parser
+
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use the sched command."}
+
+        # Check if user has calendars configured
+        calendars = get_user_calendars(self.user.id, self.db)
+        if not calendars:
+            return {"type": "text", "content": "No calendars configured. Add calendars in User Settings."}
+
+        parts = arg.strip().split(maxsplit=1)
+        subcommand = parts[0].lower() if parts else "today"
+        param = parts[1] if len(parts) > 1 else ""
+
+        try:
+            if subcommand in ("today", ""):
+                # Get today's events
+                today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                tomorrow = today + timedelta(days=1)
+                events = get_all_user_events(self.user.id, today, tomorrow, self.db)
+                events_text = format_events_for_display(events, include_description=True)
+
+                date_str = today.strftime("%A, %B %d, %Y")
+                return {"type": "text", "content": f"## Schedule for {date_str}\n\n{events_text}"}
+
+            elif subcommand == "week":
+                # Get this week's events
+                today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                week_end = today + timedelta(days=7)
+                events = get_all_user_events(self.user.id, today, week_end, self.db)
+                events_text = format_events_for_display(events, include_description=True)
+
+                return {"type": "text", "content": f"## Schedule for the Week\n\n{events_text}"}
+
+            elif subcommand == "add":
+                if not param:
+                    return {"type": "text", "content": "Usage: `sched add <event name> <time>`\n\nExample: `sched add Meeting with John tomorrow at 3pm`"}
+
+                # Use AI to parse the event
+                messages = [
+                    {"role": "system", "content": """Parse this event and return JSON with:
+- summary: event name
+- description: any details mentioned
+- start_time: ISO format datetime (assume today's date if not specified)
+- end_time: ISO format datetime (default 1 hour after start)
+- location: place if mentioned
+
+Return ONLY valid JSON, no other text."""},
+                    {"role": "user", "content": f"Parse this event: {param}"}
+                ]
+
+                try:
+                    import json
+                    import re
+                    parsed = await self.chat_service.chat(messages)
+                    logger.debug(f"AI response for event parsing: {parsed[:200]}")
+
+                    # Clean up markdown code blocks if present
+                    parsed = parsed.strip()
+                    # Handle ```json or ``` blocks
+                    code_block_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', parsed)
+                    if code_block_match:
+                        parsed = code_block_match.group(1).strip()
+                    else:
+                        # Try to extract JSON object directly
+                        json_match = re.search(r'\{[\s\S]*\}', parsed)
+                        if json_match:
+                            parsed = json_match.group(0)
+
+                    logger.debug(f"Cleaned JSON: {parsed[:200]}")
+                    event_data = json.loads(parsed)
+
+                    summary = event_data.get("summary", param)
+                    description = event_data.get("description", "")
+                    start_str = event_data.get("start_time", "")
+                    end_str = event_data.get("end_time", "")
+                    location = event_data.get("location")
+
+                    logger.info(f"Parsed event: summary={summary}, start={start_str}, end={end_str}")
+
+                    # Parse dates
+                    start_time = date_parser.parse(start_str) if start_str else datetime.now() + timedelta(hours=1)
+                    end_time = date_parser.parse(end_str) if end_str else start_time + timedelta(hours=1)
+
+                    logger.info(f"Event times: {start_time} - {end_time}")
+
+                    # Add to first calendar
+                    cal = calendars[0]
+                    logger.info(f"Adding to calendar: {cal['name']} ({cal['url']})")
+                    success = add_event_to_calendar(
+                        cal['url'], cal['username'], cal['password'],
+                        summary, description, start_time, end_time, location
+                    )
+
+                    if success:
+                        time_str = start_time.strftime("%A, %B %d at %I:%M %p")
+                        logger.info(f"Event added successfully: {summary} at {time_str}")
+                        return {"type": "text", "content": f"✅ Event added: **{summary}**\n\n📅 {time_str}"}
+                    else:
+                        logger.error(f"Failed to add event: {summary}")
+                        return {"type": "text", "content": "❌ Failed to add event to calendar."}
+
+                except json.JSONDecodeError:
+                    return {"type": "text", "content": "Could not parse event details. Try: `sched add Meeting tomorrow at 3pm`"}
+                except Exception as e:
+                    logger.error(f"Error adding event: {e}")
+                    return {"type": "text", "content": f"Error adding event: {str(e)}"}
+
+            else:
+                return {"type": "text", "content": "Usage:\n- `sched` or `sched today` - Today's events\n- `sched week` - This week's events\n- `sched add <event> <time>` - Add an event"}
+
+        except Exception as e:
+            logger.error(f"Schedule command error: {e}")
+            return {"type": "text", "content": f"Error: {str(e)}"}
+
+    async def _contacts_command(self, arg: str) -> dict:
+        """Search contacts"""
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use the contacts command."}
+
+        if not arg.strip():
+            return {"type": "text", "content": "Usage: `contacts <search query>`\n\nExample: `contacts John` or `contacts @company.com`"}
+
+        query = arg.strip()
+
+        try:
+            contacts = get_user_contacts(self.user.id, query, self.db)
+            if not contacts:
+                return {"type": "text", "content": f"No contacts found matching '{query}'."}
+
+            contacts_text = format_contacts_for_display(contacts)
+            return {"type": "text", "content": f"## Contacts matching '{query}'\n{contacts_text}"}
+
+        except Exception as e:
+            logger.error(f"Contacts command error: {e}")
+            return {"type": "text", "content": f"Error searching contacts: {str(e)}"}
 
 
 def get_command_service(db: Session) -> CommandService:

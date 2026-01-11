@@ -10,6 +10,7 @@
             <div class="user-tabs">
                 <button class="user-tab-btn active" data-tab="profile">Profile</button>
                 <button class="user-tab-btn" data-tab="ai">AI Services</button>
+                <button class="user-tab-btn" data-tab="calendar">Calendar & Contacts</button>
                 <button class="user-tab-btn" data-tab="news">News & RSS</button>
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
             </div>
@@ -102,6 +103,50 @@
                             <div class="form-group">
                                 <button type="button" class="btn-secondary" id="testCustomImage">Test Connection</button>
                                 <span id="testImageResult" class="test-result"></span>
+                            </div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <!-- Calendar & Contacts Tab -->
+                <div class="user-tab-content" id="user-tab-calendar">
+                    <fieldset>
+                        <legend>Daily Schedule</legend>
+                        <p class="fieldset-info">Get a daily summary of your calendar events at 6 AM in a "Today" conversation.</p>
+                        <div class="form-group">
+                            <div class="toggle-row">
+                                <label for="scheduleEnabled">Enable Daily Schedule</label>
+                                <input type="checkbox" id="scheduleEnabled">
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend>CalDAV Calendars</legend>
+                        <p class="fieldset-info">Connect to CalDAV calendars (Nextcloud, Baikal, Radicale, etc.).</p>
+                        <div id="caldavCalendarList">
+                            <!-- Calendars added here dynamically -->
+                        </div>
+                        <div class="form-group" style="margin-top: 15px;">
+                            <button type="button" class="btn-secondary" id="addCaldavCalendar">+ Add Calendar</button>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend>CardDAV Contacts</legend>
+                        <p class="fieldset-info">Connect to a CardDAV address book for contact search.</p>
+                        <div class="form-group">
+                            <label for="carddavUrl">CardDAV URL</label>
+                            <input type="url" id="carddavUrl" placeholder="https://cal.example.com/user/contacts/">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="carddavUsername">Username</label>
+                                <input type="text" id="carddavUsername" placeholder="username">
+                            </div>
+                            <div class="form-group">
+                                <label for="carddavPassword">Password</label>
+                                <input type="password" id="carddavPassword" placeholder="Leave blank to keep current">
                             </div>
                         </div>
                     </fieldset>

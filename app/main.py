@@ -95,6 +95,10 @@ async def startup():
         # Start Logs scheduler
         from app.services.logs_scheduler import start_logs_scheduler
         start_logs_scheduler()
+
+        # Start Schedule (daily calendar summary) scheduler
+        from app.services.schedule_scheduler import start_schedule_scheduler
+        start_schedule_scheduler()
     else:
         logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 
@@ -141,6 +145,10 @@ async def shutdown():
         # Stop Logs scheduler
         from app.services.logs_scheduler import stop_logs_scheduler
         stop_logs_scheduler()
+
+        # Stop Schedule scheduler
+        from app.services.schedule_scheduler import stop_schedule_scheduler
+        stop_schedule_scheduler()
 
     # Stop MCP server
     from app.services.mcp_service import stop_mcp_server
@@ -200,7 +208,8 @@ async def admin_page(
         return RedirectResponse(url="/", status_code=302)
     resp = templates.TemplateResponse("admin.html", {
         "request": request,
-        "user": current_user
+        "user": current_user,
+        "cache_bust": int(datetime.now().timestamp())
     })
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp

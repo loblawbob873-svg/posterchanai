@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
@@ -73,6 +73,17 @@ class Setting(Base):
     __tablename__ = "settings"
 
     key = Column(String(100), primary_key=True)
+    value = Column(Text)
+
+
+class UserSetting(Base):
+    """Per-user settings (calendar configs, etc.)"""
+    __tablename__ = "user_settings"
+    __table_args__ = (Index('ix_user_settings_user_key', 'user_id', 'key'),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    key = Column(String(100), nullable=False)
     value = Column(Text)
 
 

@@ -60,7 +60,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'flood', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'miniflux'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'torrents', 'nyaa', 'flood', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'miniflux', 'sched', 'contacts'];
         this.pluginActions = []; // Will be populated with plugin action hints
 
         // Load plugins for autocomplete
@@ -185,6 +185,73 @@ class ChatHandler {
         const minifluxUrl = document.getElementById('minifluxUrl');
         const minifluxUsername = document.getElementById('minifluxUsername');
         const minifluxPassword = document.getElementById('minifluxPassword');
+
+        // Calendar & Contacts elements
+        const scheduleEnabled = document.getElementById('scheduleEnabled');
+        const caldavCalendarList = document.getElementById('caldavCalendarList');
+        const addCaldavCalendar = document.getElementById('addCaldavCalendar');
+        const carddavUrl = document.getElementById('carddavUrl');
+        const carddavUsername = document.getElementById('carddavUsername');
+        const carddavPassword = document.getElementById('carddavPassword');
+
+        // Calendar list management
+        let caldavCalendars = [];
+
+        function renderCalendarList() {
+            if (!caldavCalendarList) return;
+            caldavCalendarList.innerHTML = caldavCalendars.map((cal, idx) => `
+                <div class="caldav-calendar-item" data-index="${idx}">
+                    <div class="form-group">
+                        <label>Calendar ${idx + 1} Name</label>
+                        <input type="text" class="cal-name" value="${cal.name || ''}" placeholder="Work Calendar">
+                    </div>
+                    <div class="form-group">
+                        <label>CalDAV URL</label>
+                        <input type="url" class="cal-url" value="${cal.url || ''}" placeholder="https://cal.example.com/user/calendar/">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Username</label>
+                            <input type="text" class="cal-username" value="${cal.username || ''}" placeholder="username">
+                        </div>
+                        <div class="form-group">
+                            <label>Password</label>
+                            <input type="password" class="cal-password" value="${cal.password ? '********' : ''}" placeholder="password">
+                        </div>
+                    </div>
+                    <button type="button" class="btn-danger btn-small remove-calendar" data-index="${idx}">Remove</button>
+                </div>
+            `).join('') || '<p class="empty-list">No calendars configured. Click "+ Add Calendar" to add one.</p>';
+
+            // Add remove handlers
+            caldavCalendarList.querySelectorAll('.remove-calendar').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const idx = parseInt(btn.dataset.index);
+                    caldavCalendars.splice(idx, 1);
+                    renderCalendarList();
+                });
+            });
+        }
+
+        if (addCaldavCalendar) {
+            addCaldavCalendar.addEventListener('click', () => {
+                caldavCalendars.push({ name: '', url: '', username: '', password: '' });
+                renderCalendarList();
+            });
+        }
+
+        function collectCalendarData() {
+            const items = caldavCalendarList?.querySelectorAll('.caldav-calendar-item') || [];
+            return Array.from(items).map(item => {
+                const password = item.querySelector('.cal-password').value;
+                return {
+                    name: item.querySelector('.cal-name').value.trim(),
+                    url: item.querySelector('.cal-url').value.trim(),
+                    username: item.querySelector('.cal-username').value.trim(),
+                    password: password === '********' ? null : password  // null means keep existing
+                };
+            });
+        }
 
         // Quick AI Toggle elements (in user menu)
         const aiToggleItem = document.getElementById('aiToggleItem');
@@ -383,6 +450,18 @@ class ChatHandler {
                         if (minifluxUrl) minifluxUrl.value = data.miniflux_url || '';
                         if (minifluxUsername) minifluxUsername.value = data.miniflux_username || '';
                         if (minifluxPassword) minifluxPassword.value = data.miniflux_has_password ? '********' : '';
+
+                        // Load Calendar & Contacts settings
+                        if (scheduleEnabled) {
+                            scheduleEnabled.checked = data.schedule_enabled || false;
+                        }
+                        if (data.caldav_calendars) {
+                            caldavCalendars = data.caldav_calendars;
+                            renderCalendarList();
+                        }
+                        if (carddavUrl) carddavUrl.value = data.carddav_url || '';
+                        if (carddavUsername) carddavUsername.value = data.carddav_username || '';
+                        if (carddavPassword) carddavPassword.value = data.carddav_has_password ? '********' : '';
                     }
                 } catch (e) {
                     console.error('Failed to load settings:', e);
@@ -490,6 +569,23 @@ class ChatHandler {
                 // Only update password if it's not the placeholder
                 if (minifluxPassword && minifluxPassword.value !== '********') {
                     settingsData.miniflux_password = minifluxPassword.value;
+                }
+
+                // Add Calendar & Contacts settings
+                if (scheduleEnabled) {
+                    settingsData.schedule_enabled = scheduleEnabled.checked;
+                }
+                // Collect calendar data from the dynamic list
+                settingsData.caldav_calendars = collectCalendarData();
+                if (carddavUrl) {
+                    settingsData.carddav_url = carddavUrl.value.trim();
+                }
+                if (carddavUsername) {
+                    settingsData.carddav_username = carddavUsername.value.trim();
+                }
+                // Only update password if it's not the placeholder
+                if (carddavPassword && carddavPassword.value !== '********') {
+                    settingsData.carddav_password = carddavPassword.value;
                 }
 
                 try {
@@ -1891,7 +1987,8 @@ class ChatHandler {
         'flood': ['list', 'add', 'start', 'stop', 'delete'],
         'budget': ['bills', 'add', 'pay'],
         'firewall': ['search', 'analyze'],
-        'news': ['refresh']
+        'news': ['refresh'],
+        'sched': ['today', 'week', 'add']
     };
 
     // Tab autocomplete for commands
