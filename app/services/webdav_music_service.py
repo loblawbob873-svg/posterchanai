@@ -321,7 +321,7 @@ def scan_all_tracks(url: str, username: str, password: str,
     results = []
 
     def scan_folder(path: str, depth: int = 0):
-        if depth > 6 or len(results) >= max_tracks:
+        if depth > 3 or len(results) >= max_tracks:  # Reduced depth for faster scanning
             return
 
         contents = list_folder(url, username, password, path)

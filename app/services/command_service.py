@@ -1642,7 +1642,7 @@ Return ONLY valid JSON, no other text."""},
 
                 # If no cache, do a quick shallow scan (limit to 100 tracks, don't recurse too deep)
                 if not all_tracks:
-                    all_tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=100)
+                    all_tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=25)
 
                 if not all_tracks:
                     return {"type": "text", "content": "No tracks found. Try `music browse` to explore your library first."}
