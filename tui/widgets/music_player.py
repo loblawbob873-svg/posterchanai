@@ -106,7 +106,10 @@ class MusicPlayerWidget(Widget):
 
         # Auto-play next in playlist
         if self.playlist and self.playlist_index < len(self.playlist) - 1:
+            self.notify(f"Track ended, playing next ({self.playlist_index + 1}/{len(self.playlist)})")
             self.next_track()
+        else:
+            self.notify(f"Playlist finished (idx={self.playlist_index}, len={len(self.playlist)})")
 
     def play_track(self, track: dict, keep_playlist: bool = False):
         """Play a single track.
@@ -140,6 +143,7 @@ class MusicPlayerWidget(Widget):
         """Load a playlist."""
         self.playlist = tracks
         self.playlist_index = 0
+        self.notify(f"Loaded {len(tracks)} tracks", severity="information")
 
     def _start_playback(self, track: dict):
         """Start playing a track."""
