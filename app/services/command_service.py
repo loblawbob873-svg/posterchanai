@@ -26,7 +26,8 @@ from app.services.caldav_service import (
 from app.services.mail_service import (
     fetch_all_accounts, fetch_messages, get_message_by_id, delete_message, delete_all_messages,
     archive_message, reply_to_message, send_email, get_user_mail_accounts,
-    format_message_list, format_message_detail, search_messages, list_folders, format_folder_list
+    format_message_list, format_message_detail, search_messages, list_folders, format_folder_list,
+    get_attachment
 )
 from app.services.webdav_music_service import (
     get_user_webdav_config, list_folder, search_tracks, get_stream_url,
@@ -525,9 +526,48 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
         return {"type": "text", "content": format_download_result(result)}
 
+    def _get_remote_bt_url(self):
+        """Get remote torrent server URL if configured."""
+        from app.models import Setting
+        server_url = self.db.query(Setting).filter(Setting.key == "bt_server_url").first()
+        return server_url.value if server_url and server_url.value else None
+
+    async def _remote_bt_request(self, endpoint: str, method: str = "GET", json_body: dict = None):
+        """Make request to remote torrent server."""
+        import httpx
+        server_url = self._get_remote_bt_url()
+        if not server_url:
+            return None
+
+        url = f"{server_url.rstrip('/')}/api/torrent{endpoint}"
+        # Get access token from user's cookie if available
+        headers = {}
+        if hasattr(self, 'access_token') and self.access_token:
+            headers["Cookie"] = f"access_token={self.access_token}"
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                if method == "GET":
+                    response = await client.get(url, headers=headers)
+                else:
+                    response = await client.post(url, headers=headers, json=json_body)
+
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    error = response.json().get("detail", "Remote server error")
+                    return {"error": error}
+        except httpx.RequestError as e:
+            logger.error(f"Failed to connect to remote torrent server: {e}")
+            return {"error": f"Cannot reach remote torrent server: {e}"}
+
     def _get_bt_service(self):
         """Get built-in torrent service if enabled, or None. Returns (service, error_msg)."""
         from app.models import Setting
+
+        # Check for remote server first
+        if self._get_remote_bt_url():
+            return "remote", None  # Special marker for remote server
 
         bt_enabled = self.db.query(Setting).filter(Setting.key == "bt_enabled").first()
         if not bt_enabled or bt_enabled.value.lower() != "true":
@@ -566,10 +606,18 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
         # Get built-in service (None if disabled or not configured)
         bt_service, bt_error = self._get_bt_service()
 
-        # Client management subcommands - require built-in client
+        # Client management subcommands - require built-in client or remote server
         if subcommand in ("list", "ls"):
             if not bt_service:
                 return {"type": "text", "content": bt_error}
+            if bt_service == "remote":
+                result = await self._remote_bt_request("/list")
+                if result and "error" in result:
+                    return {"type": "text", "content": result["error"]}
+                if result and "torrents" in result:
+                    from app.services.libtorrent_service import format_torrent_list_from_dicts
+                    return {"type": "text", "content": format_torrent_list_from_dicts(result["torrents"])}
+                return {"type": "text", "content": "No response from remote server"}
             from app.services.libtorrent_service import format_torrent_list
             torrents = bt_service.list_torrents()
             return {"type": "text", "content": format_torrent_list(torrents)}
@@ -578,16 +626,30 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             if not bt_service:
                 return {"type": "text", "content": bt_error}
             magnet = parts[1]
-            if magnet.startswith("magnet:"):
-                info_hash = bt_service.add_magnet(magnet)
-                return {"type": "text", "content": f"Added torrent: `{info_hash}`\n\nUse `torrents list` to check progress."}
-            return {"type": "text", "content": "Please provide a magnet link starting with `magnet:`"}
+            if not magnet.startswith("magnet:"):
+                return {"type": "text", "content": "Please provide a magnet link starting with `magnet:`"}
+            if bt_service == "remote":
+                result = await self._remote_bt_request("/add", method="POST", json_body={"magnet": magnet})
+                if result and "error" in result:
+                    return {"type": "text", "content": result["error"]}
+                if result and "info_hash" in result:
+                    return {"type": "text", "content": f"Added torrent: `{result['info_hash']}`\n\nUse `torrents list` to check progress."}
+                return {"type": "text", "content": "Failed to add torrent to remote server"}
+            info_hash = bt_service.add_magnet(magnet)
+            return {"type": "text", "content": f"Added torrent: `{info_hash}`\n\nUse `torrents list` to check progress."}
 
         elif subcommand in ("start", "resume") and len(parts) > 1:
             if not bt_service:
                 return {"type": "text", "content": bt_error}
             try:
                 num = int(parts[1])
+                if bt_service == "remote":
+                    result = await self._remote_bt_request("/resume", method="POST", json_body={"num": num})
+                    if result and "error" in result:
+                        return {"type": "text", "content": result["error"]}
+                    if result and "message" in result:
+                        return {"type": "text", "content": result["message"]}
+                    return {"type": "text", "content": f"Failed to resume torrent #{num}"}
                 info_hash = bt_service.get_hash_by_number(num)
                 if info_hash and bt_service.resume(info_hash):
                     return {"type": "text", "content": f"Resumed torrent #{num}"}
@@ -600,6 +662,13 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 return {"type": "text", "content": bt_error}
             try:
                 num = int(parts[1])
+                if bt_service == "remote":
+                    result = await self._remote_bt_request("/pause", method="POST", json_body={"num": num})
+                    if result and "error" in result:
+                        return {"type": "text", "content": result["error"]}
+                    if result and "message" in result:
+                        return {"type": "text", "content": result["message"]}
+                    return {"type": "text", "content": f"Failed to pause torrent #{num}"}
                 info_hash = bt_service.get_hash_by_number(num)
                 if info_hash and bt_service.pause(info_hash):
                     return {"type": "text", "content": f"Paused torrent #{num}"}
@@ -612,6 +681,13 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 return {"type": "text", "content": bt_error}
             try:
                 num = int(parts[1])
+                if bt_service == "remote":
+                    result = await self._remote_bt_request("/remove", method="POST", json_body={"num": num, "delete_files": False})
+                    if result and "error" in result:
+                        return {"type": "text", "content": result["error"]}
+                    if result and "message" in result:
+                        return {"type": "text", "content": result["message"]}
+                    return {"type": "text", "content": f"Failed to remove torrent #{num}"}
                 info_hash = bt_service.get_hash_by_number(num)
                 if info_hash and bt_service.remove(info_hash, delete_files=False):
                     return {"type": "text", "content": f"Removed torrent #{num} (files kept)"}
@@ -624,6 +700,13 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 return {"type": "text", "content": bt_error}
             try:
                 num = int(parts[1])
+                if bt_service == "remote":
+                    result = await self._remote_bt_request("/remove", method="POST", json_body={"num": num, "delete_files": True})
+                    if result and "error" in result:
+                        return {"type": "text", "content": result["error"]}
+                    if result and "message" in result:
+                        return {"type": "text", "content": result["message"]}
+                    return {"type": "text", "content": f"Failed to purge torrent #{num}"}
                 info_hash = bt_service.get_hash_by_number(num)
                 if info_hash and bt_service.remove(info_hash, delete_files=True):
                     return {"type": "text", "content": f"Removed torrent #{num} and deleted files"}
@@ -636,6 +719,33 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 return {"type": "text", "content": bt_error}
             try:
                 num = int(parts[1])
+                if bt_service == "remote":
+                    result = await self._remote_bt_request(f"/info/{num}")
+                    if result and "error" in result:
+                        return {"type": "text", "content": result["error"]}
+                    if not result or "info_hash" not in result:
+                        return {"type": "text", "content": f"Torrent #{num} not found"}
+                    # Format remote response
+                    files = result.get("files", [])
+                    file_list = "\n".join([f"  - {f['path']} ({f['size'] / 1024 / 1024:.1f} MB)" for f in files[:10]])
+                    if len(files) > 10:
+                        file_list += f"\n  ... and {len(files) - 10} more files"
+                    info = f"""## {result['name']}
+
+**Hash:** `{result['info_hash']}`
+**Status:** {result['state']} {'(paused)' if result.get('is_paused') else ''}
+**Progress:** {result['progress']:.1f}%
+**Size:** {result['size'] / 1024 / 1024:.1f} MB
+**Downloaded:** {result['downloaded'] / 1024 / 1024:.1f} MB
+**Uploaded:** {result['uploaded'] / 1024 / 1024:.1f} MB
+**Speed:** ↓{result['download_rate'] / 1024:.1f} KB/s ↑{result['upload_rate'] / 1024:.1f} KB/s
+**Peers:** {result['seeders']} seeders, {result['peers']} peers
+**Save Path:** {result['save_path']}
+
+**Files:**
+{file_list}
+"""
+                    return {"type": "text", "content": info}
                 info_hash = bt_service.get_hash_by_number(num)
                 if not info_hash:
                     return {"type": "text", "content": f"Torrent #{num} not found"}
@@ -701,6 +811,14 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
             if not bt_service:
                 return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\n{bt_error}"}
+
+            if bt_service == "remote":
+                result = await self._remote_bt_request("/add", method="POST", json_body={"magnet": magnet})
+                if result and "error" in result:
+                    return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n{result['error']}"}
+                if result and "info_hash" in result:
+                    return {"type": "text", "content": f"**Downloading:** {torrent.title}\n\nAdded: `{result['info_hash']}`\n\nUse `torrents list` to check progress."}
+                return {"type": "text", "content": f"**Selected:** {torrent.title}\n\nFailed to add torrent to remote server"}
 
             info_hash = bt_service.add_magnet(magnet)
             return {"type": "text", "content": f"**Downloading:** {torrent.title}\n\nAdded: `{info_hash}`\n\nUse `torrents list` to check progress."}
@@ -784,6 +902,14 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             bt_service, bt_error = self._get_bt_service()
             if not bt_service:
                 return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\n{bt_error}"}
+
+            if bt_service == "remote":
+                result = await self._remote_bt_request("/add", method="POST", json_body={"magnet": magnet})
+                if result and "error" in result:
+                    return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n{result['error']}"}
+                if result and "info_hash" in result:
+                    return {"type": "text", "content": f"**Downloading:** {torrent.title}\n\nAdded: `{result['info_hash']}`\n\nUse `torrents list` to check progress."}
+                return {"type": "text", "content": f"**Selected:** {torrent.title}\n\nFailed to add torrent to remote server"}
 
             info_hash = bt_service.add_magnet(magnet)
             return {"type": "text", "content": f"**Downloading:** {torrent.title}\n\nAdded: `{info_hash}`\n\nUse `torrents list` to check progress."}
@@ -1601,6 +1727,66 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"📦 Message {uid} archived."}
                 else:
                     return {"type": "text", "content": f"Failed to archive message {uid}."}
+
+            elif subcommand == "attachment":
+                # Download and open attachment: mail attachment <account> <uid> <index>
+                if len(parts) < 4:
+                    return {"type": "text", "content": "Usage: `mail attachment <account> <uid> <index>`"}
+
+                account_hint = parts[1]
+                uid = parts[2]
+                try:
+                    att_index = int(parts[3])
+                except ValueError:
+                    return {"type": "text", "content": "Invalid attachment index. Must be a number."}
+
+                # Sanitize UID
+                uid_match = re.search(r'^(\d+)', uid)
+                if not uid_match:
+                    return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
+                uid = uid_match.group(1)
+
+                # Find matching account
+                account_email = None
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+
+                # Get the attachment
+                attachment = get_attachment(self.user.id, self.db, account_email, uid, "INBOX", att_index)
+                if not attachment:
+                    return {"type": "text", "content": f"Attachment not found."}
+
+                if not attachment.data:
+                    return {"type": "text", "content": f"Attachment too large or couldn't be downloaded."}
+
+                # Save to temp file and open
+                import tempfile
+                import os
+                import subprocess
+                import platform
+
+                # Create temp file with original extension
+                _, ext = os.path.splitext(attachment.filename)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext, prefix="mail_att_") as f:
+                    f.write(attachment.data)
+                    temp_path = f.name
+
+                # Open with system default application
+                try:
+                    if platform.system() == "Darwin":  # macOS
+                        subprocess.run(["open", temp_path], check=True)
+                    elif platform.system() == "Windows":
+                        os.startfile(temp_path)
+                    else:  # Linux
+                        subprocess.run(["xdg-open", temp_path], check=True)
+                    return {"type": "text", "content": f"📎 Opened: **{attachment.filename}** ({attachment.size / 1024:.1f} KB)"}
+                except Exception as e:
+                    return {"type": "text", "content": f"Saved to: `{temp_path}`\n\nCouldn't open automatically: {e}"}
 
             elif subcommand == "send":
                 # Explicit send: mail send [account] <recipient> <message>

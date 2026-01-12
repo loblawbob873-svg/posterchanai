@@ -1254,9 +1254,9 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
         lines.append(f"**Attachments:** {len(msg.attachments)} files")
         for i, att in enumerate(msg.attachments):
             size_kb = att.size / 1024
-            # Create download link
-            download_url = f"/api/mail/attachment/{account_short}/{msg.uid}/{i}"
-            lines.append(f"  - [{att.filename}]({download_url}) ({size_kb:.1f} KB)")
+            # Create cmd: link for TUI (renders as clickable button)
+            download_cmd = f"mail attachment {account_short} {msg.uid} {i}"
+            lines.append(f"  - [{att.filename}](cmd:{download_cmd}) ({size_kb:.1f} KB)")
 
     lines.append("")
     lines.append("---")

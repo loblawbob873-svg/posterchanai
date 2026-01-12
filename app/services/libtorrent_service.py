@@ -449,3 +449,51 @@ def format_torrent_list(torrents: list[TorrentInfo]) -> str:
         )
 
     return "\n".join(lines)
+
+
+def format_torrent_list_from_dicts(torrents: list[dict]) -> str:
+    """Format torrent list from API response dicts as markdown."""
+    if not torrents:
+        return "No torrents."
+
+    lines = ["**Torrents:**\n"]
+    for i, t in enumerate(torrents, 1):
+        # Progress bar
+        bar_len = 10
+        progress = t.get("progress", 0)
+        filled = int(progress / 100 * bar_len)
+        bar = "█" * filled + "░" * (bar_len - filled)
+
+        # Speed
+        download_rate = t.get("download_rate", 0)
+        upload_rate = t.get("upload_rate", 0)
+        down = f"{download_rate / 1024:.1f} KB/s" if download_rate > 0 else "-"
+        up = f"{upload_rate / 1024:.1f} KB/s" if upload_rate > 0 else "-"
+
+        # Size
+        size = t.get("size", 0)
+        size_mb = size / (1024 * 1024)
+        size_str = f"{size_mb:.1f} MB" if size_mb < 1024 else f"{size_mb/1024:.2f} GB"
+
+        # State icon
+        state = t.get("state", "unknown")
+        state_icon = {
+            "downloading": "⬇️",
+            "seeding": "⬆️",
+            "finished": "✅",
+            "paused": "⏸️",
+            "checking": "🔍",
+            "metadata": "📥",
+        }.get(state, "❓")
+
+        name = t.get("name", "Unknown")
+        seeders = t.get("seeders", 0)
+        peers = t.get("peers", 0)
+
+        lines.append(
+            f"{i}. {state_icon} **{name}**\n"
+            f"   [{bar}] {progress:.1f}% | {size_str}\n"
+            f"   ↓{down} ↑{up} | {seeders}S/{peers}P"
+        )
+
+    return "\n".join(lines)
