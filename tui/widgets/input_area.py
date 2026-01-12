@@ -335,7 +335,7 @@ class ChatInput(Widget):
             # Special case: mail send <account> <email> -> recipient filled, show message hint
             if re.match(r'^mail\s+send\s+\S+\s+\S+@\S+$', base_cmd, re.I):
                 hint = self.query_one("#autocomplete-hint", Static)
-                hint.update("Type your message and press Enter to send")
+                hint.update('"Subject" message | Or just: message (auto-subject)')
                 hint.remove_class("--hidden")
                 self.autocomplete_suggestions = []
                 return
@@ -343,7 +343,7 @@ class ChatInput(Widget):
             # Special case: mail forward <account> <id> <email> -> recipient filled, show message hint
             if re.match(r'^mail\s+forward\s+\S+\s+\d+\s+\S+@\S+$', base_cmd, re.I):
                 hint = self.query_one("#autocomplete-hint", Static)
-                hint.update("Type your message (optional) and press Enter to forward")
+                hint.update("Type your message (optional), press Enter to forward")
                 hint.remove_class("--hidden")
                 self.autocomplete_suggestions = []
                 return
@@ -399,10 +399,27 @@ class ChatInput(Widget):
         """Complete the current command."""
         if self.autocomplete_suggestions:
             input_widget = self.query_one("#message-input", Input)
-            # Complete with first suggestion (no / prefix needed)
-            input_widget.value = self.autocomplete_suggestions[0]
-            input_widget.cursor_position = len(input_widget.value)
-            self.hide_autocomplete()
+            if len(self.autocomplete_suggestions) == 1:
+                # Single match - complete it
+                input_widget.value = self.autocomplete_suggestions[0] + " "
+                input_widget.cursor_position = len(input_widget.value)
+                self.hide_autocomplete()
+            else:
+                # Multiple matches - find common prefix and complete that
+                suggestions = self.autocomplete_suggestions
+                if suggestions:
+                    common = suggestions[0]
+                    for s in suggestions[1:]:
+                        while not s.lower().startswith(common.lower()):
+                            common = common[:-1]
+                            if not common:
+                                break
+                    # If common prefix is longer than current input, complete to it
+                    current = input_widget.value.strip()
+                    if len(common) > len(current):
+                        input_widget.value = common
+                        input_widget.cursor_position = len(input_widget.value)
+                    # Keep showing suggestions (don't hide)
 
     def action_history_prev(self):
         """Navigate to previous history item."""

@@ -563,12 +563,18 @@ class MainScreen(Screen):
     @work(exclusive=True)
     async def _delete_conversation_worker(self, conversation_id: int):
         """Worker to delete conversation with confirmation."""
+        import logging
+        logger = logging.getLogger("tui")
+
         # Find conversation title for confirmation
         conv_title = "this conversation"
-        for conv in self.conversations:
-            if conv.id == conversation_id:
-                conv_title = conv.title or "New Chat"
-                break
+        try:
+            for conv in self.conversations:
+                if conv.id == conversation_id:
+                    conv_title = conv.title or "New Chat"
+                    break
+        except Exception as e:
+            logger.error(f"Error finding conversation title: {e}")
 
         # Simple confirmation via notify - delete on 'd' press
         try:
@@ -578,28 +584,41 @@ class MainScreen(Screen):
             self.conversations = [c for c in self.conversations if c.id != conversation_id]
 
             # Update sidebar
-            sidebar = self.query_one("#sidebar", ConversationSidebar)
-            sidebar.update_conversations(self.conversations)
+            try:
+                sidebar = self.query_one("#sidebar", ConversationSidebar)
+                sidebar.update_conversations(self.conversations)
+            except Exception as e:
+                logger.error(f"Error updating sidebar: {e}")
 
             # If we deleted current conversation, clear the view
             if self.current_conversation_id == conversation_id:
                 self.current_conversation_id = None
                 if self.chat_ws:
-                    await self.chat_ws.disconnect()
+                    try:
+                        await self.chat_ws.disconnect()
+                    except Exception:
+                        pass
                     self.chat_ws = None
 
                 # Clear chat view
-                title = self.query_one("#chat-title", Static)
-                title.update("Select or create a conversation")
-                chat_view = self.query_one("#chat-view", ChatView)
-                chat_view.load_messages([])
+                try:
+                    title = self.query_one("#chat-title", Static)
+                    title.update("Select or create a conversation")
+                    chat_view = self.query_one("#chat-view", ChatView)
+                    chat_view.load_messages([])
+                except Exception as e:
+                    logger.error(f"Error clearing chat view: {e}")
 
-            # Escape brackets in title to prevent Rich parsing errors
-            safe_title = conv_title.replace("[", "\\[").replace("]", "\\]")
-            self.notify(f"Deleted: {safe_title}", severity="information")
+            # Escape ALL special characters in title to prevent Rich parsing errors
+            safe_title = conv_title
+            for char in "[]{}\\<>":
+                safe_title = safe_title.replace(char, f"\\{char}" if char != "\\" else "\\\\")
+            self.notify(f"Deleted conversation", severity="information")
 
         except Exception as e:
-            self.notify(f"Failed to delete: {e}", severity="error")
+            import traceback
+            logger.error(f"Delete error: {e}\n{traceback.format_exc()}")
+            self.notify(f"Failed to delete: {str(e)[:40]}", severity="error")
 
     @work(exclusive=True)
     async def _select_conversation_worker(self, conversation_id: int):

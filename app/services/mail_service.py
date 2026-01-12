@@ -988,14 +988,14 @@ def archive_message(
                         imap.create(archive_folder)
                     logger.info(f"Created {archive_folder} folder for {account_email}")
 
-                # Copy to archive folder
-                result = imap.copy(uid.encode(), archive_folder)
+                # Copy to archive folder using UID command (not sequence number)
+                result = imap.uid('COPY', uid, archive_folder)
                 if result[0] != "OK":
-                    logger.error(f"Failed to copy message to {archive_folder}")
+                    logger.error(f"Failed to copy message UID {uid} to {archive_folder}: {result}")
                     return False
 
-                # Delete from inbox
-                imap.store(uid.encode(), '+FLAGS', '\\Deleted')
+                # Delete from source folder using UID command
+                imap.uid('STORE', uid, '+FLAGS', '\\Deleted')
                 imap.expunge()
 
                 logger.info(f"Archived message {uid} from {account_email}:{folder} to {archive_folder}")
