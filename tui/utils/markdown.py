@@ -17,8 +17,8 @@ COPY_LINK_PATTERN = re.compile(r'\[([^\]]+)\]\(copy:([^)]+)\)')
 # Pattern for regular links: [Label](url) - handle URLs with balanced parens
 LINK_PATTERN = re.compile(r'\[([^\]]+)\]\(((?:[^()]+|\([^)]*\))+)\)')
 
-# Pattern for bare URLs - allow parentheses in URLs
-URL_PATTERN = re.compile(r'https?://[^\s<>\[\]]+')
+# Pattern for bare URLs - exclude markdown link syntax chars
+URL_PATTERN = re.compile(r'https?://[^\s<>\[\]()]+(?:\([^\s()]*\)[^\s<>\[\]()]*)*')
 
 # Pattern for code blocks
 CODE_BLOCK_PATTERN = re.compile(r'```(\w*)\n(.*?)```', re.DOTALL)
