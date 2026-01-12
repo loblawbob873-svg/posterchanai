@@ -1293,9 +1293,15 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
     lines.append("---")
     lines.append("")
 
-    # Body (prefer text, fall back to stripped HTML)
+    # Body - prefer HTML if it has links, otherwise use text
     body_content = ""
-    if msg.body_text and msg.body_text.strip():
+    # Check if HTML body has links
+    html_has_links = msg.body_html and '<a ' in msg.body_html.lower()
+
+    if html_has_links:
+        # Use HTML body to preserve links
+        body_content = html_to_text(msg.body_html)
+    elif msg.body_text and msg.body_text.strip():
         body_content = msg.body_text
         # Check if body_text actually contains HTML (some clients put HTML in plain part)
         lower_body = body_content.lower()
