@@ -74,7 +74,11 @@ class MessageWidget(Widget):
 
     def _is_bt_list(self, content: str) -> bool:
         """Check if content is a bt list with action buttons."""
-        return "**Torrents:**" in content and ("cmd:bt " in content or "cmd:torrents " in content)
+        # Must have torrents header AND action buttons AND numbered entries
+        has_header = "**Torrents:**" in content or "Torrents:" in content
+        has_buttons = "cmd:bt " in content or "cmd:torrents " in content
+        has_entries = bool(re.search(r'^\d+\.\s*[^\s]+\s*\*\*.+\*\*', content, re.MULTILINE))
+        return has_header and has_buttons and has_entries
 
     def _is_mail_list(self, content: str) -> bool:
         """Check if content is a mail list with action buttons."""
@@ -134,23 +138,32 @@ class MessageWidget(Widget):
         self._cmd_links = parse_cmd_links(content)
 
         # Check if this is a torrent list - render with inline buttons
-        if self._is_torrent_list(content):
-            self._render_torrent_list(content, content_container)
-        elif self._is_bt_list(content):
-            self._render_bt_list(content, content_container)
-        elif self._is_mail_list(content):
-            self._render_mail_list(content, content_container)
-        else:
-            # Standard markdown rendering
-            try:
-                rendered = parse_markdown(content)
-                content_container.mount(Static(rendered, classes="message-body"))
-            except Exception:
-                from tui.utils.markdown import strip_markdown
-                content_container.mount(Static(strip_markdown(content), classes="message-body"))
+        # Wrap in try/except to fall back to plain text on errors
+        try:
+            if self._is_torrent_list(content):
+                self._render_torrent_list(content, content_container)
+                return
+            elif self._is_bt_list(content):
+                self._render_bt_list(content, content_container)
+                return
+            elif self._is_mail_list(content):
+                self._render_mail_list(content, content_container)
+                return
+        except Exception as e:
+            import logging
+            logging.getLogger("tui").error(f"List render error: {e}")
+            # Fall through to standard markdown
 
-            # Render action buttons at bottom
-            self._render_buttons()
+        # Standard markdown rendering
+        try:
+            rendered = parse_markdown(content)
+            content_container.mount(Static(rendered, classes="message-body"))
+        except Exception:
+            from tui.utils.markdown import strip_markdown
+            content_container.mount(Static(strip_markdown(content), classes="message-body"))
+
+        # Render action buttons at bottom
+        self._render_buttons()
 
     def _render_torrent_list(self, content: str, container: Vertical):
         """Render torrent list with inline download buttons."""
