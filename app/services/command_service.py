@@ -1841,7 +1841,7 @@ Return ONLY valid JSON, no other text."""},
 
                 # Use AI to translate
                 messages = [
-                    {"role": "system", "content": f"Translate this email to {language}. Preserve the formatting."},
+                    {"role": "system", "content": f"You are a translator. Translate the ENTIRE email below to {language}. CRITICAL: You MUST translate every single word, sentence, and paragraph completely. Do NOT summarize. Do NOT skip any content. Do NOT add commentary. Preserve all original formatting. Output ONLY the complete translated text."},
                     {"role": "user", "content": f"From: {msg.sender}\nSubject: {msg.subject}\n\n{msg.body_text}"}
                 ]
                 translation = await self.chat_service.chat(messages)
