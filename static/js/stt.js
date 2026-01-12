@@ -77,10 +77,10 @@ const VOICE_COMMANDS = [
     { patterns: [/^(generate|create|draw)\s+(image|picture)?\s*(of\s+)?(.+)$/i], command: 'geni $4' },
 
     // ==================== TORRENTS ====================
-    // Common mishearings: "torrents" -> "torrance", "toronto", "weather for torrance"
-    { patterns: [/^(show\s+me\s+)?(the\s+)?(my\s+)?(torrents?|torrance|toronto)$/i], command: 'torrents' },
-    { patterns: [/^(show\s+me\s+)?(the\s+)?(my\s+)?(torrents?|torrance|toronto)\s+(for\s+)?today$/i], command: 'torrents' },
-    { patterns: [/^(show\s+me\s+)?(the\s+)?weather\s+for\s+torrance$/i], command: 'torrents' },
+    // Common mishearings: "torrents" -> "torrance", "toronto", "terrance", "torrent"
+    // Catch-all: any phrase containing these words
+    { patterns: [/\b(torrance|toronto|terrance)\b/i], command: 'torrents' },
+    { patterns: [/^(show\s+me\s+)?(the\s+)?(my\s+)?(torrents?|downloads?)$/i], command: 'torrents' },
     { patterns: [/^downloads?$/i], command: 'torrents list' },
     { patterns: [/^(show\s+me\s+)?(the\s+)?movies?$/i], command: 'torrents movies' },
     { patterns: [/^(show\s+me\s+)?(the\s+)?tv(\s+shows?)?$/i], command: 'torrents tv' },
