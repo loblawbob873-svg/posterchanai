@@ -420,8 +420,17 @@ class MainScreen(Screen):
         """Handle command button clicks from messages."""
         command = event.command
         if command:
-            # Send the command as a message
-            self._send_message_worker(command)
+            # Commands ending with space need user input (e.g., mail reply)
+            if command.endswith(' '):
+                # Populate input field for user to complete
+                chat_input = self.query_one("#chat-input", ChatInput)
+                input_widget = chat_input.query_one("#message-input", Input)
+                input_widget.value = command
+                input_widget.focus()
+                self.notify("Type your message and press Enter", timeout=3)
+            else:
+                # Send the command as a message
+                self._send_message_worker(command)
 
     def on_chat_input_open_links_requested(self, event):
         """Handle open links request from quick buttons."""
