@@ -1193,6 +1193,63 @@ def reply_to_message(
     )
 
 
+def forward_message(
+    user_id: int,
+    db: Session,
+    account_email: str,
+    uid: str,
+    to: str,
+    body: str = "",
+    attachments: List[Tuple[str, bytes, str]] = None,
+    folder: str = "INBOX"
+) -> bool:
+    """Forward a message to another recipient."""
+    # Get the original message
+    original = get_message_by_id(user_id, db, account_email, uid, folder=folder)
+    if not original:
+        logger.error(f"Original message not found: {account_email}/{uid}")
+        return False
+
+    # Get the account
+    accounts = get_user_mail_accounts(user_id, db)
+    account = next((a for a in accounts if a.email == account_email), None)
+    if not account:
+        return False
+
+    # Prepare forward subject
+    subject = original.subject
+    if not subject.lower().startswith("fwd:") and not subject.lower().startswith("fw:"):
+        subject = f"Fwd: {subject}"
+
+    # Build forwarded message body
+    forward_header = f"""
+---------- Forwarded message ----------
+From: {original.sender} <{original.sender_email}>
+Date: {original.date.strftime('%A, %B %d, %Y at %I:%M %p')}
+Subject: {original.subject}
+To: {original.to}
+"""
+
+    # Get original body
+    original_body = original.body_text or ""
+    if not original_body.strip() and original.body_html:
+        original_body = html_to_text(original.body_html)
+
+    # Combine user's message with forwarded content
+    if body.strip():
+        full_body = f"{body}\n{forward_header}\n{original_body}"
+    else:
+        full_body = f"{forward_header}\n{original_body}"
+
+    return send_email(
+        account=account,
+        to=to,
+        subject=subject,
+        body=full_body,
+        attachments=attachments
+    )
+
+
 def get_attachment(
     user_id: int,
     db: Session,
@@ -1325,11 +1382,12 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
 
     # Action buttons
     reply_cmd = f"mail reply {account_short} {msg_id} "
+    forward_cmd = f"mail forward {account_short} {msg_id} "
     summary_cmd = f"mail summary {account_short} {msg_id}"
     archive_cmd = f"mail archive {account_short} {msg_id}"
     delete_cmd = f"mail delete {account_short} {msg_id}"
     translate_cmd = f"mail translate {account_short} {msg_id}"
 
-    lines.append(f"[Reply All](cmd:{reply_cmd}) | [Summary](cmd:{summary_cmd}) | [Archive](cmd:{archive_cmd}) | [Translate](cmd:{translate_cmd}) | [Delete](cmd:{delete_cmd})")
+    lines.append(f"[Reply All](cmd:{reply_cmd}) | [Forward](cmd:{forward_cmd}) | [Summary](cmd:{summary_cmd}) | [Archive](cmd:{archive_cmd}) | [Translate](cmd:{translate_cmd}) | [Delete](cmd:{delete_cmd})")
 
     return "\n".join(lines)

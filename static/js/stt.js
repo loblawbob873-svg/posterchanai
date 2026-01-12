@@ -33,8 +33,15 @@ const VOICE_COMMANDS = [
     { patterns: [/^summarize(\s+this)?$/i], command: 'mail summary THIS_EMAIL' },
     { patterns: [/^translate(\s+this)?\s+(to\s+)?(\w+)$/i], command: 'mail translate THIS_EMAIL $3' },
 
+    // Forward email - "forward this to john" or "forward to john@example.com"
+    { patterns: [/^forward(\s+this)?(\s+to)?\s+(\S+)$/i], command: 'mail forward THIS_EMAIL $3' },
+    { patterns: [/^forward(\s+this)?(\s+to)?\s+(\S+)\s+(.+)$/i], command: 'mail forward THIS_EMAIL $3 $4' },
+
     // Other email actions
     { patterns: [/^(send|write|compose)\s*(e-?mail|message)?$/i], command: 'mail send' },
+    // Send email to contact - "email john hello" or "send john a message saying hello"
+    { patterns: [/^(e-?mail|message)\s+(\S+)\s+(.+)$/i], command: 'mail send $2 $3' },
+    { patterns: [/^(send|write)\s+(e-?mail|message)?\s*to\s+(\S+)\s+(saying\s+)?(.+)$/i], command: 'mail send $3 $5' },
     { patterns: [/^(search|find)\s+(e-?)?mail\s+(for\s+)?(.+)$/i], command: 'mail search $4' },
     { patterns: [/^folders?$/i], command: 'mail folders' },
 

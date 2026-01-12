@@ -25,7 +25,7 @@ from app.services.caldav_service import (
 )
 from app.services.mail_service import (
     fetch_all_accounts, fetch_messages, get_message_by_id, delete_message, delete_all_messages,
-    archive_message, reply_to_message, send_email, get_user_mail_accounts,
+    archive_message, reply_to_message, forward_message, send_email, get_user_mail_accounts,
     format_message_list, format_message_detail, search_messages, list_folders, format_folder_list,
     get_attachment
 )
@@ -131,7 +131,7 @@ class CommandService:
         "miniflux": "Fetch Miniflux articles now: miniflux",
         "cal": "Calendar: cal | cal today | cal week | cal add <event> <time>",
         "contacts": "Contacts: contacts all | contacts <query> | contacts add <name> <phone>",
-        "mail": "Email: mail | mail send <contact> [\"subject\"] <msg> | mail read/delete/archive <id> | mail reply <acct> <id> <msg>",
+        "mail": "Email: mail | mail send <contact> <msg> | mail read/delete/archive <id> | mail reply/forward <acct> <id> <msg>",
         "todo": "Todo list (CalDAV): todo | todo add <task> | todo rm <#>",
         "music": "Music: music | music browse | music search <query> | music play <#> | music random | music skip | music mood <vibe>",
         "translate": "Translate: translate <language> - translate last response | translate email <language> - translate last email",
@@ -1869,6 +1869,43 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": "Reply sent successfully."}
                 else:
                     return {"type": "text", "content": "Failed to send reply."}
+
+            elif subcommand == "forward":
+                if len(parts) < 4:
+                    return {"type": "text", "content": "Usage: `mail forward <account> [folder:]<id> <recipient> [message]`\n\nExample: `mail forward verita84 123 john@example.com` or `mail forward verita84 123 john@example.com Check this out!`"}
+
+                account_hint = parts[1]
+                uid_part = parts[2]
+                recipient = parts[3]
+                forward_body = parts[4] if len(parts) > 4 else ""
+
+                # Parse folder:uid format (e.g., "INBOX.Archive:456")
+                folder = "INBOX"
+                uid = uid_part
+                if ':' in uid_part:
+                    folder, uid = uid_part.rsplit(':', 1)
+
+                # Sanitize UID - extract only numeric portion (strip emojis/extra chars)
+                uid_match = re.search(r'^(\d+)', uid)
+                if not uid_match:
+                    return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
+                uid = uid_match.group(1)
+
+                # Find matching account
+                account_email = None
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+
+                success = forward_message(self.user.id, self.db, account_email, uid, recipient, forward_body, folder=folder)
+                if success:
+                    return {"type": "text", "content": f"Email forwarded to {recipient} successfully."}
+                else:
+                    return {"type": "text", "content": "Failed to forward email."}
 
             elif subcommand == "delete":
                 # Support both: mail delete <id> (default account) or mail delete <account> <id>

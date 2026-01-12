@@ -147,3 +147,10 @@ class APIClient:
     async def update_user_settings(self, settings: dict) -> dict:
         """Update user settings."""
         return await self.put("/api/auth/settings", json=settings)
+
+    async def get_contact_emails(self) -> list:
+        """Get contact email addresses for autocomplete."""
+        try:
+            return await self.get("/api/mail/contacts/emails")
+        except Exception:
+            return []

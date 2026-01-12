@@ -69,6 +69,7 @@ class ChatHandler {
         // Load plugins and mail accounts for autocomplete
         this.loadPluginsForAutocomplete();
         this.loadMailAccountsForAutocomplete();
+        this.loadContactEmailsForAutocomplete();
 
         // Enter to send (Shift+Enter for new line)
         this.messageInput.addEventListener('keydown', (e) => {
@@ -2412,6 +2413,7 @@ class ChatHandler {
                     this.subcommands['mail sum'] = accountHints;
                     this.subcommands['mail translate'] = accountHints;
                     this.subcommands['mail reply'] = accountHints;
+                    this.subcommands['mail forward'] = accountHints;
                     this.subcommands['mail delete'] = accountHints;
                     this.subcommands['mail deleteall'] = accountHints;
                     this.subcommands['mail archive'] = accountHints;
@@ -2436,6 +2438,31 @@ class ChatHandler {
         }
     }
 
+    async loadContactEmailsForAutocomplete() {
+        try {
+            const response = await fetch('/api/mail/contacts/emails');
+            if (response.ok) {
+                const contacts = await response.json();
+                if (contacts && contacts.length > 0) {
+                    // Create email hints - use name or email prefix for easy matching
+                    const emailHints = contacts.map(c => c.email);
+                    console.log('Contact email hints loaded:', emailHints.length);
+
+                    // Store for use in autocomplete
+                    this.contactEmails = emailHints;
+
+                    // Add contact emails to mail send and mail forward subcommands
+                    // These get appended after account hint
+                    for (const account of Object.keys(this.subcommands).filter(k => k.startsWith('mail send ') || k.startsWith('mail forward '))) {
+                        this.subcommands[account] = [...(this.subcommands[account] || []), ...emailHints];
+                    }
+                }
+            }
+        } catch (e) {
+            console.debug('Could not load contact emails:', e);
+        }
+    }
+
     // Subcommands that can be autocompleted
     subcommands = {
         'torrents': ['download', 'list', 'add', 'start', 'stop', 'delete', 'movies', 'tv', 'music', 'anime'],
@@ -2446,7 +2473,7 @@ class ChatHandler {
         'news': ['refresh'],
         'cal': ['today', 'week', 'add'],
         'contacts': ['all', 'add'],
-        'mail': ['inbox', 'unread', 'folders', 'folder', 'sum', 'search', 'read', 'summary', 'translate', 'reply', 'delete', 'deleteall', 'archive', 'send'],
+        'mail': ['inbox', 'unread', 'folders', 'folder', 'sum', 'search', 'read', 'summary', 'translate', 'reply', 'forward', 'delete', 'deleteall', 'archive', 'send'],
         // Mail subcommands - will be populated with account names dynamically
         'mail folders': [],
         'mail folder': [],
@@ -2456,6 +2483,7 @@ class ChatHandler {
         'mail sum': [],
         'mail translate': [],
         'mail reply': [],
+        'mail forward': [],
         'mail delete': [],
         'mail deleteall': [],
         'mail archive': [],

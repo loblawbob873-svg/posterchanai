@@ -77,7 +77,8 @@ class MessageWidget(Widget):
         # Must have torrents header AND action buttons AND numbered entries
         has_header = "**Torrents:**" in content or "Torrents:" in content
         has_buttons = "cmd:bt " in content or "cmd:torrents " in content
-        has_entries = bool(re.search(r'^\d+\.\s*[^\s]+\s*\*\*.+\*\*', content, re.MULTILINE))
+        # Format: **1. Name** at start of line
+        has_entries = bool(re.search(r'^\*\*\d+\.\s*.+?\*\*', content, re.MULTILINE))
         return has_header and has_buttons and has_entries
 
     def _is_mail_list(self, content: str) -> bool:

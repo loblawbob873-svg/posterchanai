@@ -4,13 +4,46 @@ Mail Router - API endpoints for email functionality.
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
+from typing import List
 
 from app.database import get_db
 from app.auth import get_current_user
 from app.models import User
 from app.services.mail_service import get_attachment, get_user_mail_accounts, sanitize_filename
+from app.services.caldav_service import get_user_contacts, get_user_contacts_config
 
 router = APIRouter(prefix="/api/mail", tags=["mail"])
+
+
+@router.get("/contacts/emails")
+async def get_contact_emails(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> List[dict]:
+    """Get contact email addresses for autocomplete."""
+    # Check if CardDAV is configured
+    config = get_user_contacts_config(current_user.id, db)
+    if not config:
+        return []
+
+    # Get all contacts (empty query returns all)
+    contacts = get_user_contacts(current_user.id, "", db)
+
+    # Extract unique emails with contact names
+    emails = []
+    seen = set()
+    for contact in contacts:
+        for email in contact.emails:
+            if email and email not in seen:
+                seen.add(email)
+                emails.append({
+                    "email": email,
+                    "name": contact.name or email.split("@")[0]
+                })
+
+    # Sort by name
+    emails.sort(key=lambda x: x["name"].lower())
+    return emails
 
 
 @router.get("/attachment/{account_hint}/{uid}/{index}")

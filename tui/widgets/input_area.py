@@ -24,8 +24,8 @@ COMMANDS = [
     "generate", "gen",
     "mail", "mail unread", "mail inbox", "mail sent", "mail send", "mail compose",
     "mail folders", "mail folder", "mail attachment", "mail search", "mail read",
-    "mail summary", "mail sum", "mail translate", "mail reply", "mail delete",
-    "mail archive",
+    "mail summary", "mail sum", "mail translate", "mail reply", "mail forward",
+    "mail delete", "mail archive",
     "cal", "cal today", "cal week", "cal month", "cal add",
     "contacts", "contacts search", "contacts add",
     "music", "music browse", "music search", "music play", "music mood",
@@ -80,6 +80,7 @@ class ChatInput(Widget):
         self.pending_attachments: List[str] = []
         # Dynamic subcommands (populated from settings)
         self.mail_accounts: List[str] = []  # Account short names (e.g., "john", "work")
+        self.contact_emails: List[str] = []  # Contact email addresses
         self.subcommands: dict[str, List[str]] = {}
 
     class OpenLinksRequested(Message):
@@ -100,10 +101,18 @@ class ChatInput(Widget):
         account_commands = [
             "mail folders", "mail folder", "mail search", "mail read",
             "mail summary", "mail sum", "mail translate", "mail reply",
-            "mail delete", "mail archive", "mail send",
+            "mail forward", "mail delete", "mail archive", "mail send",
         ]
         for cmd in account_commands:
             self.subcommands[cmd] = self.mail_accounts
+
+    def set_contact_emails(self, emails: List[str]):
+        """Set contact emails for autocomplete (mail send/forward after account)."""
+        self.contact_emails = emails
+        # Add to mail send and mail forward subcommands after account hints
+        for account in self.mail_accounts:
+            self.subcommands[f"mail send {account}"] = emails
+            self.subcommands[f"mail forward {account}"] = emails
 
     def compose(self) -> ComposeResult:
         yield Vertical(
