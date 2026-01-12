@@ -68,8 +68,10 @@ class ChatHandler {
 
         // Load plugins and mail accounts for autocomplete
         this.loadPluginsForAutocomplete();
-        this.loadMailAccountsForAutocomplete();
-        this.loadContactEmailsForAutocomplete();
+        // Chain mail accounts -> contact emails to avoid race condition
+        this.loadMailAccountsForAutocomplete().then(() => {
+            this.loadContactEmailsForAutocomplete();
+        });
 
         // Enter to send (Shift+Enter for new line)
         this.messageInput.addEventListener('keydown', (e) => {
@@ -1287,6 +1289,10 @@ class ChatHandler {
             this.messageInput.focus();
             // Place cursor at end
             this.messageInput.setSelectionRange(decodedCmd.length, decodedCmd.length);
+            // Show autocomplete suggestions
+            this.autocompleteCommand();
+            // Show hint to user
+            this.showToast("Type recipient and press Tab for autocomplete");
         } else {
             // Clear any mode (search, images, etc.) so command runs as-is
             if (window.app) {
