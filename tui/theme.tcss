@@ -925,6 +925,44 @@ TabPane {
     border: double $cyan;
 }
 
+/* Dropdown toggle button */
+.dropdown-toggle {
+    min-width: 10;
+}
+
+/* Dropdown menu container */
+.dropdown-menu {
+    height: auto;
+    padding: 0;
+    margin: 0;
+}
+
+.dropdown-menu.--hidden {
+    display: none;
+}
+
+/* Dropdown menu items */
+.dropdown-item {
+    min-width: 7;
+    height: 3;
+    margin: 0;
+    padding: 0 1;
+    background: $surface-dark;
+    color: $magenta;
+    border: solid $magenta 40%;
+    text-style: bold;
+}
+
+.dropdown-item:hover {
+    background: $magenta 35%;
+    border: solid $magenta 80%;
+}
+
+.dropdown-item:focus {
+    background: $magenta 45%;
+    border: double $magenta;
+}
+
 /* ═══════════ DIALOGS - MODAL OVERLAYS ═══════════ */
 ModalScreen {
     background: $void 80%;

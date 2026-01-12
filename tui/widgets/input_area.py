@@ -68,13 +68,26 @@ class ChatInput(Widget):
     def compose(self) -> ComposeResult:
         yield Vertical(
             Horizontal(
-                Button("Mail", id="quick-mail", classes="quick-btn"),
-                Button("News", id="quick-news", classes="quick-btn"),
+                # PIM dropdown group
+                Button("PIM ▾", id="quick-pim", classes="quick-btn dropdown-toggle"),
+                Horizontal(
+                    Button("Mail", id="pim-mail", classes="dropdown-item"),
+                    Button("News", id="pim-news", classes="dropdown-item"),
+                    Button("Cal", id="pim-cal", classes="dropdown-item"),
+                    Button("Todo", id="pim-todo", classes="dropdown-item"),
+                    id="pim-menu",
+                    classes="dropdown-menu --hidden"
+                ),
                 Button("Music", id="quick-music", classes="quick-btn"),
-                Button("Torrent", id="quick-torrent", classes="quick-btn"),
+                # Torrent dropdown group
+                Button("Torrent ▾", id="quick-torrent-toggle", classes="quick-btn dropdown-toggle"),
+                Horizontal(
+                    Button("List", id="torrent-list", classes="dropdown-item"),
+                    Button("Torrent", id="torrent-main", classes="dropdown-item"),
+                    id="torrent-menu",
+                    classes="dropdown-menu --hidden"
+                ),
                 Button("Weather", id="quick-weather", classes="quick-btn"),
-                Button("Cal", id="quick-cal", classes="quick-btn"),
-                Button("Links", id="quick-links", classes="quick-btn"),
                 id="quick-actions"
             ),
             Static("", id="autocomplete-hint", classes="--hidden"),
@@ -96,20 +109,63 @@ class ChatInput(Widget):
         btn_id = event.button.id
         if btn_id == "send-btn":
             self.submit_message()
-        elif btn_id == "quick-mail":
+        # PIM dropdown toggle
+        elif btn_id == "quick-pim":
+            self.toggle_dropdown("pim-menu")
+        # PIM menu items
+        elif btn_id == "pim-mail":
             self.send_command("mail")
-        elif btn_id == "quick-news":
+            self.hide_all_dropdowns()
+        elif btn_id == "pim-news":
             self.send_command("dailynews")
+            self.hide_all_dropdowns()
+        elif btn_id == "pim-cal":
+            self.send_command("cal")
+            self.hide_all_dropdowns()
+        elif btn_id == "pim-todo":
+            self.send_command("todo")
+            self.hide_all_dropdowns()
+        # Torrent dropdown toggle
+        elif btn_id == "quick-torrent-toggle":
+            self.toggle_dropdown("torrent-menu")
+        # Torrent menu items
+        elif btn_id == "torrent-list":
+            self.send_command("torrents list")
+            self.hide_all_dropdowns()
+        elif btn_id == "torrent-main":
+            self.send_command("torrents")
+            self.hide_all_dropdowns()
+        # Other quick buttons
         elif btn_id == "quick-music":
             self.send_command("music")
-        elif btn_id == "quick-torrent":
-            self.send_command("torrents")
         elif btn_id == "quick-weather":
             self.send_command("weather")
-        elif btn_id == "quick-cal":
-            self.send_command("cal")
-        elif btn_id == "quick-links":
-            self.post_message(self.OpenLinksRequested())
+
+    def toggle_dropdown(self, menu_id: str):
+        """Toggle a dropdown menu visibility."""
+        # Hide other dropdowns first
+        for dropdown_id in ["pim-menu", "torrent-menu"]:
+            if dropdown_id != menu_id:
+                try:
+                    dropdown = self.query_one(f"#{dropdown_id}")
+                    dropdown.add_class("--hidden")
+                except Exception:
+                    pass
+        # Toggle the target dropdown
+        try:
+            menu = self.query_one(f"#{menu_id}")
+            menu.toggle_class("--hidden")
+        except Exception:
+            pass
+
+    def hide_all_dropdowns(self):
+        """Hide all dropdown menus."""
+        for dropdown_id in ["pim-menu", "torrent-menu"]:
+            try:
+                dropdown = self.query_one(f"#{dropdown_id}")
+                dropdown.add_class("--hidden")
+            except Exception:
+                pass
 
     def send_command(self, command: str):
         """Send a command as a message."""
