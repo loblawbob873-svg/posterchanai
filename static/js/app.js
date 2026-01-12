@@ -740,9 +740,38 @@ function initCalendarModal() {
         // Build the command
         let command;
         if (uid) {
-            // Editing existing event - send multiple edit commands
-            // For simplicity, just update the title and time
-            command = `cal edit ${uid} title ${title}`;
+            // Editing existing event - detect what changed
+            // Store original values when opening modal for comparison
+            const origTitle = calendarModal.dataset.origTitle || '';
+            const origDate = calendarModal.dataset.origDate || '';
+            const origTime = calendarModal.dataset.origTime || '';
+            const origLocation = calendarModal.dataset.origLocation || '';
+            const origDescription = calendarModal.dataset.origDescription || '';
+
+            // Determine which change to make (priority order)
+            if (title !== origTitle) {
+                command = `cal edit ${uid} title ${title}`;
+            } else if (date !== origDate || time !== origTime) {
+                // Time/date changed - use move command
+                const dateObj = new Date(date + 'T' + time);
+                const dateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+                const timeStr = dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                let moveDesc = `${dateStr} at ${timeStr}`;
+                if (endTime) {
+                    const endTimeStr = new Date('1970-01-01T' + endTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                    moveDesc += ` until ${endTimeStr}`;
+                }
+                command = `cal edit ${uid} move to ${moveDesc}`;
+            } else if (location !== origLocation && location) {
+                command = `cal edit ${uid} location ${location}`;
+            } else if (description !== origDescription && description) {
+                command = `cal edit ${uid} description ${description}`;
+            } else {
+                // No changes detected
+                calendarModal.style.display = 'none';
+                clearCalendarForm();
+                return;
+            }
         } else {
             // Adding new event - build natural language description
             let eventDesc = title;
@@ -803,10 +832,22 @@ function initCalendarModal() {
             document.getElementById('eventDescription').value = eventData.description || '';
             document.getElementById('eventRecurrence').value = eventData.recurrence || '';
             document.getElementById('eventUid').value = eventData.uid || '';
+            // Store original values for change detection
+            calendarModal.dataset.origTitle = eventData.title || '';
+            calendarModal.dataset.origDate = eventData.date || today;
+            calendarModal.dataset.origTime = eventData.time || '';
+            calendarModal.dataset.origLocation = eventData.location || '';
+            calendarModal.dataset.origDescription = eventData.description || '';
         } else {
             clearCalendarForm();
             // Set default date to today
             document.getElementById('eventDate').value = today;
+            // Clear original values
+            calendarModal.dataset.origTitle = '';
+            calendarModal.dataset.origDate = '';
+            calendarModal.dataset.origTime = '';
+            calendarModal.dataset.origLocation = '';
+            calendarModal.dataset.origDescription = '';
         }
         calendarModal.style.display = 'flex';
         document.getElementById('eventTitle').focus();

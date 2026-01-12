@@ -214,26 +214,31 @@ class CalendarEventScreen(ModalScreen):
         # Build command
         if self.is_edit:
             uid = self.event_data.get('uid')
-            # Build a natural language edit command with all changes
-            changes = []
-            if title != self.event_data.get('title', ''):
-                changes.append(f"title to {title}")
-            if date_str != self.event_data.get('date', ''):
-                changes.append(f"date to {date_str}")
-            if time_str != self.event_data.get('time', ''):
-                changes.append(f"time to {time_str}")
-            if end_time_str != self.event_data.get('end_time', ''):
-                changes.append(f"end time to {end_time_str}")
-            if location != self.event_data.get('location', ''):
-                if location:
-                    changes.append(f"location to {location}")
-            if description != self.event_data.get('description', ''):
-                if description:
-                    changes.append(f"description to {description}")
+            # Generate the first valid change command
+            # Backend handles: title X, location X, description X, time/move X
+            command = None
 
-            if changes:
-                command = f"cal edit {uid} change {', '.join(changes)}"
-            else:
+            if title != self.event_data.get('title', ''):
+                command = f"cal edit {uid} title {title}"
+            elif time_str != self.event_data.get('time', '') or date_str != self.event_data.get('date', ''):
+                # Time or date changed - use move command with natural language
+                try:
+                    parsed_date = datetime.strptime(date_str, "%Y-%m-%d")
+                    date_formatted = parsed_date.strftime("%B %d, %Y")
+                except ValueError:
+                    date_formatted = date_str
+                time_desc = f"{date_formatted}"
+                if time_str:
+                    time_desc += f" at {time_str}"
+                if end_time_str:
+                    time_desc += f" until {end_time_str}"
+                command = f"cal edit {uid} move to {time_desc}"
+            elif location != self.event_data.get('location', ''):
+                command = f"cal edit {uid} location {location}"
+            elif description != self.event_data.get('description', ''):
+                command = f"cal edit {uid} description {description}"
+
+            if not command:
                 # No changes made
                 self.dismiss(None)
                 return

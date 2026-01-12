@@ -159,7 +159,7 @@ def to_naive_local(dt) -> datetime:
 
 
 def to_local_aware(dt) -> datetime:
-    """Convert naive datetime to local timezone-aware datetime."""
+    """Convert datetime to local timezone-aware datetime."""
     if dt is None:
         return None
     if not isinstance(dt, datetime):
@@ -168,7 +168,8 @@ def to_local_aware(dt) -> datetime:
     if dt.tzinfo is None:
         # Naive datetime - assume it's local time, make it aware
         return dt.astimezone()
-    return dt
+    # Already timezone-aware - convert to local timezone
+    return dt.astimezone()
 
 
 def get_events_for_date_range(
@@ -358,11 +359,16 @@ def get_event_by_uid(
                         start_dt = vevent.dtstart.value
                         if not isinstance(start_dt, datetime):
                             start_dt = datetime.combine(start_dt, datetime.min.time())
+                        # Convert to local timezone
+                        start_dt = to_local_aware(start_dt)
+
                         end_dt = None
                         if hasattr(vevent, 'dtend'):
                             end_dt = vevent.dtend.value
                             if not isinstance(end_dt, datetime):
                                 end_dt = datetime.combine(end_dt, datetime.min.time())
+                            # Convert to local timezone
+                            end_dt = to_local_aware(end_dt)
 
                         # Extract RRULE if present
                         rrule_str = None
