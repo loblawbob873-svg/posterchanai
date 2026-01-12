@@ -665,12 +665,18 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
         """Browse torrents and manage downloads."""
         global _torrent_cache
 
-        # Import formatting functions - may fail if libtorrent not installed
+        # Import formatting functions - use local fallback if libtorrent not installed
         try:
             from app.services.libtorrent_service import format_torrent_list, format_torrent_list_from_dicts
-        except ImportError:
-            format_torrent_list = None
-            format_torrent_list_from_dicts = None
+        except Exception as e:
+            logger.warning(f"Could not import libtorrent formatting: {e}")
+            format_torrent_list = lambda torrents: _format_bt_list_from_dicts([
+                {"name": t.name, "size": t.size, "progress": t.progress,
+                 "download_rate": t.download_rate, "upload_rate": t.upload_rate,
+                 "state": t.state, "seeders": t.seeders, "peers": t.peers,
+                 "is_paused": getattr(t, 'is_paused', False)} for t in torrents
+            ])
+            format_torrent_list_from_dicts = _format_bt_list_from_dicts
 
         parts = arg.strip().split()
         subcommand = parts[0].lower() if parts else ""
