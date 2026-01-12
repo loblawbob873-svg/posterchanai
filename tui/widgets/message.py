@@ -453,24 +453,49 @@ class MessageWidget(Widget):
 
     def _copy_to_clipboard(self):
         """Copy message content to clipboard."""
+        import subprocess
+        import os
+
+        content = self.content.encode('utf-8')
+
+        # Try wl-copy first (Wayland)
+        if os.environ.get('WAYLAND_DISPLAY'):
+            try:
+                process = subprocess.Popen(['wl-copy'], stdin=subprocess.PIPE)
+                process.communicate(content)
+                if process.returncode == 0:
+                    self.notify("Copied to clipboard", severity="information", timeout=2)
+                    return
+            except FileNotFoundError:
+                pass
+
+        # Try xclip (X11)
+        try:
+            process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
+            process.communicate(content)
+            if process.returncode == 0:
+                self.notify("Copied to clipboard", severity="information", timeout=2)
+                return
+        except FileNotFoundError:
+            pass
+
+        # Try xsel (X11)
+        try:
+            process = subprocess.Popen(['xsel', '--clipboard', '--input'], stdin=subprocess.PIPE)
+            process.communicate(content)
+            if process.returncode == 0:
+                self.notify("Copied to clipboard", severity="information", timeout=2)
+                return
+        except FileNotFoundError:
+            pass
+
+        # Try pyperclip as last resort
         try:
             import pyperclip
             pyperclip.copy(self.content)
             self.notify("Copied to clipboard", severity="information", timeout=2)
-        except ImportError:
-            # Fallback to xclip/xsel on Linux
-            import subprocess
-            try:
-                process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
-                process.communicate(self.content.encode('utf-8'))
-                self.notify("Copied to clipboard", severity="information", timeout=2)
-            except FileNotFoundError:
-                try:
-                    process = subprocess.Popen(['xsel', '--clipboard', '--input'], stdin=subprocess.PIPE)
-                    process.communicate(self.content.encode('utf-8'))
-                    self.notify("Copied to clipboard", severity="information", timeout=2)
-                except FileNotFoundError:
-                    self.notify("Install xclip or pyperclip to copy", severity="warning", timeout=3)
+        except (ImportError, Exception):
+            self.notify("Install wl-copy (Wayland) or xclip (X11)", severity="warning", timeout=3)
 
     def finish_streaming(self):
         """Mark streaming as complete and re-render."""

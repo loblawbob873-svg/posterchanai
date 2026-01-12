@@ -264,22 +264,26 @@ MessageWidget {
 }
 
 .copy-btn {
+    width: 6;
     min-width: 6;
+    max-width: 6;
     height: 1;
     padding: 0;
     margin: 0;
     background: transparent;
     color: $text-muted;
     border: none;
+    text-align: center;
 }
 
 .copy-btn:hover {
     color: $cyan;
-    background: $cyan 20%;
+    background: $surface-hover;
 }
 
 .copy-btn:focus {
     color: $cyan;
+    background: $surface-hover;
 }
 
 .message-body {

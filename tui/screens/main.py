@@ -81,6 +81,8 @@ class MainScreen(Screen):
             self.conversations = await self.app.api.list_conversations()
             sidebar = self.query_one("#sidebar", ConversationSidebar)
             sidebar.update_conversations(self.conversations)
+            if not self.conversations:
+                self.notify("No conversations found", severity="warning")
         except Exception as e:
             self.notify(f"Failed to load conversations: {e}", severity="error")
 
