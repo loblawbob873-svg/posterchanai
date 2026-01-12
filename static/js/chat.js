@@ -2537,6 +2537,16 @@ class ChatHandler {
             const lastPart = parts[parts.length - 1];
 
             // Try multi-level first (e.g., "torrents download" -> ["movies", "tv", ...])
+            // Special case: mail send <account> <email> -> recipient filled, show message hint
+            if (/^mail\s+send\s+\S+\s+\S+@\S+$/i.test(cmdPrefix)) {
+                this.showToast('Type your message and press Enter to send');
+                return;
+            }
+            // Special case: mail forward <account> <id> <email> -> recipient filled, show message hint
+            if (/^mail\s+forward\s+\S+\s+\d+\s+\S+@\S+$/i.test(cmdPrefix)) {
+                this.showToast('Type your message (optional) and press Enter to forward');
+                return;
+            }
             // Special case: mail forward/send <account> <id> -> suggest recipient emails
             let effectiveCmdPrefix = cmdPrefix;
             if (/^mail\s+(forward|send)\s+\S+\s+\d+$/i.test(cmdPrefix)) {

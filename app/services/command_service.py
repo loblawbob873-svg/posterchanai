@@ -1980,9 +1980,9 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Failed to delete messages from {account_email}."}
 
             elif subcommand == "archive":
-                # Support both: mail archive <id> (default account) or mail archive <account> <id>
+                # Support both: mail archive <id> (default account) or mail archive <account> [folder:]<id>
                 if len(parts) < 2:
-                    return {"type": "text", "content": "Usage: `mail archive <id>` or `mail archive <account> <id>`\n\nExample: `mail archive 123` or `mail archive verita84 456`"}
+                    return {"type": "text", "content": "Usage: `mail archive <id>` or `mail archive <account> [folder:]<id>`\n\nExample: `mail archive 123` or `mail archive verita84 456`"}
 
                 # Check if parts[1] is numeric (id) or account hint
                 # Strip # prefix if present (e.g., "#2" -> "2")
@@ -1990,13 +1990,19 @@ Return ONLY valid JSON, no other text."""},
                 if len(parts) == 2 or test_val.isdigit():
                     # mail archive <id> - use first account
                     account_hint = None
-                    uid = parts[1].lstrip('#')
+                    uid_part = parts[1].lstrip('#')
                 else:
                     # mail archive <account> <id>
                     if len(parts) < 3:
-                        return {"type": "text", "content": "Usage: `mail archive <id>` or `mail archive <account> <id>`"}
+                        return {"type": "text", "content": "Usage: `mail archive <id>` or `mail archive <account> [folder:]<id>`"}
                     account_hint = parts[1]
-                    uid = parts[2]
+                    uid_part = parts[2]
+
+                # Parse folder:uid format (e.g., "INBOX.Archive:456")
+                folder = "INBOX"
+                uid = uid_part
+                if ':' in uid_part:
+                    folder, uid = uid_part.rsplit(':', 1)
 
                 # Sanitize UID - extract only numeric portion (strip emojis/extra chars)
                 uid_match = re.search(r'^(\d+)', uid)
@@ -2017,7 +2023,7 @@ Return ONLY valid JSON, no other text."""},
                     # Default to first account
                     account_email = accounts[0].email
 
-                success = archive_message(self.user.id, self.db, account_email, uid)
+                success = archive_message(self.user.id, self.db, account_email, uid, folder=folder)
                 if success:
                     return {"type": "text", "content": f"📦 Message {uid} archived."}
                 else:

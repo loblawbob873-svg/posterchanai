@@ -952,7 +952,8 @@ def archive_message(
     user_id: int,
     db: Session,
     account_email: str,
-    uid: str
+    uid: str,
+    folder: str = "INBOX"
 ) -> bool:
     """Archive a message by moving to INBOX.Archive folder."""
     accounts = get_user_mail_accounts(user_id, db)
@@ -964,7 +965,7 @@ def archive_message(
                 return False
 
             try:
-                imap.select("INBOX")
+                imap.select(folder)
 
                 # Use INBOX.Archive as the standard archive folder
                 archive_folder = "INBOX.Archive"
@@ -997,7 +998,7 @@ def archive_message(
                 imap.store(uid.encode(), '+FLAGS', '\\Deleted')
                 imap.expunge()
 
-                logger.info(f"Archived message {uid} from {account_email} to {archive_folder}")
+                logger.info(f"Archived message {uid} from {account_email}:{folder} to {archive_folder}")
                 return True
 
             except Exception as e:

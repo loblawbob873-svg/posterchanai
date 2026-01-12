@@ -104,13 +104,18 @@ class ChatInput(Widget):
 
     def set_mail_accounts(self, accounts: List[dict]):
         """Set mail accounts for autocomplete."""
-        # Extract short names from emails (part before @)
+        # Extract short names and domains from emails for flexible matching
         self.mail_accounts = []
+        self.mail_account_hints = {}  # Maps hint -> email prefix for subcommand lookup
         for acc in accounts:
             email = acc.get("email", "")
             if "@" in email:
-                short = email.split("@")[0].lower()
-                self.mail_accounts.append(short)
+                prefix = email.split("@")[0].lower()
+                domain = email.split("@")[1].split(".")[0].lower()  # First part of domain
+                self.mail_accounts.append(prefix)
+                # Store mapping from hints to prefix
+                self.mail_account_hints[prefix] = prefix
+                self.mail_account_hints[domain] = prefix  # Also allow domain as hint
 
         # Update subcommands that need account hints
         account_commands = [
@@ -119,15 +124,18 @@ class ChatInput(Widget):
             "mail forward", "mail delete", "mail archive", "mail send",
         ]
         for cmd in account_commands:
-            self.subcommands[cmd] = self.mail_accounts
+            # Include both prefixes and domain hints
+            all_hints = list(self.mail_account_hints.keys())
+            self.subcommands[cmd] = all_hints
 
     def set_contact_emails(self, emails: List[str]):
         """Set contact emails for autocomplete (mail send/forward after account)."""
         self.contact_emails = emails
-        # Add to mail send and mail forward subcommands after account hints
-        for account in self.mail_accounts:
-            self.subcommands[f"mail send {account}"] = emails
-            self.subcommands[f"mail forward {account}"] = emails
+        # Add to mail send and mail forward subcommands for ALL account hints
+        # This includes both email prefix (verita84) and domain hints (yummy)
+        for hint in self.mail_account_hints.keys():
+            self.subcommands[f"mail send {hint}"] = emails
+            self.subcommands[f"mail forward {hint}"] = emails
 
     def compose(self) -> ComposeResult:
         yield Vertical(
@@ -259,14 +267,16 @@ class ChatInput(Widget):
 
     def on_input_changed(self, event: Input.Changed):
         """Handle input changes for autocomplete."""
-        value = event.value.strip()
+        # Don't strip value - preserve trailing space for subcommand detection
+        raw_value = event.value
+        value = raw_value.strip()
 
         # Show autocomplete for any command-like input (no / required)
-        if value and not " " in value:
-            self.update_autocomplete(value.lstrip("/"))
+        if value and " " not in value:
+            self.update_autocomplete(raw_value.lstrip("/"))
         elif value.startswith("/") or (value and value.split()[0].lower() in [c.split()[0] for c in COMMANDS]):
-            # Also show for multi-word commands
-            self.update_autocomplete(value.lstrip("/"))
+            # Also show for multi-word commands - preserve trailing space
+            self.update_autocomplete(raw_value.lstrip("/"))
         else:
             self.hide_autocomplete()
 
@@ -322,6 +332,22 @@ class ChatInput(Widget):
                 partial = prefix_lower
 
         if base_cmd and len(words) >= 1:
+            # Special case: mail send <account> <email> -> recipient filled, show message hint
+            if re.match(r'^mail\s+send\s+\S+\s+\S+@\S+$', base_cmd, re.I):
+                hint = self.query_one("#autocomplete-hint", Static)
+                hint.update("Type your message and press Enter to send")
+                hint.remove_class("--hidden")
+                self.autocomplete_suggestions = []
+                return
+
+            # Special case: mail forward <account> <id> <email> -> recipient filled, show message hint
+            if re.match(r'^mail\s+forward\s+\S+\s+\d+\s+\S+@\S+$', base_cmd, re.I):
+                hint = self.query_one("#autocomplete-hint", Static)
+                hint.update("Type your message (optional) and press Enter to forward")
+                hint.remove_class("--hidden")
+                self.autocomplete_suggestions = []
+                return
+
             # Special case: mail forward/send <account> <id> -> suggest recipient emails
             # Strip numeric ID to get mail forward/send <account>
             effective_base_cmd = base_cmd
