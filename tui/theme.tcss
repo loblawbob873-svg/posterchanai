@@ -930,9 +930,20 @@ TabPane {
     min-width: 10;
 }
 
+/* Dropdown row - contains all popup menus */
+#dropdown-row {
+    height: 3;
+    padding: 0;
+    margin: 0;
+}
+
+#dropdown-row.--hidden {
+    display: none;
+}
+
 /* Dropdown menu container */
 .dropdown-menu {
-    height: auto;
+    height: 3;
     padding: 0;
     margin: 0;
 }

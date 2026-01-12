@@ -67,9 +67,8 @@ class ChatInput(Widget):
 
     def compose(self) -> ComposeResult:
         yield Vertical(
+            # Popup menus (positioned above quick-actions)
             Horizontal(
-                # PIM dropdown group
-                Button("PIM ▾", id="quick-pim", classes="quick-btn dropdown-toggle"),
                 Horizontal(
                     Button("Mail", id="pim-mail", classes="dropdown-item"),
                     Button("News", id="pim-news", classes="dropdown-item"),
@@ -78,15 +77,19 @@ class ChatInput(Widget):
                     id="pim-menu",
                     classes="dropdown-menu --hidden"
                 ),
-                Button("Music", id="quick-music", classes="quick-btn"),
-                # Torrent dropdown group
-                Button("Torrent ▾", id="quick-torrent-toggle", classes="quick-btn dropdown-toggle"),
                 Horizontal(
                     Button("List", id="torrent-list", classes="dropdown-item"),
                     Button("Torrent", id="torrent-main", classes="dropdown-item"),
                     id="torrent-menu",
                     classes="dropdown-menu --hidden"
                 ),
+                id="dropdown-row",
+                classes="--hidden"
+            ),
+            Horizontal(
+                Button("PIM ▾", id="quick-pim", classes="quick-btn dropdown-toggle"),
+                Button("Music", id="quick-music", classes="quick-btn"),
+                Button("Torrent ▾", id="quick-torrent-toggle", classes="quick-btn dropdown-toggle"),
                 Button("Weather", id="quick-weather", classes="quick-btn"),
                 id="quick-actions"
             ),
@@ -143,23 +146,38 @@ class ChatInput(Widget):
 
     def toggle_dropdown(self, menu_id: str):
         """Toggle a dropdown menu visibility."""
-        # Hide other dropdowns first
-        for dropdown_id in ["pim-menu", "torrent-menu"]:
-            if dropdown_id != menu_id:
+        try:
+            dropdown_row = self.query_one("#dropdown-row")
+            menu = self.query_one(f"#{menu_id}")
+
+            # Check if this menu is currently visible
+            is_visible = not menu.has_class("--hidden")
+
+            # Hide all menus first
+            for dropdown_id in ["pim-menu", "torrent-menu"]:
                 try:
                     dropdown = self.query_one(f"#{dropdown_id}")
                     dropdown.add_class("--hidden")
                 except Exception:
                     pass
-        # Toggle the target dropdown
-        try:
-            menu = self.query_one(f"#{menu_id}")
-            menu.toggle_class("--hidden")
+
+            if is_visible:
+                # Was visible, now hide the row
+                dropdown_row.add_class("--hidden")
+            else:
+                # Show the row and this menu
+                dropdown_row.remove_class("--hidden")
+                menu.remove_class("--hidden")
         except Exception:
             pass
 
     def hide_all_dropdowns(self):
         """Hide all dropdown menus."""
+        try:
+            dropdown_row = self.query_one("#dropdown-row")
+            dropdown_row.add_class("--hidden")
+        except Exception:
+            pass
         for dropdown_id in ["pim-menu", "torrent-menu"]:
             try:
                 dropdown = self.query_one(f"#{dropdown_id}")
