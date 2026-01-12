@@ -74,6 +74,8 @@ class MainScreen(Screen):
         """Load conversations and settings on mount."""
         self.load_conversations()  # @work decorator handles async
         self.load_mail_accounts()  # Load mail accounts for autocomplete
+        # Start periodic sync every 30 seconds to stay in sync with web UI
+        self.set_interval(30, self.sync_conversations)
 
     @work(exclusive=True)
     async def load_conversations(self):
@@ -98,6 +100,40 @@ class MainScreen(Screen):
                 chat_input.set_mail_accounts(mail_accounts)
         except Exception as e:
             # Silently fail - autocomplete just won't have account hints
+            pass
+
+    @work(exclusive=True, group="sync")
+    async def sync_conversations(self):
+        """Periodically sync conversation list with server."""
+        try:
+            new_conversations = await self.app.api.list_conversations()
+
+            # Check if list has changed (compare IDs and update times)
+            current_ids = {(c.id, c.updated_at) for c in self.conversations}
+            new_ids = {(c.id, c.updated_at) for c in new_conversations}
+
+            if current_ids != new_ids:
+                self.conversations = new_conversations
+                sidebar = self.query_one("#sidebar", ConversationSidebar)
+                sidebar.update_conversations(self.conversations)
+
+                # If current conversation was deleted, clear the view
+                if self.current_conversation_id:
+                    current_exists = any(
+                        c.id == self.current_conversation_id
+                        for c in new_conversations
+                    )
+                    if not current_exists:
+                        self.current_conversation_id = None
+                        if self.chat_ws:
+                            await self.chat_ws.disconnect()
+                            self.chat_ws = None
+                        title = self.query_one("#chat-title", Static)
+                        title.update("Select or create a conversation")
+                        chat_view = self.query_one("#chat-view", ChatView)
+                        chat_view.load_messages([])
+        except Exception:
+            # Silently fail - sync will retry on next interval
             pass
 
     async def create_new_chat(self):
