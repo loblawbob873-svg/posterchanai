@@ -209,6 +209,7 @@ AvoidDiskWrites 1
         try:
             import socket
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(10)
             sock.connect(('127.0.0.1', self.control_port))
             sock.send(b'AUTHENTICATE ""\r\n')
             response = sock.recv(1024)
