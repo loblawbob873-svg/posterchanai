@@ -219,6 +219,8 @@ class MessageWidget(Widget):
         delete_pattern = re.compile(r'\[🗑 Delete\]\(cmd:(bt rm \d+)\)')
         # Progress line: [██████████] 100.0% | 1.5 GB
         progress_pattern = re.compile(r'\[([█░]+)\]\s*([\d.]+)%\s*\|\s*(.+)')
+        # Stats line: ↓1.2 KB/s ↑0.5 KB/s | 5S/10P
+        stats_pattern = re.compile(r'↓([\d.]+\s*[KMG]?B?/s|-)\s*↑([\d.]+\s*[KMG]?B?/s|-)\s*\|\s*(\d+)S/(\d+)P')
 
         for line in lines:
             title_match = title_pattern.match(line.strip())
@@ -232,8 +234,13 @@ class MessageWidget(Widget):
                     "num": num,
                     "icon": icon,
                     "name": name,
-                    "progress": "",
-                    "stats": "",
+                    "progress_bar": "",
+                    "progress_pct": "",
+                    "size": "",
+                    "down": "-",
+                    "up": "-",
+                    "seeds": "0",
+                    "peers": "0",
                     "toggle_cmd": None,
                     "toggle_label": None,
                     "delete_cmd": None,
@@ -242,16 +249,17 @@ class MessageWidget(Widget):
                 # Check for progress
                 progress_match = progress_pattern.search(line)
                 if progress_match:
-                    bar = progress_match.group(1)
-                    pct = progress_match.group(2)
-                    size = progress_match.group(3)
-                    current_entry["progress"] = f"[{bar}] {pct}% | {size}"
+                    current_entry["progress_bar"] = progress_match.group(1)
+                    current_entry["progress_pct"] = progress_match.group(2)
+                    current_entry["size"] = progress_match.group(3).strip()
 
                 # Check for stats (↓ ↑ | S/P)
-                if "↓" in line and "↑" in line:
-                    stats_match = re.search(r'↓[\d.]+\s*[KMG]?B?/s\s*↑[\d.]+\s*[KMG]?B?/s\s*\|\s*\d+S/\d+P', line)
-                    if stats_match:
-                        current_entry["stats"] = stats_match.group(0)
+                stats_match = stats_pattern.search(line)
+                if stats_match:
+                    current_entry["down"] = stats_match.group(1)
+                    current_entry["up"] = stats_match.group(2)
+                    current_entry["seeds"] = stats_match.group(3)
+                    current_entry["peers"] = stats_match.group(4)
 
                 # Check for pause/resume button
                 pr_match = pause_resume_pattern.search(line)
@@ -272,29 +280,42 @@ class MessageWidget(Widget):
         # Render header
         container.mount(Static("**Torrents:**", classes="message-body"))
 
-        # Render each entry
+        # Render each entry in a compact format
         for entry in entries:
             row = Horizontal(classes="torrent-row")
 
-            # Build info text
-            info = f"{entry['num']}. {entry['icon']} {entry['name']}"
-            if entry['progress']:
-                info += f"\n   {entry['progress']}"
-            if entry['stats']:
-                info += f" | {entry['stats']}"
+            # Truncate name to fit
+            name = entry['name']
+            if len(name) > 40:
+                name = name[:37] + "..."
+
+            # Compact 2-line format:
+            # 1. ⬇️ Torrent Name [████░░] 50%
+            #    ↓1.2KB/s ↑0KB/s 5S/10P 1.5GB
+            line1 = f"{entry['num']}. {entry['icon']} {name}"
+            if entry['progress_bar']:
+                line1 += f" [{entry['progress_bar'][:10]}] {entry['progress_pct']}%"
+
+            line2 = f"   ↓{entry['down']} ↑{entry['up']} {entry['seeds']}S/{entry['peers']}P"
+            if entry['size']:
+                line2 += f" {entry['size']}"
+
+            info = f"{line1}\n{line2}"
 
             row_text = Static(info, classes="torrent-text")
             container.mount(row)
             row.mount(row_text)
 
-            # Add action buttons
+            # Add action buttons with proper labels
             if entry['toggle_cmd']:
-                toggle_btn = Button(entry['toggle_label'][:1] if entry['toggle_label'] else "P", classes="torrent-btn")
+                # Show ▶ or ⏸ based on current state
+                label = "▶" if "Start" in (entry['toggle_label'] or "") or "Resume" in (entry['toggle_label'] or "") else "⏸"
+                toggle_btn = Button(label, classes="torrent-btn")
                 toggle_btn.command = entry['toggle_cmd']
                 row.mount(toggle_btn)
 
             if entry['delete_cmd']:
-                del_btn = Button("X", classes="torrent-btn torrent-btn-danger")
+                del_btn = Button("🗑", classes="torrent-btn torrent-btn-danger")
                 del_btn.command = entry['delete_cmd']
                 row.mount(del_btn)
 

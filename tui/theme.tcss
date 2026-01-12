@@ -1083,24 +1083,26 @@ Toast.-error {
 /* ═══════════ TORRENT LIST - INLINE BUTTONS ═══════════ */
 .torrent-row {
     height: auto;
-    min-height: 2;
+    min-height: 3;
     width: 100%;
     padding: 0;
     margin: 0 0 1 0;
     layout: horizontal;
+    align: left middle;
 }
 
 .torrent-text {
     width: 1fr;
     height: auto;
+    min-height: 2;
     padding: 0 1;
     color: $text;
-    content-align: left middle;
+    content-align: left top;
 }
 
 .torrent-btn {
-    width: 5;
-    min-width: 5;
+    width: 4;
+    min-width: 4;
     height: 3;
     padding: 0;
     margin: 0;
