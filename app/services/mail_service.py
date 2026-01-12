@@ -1303,6 +1303,8 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
     lines.append("")
     lines.append("---")
     lines.append("")
+    lines.append("*TUI: Press 'o' to open links in browser*")
+    lines.append("")
 
     # Action buttons
     reply_cmd = f"mail reply {account_short} {msg_id} "
