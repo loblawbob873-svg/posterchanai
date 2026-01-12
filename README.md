@@ -1793,6 +1793,34 @@ Key packages:
 - `python-docx`, `openpyxl`, `python-pptx` - Office document support
 - `PyMuPDF` - PDF text extraction
 
+### Built-in Torrent Client (Optional)
+
+The built-in torrent client uses `libtorrent-rasterbar` with Python bindings. All traffic is routed through an HTTP proxy (for Tor anonymity).
+
+**Gentoo:**
+```bash
+# Enable Python USE flag
+echo "net-libs/libtorrent-rasterbar python" >> /etc/portage/package.use/libtorrent
+emerge -av net-libs/libtorrent-rasterbar
+
+# Verify Python bindings are installed
+python3 -c "import libtorrent; print(libtorrent.version)"
+```
+
+**Debian/Ubuntu:**
+```bash
+apt install python3-libtorrent
+```
+
+**Virtual Environment Setup:**
+
+If using a venv, create it with system site-packages access:
+```bash
+python -m venv venv --system-site-packages
+```
+
+The libtorrent service will automatically detect system-installed packages even in a regular venv.
+
 ### Image Generation Dependencies (requirements-image.txt)
 
 - `diffusers` - HuggingFace Stable Diffusion pipelines
