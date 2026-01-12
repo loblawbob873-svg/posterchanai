@@ -149,6 +149,10 @@ class LibtorrentService:
         self.torrents: dict[str, lt.torrent_handle] = {}
         self._number_to_hash: dict[int, str] = {}  # For user-friendly numbering
 
+        # Resume data directory
+        self.resume_dir = self.download_dir / ".resume"
+        self.resume_dir.mkdir(parents=True, exist_ok=True)
+
         # Alert processing
         self._alert_thread: Optional[threading.Thread] = None
         self._running = False
@@ -180,6 +184,9 @@ class LibtorrentService:
 
         self._running = True
 
+        # Load saved torrents from resume data
+        self._load_resume_data()
+
         # Start alert processing thread
         self._alert_thread = threading.Thread(target=self._process_alerts, daemon=True)
         self._alert_thread.start()
@@ -187,13 +194,83 @@ class LibtorrentService:
         logger.info(f"[BT] LibtorrentService started")
 
     def stop(self):
-        """Stop background threads."""
+        """Stop background threads and save resume data."""
         self._running = False
+
+        # Save resume data for all torrents
+        self._save_resume_data()
 
         # Save session state
         self.session.pause()
 
         logger.info("[BT] LibtorrentService stopped")
+
+    def _save_resume_data(self):
+        """Save resume data for all torrents."""
+        logger.info("[BT] Saving resume data for all torrents...")
+        count = 0
+        for info_hash, handle in self.torrents.items():
+            try:
+                if not handle.is_valid():
+                    continue
+                # Request save resume data
+                handle.save_resume_data(lt.torrent_handle.save_info_dict)
+            except Exception as e:
+                logger.error(f"[BT] Failed to request resume data for {info_hash}: {e}")
+
+        # Process save_resume_data_alert
+        timeout = time.time() + 10  # 10 second timeout
+        pending = set(self.torrents.keys())
+        while pending and time.time() < timeout:
+            alerts = self.session.pop_alerts()
+            for alert in alerts:
+                if isinstance(alert, lt.save_resume_data_alert):
+                    info_hash = str(alert.handle.info_hash())
+                    try:
+                        resume_file = self.resume_dir / f"{info_hash}.resume"
+                        resume_data = lt.write_resume_data_buf(alert.params)
+                        resume_file.write_bytes(resume_data)
+                        count += 1
+                        pending.discard(info_hash)
+                        logger.debug(f"[BT] Saved resume data: {info_hash}")
+                    except Exception as e:
+                        logger.error(f"[BT] Failed to write resume data for {info_hash}: {e}")
+                elif isinstance(alert, lt.save_resume_data_failed_alert):
+                    info_hash = str(alert.handle.info_hash())
+                    pending.discard(info_hash)
+                    logger.warning(f"[BT] Resume data failed for {info_hash}: {alert.error}")
+            time.sleep(0.1)
+
+        logger.info(f"[BT] Saved resume data for {count} torrents")
+
+    def _load_resume_data(self):
+        """Load resume data and re-add torrents."""
+        if not self.resume_dir.exists():
+            return
+
+        count = 0
+        for resume_file in self.resume_dir.glob("*.resume"):
+            try:
+                resume_data = resume_file.read_bytes()
+                params = lt.read_resume_data(resume_data)
+                params.save_path = str(self.download_dir)
+
+                handle = self.session.add_torrent(params)
+                info_hash = str(handle.info_hash())
+                self.torrents[info_hash] = handle
+                count += 1
+                logger.debug(f"[BT] Restored torrent: {info_hash}")
+            except Exception as e:
+                logger.error(f"[BT] Failed to load resume data from {resume_file}: {e}")
+                # Remove corrupted resume file
+                try:
+                    resume_file.unlink()
+                except:
+                    pass
+
+        if count > 0:
+            logger.info(f"[BT] Restored {count} torrents from resume data")
+            self._update_numbering()
 
     def _check_proxy(self, host: str, port: int, timeout: int = 5) -> bool:
         """Verify proxy is reachable and responding."""
