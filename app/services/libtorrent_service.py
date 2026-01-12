@@ -121,28 +121,28 @@ class LibtorrentService:
             'proxy_type': lt.proxy_type_t.http,
             'proxy_hostname': proxy_host,
             'proxy_port': proxy_port,
-            # FORCE ALL connections through proxy - no exceptions!
-            'force_proxy': True,
-            # Proxy peer connections through Tor
+            # Don't force ALL traffic - allow trackers direct access
+            'force_proxy': False,
+            # CRITICAL: Force peer DATA connections through Tor
             'proxy_peer_connections': True,
-            # Proxy tracker connections too (HTTP trackers work, UDP will fail)
-            'proxy_tracker_connections': True,
-            # Proxy hostname lookups
-            'proxy_hostnames': True,
+            # Allow direct tracker connections (UDP trackers need this)
+            'proxy_tracker_connections': False,
+            # Allow direct DNS for trackers
+            'proxy_hostnames': False,
             # Anonymous mode - don't leak peer_id, client info
             'anonymous_mode': True,
         })
 
         # Log startup configuration
-        logger.info(f"[BT] ========== TORRENT ENGINE STARTING (STRICT TOR MODE) ==========")
+        logger.info(f"[BT] ========== TORRENT ENGINE STARTING (TOR DATA MODE) ==========")
         logger.info(f"[BT] HTTP Proxy: {proxy_host}:{proxy_port} -> Tor SOCKS5")
         logger.info(f"[BT] Download dir: {self.download_dir}")
-        logger.info(f"[BT] FORCE PROXY: YES - ALL connections through Tor")
-        logger.info(f"[BT] DHT: DISABLED (uses UDP)")
-        logger.info(f"[BT] uTP: DISABLED (uses UDP)")
-        logger.info(f"[BT] UDP Trackers: WILL FAIL (HTTP trackers only)")
+        logger.info(f"[BT] Trackers: DIRECT (UDP+HTTP work) - IP visible to trackers")
+        logger.info(f"[BT] Peer DATA: PROXIED through Tor - anonymous transfers")
+        logger.info(f"[BT] DHT: DISABLED (peer-to-peer UDP)")
+        logger.info(f"[BT] uTP: DISABLED (peer-to-peer UDP)")
         logger.info(f"[BT] Anonymous mode: ENABLED")
-        logger.info(f"[BT] ================================================================")
+        logger.info(f"[BT] =============================================================")
 
         self.session.apply_settings(settings)
 
