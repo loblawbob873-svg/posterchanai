@@ -997,6 +997,32 @@ The music command provides WebDAV-based music streaming with a cyberpunk-styled 
 
 Works with Nextcloud, ownCloud, or any WebDAV-compatible server.
 
+**Global Keyboard Shortcuts (Wayland/Hyprland):**
+
+Control music playback from anywhere on your desktop using global shortcuts. The TUI must be running.
+
+Add to your Hyprland config (`~/.config/hypr/hyprland.conf`):
+```
+bind = SUPER, P, exec, /path/to/posterchanai/scripts/music-control.sh toggle
+bind = SUPER, F, exec, /path/to/posterchanai/scripts/music-control.sh next
+bind = SUPER, R, exec, /path/to/posterchanai/scripts/music-control.sh prev
+```
+
+For Sway (`~/.config/sway/config`):
+```
+bindsym Mod4+p exec /path/to/posterchanai/scripts/music-control.sh toggle
+bindsym Mod4+f exec /path/to/posterchanai/scripts/music-control.sh next
+bindsym Mod4+r exec /path/to/posterchanai/scripts/music-control.sh prev
+```
+
+Then reload your compositor config (`hyprctl reload` for Hyprland).
+
+| Shortcut | Action |
+|----------|--------|
+| Super+P | Play/Pause toggle |
+| Super+F | Next track (Forward) |
+| Super+R | Previous track (Rewind) |
+
 ### Todo Command
 
 The todo command provides CalDAV-integrated task management (VTODO items).
