@@ -1,12 +1,11 @@
 """
-Built-in torrent client using libtorrent with HTTP proxy support and SCGI server for Flood.
+Built-in torrent client using libtorrent with HTTP proxy support.
+All traffic is routed through the configured HTTP proxy (for Tor).
 """
 
 import libtorrent as lt
 import threading
 import socket
-import struct
-import xmlrpc.client
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Callable
@@ -39,8 +38,8 @@ class TorrentInfo:
 class LibtorrentService:
     """
     All-in-one torrent client using libtorrent.
-    - HTTP proxy support for Tor
-    - SCGI server for Flood compatibility
+    - HTTP proxy REQUIRED for Tor (force_proxy=True)
+    - All traffic routed through proxy - no direct connections
     """
 
     _instance: Optional['LibtorrentService'] = None
@@ -51,8 +50,6 @@ class LibtorrentService:
         download_dir: str = "/tmp/torrents",
         proxy_host: str = "",
         proxy_port: int = 8118,
-        scgi_host: str = "0.0.0.0",
-        scgi_port: int = 5001,
         listen_port: int = 6881,
     ):
         self.download_dir = Path(download_dir)
@@ -122,7 +119,6 @@ class LibtorrentService:
         logger.info(f"[BT] proxy_tracker_connections: True")
         logger.info(f"[BT] Download dir: {self.download_dir}")
         logger.info(f"[BT] Listen port: {listen_port}")
-        logger.info(f"[BT] SCGI: {scgi_host}:{scgi_port}")
         logger.info(f"[BT] DHT: enabled (will use proxy)")
         logger.info(f"[BT] UDP trackers: enabled (will fallback to HTTP via proxy)")
         logger.info(f"[BT] ==============================================")
@@ -132,12 +128,6 @@ class LibtorrentService:
         # Track torrents by hash
         self.torrents: dict[str, lt.torrent_handle] = {}
         self._number_to_hash: dict[int, str] = {}  # For user-friendly numbering
-
-        # SCGI server
-        self.scgi_host = scgi_host
-        self.scgi_port = scgi_port
-        self._scgi_thread: Optional[threading.Thread] = None
-        self._scgi_running = False
 
         # Alert processing
         self._alert_thread: Optional[threading.Thread] = None
@@ -149,8 +139,6 @@ class LibtorrentService:
         download_dir: str = "/tmp/torrents",
         proxy_host: str = "",
         proxy_port: int = 8118,
-        scgi_host: str = "0.0.0.0",
-        scgi_port: int = 5001,
         listen_port: int = 6881,
     ) -> 'LibtorrentService':
         """Get or create singleton instance."""
@@ -160,8 +148,6 @@ class LibtorrentService:
                     download_dir=download_dir,
                     proxy_host=proxy_host,
                     proxy_port=proxy_port,
-                    scgi_host=scgi_host,
-                    scgi_port=scgi_port,
                     listen_port=listen_port,
                 )
                 cls._instance.start()
@@ -178,22 +164,16 @@ class LibtorrentService:
         self._alert_thread = threading.Thread(target=self._process_alerts, daemon=True)
         self._alert_thread.start()
 
-        # Start SCGI server
-        self._scgi_running = True
-        self._scgi_thread = threading.Thread(target=self._run_scgi_server, daemon=True)
-        self._scgi_thread.start()
-
-        logger.info(f"LibtorrentService started - SCGI on {self.scgi_host}:{self.scgi_port}")
+        logger.info(f"[BT] LibtorrentService started")
 
     def stop(self):
         """Stop background threads."""
         self._running = False
-        self._scgi_running = False
 
         # Save session state
         self.session.pause()
 
-        logger.info("LibtorrentService stopped")
+        logger.info("[BT] LibtorrentService stopped")
 
     def _check_proxy(self, host: str, port: int, timeout: int = 5) -> bool:
         """Verify proxy is reachable and responding."""
@@ -430,207 +410,6 @@ class LibtorrentService:
             files.append({"path": f, "size": s})
 
         return files
-
-    # ==================== SCGI Server for Flood ====================
-
-    def _run_scgi_server(self):
-        """Run SCGI server for Flood compatibility."""
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.settimeout(1.0)
-
-        try:
-            server.bind((self.scgi_host, self.scgi_port))
-            server.listen(5)
-            logger.info(f"SCGI server listening on {self.scgi_host}:{self.scgi_port}")
-
-            while self._scgi_running:
-                try:
-                    client, addr = server.accept()
-                    threading.Thread(
-                        target=self._handle_scgi_client,
-                        args=(client,),
-                        daemon=True
-                    ).start()
-                except socket.timeout:
-                    continue
-                except Exception as e:
-                    logger.error(f"SCGI accept error: {e}")
-        finally:
-            server.close()
-
-    def _handle_scgi_client(self, client: socket.socket):
-        """Handle an SCGI client connection."""
-        try:
-            # Read SCGI request
-            data = b""
-            while True:
-                chunk = client.recv(4096)
-                if not chunk:
-                    break
-                data += chunk
-                if b"</methodCall>" in data:
-                    break
-
-            if not data:
-                return
-
-            # Parse SCGI header (netstring format: "length:headers,body")
-            colon_idx = data.find(b":")
-            if colon_idx > 0:
-                header_len = int(data[:colon_idx])
-                header_end = colon_idx + 1 + header_len + 1  # +1 for : and ,
-                body = data[header_end:]
-            else:
-                body = data
-
-            # Parse XML-RPC request
-            try:
-                # Find XML start
-                xml_start = body.find(b"<?xml")
-                if xml_start == -1:
-                    xml_start = body.find(b"<methodCall>")
-                if xml_start >= 0:
-                    body = body[xml_start:]
-
-                params, method = xmlrpc.client.loads(body.decode('utf-8'))
-                result = self._handle_xmlrpc(method, params)
-
-                # Create XML-RPC response
-                response = xmlrpc.client.dumps((result,), methodresponse=True)
-            except Exception as e:
-                logger.error(f"XML-RPC parse error: {e}")
-                response = xmlrpc.client.dumps(
-                    xmlrpc.client.Fault(1, str(e)),
-                    methodresponse=True
-                )
-
-            # Send response
-            client.sendall(response.encode('utf-8'))
-        except Exception as e:
-            logger.error(f"SCGI handler error: {e}")
-        finally:
-            client.close()
-
-    def _handle_xmlrpc(self, method: str, params: tuple):
-        """Handle an XML-RPC method call (rtorrent-compatible)."""
-        logger.debug(f"XML-RPC: {method} {params}")
-
-        # System methods
-        if method == "system.listMethods":
-            return [
-                "system.listMethods",
-                "system.client_version",
-                "d.multicall2",
-                "load.raw_start",
-                "d.start", "d.stop", "d.erase",
-                "d.name", "d.size_bytes", "d.completed_bytes",
-                "d.down.rate", "d.up.rate", "d.hash",
-            ]
-
-        elif method == "system.client_version":
-            return f"libtorrent/{lt.__version__}"
-
-        # Torrent list (Flood uses this)
-        elif method == "d.multicall2":
-            # params: ("", "main", "d.hash=", "d.name=", ...)
-            view = params[1] if len(params) > 1 else "main"
-            fields = params[2:] if len(params) > 2 else []
-
-            result = []
-            for info_hash, handle in self.torrents.items():
-                try:
-                    status = handle.status()
-                    row = []
-                    for field in fields:
-                        field = field.rstrip("=")
-                        value = self._get_torrent_field(handle, status, field)
-                        row.append(value)
-                    result.append(row)
-                except Exception as e:
-                    logger.error(f"Error in multicall for {info_hash}: {e}")
-
-            return result
-
-        # Load torrent (raw .torrent data)
-        elif method == "load.raw_start":
-            # params: ("", torrent_data_base64)
-            if len(params) >= 2:
-                torrent_data = params[1]
-                if isinstance(torrent_data, xmlrpc.client.Binary):
-                    torrent_data = torrent_data.data
-                self.add_torrent_file(torrent_data)
-            return 0
-
-        # Single torrent operations
-        elif method == "d.start":
-            if params:
-                self.resume(params[0])
-            return 0
-
-        elif method == "d.stop":
-            if params:
-                self.pause(params[0])
-            return 0
-
-        elif method == "d.erase":
-            if params:
-                self.remove(params[0])
-            return 0
-
-        # Torrent field getters
-        elif method.startswith("d."):
-            if params:
-                handle = self.torrents.get(params[0])
-                if handle:
-                    status = handle.status()
-                    return self._get_torrent_field(handle, status, method)
-            return ""
-
-        else:
-            logger.warning(f"Unknown XML-RPC method: {method}")
-            return ""
-
-    def _get_torrent_field(self, handle, status, field: str):
-        """Get a torrent field value (rtorrent-compatible names)."""
-        field_map = {
-            "d.hash": lambda: str(handle.info_hash()),
-            "d.name": lambda: status.name or "",
-            "d.size_bytes": lambda: status.total_wanted,
-            "d.completed_bytes": lambda: status.total_wanted_done,
-            "d.down.rate": lambda: status.download_rate,
-            "d.up.rate": lambda: status.upload_rate,
-            "d.down.total": lambda: status.total_download,
-            "d.up.total": lambda: status.total_upload,
-            "d.ratio": lambda: (status.total_upload / max(status.total_download, 1)) * 1000,
-            "d.is_active": lambda: 1 if not status.paused else 0,
-            "d.is_open": lambda: 1,
-            "d.state": lambda: 1 if not status.paused else 0,
-            "d.complete": lambda: 1 if status.is_finished else 0,
-            "d.hashing": lambda: 0,
-            "d.message": lambda: "",
-            "d.priority": lambda: 2,
-            "d.peers_connected": lambda: status.num_peers,
-            "d.peers_complete": lambda: status.num_seeds,
-            "d.directory": lambda: status.save_path,
-            "d.base_path": lambda: status.save_path,
-            "d.left_bytes": lambda: status.total_wanted - status.total_wanted_done,
-            "d.creation_date": lambda: 0,
-            "d.timestamp.started": lambda: 0,
-            "d.timestamp.finished": lambda: 0,
-            "d.custom1": lambda: "",
-            "d.custom2": lambda: "",
-            "d.custom3": lambda: "",
-            "d.custom4": lambda: "",
-            "d.custom5": lambda: "",
-        }
-
-        getter = field_map.get(field)
-        if getter:
-            return getter()
-
-        logger.debug(f"Unknown field: {field}")
-        return ""
 
 
 def format_torrent_list(torrents: list[TorrentInfo]) -> str:

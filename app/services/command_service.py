@@ -547,8 +547,6 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 download_dir=get_setting("bt_download_dir", "/var/lib/posterchanai/torrents"),
                 proxy_host=proxy_host,
                 proxy_port=int(get_setting("bt_proxy_port", "8118")),
-                scgi_host=get_setting("bt_scgi_host", "0.0.0.0"),
-                scgi_port=int(get_setting("bt_scgi_port", "5001")),
                 listen_port=int(get_setting("bt_listen_port", "6881")),
             )
             return service, None

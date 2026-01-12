@@ -155,19 +155,22 @@ class HttpToSocksProxy:
         else:
             host, port = target, 443
 
+        logger.info(f"[PROXY] CONNECT request: {host}:{port} from {client_addr}")
+
         try:
             # Connect to target through SOCKS5
-            remote_reader, remote_writer = await self._socks5_connect(host, port)
+            remote_reader, remote_writer = await self._socks_connect(host, port)
 
             # Send success response
             writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             await writer.drain()
+            logger.debug(f"[PROXY] Tunnel established: {host}:{port}")
 
             # Bidirectional tunnel
             await self._tunnel(reader, writer, remote_reader, remote_writer)
 
         except Exception as e:
-            logger.error(f"CONNECT to {target} failed: {e}")
+            logger.error(f"[PROXY] CONNECT to {target} failed: {e}")
             writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             await writer.drain()
 
@@ -191,7 +194,7 @@ class HttpToSocksProxy:
 
         try:
             # Connect to target through SOCKS5
-            remote_reader, remote_writer = await self._socks5_connect(host, port)
+            remote_reader, remote_writer = await self._socks_connect(host, port)
 
             # Reconstruct and forward the request
             request = f"{method} {path} HTTP/1.1\r\n"
@@ -233,9 +236,46 @@ class HttpToSocksProxy:
             writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             await writer.drain()
 
+    async def _socks4a_connect(self, host: str, port: int) -> tuple:
+        """Connect to a host through SOCKS4a proxy (supports domain names like .onion)."""
+        logger.debug(f"[PROXY] Connecting via SOCKS4a to {self.socks_host}:{self.socks_port} for {host}:{port}")
+        reader, writer = await asyncio.open_connection(self.socks_host, self.socks_port)
+
+        try:
+            # SOCKS4a connect request
+            # Version(1) + Command(1) + Port(2) + IP(4) + UserID(null-term) + Hostname(null-term)
+            # For SOCKS4a, use IP 0.0.0.x (where x != 0) to signal hostname follows
+            request = bytes([0x04, 0x01])  # Version 4, Connect command
+            request += port.to_bytes(2, 'big')  # Port (network byte order)
+            request += bytes([0x00, 0x00, 0x00, 0x01])  # Fake IP 0.0.0.1 (signals SOCKS4a)
+            request += b'\x00'  # Empty user ID, null terminated
+            request += host.encode('utf-8') + b'\x00'  # Hostname, null terminated
+
+            writer.write(request)
+            await writer.drain()
+
+            # Read response (8 bytes)
+            response = await reader.readexactly(8)
+            # Response: null byte + status + 2 bytes port + 4 bytes IP
+            if response[1] != 0x5A:  # 0x5A = request granted
+                error_codes = {
+                    0x5B: "Request rejected or failed",
+                    0x5C: "Request failed - client not running identd",
+                    0x5D: "Request failed - identd could not confirm user",
+                }
+                raise Exception(f"SOCKS4a connect failed: {error_codes.get(response[1], f'Unknown error 0x{response[1]:02x}')}")
+
+            return reader, writer
+
+        except Exception as e:
+            writer.close()
+            await writer.wait_closed()
+            raise
+
     async def _socks5_connect(self, host: str, port: int) -> tuple:
         """Connect to a host through the SOCKS5 proxy."""
         # Connect to SOCKS5 proxy
+        logger.debug(f"[PROXY] Connecting via SOCKS5 to {self.socks_host}:{self.socks_port} for {host}:{port}")
         reader, writer = await asyncio.open_connection(self.socks_host, self.socks_port)
 
         try:
@@ -296,6 +336,14 @@ class HttpToSocksProxy:
             writer.close()
             await writer.wait_closed()
             raise
+
+    async def _socks_connect(self, host: str, port: int) -> tuple:
+        """Connect through SOCKS - try SOCKS4a first (better for .onion), fallback to SOCKS5."""
+        try:
+            return await self._socks4a_connect(host, port)
+        except Exception as e:
+            logger.debug(f"[PROXY] SOCKS4a failed, trying SOCKS5: {e}")
+            return await self._socks5_connect(host, port)
 
     def _is_ip(self, host: str) -> bool:
         """Check if host is an IP address."""

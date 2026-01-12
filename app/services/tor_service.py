@@ -186,6 +186,9 @@ AvoidDiskWrites 1
         """Wait for Tor to complete bootstrapping."""
         import socket
 
+        # Use 127.0.0.1 to check if listen_host is 0.0.0.0, otherwise use listen_host
+        check_host = "127.0.0.1" if self.listen_host == "0.0.0.0" else self.listen_host
+
         start_time = time.time()
         while time.time() - start_time < timeout:
             if not self._running or not self._process:
@@ -195,14 +198,14 @@ AvoidDiskWrites 1
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(1)
-                result = sock.connect_ex(('127.0.0.1', self.socks_port))
+                result = sock.connect_ex((check_host, self.socks_port))
                 sock.close()
                 if result == 0:
                     # Port is open, try SOCKS5 handshake
                     try:
                         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         sock.settimeout(5)
-                        sock.connect(('127.0.0.1', self.socks_port))
+                        sock.connect((check_host, self.socks_port))
                         sock.send(b'\x05\x01\x00')  # SOCKS5 greeting
                         response = sock.recv(2)
                         sock.close()

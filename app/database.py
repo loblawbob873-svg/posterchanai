@@ -272,8 +272,6 @@ When asked to write or modify code or files:
             "bt_download_dir": "/var/lib/posterchanai/torrents",
             "bt_proxy_host": "",              # HTTP proxy host (required for torrenting)
             "bt_proxy_port": "8118",          # HTTP proxy port (e.g. Privoxy for Tor)
-            "bt_scgi_host": "0.0.0.0",        # SCGI listen address for Flood
-            "bt_scgi_port": "5001",           # SCGI port for Flood
             "bt_listen_port": "6881",         # BitTorrent listen port
             # Built-in HTTP proxy (HTTP → SOCKS5/Tor gateway)
             "proxy_enabled": "false",         # Enable built-in HTTP proxy

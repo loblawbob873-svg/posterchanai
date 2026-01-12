@@ -196,8 +196,6 @@ async def startup():
 
                 download_dir = get_bt_setting("bt_download_dir") or "/var/lib/posterchanai/torrents"
                 proxy_port = int(get_bt_setting("bt_proxy_port") or "8118")
-                scgi_host = get_bt_setting("bt_scgi_host") or "0.0.0.0"
-                scgi_port = int(get_bt_setting("bt_scgi_port") or "5001")
                 listen_port = int(get_bt_setting("bt_listen_port") or "6881")
 
                 from app.services.libtorrent_service import LibtorrentService
@@ -205,11 +203,9 @@ async def startup():
                     download_dir=download_dir,
                     proxy_host=bt_proxy_host.value,
                     proxy_port=proxy_port,
-                    scgi_host=scgi_host,
-                    scgi_port=scgi_port,
                     listen_port=listen_port
                 )
-                logging.info(f"Built-in torrent client started (SCGI port {scgi_port})")
+                logging.info(f"Built-in torrent client started")
             else:
                 logging.warning("Built-in torrent client enabled but no proxy host configured")
     except Exception as e:
