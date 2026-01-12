@@ -100,18 +100,32 @@ class LanguagePickerScreen(ModalScreen):
 
         if not query:
             suggestions_widget.update("")
+            self._current_matches = []
             return
 
         # Find matching languages
-        matches = [lang for lang in LANGUAGES if lang.lower().startswith(query)][:5]
-        if matches:
-            suggestions_widget.update("Suggestions: " + ", ".join(matches))
+        self._current_matches = [lang for lang in LANGUAGES if lang.lower().startswith(query)][:5]
+        if self._current_matches:
+            suggestions_widget.update("Tab to complete: " + ", ".join(self._current_matches))
         else:
             suggestions_widget.update("")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle Enter key in input."""
         self._submit_language()
+
+    def on_key(self, event) -> None:
+        """Handle key press."""
+        if event.key == "escape":
+            self.dismiss(None)
+        elif event.key == "tab":
+            # Autocomplete with first match
+            if hasattr(self, '_current_matches') and self._current_matches:
+                lang_input = self.query_one("#language-input", Input)
+                lang_input.value = self._current_matches[0]
+                lang_input.cursor_position = len(lang_input.value)
+                event.prevent_default()
+                event.stop()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button press."""
@@ -134,8 +148,3 @@ class LanguagePickerScreen(ModalScreen):
         # Return the full command with language appended
         full_command = f"{self.pending_command} {language}"
         self.dismiss(full_command)
-
-    def on_key(self, event) -> None:
-        """Handle key press."""
-        if event.key == "escape":
-            self.dismiss(None)

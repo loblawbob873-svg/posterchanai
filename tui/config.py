@@ -108,20 +108,18 @@ class Config:
 
     def save_token(self, token: str):
         """Save auth token securely."""
-        saved = False
+        # Try keyring first
         if KEYRING_AVAILABLE and _keyring:
             try:
                 _keyring.set_password(TOKEN_SERVICE, self.username or "default", token)
-                saved = True
             except Exception:
-                pass  # Fall through to file storage
+                pass
 
-        if not saved:
-            # Fallback to file (less secure)
-            token_file = CONFIG_DIR / ".token"
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            token_file.write_text(token)
-            token_file.chmod(0o600)
+        # Always save to file as backup (keyring may fail silently)
+        token_file = CONFIG_DIR / ".token"
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        token_file.write_text(token)
+        token_file.chmod(0o600)
 
     def load_token(self) -> Optional[str]:
         """Load auth token."""
