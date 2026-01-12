@@ -274,28 +274,24 @@ MessageWidget {
 }
 
 .copy-btn {
-    width: 8;
-    min-width: 8;
+    width: 6;
+    min-width: 6;
+    max-width: 6;
     height: 1;
-    padding: 0 1;
-    margin: 0;
-    margin-left: 1;
+    padding: 0;
+    margin: 0 0 0 1;
     background: $surface;
     color: $text-muted;
-    border: round $primary 30%;
-    text-align: center;
+    border: none;
 }
 
 .copy-btn:hover {
     color: $cyan;
-    background: $surface-hover;
-    border: round $cyan 60%;
+    background: $cyan 20%;
 }
 
 .copy-btn:focus {
     color: $cyan;
-    background: $surface-hover;
-    border: round $cyan 60%;
 }
 
 .message-body {
