@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Lazy load model to avoid startup delay
 _model = None
-_model_size = "small"  # Options: tiny, base, small, medium, large-v3
+_model_size = "medium"  # Options: tiny, base, small, medium, large-v3
 
 
 def get_model():
