@@ -250,7 +250,7 @@ class LibtorrentService:
                 # DHT events
                 elif isinstance(alert, lt.dht_bootstrap_alert):
                     logger.info(f"[BT] DHT: Bootstrap complete")
-                elif isinstance(alert, lt.dht_error_alert):
+                elif hasattr(lt, 'dht_error_alert') and isinstance(alert, lt.dht_error_alert):
                     logger.warning(f"[BT] DHT ERROR: {alert.error}")
 
                 # Peer events (debug level - verbose)
