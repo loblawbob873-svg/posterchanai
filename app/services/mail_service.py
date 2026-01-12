@@ -1388,6 +1388,8 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
     delete_cmd = f"mail delete {account_short} {msg_id}"
     translate_cmd = f"mail translate {account_short} {msg_id}"
 
-    lines.append(f"[Reply All](cmd:{reply_cmd}) | [Forward](cmd:{forward_cmd}) | [Summary](cmd:{summary_cmd}) | [Archive](cmd:{archive_cmd}) | [Translate](cmd:{translate_cmd}) | [Delete](cmd:{delete_cmd})")
+    # Split buttons into two rows to prevent cutoff on narrow terminals
+    lines.append(f"[Reply](cmd:{reply_cmd}) | [Forward](cmd:{forward_cmd}) | [Summary](cmd:{summary_cmd})")
+    lines.append(f"[Archive](cmd:{archive_cmd}) | [Translate](cmd:{translate_cmd}) | [Delete](cmd:{delete_cmd})")
 
     return "\n".join(lines)

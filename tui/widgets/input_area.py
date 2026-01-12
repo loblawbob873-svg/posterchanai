@@ -291,15 +291,24 @@ class ChatInput(Widget):
         matches = []
 
         # Check if we have a multi-word command that needs subcommand hints
-        words = prefix_lower.split()
-        if len(words) >= 2:
-            # Check for subcommand hints (e.g., "mail folders" -> account hints)
-            base_cmd = " ".join(words[:-1])  # All but last word
-            partial = words[-1]  # Last word (partial)
+        # Handle trailing space - if prefix ends with space, we're looking for next word
+        import re
+        if prefix_lower.endswith(' '):
+            words = prefix_lower.strip().split()
+            base_cmd = " ".join(words)  # Full command (will look up subcommands)
+            partial = ""  # Empty partial - show all options
+        else:
+            words = prefix_lower.split()
+            if len(words) >= 2:
+                base_cmd = " ".join(words[:-1])  # All but last word
+                partial = words[-1]  # Last word (partial)
+            else:
+                base_cmd = ""
+                partial = prefix_lower
 
+        if base_cmd and len(words) >= 1:
             # Special case: mail forward/send <account> <id> -> suggest recipient emails
             # Strip numeric ID to get mail forward/send <account>
-            import re
             effective_base_cmd = base_cmd
             if re.match(r'^mail\s+(forward|send)\s+\S+\s+\d+$', base_cmd, re.I):
                 effective_base_cmd = re.sub(r'\s+\d+$', '', base_cmd)

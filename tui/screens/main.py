@@ -510,7 +510,9 @@ class MainScreen(Screen):
                 input_widget = chat_input.query_one("#message-input", Input)
                 input_widget.value = command
                 input_widget.focus()
-                self.notify("Type your message and press Enter", timeout=3)
+                # Trigger autocomplete to show suggestions
+                chat_input.update_autocomplete(command)
+                self.notify("Type recipient and press Tab for suggestions", timeout=3)
             # Check if translate command needs language picker
             elif self._needs_language_picker(command):
                 self._show_language_picker(command)
