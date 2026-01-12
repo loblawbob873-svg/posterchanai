@@ -69,8 +69,9 @@ class MainScreen(Screen):
         yield Footer()
 
     def on_mount(self):
-        """Load conversations on mount."""
+        """Load conversations and settings on mount."""
         self.load_conversations()  # @work decorator handles async
+        self.load_mail_accounts()  # Load mail accounts for autocomplete
 
     @work(exclusive=True)
     async def load_conversations(self):
@@ -81,6 +82,19 @@ class MainScreen(Screen):
             sidebar.update_conversations(self.conversations)
         except Exception as e:
             self.notify(f"Failed to load conversations: {e}", severity="error")
+
+    @work(exclusive=True)
+    async def load_mail_accounts(self):
+        """Load mail accounts for autocomplete."""
+        try:
+            settings = await self.app.api.get_user_settings()
+            mail_accounts = settings.get("mail_accounts", [])
+            if mail_accounts:
+                chat_input = self.query_one("#chat-input", ChatInput)
+                chat_input.set_mail_accounts(mail_accounts)
+        except Exception as e:
+            # Silently fail - autocomplete just won't have account hints
+            pass
 
     async def create_new_chat(self):
         """Create a new conversation."""
@@ -148,8 +162,12 @@ class MainScreen(Screen):
         except Exception as e:
             self.notify(f"Failed to connect: {e}", severity="error")
 
-    async def send_message(self, content: str):
-        """Send a message."""
+    async def send_message(self, content: str, attachments: list[str] = None):
+        """Send a message with optional file attachments."""
+        import base64
+        import mimetypes
+        import os
+
         if not self.current_conversation_id:
             # Create new conversation first
             await self.create_new_chat()
@@ -157,18 +175,67 @@ class MainScreen(Screen):
         if not self.chat_ws or not self.chat_ws.connected:
             await self.connect_websocket(self.current_conversation_id)
 
+        # Process attachments
+        image_data = None
+        file_content = None
+        pdf_data = None
+        document_data = None
+        attachment_names = []
+
+        if attachments:
+            for file_path in attachments:
+                if not os.path.isfile(file_path):
+                    continue
+
+                filename = os.path.basename(file_path)
+                attachment_names.append(filename)
+                mime_type, _ = mimetypes.guess_type(file_path)
+
+                try:
+                    with open(file_path, "rb") as f:
+                        data = f.read()
+
+                    # Categorize by file type
+                    if mime_type and mime_type.startswith("image/"):
+                        image_data = base64.b64encode(data).decode("utf-8")
+                    elif mime_type == "application/pdf" or filename.lower().endswith(".pdf"):
+                        pdf_data = base64.b64encode(data).decode("utf-8")
+                    elif filename.lower().endswith((".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx")):
+                        document_data = base64.b64encode(data).decode("utf-8")
+                    elif mime_type and mime_type.startswith("text/") or filename.lower().endswith((".txt", ".md", ".py", ".js", ".json", ".xml", ".csv")):
+                        file_content = data.decode("utf-8", errors="replace")
+                    else:
+                        # Try as text, fallback to base64
+                        try:
+                            file_content = data.decode("utf-8")
+                        except UnicodeDecodeError:
+                            document_data = base64.b64encode(data).decode("utf-8")
+                except Exception as e:
+                    self.notify(f"Failed to read {filename}: {e}", severity="error")
+
+        # Build display message
+        display_msg = content
+        if attachment_names:
+            display_msg = f"{content}\n\n📎 Attached: {', '.join(attachment_names)}" if content else f"📎 {', '.join(attachment_names)}"
+
         # Add user message to view
         chat_view = self.query_one("#chat-view", ChatView)
-        chat_view.add_message("user", content)
+        chat_view.add_message("user", display_msg)
 
         # Start streaming state
         self.is_streaming = True
         self.streaming_content = ""
         chat_view.start_streaming()
 
-        # Send via WebSocket
+        # Send via WebSocket with attachments
         try:
-            await self.chat_ws.send_message(content)
+            await self.chat_ws.send_message(
+                content,
+                image_data=image_data,
+                file_content=file_content,
+                pdf_data=pdf_data,
+                document_data=document_data,
+            )
         except Exception as e:
             self.is_streaming = False
             chat_view.stop_streaming()
@@ -340,7 +407,7 @@ class MainScreen(Screen):
 
     def on_chat_input_message_submitted(self, event):
         """Handle message submission from input."""
-        self._send_message_worker(event.content)
+        self._send_message_worker(event.content, event.attachments)
 
     def on_conversation_sidebar_delete_requested(self, event):
         """Handle delete request from sidebar."""
@@ -417,9 +484,9 @@ class MainScreen(Screen):
         await self.create_new_chat()
 
     @work(exclusive=True)
-    async def _send_message_worker(self, content: str):
+    async def _send_message_worker(self, content: str, attachments: list[str] = None):
         """Worker to send message."""
-        await self.send_message(content)
+        await self.send_message(content, attachments)
 
     # Vim-style actions
     def action_next_conversation(self):

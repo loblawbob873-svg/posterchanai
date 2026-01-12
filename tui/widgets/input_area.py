@@ -22,8 +22,10 @@ COMMANDS = [
     "search", "s",
     "image", "img",
     "generate", "gen",
-    "mail", "mail unread", "mail inbox", "mail sent", "mail compose",
-    "mail folders", "mail folder", "mail attachment",
+    "mail", "mail unread", "mail inbox", "mail sent", "mail send", "mail compose",
+    "mail folders", "mail folder", "mail attachment", "mail search", "mail read",
+    "mail summary", "mail sum", "mail translate", "mail reply", "mail delete",
+    "mail archive",
     "cal", "cal today", "cal week", "cal month", "cal add",
     "contacts", "contacts search", "contacts add",
     "music", "music browse", "music search", "music play", "music mood",
@@ -69,10 +71,32 @@ class ChatInput(Widget):
         self.history_index = -1
         self.autocomplete_suggestions: list[str] = []
         self.pending_attachments: List[str] = []
+        # Dynamic subcommands (populated from settings)
+        self.mail_accounts: List[str] = []  # Account short names (e.g., "john", "work")
+        self.subcommands: dict[str, List[str]] = {}
 
     class OpenLinksRequested(Message):
         """Posted when user wants to open links."""
         pass
+
+    def set_mail_accounts(self, accounts: List[dict]):
+        """Set mail accounts for autocomplete."""
+        # Extract short names from emails (part before @)
+        self.mail_accounts = []
+        for acc in accounts:
+            email = acc.get("email", "")
+            if "@" in email:
+                short = email.split("@")[0].lower()
+                self.mail_accounts.append(short)
+
+        # Update subcommands that need account hints
+        account_commands = [
+            "mail folders", "mail folder", "mail search", "mail read",
+            "mail summary", "mail sum", "mail translate", "mail reply",
+            "mail delete", "mail archive", "mail send",
+        ]
+        for cmd in account_commands:
+            self.subcommands[cmd] = self.mail_accounts
 
     def compose(self) -> ComposeResult:
         yield Vertical(
@@ -249,10 +273,37 @@ class ChatInput(Widget):
             return
 
         prefix_lower = prefix.lower()
-        matches = [cmd for cmd in COMMANDS if cmd.lower().startswith(prefix_lower)]
+        matches = []
 
-        if matches:
-            self.autocomplete_suggestions = matches[:5]  # Limit to 5
+        # Check if we have a multi-word command that needs subcommand hints
+        words = prefix_lower.split()
+        if len(words) >= 2:
+            # Check for subcommand hints (e.g., "mail folders" -> account hints)
+            base_cmd = " ".join(words[:-1])  # All but last word
+            partial = words[-1]  # Last word (partial)
+
+            if base_cmd in self.subcommands:
+                # Filter subcommand hints by partial match
+                hints = self.subcommands[base_cmd]
+                sub_matches = [f"{base_cmd} {h}" for h in hints if h.startswith(partial)]
+                matches.extend(sub_matches[:5])
+
+        # Also match against static commands
+        cmd_matches = [cmd for cmd in COMMANDS if cmd.lower().startswith(prefix_lower)]
+        matches.extend(cmd_matches)
+
+        # Dedupe and limit
+        seen = set()
+        unique_matches = []
+        for m in matches:
+            if m not in seen:
+                seen.add(m)
+                unique_matches.append(m)
+                if len(unique_matches) >= 5:
+                    break
+
+        if unique_matches:
+            self.autocomplete_suggestions = unique_matches
             hint_text = " | ".join(self.autocomplete_suggestions)
             hint = self.query_one("#autocomplete-hint", Static)
             hint.update(hint_text)
