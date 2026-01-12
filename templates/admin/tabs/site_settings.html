@@ -99,4 +99,46 @@ newsweek.com|Newsweek"></textarea>
             <button type="button" class="btn-secondary" id="resetNewsSourcesBtn" style="margin-top: 8px;">Reset to Defaults</button>
         </div>
     </fieldset>
+
+    <fieldset>
+        <legend>Built-in Torrent Client (libtorrent)</legend>
+        <div class="form-group">
+            <label for="bt_enabled">
+                <input type="checkbox" id="bt_enabled" name="bt_enabled"> Enable Built-in Torrent Client
+            </label>
+            <small>All torrent traffic is routed through the HTTP proxy (required)</small>
+        </div>
+        <div class="form-group">
+            <label for="bt_download_dir">Download Directory</label>
+            <input type="text" id="bt_download_dir" name="bt_download_dir" placeholder="/var/lib/posterchanai/torrents">
+            <small>Where downloaded torrents are saved</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="bt_proxy_host">HTTP Proxy Host</label>
+                <input type="text" id="bt_proxy_host" name="bt_proxy_host" placeholder="127.0.0.1">
+                <small>Required - e.g., Privoxy for Tor</small>
+            </div>
+            <div class="form-group">
+                <label for="bt_proxy_port">Proxy Port</label>
+                <input type="number" id="bt_proxy_port" name="bt_proxy_port" value="8118" min="1" max="65535">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="bt_scgi_host">SCGI Listen Address</label>
+                <input type="text" id="bt_scgi_host" name="bt_scgi_host" value="0.0.0.0" placeholder="0.0.0.0">
+                <small>For Flood web UI access</small>
+            </div>
+            <div class="form-group">
+                <label for="bt_scgi_port">SCGI Port</label>
+                <input type="number" id="bt_scgi_port" name="bt_scgi_port" value="5001" min="1" max="65535">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="bt_listen_port">BitTorrent Listen Port</label>
+            <input type="number" id="bt_listen_port" name="bt_listen_port" value="6881" min="1024" max="65535">
+            <small>Port for incoming peer connections</small>
+        </div>
+    </fieldset>
 </div>

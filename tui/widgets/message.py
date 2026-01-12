@@ -3,6 +3,7 @@ Message widget for displaying chat messages.
 """
 from __future__ import annotations
 
+import re
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static, Button
@@ -45,7 +46,7 @@ class MessageWidget(Widget):
         role_label = self.get_role_label()
         yield Vertical(
             Static(role_label, classes="message-role"),
-            Static(id="message-content", classes="message-body"),
+            Vertical(id="message-content-container"),
             Horizontal(id="message-buttons"),
             classes="message-inner"
         )
@@ -63,29 +64,126 @@ class MessageWidget(Widget):
         }
         return labels.get(self.role, self.role.upper())
 
+    def _is_torrent_list(self, content: str) -> bool:
+        """Check if content is a torrent list with download commands."""
+        return "torrents download" in content and content.count("[Download]") >= 2
+
+    def _parse_torrent_entries(self, content: str) -> list[dict]:
+        """Parse torrent list content into entries with inline buttons."""
+        entries = []
+        lines = content.split("\n")
+        current_entry = None
+
+        # Pattern: **1. [Title](url)** or **1. Title**
+        title_pattern = re.compile(r'\*\*(\d+)\.\s*(.+?)\*\*')
+        # Pattern: [Download](cmd:torrents download category num)
+        download_pattern = re.compile(r'\[Download\]\(cmd:(torrents download [^)]+)\)')
+
+        for line in lines:
+            title_match = title_pattern.search(line)
+            if title_match:
+                # Save previous entry
+                if current_entry:
+                    entries.append(current_entry)
+                # Start new entry
+                num = title_match.group(1)
+                title = title_match.group(2)
+                # Clean up markdown links in title
+                title = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', title)
+                current_entry = {"num": num, "title": title, "info": "", "command": None}
+            elif current_entry:
+                # Check for download command
+                dl_match = download_pattern.search(line)
+                if dl_match:
+                    current_entry["command"] = dl_match.group(1)
+                    # Extract info (S:X L:Y | size)
+                    info_match = re.search(r'\|\s*(S:\d+\s*L:\d+\s*\|\s*[\d.]+\s*[GMKT]B)', line, re.I)
+                    if info_match:
+                        current_entry["info"] = info_match.group(1)
+
+        # Don't forget last entry
+        if current_entry:
+            entries.append(current_entry)
+
+        return entries
+
     def update_content(self, content: str):
         """Update message content."""
         self.content = content
-        content_widget = self.query_one("#message-content", Static)
+        content_container = self.query_one("#message-content-container", Vertical)
+        content_container.remove_children()
 
         # For streaming, show raw text for speed
         if self.is_streaming:
-            content_widget.update(content + " _")
-        else:
-            # Parse and extract cmd links
-            self._cmd_links = parse_cmd_links(content)
+            content_container.mount(Static(content + " _", classes="message-body"))
+            return
 
-            # Parse markdown for display
+        # Parse and extract cmd links
+        self._cmd_links = parse_cmd_links(content)
+
+        # Check if this is a torrent list - render with inline buttons
+        if self._is_torrent_list(content):
+            self._render_torrent_list(content, content_container)
+        else:
+            # Standard markdown rendering
             try:
                 rendered = parse_markdown(content)
-                content_widget.update(rendered)
+                content_container.mount(Static(rendered, classes="message-body"))
             except Exception:
-                # Fallback to plain text with cmd links cleaned up
                 from tui.utils.markdown import strip_markdown
-                content_widget.update(strip_markdown(content))
+                content_container.mount(Static(strip_markdown(content), classes="message-body"))
 
-            # Render action buttons
+            # Render action buttons at bottom
             self._render_buttons()
+
+    def _render_torrent_list(self, content: str, container: Vertical):
+        """Render torrent list with inline download buttons."""
+        import logging
+        logger = logging.getLogger("tui")
+
+        # Extract header (first lines before entries)
+        lines = content.split("\n")
+        header_lines = []
+        for line in lines:
+            if re.match(r'\*\*\d+\.', line):
+                break
+            if line.strip():
+                header_lines.append(line)
+
+        # Render header
+        if header_lines:
+            header_text = "\n".join(header_lines)
+            try:
+                rendered_header = parse_markdown(header_text)
+                container.mount(Static(rendered_header, classes="message-body"))
+            except Exception:
+                container.mount(Static(header_text, classes="message-body"))
+
+        # Parse and render torrent entries
+        entries = self._parse_torrent_entries(content)
+        logger.info(f"Parsed {len(entries)} torrent entries")
+
+        for entry in entries:
+            # Create row with text + button
+            row = Horizontal(classes="torrent-row")
+
+            # Torrent info text
+            info_text = f"{entry['num']}. {entry['title']}"
+            if entry['info']:
+                info_text += f" | {entry['info']}"
+
+            row_text = Static(info_text, classes="torrent-text")
+
+            # Download button
+            if entry['command']:
+                btn = Button("DL", classes="torrent-btn")
+                btn.command = entry['command']
+                container.mount(row)
+                row.mount(row_text)
+                row.mount(btn)
+            else:
+                container.mount(row)
+                row.mount(row_text)
 
     def _render_buttons(self):
         """Render cmd: link buttons for essential actions."""
@@ -96,10 +194,14 @@ class MessageWidget(Widget):
             button_container = self.query_one("#message-buttons", Horizontal)
             button_container.remove_children()
 
+            # Skip if already rendered inline (torrent list)
+            if self._is_torrent_list(self.content):
+                return
+
             logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")
 
-            # Filter to essential action buttons
-            essential_prefixes = ("mail ", "cal ", "torrents ", "todo ", "news ", "miniflux ", "nyaa ", "music ")
+            # Filter to essential action buttons (exclude torrents download - handled inline)
+            essential_prefixes = ("mail ", "cal ", "todo ", "news ", "miniflux ", "nyaa ", "music ")
             actionable = [
                 (label, cmd) for label, cmd, _, _ in self._cmd_links
                 if any(cmd.startswith(p) for p in essential_prefixes)

@@ -1001,6 +1001,39 @@ Toast.-error {
     color: $green;
 }
 
+/* ═══════════ TORRENT LIST - INLINE BUTTONS ═══════════ */
+.torrent-row {
+    height: auto;
+    width: 100%;
+    padding: 0 1;
+    margin: 0;
+}
+
+.torrent-text {
+    width: 1fr;
+    padding: 0;
+    color: $text;
+}
+
+.torrent-btn {
+    width: 6;
+    min-width: 6;
+    height: 1;
+    margin-left: 1;
+    background: $magenta;
+    color: $background;
+    border: none;
+    text-style: bold;
+}
+
+.torrent-btn:hover {
+    background: $cyan;
+}
+
+.torrent-btn:focus {
+    background: $green;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    END OF THEME - "Wake up, Samurai. We have a city to burn."
    ═══════════════════════════════════════════════════════════════════════════ */

@@ -71,6 +71,7 @@ class CommandService:
         "mail": "Email: mail | mail folders/folder/search/read/reply/delete/archive <acct> <id>",
         "todo": "Todo list (CalDAV): todo | todo add <task> | todo rm <#>",
         "music": "Music: music | music browse | music search <query> | music play <#> | music random | music skip | music mood <vibe>",
+        "bt": "Built-in torrent: bt list | bt add <magnet> | bt pause/resume/rm <#> | bt info <#>",
     }
 
     # Command aliases (alias -> canonical command)
@@ -159,6 +160,8 @@ class CommandService:
             return await self._todo_command(arg)
         elif command == "music":
             return await self._music_command(arg)
+        elif command == "bt":
+            return await self._bt_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -1999,6 +2002,151 @@ Return ONLY valid JSON, no other text."""},
 
         except Exception as e:
             logger.error(f"Music command error: {e}")
+            return {"type": "text", "content": f"Error: {str(e)}"}
+
+    async def _bt_command(self, arg: str) -> dict:
+        """Built-in torrent client (libtorrent with HTTP proxy)."""
+        from app.models import Setting
+
+        # Check if bt is enabled
+        bt_enabled = self.db.query(Setting).filter(Setting.key == "bt_enabled").first()
+        if not bt_enabled or bt_enabled.value.lower() != "true":
+            return {"type": "text", "content": "Built-in torrent client is disabled. Enable it in Admin Settings."}
+
+        # Get settings
+        def get_setting(key: str, default: str = "") -> str:
+            s = self.db.query(Setting).filter(Setting.key == key).first()
+            return s.value if s and s.value else default
+
+        proxy_host = get_setting("bt_proxy_host")
+        if not proxy_host:
+            return {"type": "text", "content": "No HTTP proxy configured. Torrenting requires a proxy for safety. Set it in Admin Settings."}
+
+        proxy_port = int(get_setting("bt_proxy_port", "8118"))
+        download_dir = get_setting("bt_download_dir", "/var/lib/posterchanai/torrents")
+        scgi_host = get_setting("bt_scgi_host", "0.0.0.0")
+        scgi_port = int(get_setting("bt_scgi_port", "5001"))
+
+        try:
+            from app.services.libtorrent_service import LibtorrentService, format_torrent_list
+
+            # Get or create singleton service
+            service = LibtorrentService.get_instance(
+                download_dir=download_dir,
+                proxy_host=proxy_host,
+                proxy_port=proxy_port,
+                scgi_host=scgi_host,
+                scgi_port=scgi_port,
+            )
+
+            parts = arg.split(None, 1)
+            subcommand = parts[0].lower() if parts else "list"
+            subarg = parts[1] if len(parts) > 1 else ""
+
+            # List torrents
+            if subcommand in ("list", "ls", ""):
+                torrents = service.list_torrents()
+                return {"type": "text", "content": format_torrent_list(torrents)}
+
+            # Add torrent
+            elif subcommand == "add":
+                if not subarg:
+                    return {"type": "text", "content": "Usage: `bt add <magnet_link>`"}
+
+                if subarg.startswith("magnet:"):
+                    info_hash = service.add_magnet(subarg)
+                    return {"type": "text", "content": f"Added torrent: `{info_hash}`\n\nUse `bt list` to check progress."}
+                else:
+                    return {"type": "text", "content": "Please provide a magnet link starting with `magnet:`"}
+
+            # Pause torrent
+            elif subcommand in ("pause", "stop"):
+                try:
+                    num = int(subarg)
+                    info_hash = service.get_hash_by_number(num)
+                    if info_hash and service.pause(info_hash):
+                        return {"type": "text", "content": f"Paused torrent #{num}"}
+                    return {"type": "text", "content": f"Torrent #{num} not found"}
+                except ValueError:
+                    return {"type": "text", "content": "Usage: `bt pause <number>`"}
+
+            # Resume torrent
+            elif subcommand in ("resume", "start"):
+                try:
+                    num = int(subarg)
+                    info_hash = service.get_hash_by_number(num)
+                    if info_hash and service.resume(info_hash):
+                        return {"type": "text", "content": f"Resumed torrent #{num}"}
+                    return {"type": "text", "content": f"Torrent #{num} not found"}
+                except ValueError:
+                    return {"type": "text", "content": "Usage: `bt resume <number>`"}
+
+            # Remove torrent
+            elif subcommand in ("rm", "remove", "delete"):
+                try:
+                    num = int(subarg)
+                    info_hash = service.get_hash_by_number(num)
+                    if info_hash and service.remove(info_hash, delete_files=False):
+                        return {"type": "text", "content": f"Removed torrent #{num} (files kept)"}
+                    return {"type": "text", "content": f"Torrent #{num} not found"}
+                except ValueError:
+                    return {"type": "text", "content": "Usage: `bt rm <number>`"}
+
+            # Delete torrent with files
+            elif subcommand in ("purge", "rmf"):
+                try:
+                    num = int(subarg)
+                    info_hash = service.get_hash_by_number(num)
+                    if info_hash and service.remove(info_hash, delete_files=True):
+                        return {"type": "text", "content": f"Removed torrent #{num} and deleted files"}
+                    return {"type": "text", "content": f"Torrent #{num} not found"}
+                except ValueError:
+                    return {"type": "text", "content": "Usage: `bt purge <number>`"}
+
+            # Torrent info
+            elif subcommand == "info":
+                try:
+                    num = int(subarg)
+                    info_hash = service.get_hash_by_number(num)
+                    if not info_hash:
+                        return {"type": "text", "content": f"Torrent #{num} not found"}
+
+                    t = service.get_torrent(info_hash)
+                    if not t:
+                        return {"type": "text", "content": f"Torrent #{num} not found"}
+
+                    files = service.get_files(info_hash)
+                    file_list = "\n".join([f"  - {f['path']} ({f['size'] / 1024 / 1024:.1f} MB)" for f in files[:10]])
+                    if len(files) > 10:
+                        file_list += f"\n  ... and {len(files) - 10} more files"
+
+                    info = f"""## {t.name}
+
+**Hash:** `{t.info_hash}`
+**Status:** {t.state} {'(paused)' if t.is_paused else ''}
+**Progress:** {t.progress:.1f}%
+**Size:** {t.size / 1024 / 1024:.1f} MB
+**Downloaded:** {t.downloaded / 1024 / 1024:.1f} MB
+**Uploaded:** {t.uploaded / 1024 / 1024:.1f} MB
+**Speed:** ↓{t.download_rate / 1024:.1f} KB/s ↑{t.upload_rate / 1024:.1f} KB/s
+**Peers:** {t.seeders} seeders, {t.peers} peers
+**Save Path:** {t.save_path}
+
+**Files:**
+{file_list}
+"""
+                    return {"type": "text", "content": info}
+                except ValueError:
+                    return {"type": "text", "content": "Usage: `bt info <number>`"}
+
+            else:
+                return {"type": "text", "content": "Usage:\n- `bt list` - Show all torrents\n- `bt add <magnet>` - Add torrent\n- `bt pause <#>` - Pause torrent\n- `bt resume <#>` - Resume torrent\n- `bt rm <#>` - Remove torrent (keep files)\n- `bt purge <#>` - Remove torrent and files\n- `bt info <#>` - Show torrent details"}
+
+        except ImportError as e:
+            logger.error(f"libtorrent not installed: {e}")
+            return {"type": "text", "content": "libtorrent is not installed. Run: `pip install libtorrent`"}
+        except Exception as e:
+            logger.error(f"BT command error: {e}")
             return {"type": "text", "content": f"Error: {str(e)}"}
 
 

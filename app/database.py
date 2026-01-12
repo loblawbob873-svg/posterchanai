@@ -266,6 +266,14 @@ When asked to write or modify code or files:
             "mcp_port": "8808",                # SSE/HTTP port for MCP clients
             "mcp_host": "0.0.0.0",             # Host to bind MCP server
             "mcp_warmup": "true",              # Pre-load embeddings on startup
+            # Built-in torrent client (libtorrent)
+            "bt_enabled": "false",
+            "bt_download_dir": "/var/lib/posterchanai/torrents",
+            "bt_proxy_host": "",              # HTTP proxy host (required for torrenting)
+            "bt_proxy_port": "8118",          # HTTP proxy port (e.g. Privoxy for Tor)
+            "bt_scgi_host": "0.0.0.0",        # SCGI listen address for Flood
+            "bt_scgi_port": "5001",           # SCGI port for Flood
+            "bt_listen_port": "6881",         # BitTorrent listen port
         }
 
         added_settings = []
