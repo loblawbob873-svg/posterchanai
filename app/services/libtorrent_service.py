@@ -123,25 +123,29 @@ class LibtorrentService:
             'proxy_type': lt.proxy_type_t.http,
             'proxy_hostname': proxy_host,
             'proxy_port': proxy_port,
+            # Proxy settings - match rtorrent behavior
             'proxy_peer_connections': True,
             'proxy_tracker_connections': True,
             'proxy_hostnames': True,
-            'force_proxy': True,  # Force ALL traffic through proxy - NO DIRECT CONNECTIONS
-            # Additional safety: disable features that might leak
-            'anonymous_mode': True,  # Hide client identity
+            # NOTE: force_proxy=True can break some connections through HTTP proxy
+            # HTTP proxies can't handle UDP, so DHT/UDP trackers need direct or SOCKS5
+            'force_proxy': False,  # Allow fallback if proxy fails
+            # anonymous_mode disables too many features, use False to match rtorrent
+            'anonymous_mode': False,
         })
 
         # Log startup configuration
         logger.info(f"[BT] ========== TORRENT ENGINE STARTING ==========")
-        logger.info(f"[BT] Proxy: {proxy_host}:{proxy_port} (REQUIRED - ALL TRAFFIC)")
-        logger.info(f"[BT] force_proxy: True (no direct connections)")
-        logger.info(f"[BT] anonymous_mode: True (identity hidden)")
+        logger.info(f"[BT] Proxy: {proxy_host}:{proxy_port}")
+        logger.info(f"[BT] force_proxy: False (allow fallback)")
+        logger.info(f"[BT] anonymous_mode: False (full features)")
         logger.info(f"[BT] proxy_peer_connections: True")
         logger.info(f"[BT] proxy_tracker_connections: True")
         logger.info(f"[BT] Download dir: {self.download_dir}")
         logger.info(f"[BT] Listen port: {listen_port}")
-        logger.info(f"[BT] DHT: enabled (will use proxy)")
-        logger.info(f"[BT] UDP trackers: enabled (will fallback to HTTP via proxy)")
+        logger.info(f"[BT] DHT: enabled (dht.mode.set = auto)")
+        logger.info(f"[BT] UDP trackers: enabled (trackers.use_udp.set = yes)")
+        logger.info(f"[BT] PEX: enabled by default (protocol.pex.set = yes)")
         logger.info(f"[BT] ==============================================")
 
         self.session.apply_settings(settings)
@@ -427,10 +431,26 @@ class LibtorrentService:
     def list_torrents(self) -> list[TorrentInfo]:
         """Get list of all torrents."""
         result = []
+
+        # Log session status for debugging
+        try:
+            session_status = self.session.status()
+            logger.info(f"[BT] Session: DHT={session_status.dht_nodes} nodes, "
+                       f"DL={session_status.download_rate/1024:.1f}KB/s, "
+                       f"UL={session_status.upload_rate/1024:.1f}KB/s, "
+                       f"torrents={len(self.torrents)}")
+        except Exception as e:
+            logger.error(f"[BT] Failed to get session status: {e}")
+
         for info_hash, handle in self.torrents.items():
             try:
                 status = handle.status()
                 info = handle.torrent_file()
+
+                # Debug log each torrent state
+                logger.info(f"[BT] {status.name[:30]}: state={self._state_str(status.state)}, "
+                           f"peers={status.num_peers}, seeds={status.num_seeds}, "
+                           f"progress={status.progress*100:.1f}%")
 
                 # Calculate ETA
                 eta = -1
