@@ -4,6 +4,7 @@ Supports both local libtorrent and remote server forwarding via bt_server_url.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -16,6 +17,38 @@ from app.models import User, Setting
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/torrent", tags=["torrent"])
+security = HTTPBearer(auto_error=False)
+
+
+def get_torrent_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+) -> Optional[User]:
+    """
+    Get current user or validate server-to-server API token.
+    Accepts:
+    - Normal user JWT auth (header or cookie)
+    - Server API token (bt_server_token) for server-to-server requests
+    """
+    # Check for server-to-server API token first
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+        # Check if this is the server API token
+        server_token = db.query(Setting).filter(Setting.key == "bt_server_token").first()
+        if server_token and server_token.value and token == server_token.value:
+            # Valid server token - return None to indicate system access (no specific user)
+            # This allows server-to-server requests without requiring a user account
+            return None
+
+    # Fall back to normal user authentication
+    try:
+        return get_current_user(request, credentials, db)
+    except HTTPException:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated"
+        )
 
 
 async def forward_to_remote(
@@ -30,11 +63,20 @@ async def forward_to_remote(
     if not server_url or not server_url.value:
         return None
 
-    # Get auth token from request cookies
+    # Get server-to-server API token
+    server_token = db.query(Setting).filter(Setting.key == "bt_server_token").first()
+
+    # Also try to forward the user's cookie (fallback)
     access_token = request.cookies.get("access_token", "")
 
     url = f"{server_url.value.rstrip('/')}/api/torrent{endpoint}"
-    headers = {"Cookie": f"access_token={access_token}"} if access_token else {}
+    headers = {}
+
+    # Prefer server token for server-to-server auth
+    if server_token and server_token.value:
+        headers["Authorization"] = f"Bearer {server_token.value}"
+    elif access_token:
+        headers["Cookie"] = f"access_token={access_token}"
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -100,7 +142,7 @@ def get_bt_service(db: Session):
 async def list_torrents(
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_torrent_user)
 ):
     """List all active torrents."""
     # Check for remote server first
@@ -141,7 +183,7 @@ async def add_torrent(
     body: AddTorrentRequest,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_torrent_user)
 ):
     """Add a torrent by magnet link."""
     # Check for remote server first
@@ -164,7 +206,7 @@ async def pause_torrent(
     body: TorrentActionRequest,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_torrent_user)
 ):
     """Pause a torrent by number."""
     # Check for remote server first
@@ -189,7 +231,7 @@ async def resume_torrent(
     body: TorrentActionRequest,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_torrent_user)
 ):
     """Resume a torrent by number."""
     # Check for remote server first
@@ -214,7 +256,7 @@ async def remove_torrent(
     body: TorrentActionRequest,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_torrent_user)
 ):
     """Remove a torrent by number."""
     # Check for remote server first
@@ -240,7 +282,7 @@ async def get_torrent_info(
     num: int,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_torrent_user)
 ):
     """Get detailed info for a torrent."""
     # Check for remote server first

@@ -269,6 +269,7 @@ When asked to write or modify code or files:
             # Built-in torrent client (libtorrent)
             "bt_enabled": "false",
             "bt_server_url": "",              # Remote torrent server URL (empty = local)
+            "bt_server_token": "",            # API token for remote torrent server auth
             "bt_download_dir": "/var/lib/posterchanai/torrents",
             "bt_proxy_host": "",              # HTTP proxy host (required for torrenting)
             "bt_proxy_port": "8118",          # HTTP proxy port (e.g. Privoxy for Tor)

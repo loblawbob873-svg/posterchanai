@@ -535,15 +535,21 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
     async def _remote_bt_request(self, endpoint: str, method: str = "GET", json_body: dict = None):
         """Make request to remote torrent server."""
         import httpx
+        from app.models import Setting
+
         server_url = self._get_remote_bt_url()
         if not server_url:
             return None
 
+        # Get server-to-server API token
+        server_token = self.db.query(Setting).filter(Setting.key == "bt_server_token").first()
+
         url = f"{server_url.rstrip('/')}/api/torrent{endpoint}"
-        # Get access token from user's cookie if available
         headers = {}
-        if hasattr(self, 'access_token') and self.access_token:
-            headers["Cookie"] = f"access_token={self.access_token}"
+
+        # Use server token for authentication
+        if server_token and server_token.value:
+            headers["Authorization"] = f"Bearer {server_token.value}"
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
