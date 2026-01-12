@@ -14,6 +14,11 @@ from rich.text import Text
 from tui.utils.markdown import parse_markdown, parse_cmd_links
 
 
+def escape_rich_brackets(text: str) -> str:
+    """Escape square brackets to prevent Rich markup parsing errors."""
+    return text.replace("[", "\\[").replace("]", "\\]")
+
+
 class MessageWidget(Widget):
     """Widget displaying a single chat message."""
 
@@ -197,10 +202,11 @@ class MessageWidget(Widget):
             # Create row with text + button
             row = Horizontal(classes="torrent-row")
 
-            # Torrent info text
-            info_text = f"{entry['num']}. {entry['title']}"
+            # Torrent info text - escape brackets to prevent Rich markup errors
+            title = escape_rich_brackets(entry['title'])
+            info_text = f"{entry['num']}. {title}"
             if entry['info']:
-                info_text += f" | {entry['info']}"
+                info_text += f" | {escape_rich_brackets(entry['info'])}"
 
             row_text = Static(info_text, classes="torrent-text")
 
@@ -306,17 +312,19 @@ class MessageWidget(Widget):
         for entry in entries:
             row = Horizontal(classes="torrent-row")
 
-            # Truncate name to fit
+            # Truncate name to fit and escape brackets
             name = entry['name']
             if len(name) > 40:
                 name = name[:37] + "..."
+            name = escape_rich_brackets(name)
 
             # Compact 2-line format:
             # 1. ⬇️ Torrent Name [████░░] 50%
             #    ↓1.2KB/s ↑0KB/s 5S/10P 1.5GB
             line1 = f"{entry['num']}. {entry['icon']} {name}"
             if entry['progress_bar']:
-                line1 += f" [{entry['progress_bar'][:10]}] {entry['progress_pct']}%"
+                # Escape progress bar brackets too
+                line1 += f" \\[{entry['progress_bar'][:10]}\\] {entry['progress_pct']}%"
 
             line2 = f"   ↓{entry['down']} ↑{entry['up']} {entry['seeds']}S/{entry['peers']}P"
             if entry['size']:

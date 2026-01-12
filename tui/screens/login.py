@@ -122,12 +122,14 @@ class LoginScreen(Screen):
                 login_btn.disabled = False
                 login_btn.label = "Login"
             elif "Connection" in error_msg or "connect" in error_msg.lower() or "timeout" in error_msg.lower():
-                # Connection error - offer to retry
-                error_widget.update("Server unavailable. Retrying...")
+                # Connection error - retry automatically
+                self.retry_count = getattr(self, 'retry_count', 0) + 1
+                error_widget.update(f"Server unavailable. Retrying... (attempt {self.retry_count})")
                 login_btn.label = "Retrying..."
-                # Wait and retry
+                # Wait and retry with backoff
                 import asyncio
-                await asyncio.sleep(3)
+                delay = min(3 * self.retry_count, 15)  # Max 15 seconds
+                await asyncio.sleep(delay)
                 self.do_login()  # Retry login
             else:
                 error_widget.update(f"Error: {error_msg[:50]}")

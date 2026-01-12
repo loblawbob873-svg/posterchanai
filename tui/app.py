@@ -56,10 +56,10 @@ class ChatApp(App):
         token = self.config.load_token()
         if token:
             self.api.token = token
-            # Retry connection if server is temporarily down
-            max_retries = 5
+            # Retry connection indefinitely if server is temporarily down
             retry_delay = 2
-            for attempt in range(max_retries):
+            attempt = 0
+            while True:
                 try:
                     user = await self.api.get_current_user()
                     self.current_user = user
@@ -75,14 +75,11 @@ class ChatApp(App):
                         self.config.clear_token()
                         break
                     elif "connect" in error_msg or "connection" in error_msg or "timeout" in error_msg:
-                        # Connection error - server might be starting up, retry
-                        if attempt < max_retries - 1:
-                            self.notify(f"Server unavailable, retrying in {retry_delay}s... ({attempt + 1}/{max_retries})")
-                            await asyncio.sleep(retry_delay)
-                            retry_delay = min(retry_delay * 2, 10)  # Exponential backoff, max 10s
-                        else:
-                            # Max retries reached - go to login but keep token
-                            self.notify("Server unavailable. Token preserved for later.")
+                        # Connection error - server might be starting up, retry indefinitely
+                        attempt += 1
+                        self.notify(f"Server unavailable, retrying in {retry_delay}s... (attempt {attempt})")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 1.5, 30)  # Gradual backoff, max 30s
                     else:
                         # Unknown error - clear token
                         self.config.clear_token()
