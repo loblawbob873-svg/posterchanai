@@ -562,11 +562,13 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
 
     lines = []
     current_date = None
+    first_event_of_day = True
 
     for event in events:
         event_date = event.start.date()
         if event_date != current_date:
             current_date = event_date
+            first_event_of_day = True
             if cyberpunk:
                 # Cyberpunk style date header
                 day_abbrev = event_date.strftime('%a').upper()
@@ -574,6 +576,12 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
                 lines.append(f"\n**[{day_abbrev}]** {date_formatted}")
             else:
                 lines.append(f"\n**{event_date.strftime('%A, %B %d, %Y')}**")
+        else:
+            # Add spacing between events on same day
+            if not first_event_of_day:
+                lines.append("")  # Blank line for spacing
+
+        first_event_of_day = False
 
         time_str = event.start.strftime("%I:%M %p").lstrip('0')
         if event.end:
@@ -584,9 +592,7 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
         delete_link = ""
         if event.uid:
             delete_cmd = f"cal delete {event.uid}"
-            # Truncate summary for button label
-            short_summary = event.summary[:20] + "..." if len(event.summary) > 20 else event.summary
-            delete_link = f" [🗑️ {short_summary}](cmd:{delete_cmd})"
+            delete_link = f" [🗑️](cmd:{delete_cmd})"
 
         if cyberpunk:
             # Cyberpunk style event line with time in brackets
