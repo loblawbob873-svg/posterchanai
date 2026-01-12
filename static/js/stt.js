@@ -463,9 +463,16 @@ class STTController {
             const formData = new FormData();
             formData.append('audio', audioBlob, `recording.${ext}`);
 
+            // Get CSRF token from cookie
+            const csrfToken = document.cookie.split('; ')
+                .find(row => row.startsWith('csrf_token='))?.split('=')[1];
+
             const resp = await fetch('/api/stt/transcribe', {
                 method: 'POST',
-                body: formData
+                body: formData,
+                headers: {
+                    'X-CSRF-Token': csrfToken || ''
+                }
             });
 
             if (resp.ok) {
