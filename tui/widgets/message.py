@@ -306,20 +306,19 @@ class MessageWidget(Widget):
             container.mount(row)
             row.mount(row_text)
 
-            # Add action buttons with proper labels
+            # Add action buttons with simple ASCII labels
             if entry['toggle_cmd']:
-                # Show ▶ or ⏸ based on current state
-                label = "▶" if "Start" in (entry['toggle_label'] or "") or "Resume" in (entry['toggle_label'] or "") else "⏸"
+                # Show > (play) or || (pause) based on current state
+                is_start = "Start" in (entry['toggle_label'] or "") or "Resume" in (entry['toggle_label'] or "")
+                label = ">" if is_start else "||"
                 toggle_btn = Button(label, classes="torrent-btn", name=entry['toggle_cmd'])
                 toggle_btn.command = entry['toggle_cmd']
                 row.mount(toggle_btn)
-                logger.info(f"Created toggle button: {label} -> {entry['toggle_cmd']}")
 
             if entry['delete_cmd']:
-                del_btn = Button("🗑", classes="torrent-btn torrent-btn-danger", name=entry['delete_cmd'])
+                del_btn = Button("X", classes="torrent-btn torrent-btn-danger", name=entry['delete_cmd'])
                 del_btn.command = entry['delete_cmd']
                 row.mount(del_btn)
-                logger.info(f"Created delete button: 🗑 -> {entry['delete_cmd']}")
 
     def _render_mail_list(self, content: str, container: Vertical):
         """Render mail list with inline action buttons per message."""
