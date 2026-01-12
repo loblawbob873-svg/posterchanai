@@ -105,12 +105,18 @@ def parse_markdown(text: str) -> Text:
     # Convert copy: links similarly - remove
     processed = COPY_LINK_PATTERN.sub('', processed)
 
-    # Convert regular links to display text
+    # Convert regular links to clickable Rich links (OSC 8 hyperlinks)
     def replace_link(match):
         label = match.group(1)
         url = match.group(2)
         if url.startswith(('http://', 'https://')):
-            return f"{label} ({url})"
+            # Use Rich's link markup for clickable terminal links
+            # Escape brackets in label to avoid Rich markup issues
+            safe_label = label.replace('[', '\\[').replace(']', '\\]')
+            return f"[link={url}][cyan underline]{safe_label}[/cyan underline][/link]"
+        elif url.startswith('/'):
+            # Local API paths - just show the label
+            return label
         return label
 
     processed = LINK_PATTERN.sub(replace_link, processed)

@@ -454,8 +454,8 @@ class MainScreen(Screen):
                     # All sources - use dailynews command
                     self._send_message_worker("dailynews")
                 else:
-                    # Specific source
-                    self._send_message_worker(f"news {source_url}")
+                    # Specific source - use dailynews command with URL
+                    self._send_message_worker(f"dailynews {source_url}")
 
         self.app.push_screen(NewsPickerScreen(), handle_news_selected)
 

@@ -92,6 +92,8 @@ class LibtorrentService:
             'dht_bootstrap_nodes': 'router.bittorrent.com:6881,router.utorrent.com:6881,dht.transmissionbt.com:6881',
             # Enable LSD (Local Service Discovery)
             'enable_lsd': True,
+            # protocol.pex.set = yes - enable Peer Exchange
+            'enable_pex': True,
             # Enable uTP - proxy will force TCP fallback
             'enable_outgoing_utp': True,
             'enable_incoming_utp': True,
@@ -320,9 +322,16 @@ class LibtorrentService:
                 elif isinstance(alert, lt.tracker_reply_alert):
                     logger.info(f"[BT] TRACKER OK: {alert.torrent_name} - {alert.url} ({alert.num_peers} peers)")
                 elif isinstance(alert, lt.tracker_error_alert):
-                    logger.warning(f"[BT] TRACKER FAIL: {alert.torrent_name} - {alert.url} - {alert.error_message}")
+                    # error_message is a method in libtorrent v2
+                    err_msg = alert.error_message() if callable(alert.error_message) else str(alert.error_message)
+                    # UDP tracker failures are expected with HTTP proxy - log as debug
+                    if 'udp://' in alert.url:
+                        logger.debug(f"[BT] TRACKER UDP FAIL (expected with HTTP proxy): {alert.torrent_name} - {alert.url}")
+                    else:
+                        logger.warning(f"[BT] TRACKER FAIL: {alert.torrent_name} - {alert.url} - {err_msg}")
                 elif isinstance(alert, lt.tracker_warning_alert):
-                    logger.warning(f"[BT] TRACKER WARN: {alert.torrent_name} - {alert.warning_message}")
+                    warn_msg = alert.warning_message() if callable(alert.warning_message) else str(alert.warning_message)
+                    logger.warning(f"[BT] TRACKER WARN: {alert.torrent_name} - {warn_msg}")
 
                 # DHT events
                 elif isinstance(alert, lt.dht_bootstrap_alert):

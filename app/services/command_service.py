@@ -1111,12 +1111,22 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
         try:
             # Get news sources (user's custom sources or admin defaults)
-            sources = get_user_news_sources(self.user, self.db)
+            all_sources = get_user_news_sources(self.user, self.db)
 
-            if not sources:
+            if not all_sources:
                 return {"type": "text", "content": "No news sources configured. Add sources in User Settings."}
 
-            # Fetch news from all sources
+            # If arg provided, filter to matching source
+            if arg.strip():
+                arg_lower = arg.strip().lower()
+                sources = [s for s in all_sources if arg_lower in s["url"].lower() or arg_lower in s["name"].lower()]
+                if not sources:
+                    # Try as a direct URL
+                    sources = [{"url": arg.strip(), "name": arg.strip().split('/')[0]}]
+            else:
+                sources = all_sources
+
+            # Fetch news from sources
             results = []
             for source in sources:
                 try:
@@ -1130,7 +1140,10 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
             # Format response
             today = datetime.now().strftime("%B %d, %Y %H:%M")
-            content = f"## Daily News - {today}\n\n" + "\n\n---\n\n".join(results)
+            if len(sources) == 1:
+                content = f"## {sources[0]['name']} - {today}\n\n" + results[0] if results else "No headlines found."
+            else:
+                content = f"## Daily News - {today}\n\n" + "\n\n---\n\n".join(results)
 
             return {"type": "text", "content": content}
 
@@ -1148,13 +1161,29 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             return {"type": "text", "content": "The logs command is only available to administrators."}
 
         try:
-            from app.services.logs_scheduler import collect_system_logs, generate_log_summary, get_or_create_logs_chat
+            from app.services.logs_scheduler import (
+                collect_system_logs, generate_log_summary, get_or_create_logs_chat,
+                get_logs_settings, collect_remote_logs
+            )
             from app.models import Message
             from datetime import datetime
             import socket
 
-            # Collect logs (pass db for settings)
+            # Get settings for remote hosts
+            settings = get_logs_settings(self.db)
+
+            # Collect local logs
             log_data = collect_system_logs(self.db)
+
+            # Collect logs from remote hosts (same as scheduled task)
+            remote_hosts = settings.get('hosts', [])
+            for host in remote_hosts:
+                if host:
+                    logger.info(f"Collecting logs from remote host: {host}")
+                    remote_log_data = collect_remote_logs(host, settings)
+                    if remote_log_data:
+                        log_data += " " + remote_log_data
+
             if not log_data:
                 return {"type": "text", "content": "No log data collected."}
 
@@ -1356,6 +1385,21 @@ Return ONLY valid JSON, no other text."""},
             except Exception as e:
                 logger.error(f"Contacts all error: {e}")
                 return {"type": "text", "content": f"Error listing contacts: {str(e)}"}
+
+        # Handle search subcommand - explicit search (for autocomplete compatibility)
+        if subcommand == "search":
+            query = parts[1] if len(parts) > 1 else ""
+            if not query:
+                return {"type": "text", "content": "Usage: `contacts search <query>`\n\nExample: `contacts search john`"}
+            try:
+                contacts = get_user_contacts(self.user.id, query, self.db)
+                if not contacts:
+                    return {"type": "text", "content": f"No contacts found matching '{query}'."}
+                contacts_text = format_contacts_for_display(contacts)
+                return {"type": "text", "content": f"## Contacts matching '{query}'\n{contacts_text}"}
+            except Exception as e:
+                logger.error(f"Contacts search error: {e}")
+                return {"type": "text", "content": f"Error searching contacts: {str(e)}"}
 
         # Handle add subcommand
         if subcommand == "add":
@@ -1628,12 +1672,14 @@ Return ONLY valid JSON, no other text."""},
                 return {"type": "text", "content": f"## Summary of: {msg.subject}\n\n{summary}"}
 
             elif subcommand == "translate":
-                if len(parts) < 4:
-                    return {"type": "text", "content": "Usage: `mail translate <language> <account> <id>`\n\nExample: `mail translate spanish work 123`"}
+                # Format: mail translate <account> <id> [language]
+                # Language defaults to English if not specified
+                if len(parts) < 3:
+                    return {"type": "text", "content": "Usage: `mail translate <account> <id> [language]`\n\nExamples:\n- `mail translate work 123` - translates to English\n- `mail translate work 123 spanish` - translates to Spanish"}
 
-                language = parts[1]
-                account_hint = parts[2]
-                uid_part = parts[3]
+                account_hint = parts[1]
+                uid_part = parts[2]
+                language = parts[3] if len(parts) > 3 else "English"
 
                 # Parse folder:uid format
                 folder = None
