@@ -5,7 +5,6 @@ Markdown parsing utilities for TUI.
 import re
 from typing import List, Tuple
 from rich.text import Text
-from rich.markdown import Markdown
 
 
 # Pattern for cmd: links: [Label](cmd:command args)
@@ -14,14 +13,59 @@ CMD_LINK_PATTERN = re.compile(r'\[([^\]]+)\]\(cmd:([^)]+)\)')
 # Pattern for copy: links: [Label](copy:content)
 COPY_LINK_PATTERN = re.compile(r'\[([^\]]+)\]\(copy:([^)]+)\)')
 
-# Pattern for regular links: [Label](url) - handle URLs with balanced parens
-LINK_PATTERN = re.compile(r'\[([^\]]+)\]\(((?:[^()]+|\([^)]*\))+)\)')
-
-# Pattern for bare URLs - exclude markdown link syntax chars
-URL_PATTERN = re.compile(r'https?://[^\s<>\[\]()]+(?:\([^\s()]*\)[^\s<>\[\]()]*)*')
+# Pattern for bare URLs - match until whitespace, angle brackets, or quotes
+URL_PATTERN = re.compile(r'https?://[^\s<>\[\]"\']+')
 
 # Pattern for code blocks
 CODE_BLOCK_PATTERN = re.compile(r'```(\w*)\n(.*?)```', re.DOTALL)
+
+
+def extract_markdown_links(text: str) -> List[Tuple[str, str, int, int]]:
+    """
+    Extract markdown links [label](url) with proper paren balancing.
+
+    Returns list of (label, url, start_pos, end_pos) tuples.
+    """
+    links = []
+    i = 0
+    while i < len(text):
+        # Find start of link: [
+        if text[i] == '[':
+            # Find the closing ]
+            j = i + 1
+            bracket_depth = 1
+            while j < len(text) and bracket_depth > 0:
+                if text[j] == '[':
+                    bracket_depth += 1
+                elif text[j] == ']':
+                    bracket_depth -= 1
+                j += 1
+
+            if j < len(text) and text[j] == '(':
+                # We have [label](
+                label = text[i+1:j-1]
+                url_start = j + 1
+
+                # Find matching ) by counting parens
+                k = url_start
+                paren_depth = 1
+                while k < len(text) and paren_depth > 0:
+                    if text[k] == '(':
+                        paren_depth += 1
+                    elif text[k] == ')':
+                        paren_depth -= 1
+                    k += 1
+
+                if paren_depth == 0:
+                    url = text[url_start:k-1]
+                    # Skip cmd: and copy: links
+                    if not url.startswith('cmd:') and not url.startswith('copy:'):
+                        links.append((label, url, i, k))
+                    i = k
+                    continue
+        i += 1
+
+    return links
 
 
 def parse_cmd_links(text: str) -> List[Tuple[str, str, int, int]]:
@@ -106,36 +150,37 @@ def parse_markdown(text: str) -> Text:
     processed = COPY_LINK_PATTERN.sub('', processed)
 
     # Convert regular links - show URL for Ctrl+Click in terminal
-    def replace_link(match):
-        label = match.group(1)
-        url = match.group(2)
+    # Use proper paren-balanced extraction
+    links = extract_markdown_links(processed)
+    # Process in reverse order to preserve positions
+    for label, url, start, end in reversed(links):
         safe_label = label.replace('[', '\\[').replace(']', '\\]')
 
         if url.startswith(('http://', 'https://')):
             # Show both label and URL so users can Ctrl+Click the URL
-            # If label is same as URL, just show URL once
             if label == url or label.startswith('http'):
-                return f"[cyan underline]{url}[/cyan underline]"
-            # Otherwise show "label: url"
-            return f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
+                replacement = f"[cyan underline]{url}[/cyan underline]"
+            else:
+                replacement = f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
         elif url.startswith('mailto:'):
             # Email links - show as clickable
-            email = url[7:]  # Strip mailto:
-            if label == email or label == url:
-                return f"[cyan underline]{url}[/cyan underline]"
-            return f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
+            if label == url[7:] or label == url:
+                replacement = f"[cyan underline]{url}[/cyan underline]"
+            else:
+                replacement = f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
         elif url.startswith('tel:'):
             # Phone links - show as clickable
-            phone = url[4:]  # Strip tel:
-            if label == phone or label == url:
-                return f"[cyan underline]{url}[/cyan underline]"
-            return f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
+            if label == url[4:] or label == url:
+                replacement = f"[cyan underline]{url}[/cyan underline]"
+            else:
+                replacement = f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
         elif url.startswith('/'):
             # Local API paths - just show the label
-            return label
-        return label
+            replacement = label
+        else:
+            replacement = label
 
-    processed = LINK_PATTERN.sub(replace_link, processed)
+        processed = processed[:start] + replacement + processed[end:]
 
     # Handle bold
     processed = re.sub(r'\*\*(.+?)\*\*', r'[bold]\1[/bold]', processed)
@@ -165,10 +210,14 @@ def strip_markdown(text: str) -> str:
     # Remove code blocks
     text = CODE_BLOCK_PATTERN.sub(r'\2', text)
 
-    # Remove links, keep label
+    # Remove cmd: and copy: links, keep label
     text = CMD_LINK_PATTERN.sub(r'\1', text)
     text = COPY_LINK_PATTERN.sub(r'\1', text)
-    text = LINK_PATTERN.sub(r'\1', text)
+
+    # Remove regular markdown links, keep label (with proper paren handling)
+    links = extract_markdown_links(text)
+    for label, url, start, end in reversed(links):
+        text = text[:start] + label + text[end:]
 
     # Remove formatting
     text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
@@ -205,22 +254,28 @@ def extract_urls(text: str) -> List[str]:
     """
     urls = set()
 
-    # Extract from markdown links [label](url)
-    for match in LINK_PATTERN.finditer(text):
-        url = match.group(2)
+    # Extract from markdown links [label](url) with proper paren balancing
+    for label, url, start, end in extract_markdown_links(text):
         # Include http, https, mailto, and tel links
         if url.startswith(('http://', 'https://', 'mailto:', 'tel:')):
             urls.add(url)
         elif url.startswith('www.'):
             urls.add('https://' + url)
 
-    # Extract bare URLs (http/https)
+    # Extract bare URLs (http/https) - clean up trailing punctuation
     for match in URL_PATTERN.finditer(text):
-        urls.add(match.group(0))
+        url = match.group(0)
+        # Remove trailing punctuation that's likely not part of URL
+        url = url.rstrip('.,;:!?\'"')
+        # Remove trailing ) if unbalanced
+        while url.count(')') > url.count('(') and url.endswith(')'):
+            url = url[:-1]
+        if url:
+            urls.add(url)
 
     # Extract bare www. URLs
-    for match in re.finditer(r'\bwww\.[^\s<>\[\]]+', text):
-        url = match.group(0)
+    for match in re.finditer(r'\bwww\.[^\s<>\[\]"\']+', text):
+        url = match.group(0).rstrip('.,;:!?\'"')
         if not any(url in u for u in urls):  # Avoid duplicates
             urls.add('https://' + url)
 

@@ -800,6 +800,40 @@ body {
 .upload-btn:hover, .camera-btn:hover {
     background: var(--bg-tertiary);
 }
+
+/* Voice Input Button (STT) */
+.voice-input-btn {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    position: relative;
+}
+.voice-input-btn:hover {
+    background: var(--bg-tertiary);
+}
+.voice-input-btn.listening {
+    color: var(--accent-tertiary);
+    animation: voice-pulse 1.5s ease-in-out infinite;
+}
+.voice-input-btn.listening::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 4px;
+    background: radial-gradient(circle, rgba(255, 51, 102, 0.3) 0%, transparent 70%);
+    animation: voice-glow 1.5s ease-in-out infinite;
+}
+@keyframes voice-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+}
+@keyframes voice-glow {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
 .upload-preview {
     display: flex;
     align-items: center;

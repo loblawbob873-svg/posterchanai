@@ -42,6 +42,9 @@ class ChatHandler {
         // Streaming state
         this.isStreaming = false;
 
+        // Track last read email for "this email" voice commands
+        this.lastReadEmail = null;  // {account: "...", id: "..."}
+
         this.init();
     }
 
@@ -1251,6 +1254,18 @@ class ChatHandler {
         const textarea = document.createElement('textarea');
         textarea.innerHTML = cmd;
         const decodedCmd = textarea.value;
+
+        // Track mail read commands for "this email" voice support
+        // Format: "mail read <id>" or "mail read <account> <id>"
+        const mailReadMatch = decodedCmd.match(/^mail\s+read\s+(\S+)(?:\s+(\S+))?/i);
+        if (mailReadMatch) {
+            // If second group exists, first is account and second is ID
+            // Otherwise first is just the ID
+            const account = mailReadMatch[2] ? mailReadMatch[1] : 'default';
+            const id = mailReadMatch[2] || mailReadMatch[1];
+            this.lastReadEmail = { account, id };
+            console.log('Tracked last read email:', this.lastReadEmail);
+        }
 
         // Check WebSocket connection
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {

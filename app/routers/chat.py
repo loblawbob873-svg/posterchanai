@@ -764,6 +764,33 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                         if full_response:
                             clean_response = chat_service.strip_thinking_tags(full_response)
 
+                            # Check if LLM responded with just a command (for voice/natural language)
+                            # Commands are short (under 100 chars) and start with known command words
+                            clean_stripped = clean_response.strip()
+                            llm_command, llm_arg = command_service.parse_command(clean_stripped)
+                            if llm_command and len(clean_stripped) < 100:
+                                # LLM identified this as a command - execute it
+                                logger.info(f"LLM command detected: {llm_command} {llm_arg}")
+                                await manager.send_json(user.id, {"type": "stream_clear"}, conn_id)
+
+                                result = await command_service.execute_command(llm_command, llm_arg)
+
+                                # Save and send the command result
+                                assistant_msg = Message(
+                                    conversation_id=conversation_id,
+                                    role="assistant",
+                                    content=result.get("content", "")
+                                )
+                                db.add(assistant_msg)
+                                db.commit()
+
+                                await manager.send_json(user.id, {
+                                    "type": "response",
+                                    "data": result
+                                }, conn_id)
+                                await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
+                                continue  # Skip normal response handling
+
                             # Check for plugin tool calls in the response
                             tool_calls = plugin_service.parse_tool_calls(clean_response)
                             if tool_calls:

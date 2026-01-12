@@ -116,9 +116,10 @@ class CommandService:
         "miniflux": "Fetch Miniflux articles now: miniflux",
         "cal": "Calendar: cal | cal today | cal week | cal add <event> <time>",
         "contacts": "Contacts: contacts all | contacts <query> | contacts add <name> <phone>",
-        "mail": "Email: mail | mail send <contact> [\"subject\"] <msg> | mail read/reply/delete/archive <acct> <id>",
+        "mail": "Email: mail | mail send <contact> [\"subject\"] <msg> | mail read/delete/archive <id> | mail reply <acct> <id> <msg>",
         "todo": "Todo list (CalDAV): todo | todo add <task> | todo rm <#>",
         "music": "Music: music | music browse | music search <query> | music play <#> | music random | music skip | music mood <vibe>",
+        "translate": "Translate: translate <language> - translate last response | translate email <language> - translate last email",
     }
 
     # Command aliases (alias -> canonical command)
@@ -208,6 +209,8 @@ class CommandService:
             return await self._todo_command(arg)
         elif command == "music":
             return await self._music_command(arg)
+        elif command == "translate":
+            return await self._translate_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -467,7 +470,8 @@ class CommandService:
                 action = "bills"
             elif subcommand == "add" and len(parts) >= 3:
                 name = parts[1]
-                amount = parts[2]
+                # Strip $ and commas from amount
+                amount = parts[2].lstrip('$').replace(',', '')
                 result = await plugin_service.execute_tool_call("budget", "add", {"name": name, "amount": amount}, self.user.id)
                 if "error" not in result:
                     return {"type": "text", "content": f"✅ Bill added: {name} - ${float(amount):,.2f}"}
@@ -1621,26 +1625,30 @@ Return ONLY valid JSON, no other text."""},
                 return {"type": "text", "content": f"## Inbox Summary ({len(messages)} messages)\n\n{summary}"}
 
             elif subcommand == "search":
-                if len(parts) < 3:
-                    return {"type": "text", "content": "Usage: `mail search <account> <query>`\n\nExample: `mail search yummy invoice`"}
+                # Support both: mail search <query> (default account) or mail search <account> <query>
+                if len(parts) < 2:
+                    return {"type": "text", "content": "Usage: `mail search <query>` or `mail search <account> <query>`\n\nExample: `mail search invoice` or `mail search yummy invoice`"}
 
-                account_hint = parts[1]
-                # Get full query (may contain spaces)
-                query_parts = arg.strip().split(maxsplit=2)
-                query = query_parts[2] if len(query_parts) > 2 else ""
-
-                if not query:
-                    return {"type": "text", "content": "Please provide a search query."}
-
-                # Find matching account
+                # Check if parts[1] looks like an account hint (contains @ or matches an account)
+                potential_account = parts[1]
                 account_email = None
                 for acc in accounts:
-                    if account_hint.lower() in acc.email.lower():
+                    if potential_account.lower() in acc.email.lower():
                         account_email = acc.email
                         break
 
-                if not account_email:
-                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                if account_email and len(parts) >= 3:
+                    # mail search <account> <query>
+                    query_parts = arg.strip().split(maxsplit=2)
+                    query = query_parts[2] if len(query_parts) > 2 else ""
+                else:
+                    # mail search <query> - use first account
+                    account_email = accounts[0].email
+                    query_parts = arg.strip().split(maxsplit=1)
+                    query = query_parts[1] if len(query_parts) > 1 else ""
+
+                if not query:
+                    return {"type": "text", "content": "Please provide a search query."}
 
                 messages = search_messages(self.user.id, self.db, account_email, query)
                 if not messages:
@@ -1648,11 +1656,23 @@ Return ONLY valid JSON, no other text."""},
                 return {"type": "text", "content": f"## ◈ SEARCH: {query.upper()} ◈\n\n" + format_message_list(messages, show_header=False)}
 
             elif subcommand == "read":
-                if len(parts) < 3:
-                    return {"type": "text", "content": "Usage: `mail read <account> <id>`\n\nExample: `mail read verita84 123` or `mail read verita84 INBOX.Archive:123`"}
+                # Support both: mail read <id> (default account) or mail read <account> <id>
+                if len(parts) < 2:
+                    return {"type": "text", "content": "Usage: `mail read <id>` or `mail read <account> <id>`\n\nExample: `mail read 123` or `mail read verita84 INBOX.Archive:123`"}
 
-                account_hint = parts[1]
-                uid_part = parts[2]
+                # Check if parts[1] is numeric (id) or account hint
+                # Strip # prefix if present (e.g., "#2" -> "2")
+                test_val = parts[1].lstrip('#')
+                if len(parts) == 2 or test_val.isdigit() or re.match(r'^\d+$|^[\w.-]+:\d+$', test_val):
+                    # mail read <id> - use first account
+                    account_hint = None
+                    uid_part = parts[1].lstrip('#')
+                else:
+                    # mail read <account> <id>
+                    if len(parts) < 3:
+                        return {"type": "text", "content": "Usage: `mail read <id>` or `mail read <account> <id>`"}
+                    account_hint = parts[1]
+                    uid_part = parts[2]
 
                 # Parse folder:uid format (e.g., "INBOX.Archive:123")
                 folder = None
@@ -1667,15 +1687,18 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
                 uid = uid_match.group(1)
 
-                # Find matching account
+                # Find matching account or use first account
                 account_email = None
-                for acc in accounts:
-                    if account_hint.lower() in acc.email.lower():
-                        account_email = acc.email
-                        break
-
-                if not account_email:
-                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                if account_hint:
+                    for acc in accounts:
+                        if account_hint.lower() in acc.email.lower():
+                            account_email = acc.email
+                            break
+                    if not account_email:
+                        return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                else:
+                    # Default to first account
+                    account_email = accounts[0].email
 
                 msg = get_message_by_id(self.user.id, self.db, account_email, uid, folder=folder)
                 if not msg:
@@ -1684,11 +1707,22 @@ Return ONLY valid JSON, no other text."""},
                 return {"type": "text", "content": format_message_detail(msg, folder=folder)}
 
             elif subcommand == "summary":
-                if len(parts) < 3:
-                    return {"type": "text", "content": "Usage: `mail summary <account> <id>`\n\nExample: `mail summary work 123`"}
+                # Support both: mail summary <id> (default account) or mail summary <account> <id>
+                if len(parts) < 2:
+                    return {"type": "text", "content": "Usage: `mail summary <id>` or `mail summary <account> <id>`\n\nExample: `mail summary 123` or `mail summary work 456`"}
 
-                account_hint = parts[1]
-                uid_part = parts[2]
+                # Check if parts[1] is numeric (id) or account hint
+                test_val = parts[1].lstrip('#')
+                if len(parts) == 2 or test_val.isdigit() or re.match(r'^\d+$|^[\w.-]+:\d+$', test_val):
+                    # mail summary <id> - use first account
+                    account_hint = None
+                    uid_part = parts[1].lstrip('#')
+                else:
+                    # mail summary <account> <id>
+                    if len(parts) < 3:
+                        return {"type": "text", "content": "Usage: `mail summary <id>` or `mail summary <account> <id>`"}
+                    account_hint = parts[1]
+                    uid_part = parts[2]
 
                 # Parse folder:uid format
                 folder = None
@@ -1703,15 +1737,17 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
                 uid = uid_match.group(1)
 
-                # Find matching account
+                # Find matching account or use first account
                 account_email = None
-                for acc in accounts:
-                    if account_hint.lower() in acc.email.lower():
-                        account_email = acc.email
-                        break
-
-                if not account_email:
-                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                if account_hint:
+                    for acc in accounts:
+                        if account_hint.lower() in acc.email.lower():
+                            account_email = acc.email
+                            break
+                    if not account_email:
+                        return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                else:
+                    account_email = accounts[0].email
 
                 msg = get_message_by_id(self.user.id, self.db, account_email, uid, folder=folder)
                 if not msg:
@@ -1726,14 +1762,25 @@ Return ONLY valid JSON, no other text."""},
                 return {"type": "text", "content": f"## Summary of: {msg.subject}\n\n{summary}"}
 
             elif subcommand == "translate":
-                # Format: mail translate <account> <id> [language]
+                # Support both: mail translate <id> [language] or mail translate <account> <id> [language]
                 # Language defaults to English if not specified
-                if len(parts) < 3:
-                    return {"type": "text", "content": "Usage: `mail translate <account> <id> [language]`\n\nExamples:\n- `mail translate work 123` - translates to English\n- `mail translate work 123 spanish` - translates to Spanish"}
+                if len(parts) < 2:
+                    return {"type": "text", "content": "Usage: `mail translate <id> [language]` or `mail translate <account> <id> [language]`\n\nExamples:\n- `mail translate 123` - translates to English\n- `mail translate 123 spanish` - translates to Spanish\n- `mail translate work 123 japanese` - translates to Japanese"}
 
-                account_hint = parts[1]
-                uid_part = parts[2]
-                language = parts[3] if len(parts) > 3 else "English"
+                # Check if parts[1] is numeric (id) or account hint
+                test_val = parts[1].lstrip('#')
+                if test_val.isdigit() or re.match(r'^\d+$|^[\w.-]+:\d+$', test_val):
+                    # mail translate <id> [language] - use first account
+                    account_hint = None
+                    uid_part = parts[1].lstrip('#')
+                    language = parts[2] if len(parts) > 2 else "English"
+                else:
+                    # mail translate <account> <id> [language]
+                    if len(parts) < 3:
+                        return {"type": "text", "content": "Usage: `mail translate <id> [language]` or `mail translate <account> <id> [language]`"}
+                    account_hint = parts[1]
+                    uid_part = parts[2]
+                    language = parts[3] if len(parts) > 3 else "English"
 
                 # Parse folder:uid format
                 folder = None
@@ -1748,15 +1795,17 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
                 uid = uid_match.group(1)
 
-                # Find matching account
+                # Find matching account or use first account
                 account_email = None
-                for acc in accounts:
-                    if account_hint.lower() in acc.email.lower():
-                        account_email = acc.email
-                        break
-
-                if not account_email:
-                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                if account_hint:
+                    for acc in accounts:
+                        if account_hint.lower() in acc.email.lower():
+                            account_email = acc.email
+                            break
+                    if not account_email:
+                        return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                else:
+                    account_email = accounts[0].email
 
                 msg = get_message_by_id(self.user.id, self.db, account_email, uid, folder=folder)
                 if not msg:
@@ -1807,11 +1856,23 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": "Failed to send reply."}
 
             elif subcommand == "delete":
-                if len(parts) < 3:
-                    return {"type": "text", "content": "Usage: `mail delete <account> [folder:]<id>`\n\nExample: `mail delete verita84 123` or `mail delete verita84 INBOX.Archive:456`"}
+                # Support both: mail delete <id> (default account) or mail delete <account> <id>
+                if len(parts) < 2:
+                    return {"type": "text", "content": "Usage: `mail delete <id>` or `mail delete <account> [folder:]<id>`\n\nExample: `mail delete 123` or `mail delete verita84 INBOX.Archive:456`"}
 
-                account_hint = parts[1]
-                uid_part = parts[2]
+                # Check if parts[1] is numeric (id) or account hint
+                # Strip # prefix if present (e.g., "#2" -> "2")
+                test_val = parts[1].lstrip('#')
+                if len(parts) == 2 or test_val.isdigit() or re.match(r'^\d+$|^[\w.-]+:\d+$', test_val):
+                    # mail delete <id> - use first account
+                    account_hint = None
+                    uid_part = parts[1].lstrip('#')
+                else:
+                    # mail delete <account> <id>
+                    if len(parts) < 3:
+                        return {"type": "text", "content": "Usage: `mail delete <id>` or `mail delete <account> <id>`"}
+                    account_hint = parts[1]
+                    uid_part = parts[2]
 
                 # Parse folder:uid format (e.g., "INBOX.Archive:456")
                 folder = "INBOX"
@@ -1825,15 +1886,18 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
                 uid = uid_match.group(1)
 
-                # Find matching account
+                # Find matching account or use first account
                 account_email = None
-                for acc in accounts:
-                    if account_hint.lower() in acc.email.lower():
-                        account_email = acc.email
-                        break
-
-                if not account_email:
-                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                if account_hint:
+                    for acc in accounts:
+                        if account_hint.lower() in acc.email.lower():
+                            account_email = acc.email
+                            break
+                    if not account_email:
+                        return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                else:
+                    # Default to first account
+                    account_email = accounts[0].email
 
                 success = delete_message(self.user.id, self.db, account_email, uid, folder)
                 if success:
@@ -1864,11 +1928,23 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Failed to delete messages from {account_email}."}
 
             elif subcommand == "archive":
-                if len(parts) < 3:
-                    return {"type": "text", "content": "Usage: `mail archive <account> <id>`\n\nExample: `mail archive verita84 123`"}
+                # Support both: mail archive <id> (default account) or mail archive <account> <id>
+                if len(parts) < 2:
+                    return {"type": "text", "content": "Usage: `mail archive <id>` or `mail archive <account> <id>`\n\nExample: `mail archive 123` or `mail archive verita84 456`"}
 
-                account_hint = parts[1]
-                uid = parts[2]
+                # Check if parts[1] is numeric (id) or account hint
+                # Strip # prefix if present (e.g., "#2" -> "2")
+                test_val = parts[1].lstrip('#')
+                if len(parts) == 2 or test_val.isdigit():
+                    # mail archive <id> - use first account
+                    account_hint = None
+                    uid = parts[1].lstrip('#')
+                else:
+                    # mail archive <account> <id>
+                    if len(parts) < 3:
+                        return {"type": "text", "content": "Usage: `mail archive <id>` or `mail archive <account> <id>`"}
+                    account_hint = parts[1]
+                    uid = parts[2]
 
                 # Sanitize UID - extract only numeric portion (strip emojis/extra chars)
                 uid_match = re.search(r'^(\d+)', uid)
@@ -1876,15 +1952,18 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
                 uid = uid_match.group(1)
 
-                # Find matching account
+                # Find matching account or use first account
                 account_email = None
-                for acc in accounts:
-                    if account_hint.lower() in acc.email.lower():
-                        account_email = acc.email
-                        break
-
-                if not account_email:
-                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                if account_hint:
+                    for acc in accounts:
+                        if account_hint.lower() in acc.email.lower():
+                            account_email = acc.email
+                            break
+                    if not account_email:
+                        return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                else:
+                    # Default to first account
+                    account_email = accounts[0].email
 
                 success = archive_message(self.user.id, self.db, account_email, uid)
                 if success:
@@ -2506,6 +2585,63 @@ Return ONLY valid JSON, no other text."""},
         except Exception as e:
             logger.error(f"Music command error: {e}")
             return {"type": "text", "content": f"Error: {str(e)}"}
+
+    async def _translate_command(self, arg: str) -> dict:
+        """Translate last response or email to specified language."""
+        if not self.user:
+            return {"type": "text", "content": "Please log in to use translate."}
+
+        parts = arg.strip().split()
+        if not parts:
+            return {"type": "text", "content": "Usage:\n- `translate <language>` - Translate last response\n- `translate email <language>` - Translate last email\n\nExamples: `translate spanish`, `translate email japanese`"}
+
+        # Check if translating email
+        if parts[0].lower() == "email":
+            language = parts[1] if len(parts) > 1 else "English"
+            # Get last email from conversation context
+            # For now, suggest using mail translate command
+            return {"type": "text", "content": f"To translate an email, use:\n`mail translate <account> <id> {language}`\n\nFirst check your mail with `mail` to get the email ID."}
+
+        # Translate last assistant response
+        language = parts[0]
+
+        # Get the last assistant message from the conversation
+        from app.models import Conversation, Message
+
+        # Find user's most recent conversation
+        conversation = self.db.query(Conversation).filter(
+            Conversation.user_id == self.user.id
+        ).order_by(Conversation.updated_at.desc()).first()
+
+        if not conversation:
+            return {"type": "text", "content": "No conversation found to translate."}
+
+        # Get last assistant message
+        last_msg = self.db.query(Message).filter(
+            Message.conversation_id == conversation.id,
+            Message.role == "assistant"
+        ).order_by(Message.created_at.desc()).first()
+
+        if not last_msg or not last_msg.content:
+            return {"type": "text", "content": "No previous response to translate."}
+
+        # Truncate if too long
+        content = last_msg.content
+        if len(content) > 3000:
+            content = content[:3000] + "..."
+
+        # Use AI to translate
+        messages = [
+            {"role": "system", "content": f"Translate the following text to {language}. Preserve formatting, code blocks, and structure. Only output the translation, nothing else."},
+            {"role": "user", "content": content}
+        ]
+
+        try:
+            translation = await self.chat_service.chat(messages)
+            return {"type": "text", "content": f"## Translation ({language})\n\n{translation}"}
+        except Exception as e:
+            logger.error(f"Translation error: {e}")
+            return {"type": "text", "content": f"Translation failed: {str(e)}"}
 
 
 def get_command_service(db: Session) -> CommandService:

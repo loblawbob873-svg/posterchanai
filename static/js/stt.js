@@ -1,0 +1,583 @@
+// Voice command mappings - natural phrases to commands
+// Patterns are checked in order - first match wins
+const VOICE_COMMANDS = [
+    // ==================== EMAIL ====================
+    // Check inbox
+    { patterns: [/^(check|show|get|open|read)?\s*(my\s+)?(e-?)?mail$/i], command: 'mail' },
+    { patterns: [/^(check|show|get|open)?\s*(my\s+)?(inbox|messages?)$/i], command: 'mail' },
+    { patterns: [/^(any\s+)?(new|unread)\s*(mail|messages?)?$/i], command: 'mail unread' },
+
+    // Read/delete/archive by number - SIMPLE: "read 2", "delete 3", "archive 1"
+    { patterns: [/^read\s+(\d+)$/i], command: 'mail read $1' },
+    { patterns: [/^(delete|remove|trash)\s+(\d+)$/i], command: 'mail delete $2' },
+    { patterns: [/^archive\s+(\d+)$/i], command: 'mail archive $1' },
+    // With "email/message": "read email 2", "delete message 3"
+    { patterns: [/^read\s+(e-?mail|message)\s+(\d+)$/i], command: 'mail read $2' },
+    { patterns: [/^(open|show)\s+(e-?mail|message)\s+(\d+)$/i], command: 'mail read $3' },
+    { patterns: [/^(delete|remove|trash)\s+(e-?mail|message)\s+(\d+)$/i], command: 'mail delete $3' },
+    { patterns: [/^archive\s+(e-?mail|message)\s+(\d+)$/i], command: 'mail archive $2' },
+
+    // "This email" commands - after reading an email
+    { patterns: [/^reply(\s+to)?(\s+this)?$/i], command: 'mail reply THIS_EMAIL ' },
+    { patterns: [/^reply(\s+to\s+this)?\s+(.+)$/i], command: 'mail reply THIS_EMAIL $2' },
+    { patterns: [/^delete\s+this$/i], command: 'mail delete THIS_EMAIL' },
+    { patterns: [/^archive\s+this$/i], command: 'mail archive THIS_EMAIL' },
+    { patterns: [/^summarize(\s+this)?$/i], command: 'mail summary THIS_EMAIL' },
+    { patterns: [/^translate(\s+this)?\s+(to\s+)?(\w+)$/i], command: 'mail translate THIS_EMAIL $3' },
+
+    // Other email actions
+    { patterns: [/^(send|write|compose)\s*(e-?mail|message)?$/i], command: 'mail send' },
+    { patterns: [/^(search|find)\s+(e-?)?mail\s+(for\s+)?(.+)$/i], command: 'mail search $4' },
+    { patterns: [/^folders?$/i], command: 'mail folders' },
+
+    // ==================== CALENDAR ====================
+    { patterns: [/^(check\s+)?(my\s+)?calendar$/i], command: 'cal' },
+    { patterns: [/^(what'?s?\s+)?(my\s+)?schedule(\s+today)?$/i], command: 'cal today' },
+    { patterns: [/^(this\s+)?week('?s)?(\s+schedule)?$/i], command: 'cal week' },
+    { patterns: [/^(add|create|schedule)\s+(event|meeting|appointment)\s+(.+)$/i], command: 'cal add $3' },
+
+    // ==================== CONTACTS ====================
+    { patterns: [/^(my\s+)?contacts$/i], command: 'contacts all' },
+    { patterns: [/^(find|search)\s+contact\s+(.+)$/i], command: 'contacts $2' },
+    { patterns: [/^who\s+is\s+(.+)$/i], command: 'contacts $1' },
+    { patterns: [/^(add|new)\s+contact\s+(.+)$/i], command: 'contacts add $2' },
+
+    // ==================== TODO ====================
+    { patterns: [/^(my\s+)?to-?do('?s)?(\s+list)?$/i], command: 'todo' },
+    { patterns: [/^(add|new)\s+to-?do\s+(.+)$/i], command: 'todo add $2' },
+    { patterns: [/^remind\s+me\s+to\s+(.+)$/i], command: 'todo add $1' },
+    { patterns: [/^(delete|remove|done)\s+to-?do\s+(\d+)$/i], command: 'todo rm $2' },
+    { patterns: [/^(complete|finish)\s+task\s+(\d+)$/i], command: 'todo rm $2' },
+
+    // ==================== MUSIC ====================
+    { patterns: [/^play\s+music$/i], command: 'music shuffle' },
+    { patterns: [/^(my\s+)?music$/i], command: 'music browse' },
+    { patterns: [/^(play|search)\s+(song|music)\s+(.+)$/i], command: 'music search $3' },
+    { patterns: [/^play\s+(\d+)$/i], command: 'music play $1' },
+    { patterns: [/^play\s+(track|song)\s+(\d+)$/i], command: 'music play $2' },
+    { patterns: [/^(next|skip)(\s+song)?$/i], command: 'music skip' },
+    { patterns: [/^(previous|prev|back)(\s+song)?$/i], command: 'music prev' },
+    { patterns: [/^random(\s+song)?$/i], command: 'music random' },
+    { patterns: [/^(stop|pause)(\s+music)?$/i], command: 'music stop' },
+    { patterns: [/^(resume|continue)(\s+music)?$/i], command: 'music play' },
+    { patterns: [/^play\s+(something\s+)?(relaxing|chill|calm)$/i], command: 'music mood relaxing' },
+    { patterns: [/^play\s+(something\s+)?(upbeat|energetic|happy)$/i], command: 'music mood upbeat' },
+    { patterns: [/^play\s+(something\s+)?(sad|melancholy)$/i], command: 'music mood sad' },
+    { patterns: [/^play\s+(something\s+)?(focus|study|work)$/i], command: 'music mood focus' },
+
+    // ==================== NEWS ====================
+    { patterns: [/^(the\s+)?news$/i], command: 'news' },
+    { patterns: [/^(refresh|update)\s+news$/i], command: 'news refresh' },
+    { patterns: [/^daily\s*news$/i], command: 'dailynews' },
+
+    // ==================== SEARCH & IMAGES ====================
+    { patterns: [/^search\s+(for\s+)?(.+)$/i], command: 'search $2' },
+    { patterns: [/^google\s+(.+)$/i], command: 'search $1' },
+    { patterns: [/^(show\s+)?(images?|pictures?)\s+(of\s+)?(.+)$/i], command: 'images $4' },
+    { patterns: [/^(generate|create|draw)\s+(image|picture)?\s*(of\s+)?(.+)$/i], command: 'geni $4' },
+
+    // ==================== TORRENTS ====================
+    { patterns: [/^(my\s+)?torrents?$/i], command: 'torrents' },
+    { patterns: [/^downloads?$/i], command: 'torrents list' },
+    { patterns: [/^movies?$/i], command: 'torrents movies' },
+    { patterns: [/^tv(\s+shows?)?$/i], command: 'torrents tv' },
+    { patterns: [/^anime$/i], command: 'torrents anime' },
+    // Download: "download movie 3", "download tv 5", "download anime 2"
+    { patterns: [/^download\s+(movie|film)\s+(\d+)$/i], command: 'torrents download movies $2' },
+    { patterns: [/^download\s+(tv|show)\s+(\d+)$/i], command: 'torrents download tv $2' },
+    { patterns: [/^download\s+anime\s+(\d+)$/i], command: 'torrents download anime $1' },
+    { patterns: [/^download\s+music\s+(\d+)$/i], command: 'torrents download music $1' },
+    // Torrent controls
+    { patterns: [/^pause\s+(\d+)$/i], command: 'torrents pause $1' },
+    { patterns: [/^resume\s+(\d+)$/i], command: 'torrents resume $1' },
+    { patterns: [/^(delete|remove)\s+torrent\s+(\d+)$/i], command: 'torrents rm $2' },
+
+    // Nyaa anime search
+    { patterns: [/^(search\s+)?anime\s+(.+)$/i], command: 'nyaa $2' },
+    { patterns: [/^nyaa\s+(.+)$/i], command: 'nyaa $1' },
+
+    // ==================== YOUTUBE ====================
+    { patterns: [/^summarize\s+(video\s+)?(.+)$/i], command: 'yt $2' },
+    { patterns: [/^download\s+(video|youtube)\s+(.+)$/i], command: 'ytdl $2' },
+
+    // ==================== BUDGET ====================
+    { patterns: [/^(my\s+)?budget$/i], command: 'budget' },
+    { patterns: [/^(my\s+)?bills?$/i], command: 'budget bills' },
+    // "add bill rent 500" or "add bill chilies for $200"
+    { patterns: [/^add\s+bill\s+(.+?)\s+(?:for\s+)?\$?(\d+(?:\.\d+)?)$/i], command: 'budget add $1 $2' },
+    { patterns: [/^pay\s+(.+)$/i], command: 'budget pay $1' },
+    { patterns: [/^(.+)\s+paid$/i], command: 'budget pay $1' },
+
+    // ==================== TRANSLATE ====================
+    { patterns: [/^translate\s+to\s+(\w+)$/i], command: 'translate $1' },
+    { patterns: [/^(say\s+)?that\s+in\s+(\w+)$/i], command: 'translate $2' },
+
+    // ==================== SYSTEM ====================
+    { patterns: [/^firewall$/i], command: 'firewall' },
+    { patterns: [/^(check|lookup)\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i], command: 'firewall search $2' },
+    { patterns: [/^logs?$/i], command: 'logs' },
+    { patterns: [/^help$/i], command: 'help' },
+];
+
+/**
+ * Convert natural language voice input to a command
+ * @param {string} text - The transcribed voice input
+ * @returns {string} - The command or original text if no match
+ */
+function parseVoiceCommand(text) {
+    const trimmed = text.trim();
+
+    for (const { patterns, command } of VOICE_COMMANDS) {
+        for (const pattern of patterns) {
+            const match = trimmed.match(pattern);
+            if (match) {
+                // Replace $1, $2, etc. with captured groups
+                let result = command;
+                for (let i = 1; i < match.length; i++) {
+                    if (match[i]) {
+                        result = result.replace(`$${i}`, match[i].trim());
+                    }
+                }
+                // Clean up any unreplaced placeholders and extra spaces
+                result = result.replace(/\$\d+/g, '').replace(/\s+/g, ' ').trim();
+
+                // Handle THIS_EMAIL placeholder - substitute with last read email
+                if (result.includes('THIS_EMAIL')) {
+                    const lastEmail = window.chatHandler?.lastReadEmail;
+                    if (lastEmail && lastEmail.id) {
+                        if (lastEmail.account && lastEmail.account !== 'default') {
+                            result = result.replace('THIS_EMAIL', `${lastEmail.account} ${lastEmail.id}`);
+                        } else {
+                            result = result.replace('THIS_EMAIL', lastEmail.id);
+                        }
+                    } else {
+                        console.warn('No email tracked for "this" command');
+                        return 'Please read an email first, then say "reply" or "delete this"';
+                    }
+                }
+
+                return result;
+            }
+        }
+    }
+
+    // No match - return original text for LLM
+    return trimmed;
+}
+
+// Speech-to-Text Controller with Whisper fallback for Brave/Firefox
+class STTController {
+    constructor() {
+        this.recognition = null;
+        this.isListening = false;
+        this.voiceBtn = null;
+        this.messageInput = null;
+        this.interimTranscript = '';
+        this.finalTranscript = '';
+        this.autoSendTimeout = null;
+        this.autoSendDelay = 1500;
+        this.userStopped = false;
+
+        // Whisper fallback
+        this.useWhisper = false;
+        this.whisperAvailable = false;
+        this.mediaRecorder = null;
+        this.audioChunks = [];
+        this.recordingMimeType = 'audio/webm';
+
+        // Check browser support
+        this.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        this.webSpeechSupported = !!this.SpeechRecognition;
+
+        this.init();
+    }
+
+    async init() {
+        this.voiceBtn = document.getElementById('voiceInputBtn');
+        this.messageInput = document.getElementById('messageInput');
+
+        // Check if Whisper backend is available
+        await this.checkWhisperAvailable();
+
+        if (!this.webSpeechSupported && !this.whisperAvailable) {
+            console.warn('No speech recognition available');
+            if (this.voiceBtn) {
+                this.voiceBtn.title = 'Voice not available';
+                this.voiceBtn.style.opacity = '0.5';
+                this.voiceBtn.addEventListener('click', () => {
+                    this.showNotification('Voice requires Chrome, or install faster-whisper on server', 'error');
+                });
+            }
+            return;
+        }
+
+        // Setup Web Speech API if available
+        if (this.webSpeechSupported) {
+            this.setupWebSpeech();
+        }
+
+        if (this.voiceBtn) {
+            this.voiceBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggle();
+            });
+        }
+    }
+
+    async checkWhisperAvailable() {
+        try {
+            const resp = await fetch('/api/stt/status');
+            if (resp.ok) {
+                const data = await resp.json();
+                this.whisperAvailable = data.available;
+                console.log('Whisper STT available:', this.whisperAvailable);
+            }
+        } catch (e) {
+            console.log('Whisper STT not available');
+            this.whisperAvailable = false;
+        }
+    }
+
+    setupWebSpeech() {
+        this.recognition = new this.SpeechRecognition();
+        this.recognition.continuous = true;
+        this.recognition.interimResults = true;
+        this.recognition.lang = 'en-US';
+
+        this.recognition.onstart = () => {
+            this.isListening = true;
+            this.userStopped = false;
+            this.updateUI();
+        };
+
+        this.recognition.onend = () => {
+            this.isListening = false;
+            this.updateUI();
+
+            if (this.finalTranscript.trim() && this.userStopped) {
+                this.autoSend();
+            }
+        };
+
+        this.recognition.onresult = (event) => {
+            this.interimTranscript = '';
+            let hasNewFinal = false;
+
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                    this.finalTranscript += transcript;
+                    hasNewFinal = true;
+                } else {
+                    this.interimTranscript += transcript;
+                }
+            }
+
+            if (this.messageInput) {
+                const currentText = this.finalTranscript + this.interimTranscript;
+                this.messageInput.value = currentText;
+                this.messageInput.dispatchEvent(new Event('input'));
+            }
+
+            this.clearAutoSendTimer();
+            if (hasNewFinal && this.finalTranscript.trim()) {
+                this.startAutoSendTimer();
+            }
+        };
+
+        this.recognition.onerror = (event) => {
+            console.error('Web Speech error:', event.error);
+
+            // If service blocked, try Whisper fallback
+            if ((event.error === 'service-not-allowed' || event.error === 'not-allowed') && this.whisperAvailable) {
+                console.log('Switching to Whisper fallback');
+                this.useWhisper = true;
+                this.showNotification('Using local voice recognition', 'info');
+                this.startWhisper();
+                return;
+            }
+
+            if (event.error === 'not-allowed') {
+                this.showError('Microphone access denied. Click lock icon to allow.');
+            } else if (event.error === 'service-not-allowed') {
+                if (this.whisperAvailable) {
+                    this.useWhisper = true;
+                    this.startWhisper();
+                } else {
+                    this.showError('Speech blocked. Use Chrome or install faster-whisper on server.');
+                }
+            } else if (event.error === 'no-speech') {
+                if (this.finalTranscript.trim()) {
+                    this.autoSend();
+                }
+            } else if (event.error === 'network') {
+                this.showError('Speech service unavailable.');
+            } else if (event.error === 'audio-capture') {
+                this.showError('No microphone found.');
+            } else if (event.error && event.error !== 'aborted') {
+                this.showError(`Voice error: ${event.error}`);
+            }
+
+            this.isListening = false;
+            this.updateUI();
+        };
+    }
+
+    toggle() {
+        if (this.isListening) {
+            this.stop();
+        } else {
+            this.start();
+        }
+    }
+
+    start() {
+        this.finalTranscript = this.messageInput?.value || '';
+        this.interimTranscript = '';
+        this.userStopped = false;
+        this.clearAutoSendTimer();
+
+        if (this.useWhisper || !this.webSpeechSupported) {
+            if (this.whisperAvailable) {
+                this.startWhisper();
+            } else {
+                this.showError('Voice not available');
+            }
+        } else {
+            this.startWebSpeech();
+        }
+    }
+
+    startWebSpeech() {
+        if (!this.recognition) return;
+
+        try {
+            console.log('Starting Web Speech...');
+            this.recognition.start();
+        } catch (e) {
+            if (e.message?.includes('already started')) {
+                console.warn('Recognition already active');
+            } else {
+                console.error('Failed to start Web Speech:', e);
+                if (this.whisperAvailable) {
+                    console.log('Falling back to Whisper');
+                    this.useWhisper = true;
+                    this.startWhisper();
+                } else {
+                    this.showError('Failed to start voice input');
+                }
+            }
+        }
+    }
+
+    async startWhisper() {
+        // Check if we're on HTTPS or localhost (required for getUserMedia)
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+            this.showError('Voice requires HTTPS. Use https:// URL.');
+            return;
+        }
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            this.audioChunks = [];
+
+            // Find a supported MIME type
+            const mimeTypes = ['audio/webm', 'audio/webm;codecs=opus', 'audio/ogg', 'audio/mp4', ''];
+            let mimeType = '';
+            for (const type of mimeTypes) {
+                if (type === '' || MediaRecorder.isTypeSupported(type)) {
+                    mimeType = type;
+                    break;
+                }
+            }
+
+            const options = mimeType ? { mimeType } : {};
+            this.mediaRecorder = new MediaRecorder(stream, options);
+            this.recordingMimeType = this.mediaRecorder.mimeType || 'audio/webm';
+
+            this.mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) {
+                    this.audioChunks.push(e.data);
+                }
+            };
+
+            this.mediaRecorder.onstop = async () => {
+                stream.getTracks().forEach(track => track.stop());
+
+                if (this.audioChunks.length > 0 && this.userStopped) {
+                    await this.transcribeWithWhisper();
+                }
+            };
+
+            this.mediaRecorder.start(100);
+            this.isListening = true;
+            this.updateUI();
+            console.log('Whisper recording started');
+
+        } catch (e) {
+            console.error('Failed to start Whisper recording:', e);
+            if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                // More helpful error for Brave users
+                const isBrave = navigator.brave && navigator.brave.isBrave;
+                if (isBrave) {
+                    this.showError('Mic blocked. Disable Brave Shields or check brave://settings/content/microphone');
+                } else {
+                    this.showError('Microphone blocked. Check site permissions.');
+                }
+            } else if (e.name === 'NotFoundError' || e.name === 'NotReadableError') {
+                this.showError('No microphone found or in use');
+            } else {
+                this.showError(`Recording error: ${e.message || e.name}`);
+            }
+            this.isListening = false;
+            this.updateUI();
+        }
+    }
+
+    async transcribeWithWhisper() {
+        if (this.audioChunks.length === 0) return;
+
+        const mimeType = this.recordingMimeType || 'audio/webm';
+        const audioBlob = new Blob(this.audioChunks, { type: mimeType });
+        const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'm4a' : 'webm';
+
+        if (this.messageInput) {
+            this.messageInput.placeholder = 'Transcribing...';
+        }
+
+        try {
+            const formData = new FormData();
+            formData.append('audio', audioBlob, `recording.${ext}`);
+
+            const resp = await fetch('/api/stt/transcribe', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data.text) {
+                    this.finalTranscript = (this.finalTranscript + ' ' + data.text).trim();
+                    if (this.messageInput) {
+                        this.messageInput.value = this.finalTranscript;
+                        this.messageInput.dispatchEvent(new Event('input'));
+                    }
+                    this.autoSend();
+                }
+            } else {
+                const error = await resp.json();
+                this.showError(error.detail || 'Transcription failed');
+            }
+        } catch (e) {
+            console.error('Whisper transcription error:', e);
+            this.showError('Transcription failed');
+        } finally {
+            if (this.messageInput) {
+                this.messageInput.placeholder = 'Type a message or command...';
+            }
+        }
+    }
+
+    stop() {
+        this.userStopped = true;
+        this.clearAutoSendTimer();
+
+        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+            this.mediaRecorder.stop();
+            this.isListening = false;
+            this.updateUI();
+        } else if (this.recognition) {
+            try {
+                this.recognition.stop();
+            } catch (e) {
+                console.warn('Recognition stop error:', e);
+            }
+        }
+    }
+
+    startAutoSendTimer() {
+        this.clearAutoSendTimer();
+        this.autoSendTimeout = setTimeout(() => {
+            if (this.finalTranscript.trim()) {
+                this.stop();
+            }
+        }, this.autoSendDelay);
+    }
+
+    clearAutoSendTimer() {
+        if (this.autoSendTimeout) {
+            clearTimeout(this.autoSendTimeout);
+            this.autoSendTimeout = null;
+        }
+    }
+
+    autoSend() {
+        if (this.messageInput && this.messageInput.value.trim()) {
+            const originalText = this.messageInput.value.trim();
+            const parsed = parseVoiceCommand(originalText);
+
+            if (parsed !== originalText) {
+                this.messageInput.value = parsed;
+                this.messageInput.dispatchEvent(new Event('input'));
+                console.log(`Voice command: "${originalText}" → "${parsed}"`);
+            }
+
+            const sendBtn = document.getElementById('sendBtn');
+            if (sendBtn) {
+                sendBtn.click();
+            }
+        }
+        this.finalTranscript = '';
+        this.interimTranscript = '';
+    }
+
+    updateUI() {
+        if (!this.voiceBtn) return;
+
+        if (this.isListening) {
+            this.voiceBtn.classList.add('listening');
+            this.voiceBtn.textContent = '🎙️';
+            this.voiceBtn.title = this.useWhisper ? 'Recording... (click to send)' : 'Listening... (click to send)';
+        } else {
+            this.voiceBtn.classList.remove('listening');
+            this.voiceBtn.textContent = '🎤';
+            this.voiceBtn.title = 'Voice input (click to speak)';
+        }
+    }
+
+    showError(message) {
+        console.error('STT Error:', message);
+        this.showNotification(message, 'error');
+    }
+
+    showNotification(message, type = 'info') {
+        if (window.showNotification) {
+            window.showNotification(message, type);
+        } else if (window.Toastify) {
+            Toastify({
+                text: message,
+                duration: 3000,
+                gravity: 'top',
+                position: 'right',
+                backgroundColor: type === 'error' ? '#dc3545' : '#17a2b8'
+            }).showToast();
+        } else if (this.messageInput) {
+            const oldPlaceholder = this.messageInput.placeholder;
+            this.messageInput.placeholder = message;
+            setTimeout(() => {
+                this.messageInput.placeholder = oldPlaceholder;
+            }, 3000);
+        }
+    }
+
+    isSupported() {
+        return this.webSpeechSupported || this.whisperAvailable;
+    }
+
+    isActive() {
+        return this.isListening;
+    }
+}
+
+// Initialize STT controller
+window.sttController = new STTController();
