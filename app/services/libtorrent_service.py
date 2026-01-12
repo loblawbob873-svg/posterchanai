@@ -78,37 +78,35 @@ class LibtorrentService:
         # Create libtorrent session
         self.session = lt.session()
 
-        # Configure session settings for Tor operation:
-        # - Trackers (including UDP) work directly to get peer lists
-        # - All peer DATA transfers go through HTTP proxy -> Tor
-        # This reveals your IP to trackers only, not to peers you download from
+        # Configure session settings for STRICT Tor-only operation:
+        # ALL peer connections MUST go through HTTP proxy -> Tor
+        # NO direct connections allowed (UDP disabled entirely)
         settings = {
             'alert_mask': lt.alert.category_t.all_categories,
             'listen_interfaces': f'0.0.0.0:{listen_port}',
             'download_rate_limit': 0,  # unlimited
             'upload_rate_limit': 0,
-            # Enable DHT for better peer discovery (reveals IP to DHT nodes only)
-            'enable_dht': True,
-            'dht_bootstrap_nodes': 'router.bittorrent.com:6881,router.utorrent.com:6881,dht.transmissionbt.com:6881',
-            # Disable LSD (Local Service Discovery) - not useful for Tor
+            # DISABLE DHT - uses UDP which CANNOT go through HTTP proxy
+            'enable_dht': False,
+            # DISABLE LSD - local network discovery, not useful for Tor
             'enable_lsd': False,
-            # Enable uTP for UDP-based peer discovery (actual transfers proxied)
-            'enable_outgoing_utp': True,
-            'enable_incoming_utp': True,
-            # TCP for actual data transfers through proxy
+            # DISABLE uTP - uses UDP which CANNOT go through HTTP proxy
+            'enable_outgoing_utp': False,
+            'enable_incoming_utp': False,
+            # TCP only - this goes through HTTP proxy
             'enable_outgoing_tcp': True,
             'enable_incoming_tcp': True,
-            # Announce to all trackers (UDP and HTTP)
+            # Announce to all trackers (HTTP only will work through proxy)
             'announce_to_all_trackers': True,
             'announce_to_all_tiers': True,
-            # Performance settings
-            'connections_limit': 200,
-            'active_downloads': 8,
-            'active_seeds': 5,
-            'active_limit': 15,
+            # Conservative settings for Tor
+            'connections_limit': 100,
+            'active_downloads': 4,
+            'active_seeds': 2,
+            'active_limit': 8,
         }
 
-        # REQUIRE proxy for peer connections
+        # REQUIRE proxy - no torrenting without Tor
         if not proxy_host:
             raise ValueError("Proxy is REQUIRED for torrenting. Configure HTTP proxy in Admin Settings.")
 
@@ -123,29 +121,28 @@ class LibtorrentService:
             'proxy_type': lt.proxy_type_t.http,
             'proxy_hostname': proxy_host,
             'proxy_port': proxy_port,
-            # Don't force ALL traffic through proxy (trackers can be direct)
-            'force_proxy': False,
-            # IMPORTANT: Proxy peer connections (actual data transfers) through Tor
+            # FORCE ALL connections through proxy - no exceptions!
+            'force_proxy': True,
+            # Proxy peer connections through Tor
             'proxy_peer_connections': True,
-            # Allow direct tracker connections (UDP trackers need this)
-            'proxy_tracker_connections': False,
-            # Don't proxy hostname lookups (trackers need direct DNS)
-            'proxy_hostnames': False,
-            # Anonymous mode - don't leak peer_id in extensions
+            # Proxy tracker connections too (HTTP trackers work, UDP will fail)
+            'proxy_tracker_connections': True,
+            # Proxy hostname lookups
+            'proxy_hostnames': True,
+            # Anonymous mode - don't leak peer_id, client info
             'anonymous_mode': True,
         })
 
         # Log startup configuration
-        logger.info(f"[BT] ========== TORRENT ENGINE STARTING (TOR DATA MODE) ==========")
+        logger.info(f"[BT] ========== TORRENT ENGINE STARTING (STRICT TOR MODE) ==========")
         logger.info(f"[BT] HTTP Proxy: {proxy_host}:{proxy_port} -> Tor SOCKS5")
         logger.info(f"[BT] Download dir: {self.download_dir}")
-        logger.info(f"[BT] Listen port: {listen_port}")
-        logger.info(f"[BT] Trackers: DIRECT (UDP+HTTP) - reveals IP to trackers only")
-        logger.info(f"[BT] Peer data: PROXIED through Tor - anonymous downloads")
-        logger.info(f"[BT] DHT: ENABLED (reveals IP to DHT)")
-        logger.info(f"[BT] PEX: ENABLED (peer exchange)")
+        logger.info(f"[BT] FORCE PROXY: YES - ALL connections through Tor")
+        logger.info(f"[BT] DHT: DISABLED (uses UDP)")
+        logger.info(f"[BT] uTP: DISABLED (uses UDP)")
+        logger.info(f"[BT] UDP Trackers: WILL FAIL (HTTP trackers only)")
         logger.info(f"[BT] Anonymous mode: ENABLED")
-        logger.info(f"[BT] ============================================================")
+        logger.info(f"[BT] ================================================================")
 
         self.session.apply_settings(settings)
 
