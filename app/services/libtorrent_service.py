@@ -92,8 +92,7 @@ class LibtorrentService:
             'dht_bootstrap_nodes': 'router.bittorrent.com:6881,router.utorrent.com:6881,dht.transmissionbt.com:6881',
             # Enable LSD (Local Service Discovery)
             'enable_lsd': True,
-            # protocol.pex.set = yes - enable Peer Exchange
-            'enable_pex': True,
+            # PEX (Peer Exchange) is enabled by default in libtorrent 2.x
             # Enable uTP - proxy will force TCP fallback
             'enable_outgoing_utp': True,
             'enable_incoming_utp': True,
