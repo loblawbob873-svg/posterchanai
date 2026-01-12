@@ -584,7 +584,9 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
         delete_link = ""
         if event.uid:
             delete_cmd = f"cal delete {event.uid}"
-            delete_link = f" [🗑️](cmd:{delete_cmd})"
+            # Truncate summary for button label
+            short_summary = event.summary[:20] + "..." if len(event.summary) > 20 else event.summary
+            delete_link = f" [🗑️ {short_summary}](cmd:{delete_cmd})"
 
         if cyberpunk:
             # Cyberpunk style event line with time in brackets
