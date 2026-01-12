@@ -79,6 +79,8 @@ const VOICE_COMMANDS = [
     { patterns: [/^daily\s*news$/i], command: 'dailynews' },
 
     // ==================== SEARCH & IMAGES ====================
+    // Note: "search anime X" goes to nyaa, not web search (handled below)
+    { patterns: [/^search\s+anime\s+(.+)$/i], command: 'nyaa $1' },
     { patterns: [/^search\s+(for\s+)?(.+)$/i], command: 'search $2' },
     { patterns: [/^google\s+(.+)$/i], command: 'search $1' },
     { patterns: [/^(show\s+)?(images?|pictures?)\s+(of\s+)?(.+)$/i], command: 'images $4' },
@@ -90,9 +92,9 @@ const VOICE_COMMANDS = [
     { patterns: [/\b(torrance|toronto|terrance)\b/i], command: 'torrents' },
     { patterns: [/^(show\s+me\s+)?(the\s+)?(my\s+)?(torrents?|downloads?)$/i], command: 'torrents' },
     { patterns: [/^downloads?$/i], command: 'torrents list' },
-    { patterns: [/^(show\s+me\s+)?(the\s+)?movies?$/i], command: 'torrents movies' },
-    { patterns: [/^(show\s+me\s+)?(the\s+)?tv(\s+shows?)?$/i], command: 'torrents tv' },
-    { patterns: [/^(show\s+me\s+)?(the\s+)?anime$/i], command: 'torrents anime' },
+    { patterns: [/^(show\s+(me\s+)?)?(the\s+)?movies?$/i], command: 'torrents movies' },
+    { patterns: [/^(show\s+(me\s+)?)?(the\s+)?tv(\s+shows?)?$/i], command: 'torrents tv' },
+    { patterns: [/^(show\s+(me\s+)?)?(the\s+)?anime$/i], command: 'torrents anime' },
     // Download: "download movie 3", "download tv 5", "download anime 2"
     { patterns: [/^download\s+(movie|film)\s+(\d+)$/i], command: 'torrents download movies $2' },
     { patterns: [/^download\s+(tv|show)\s+(\d+)$/i], command: 'torrents download tv $2' },
@@ -512,8 +514,12 @@ class STTController {
                     this.autoSend();
                 }
             } else {
-                const error = await resp.json();
-                this.showError(error.detail || 'Transcription failed');
+                try {
+                    const error = await resp.json();
+                    this.showError(error.detail || 'Transcription failed');
+                } catch {
+                    this.showError(`Transcription failed (${resp.status})`);
+                }
             }
         } catch (e) {
             console.error('Whisper transcription error:', e);
