@@ -3,7 +3,7 @@ Built-in torrent client using libtorrent with HTTP proxy support.
 All traffic is routed through the configured HTTP proxy (for Tor).
 """
 
-import libtorrent as lt
+import sys
 import threading
 import socket
 from pathlib import Path
@@ -13,6 +13,26 @@ import logging
 import time
 
 logger = logging.getLogger(__name__)
+
+# Try to import libtorrent, falling back to system site-packages if needed
+try:
+    import libtorrent as lt
+except ImportError:
+    # Try system site-packages (for venv without --system-site-packages)
+    import glob
+    system_paths = glob.glob("/usr/lib/python3*/site-packages")
+    for sp in system_paths:
+        if sp not in sys.path:
+            sys.path.insert(0, sp)
+    try:
+        import libtorrent as lt
+        logger.info(f"[BT] Loaded libtorrent from system site-packages")
+    except ImportError:
+        raise ImportError(
+            "libtorrent not found. Install system package:\n"
+            "  Gentoo: emerge net-libs/libtorrent-rasterbar\n"
+            "  Debian: apt install python3-libtorrent"
+        )
 
 
 @dataclass

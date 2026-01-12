@@ -2,6 +2,7 @@
 Chat input area with autocomplete.
 """
 
+from typing import List, Optional
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Input, Button, Static
@@ -22,7 +23,7 @@ COMMANDS = [
     "image", "img",
     "generate", "gen",
     "mail", "mail unread", "mail inbox", "mail sent", "mail compose",
-    "mail folders", "mail folder",
+    "mail folders", "mail folder", "mail attachment",
     "cal", "cal today", "cal week", "cal month", "cal add",
     "contacts", "contacts search", "contacts add",
     "music", "music browse", "music search", "music play", "music mood",
@@ -31,6 +32,8 @@ COMMANDS = [
     "news", "dailynews",
     "torrents", "torrents list", "torrents add", "torrents download",
     "torrents pause", "torrents resume", "torrents rm", "torrents info", "torrents purge",
+    "bt", "bt list", "bt add", "bt pause", "bt resume", "bt rm", "bt info", "bt purge",
+    "nyaa",
     "yt", "yt dl", "ytdl",  # YouTube summarize and download
     "todo", "todo add", "todo rm",  # Todo list
     "budget", "budget bills",  # Budget
@@ -45,9 +48,14 @@ class ChatInput(Widget):
 
     class MessageSubmitted(Message):
         """Posted when a message is submitted."""
-        def __init__(self, content: str):
+        def __init__(self, content: str, attachments: Optional[List[str]] = None):
             self.content = content
+            self.attachments = attachments or []
             super().__init__()
+
+    class AttachFileRequested(Message):
+        """Posted when user wants to attach a file."""
+        pass
 
     BINDINGS = [
         Binding("tab", "autocomplete", "Autocomplete", show=False, priority=True),
@@ -60,6 +68,7 @@ class ChatInput(Widget):
         self.history: list[str] = []
         self.history_index = -1
         self.autocomplete_suggestions: list[str] = []
+        self.pending_attachments: List[str] = []
 
     class OpenLinksRequested(Message):
         """Posted when user wants to open links."""
@@ -92,8 +101,10 @@ class ChatInput(Widget):
                 Button("Torrent ▾", id="quick-torrent-toggle", classes="quick-btn dropdown-toggle"),
                 id="quick-actions"
             ),
+            Static("", id="attachments-display", classes="--hidden"),
             Static("", id="autocomplete-hint", classes="--hidden"),
             Horizontal(
+                Button("📎", id="attach-btn", classes="attach-btn"),
                 AutocompleteInput(placeholder="Type a message or command...", id="message-input"),
                 Button("SEND", id="send-btn", variant="primary"),
                 id="input-row"
@@ -111,6 +122,8 @@ class ChatInput(Widget):
         btn_id = event.button.id
         if btn_id == "send-btn":
             self.submit_message()
+        elif btn_id == "attach-btn":
+            self.post_message(self.AttachFileRequested())
         # PIM dropdown toggle
         elif btn_id == "quick-pim":
             self.toggle_dropdown("pim-menu")
@@ -208,19 +221,23 @@ class ChatInput(Widget):
         input_widget = self.query_one("#message-input", Input)
         content = input_widget.value.strip()
 
-        if not content:
+        if not content and not self.pending_attachments:
             return
 
         # Add to history
-        if not self.history or self.history[-1] != content:
+        if content and (not self.history or self.history[-1] != content):
             self.history.append(content)
         self.history_index = -1
 
         # Clear input
         input_widget.value = ""
 
-        # Post message
-        self.post_message(self.MessageSubmitted(content))
+        # Post message with attachments
+        self.post_message(self.MessageSubmitted(content, self.pending_attachments.copy()))
+
+        # Clear attachments
+        self.pending_attachments.clear()
+        self.update_attachments_display()
 
         # Hide autocomplete
         self.hide_autocomplete()
@@ -284,3 +301,32 @@ class ChatInput(Widget):
             self.history_index = -1
             input_widget = self.query_one("#message-input", Input)
             input_widget.value = ""
+
+    def add_attachment(self, file_path: str):
+        """Add a file to pending attachments."""
+        if file_path and file_path not in self.pending_attachments:
+            self.pending_attachments.append(file_path)
+            self.update_attachments_display()
+
+    def remove_attachment(self, file_path: str):
+        """Remove a file from pending attachments."""
+        if file_path in self.pending_attachments:
+            self.pending_attachments.remove(file_path)
+            self.update_attachments_display()
+
+    def clear_attachments(self):
+        """Clear all pending attachments."""
+        self.pending_attachments.clear()
+        self.update_attachments_display()
+
+    def update_attachments_display(self):
+        """Update the attachments display widget."""
+        display = self.query_one("#attachments-display", Static)
+        if self.pending_attachments:
+            import os
+            names = [os.path.basename(p) for p in self.pending_attachments]
+            display.update(f"📎 Attachments: {', '.join(names)}")
+            display.remove_class("--hidden")
+        else:
+            display.update("")
+            display.add_class("--hidden")

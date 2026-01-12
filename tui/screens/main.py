@@ -17,6 +17,7 @@ from tui.widgets.sidebar import ConversationSidebar
 from tui.widgets.chat_view import ChatView
 from tui.widgets.input_area import ChatInput
 from tui.widgets.music_player import MusicPlayerWidget
+from tui.screens.file_picker import FilePickerScreen
 
 
 class MainScreen(Screen):
@@ -355,6 +356,16 @@ class MainScreen(Screen):
     def on_chat_input_open_links_requested(self, event):
         """Handle open links request from quick buttons."""
         self.action_open_urls()
+
+    def on_chat_input_attach_file_requested(self, event):
+        """Handle attach file request from input area."""
+        def handle_file_selected(file_path: str | None):
+            if file_path:
+                chat_input = self.query_one("#chat-input", ChatInput)
+                chat_input.add_attachment(file_path)
+                self.notify(f"Attached: {file_path.split('/')[-1]}")
+
+        self.app.push_screen(FilePickerScreen(title="Attach File"), handle_file_selected)
 
     @work(exclusive=True)
     async def _delete_conversation_worker(self, conversation_id: int):

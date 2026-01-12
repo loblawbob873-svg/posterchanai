@@ -1110,6 +1110,146 @@ Toast.-error {
     background: $green;
 }
 
+/* ═══════════ ATTACH BUTTON - FILE UPLOAD ═══════════ */
+.attach-btn {
+    width: 5;
+    min-width: 5;
+    height: 3;
+    margin: 0;
+    padding: 0;
+    background: $surface-bright;
+    color: $orange;
+    border: solid $orange 50%;
+}
+
+.attach-btn:hover {
+    background: $orange 30%;
+    border: solid $orange;
+}
+
+.attach-btn:focus {
+    border: double $orange;
+}
+
+/* Attachments display */
+#attachments-display {
+    color: $orange;
+    background: $orange 15%;
+    padding: 0 1;
+    height: 1;
+    margin-bottom: 0;
+}
+
+#attachments-display.--hidden {
+    display: none;
+}
+
+/* ═══════════ FILE PICKER - DATA BROWSER ═══════════ */
+FilePickerScreen {
+    align: center middle;
+}
+
+#file-picker-container {
+    width: 80%;
+    height: 80%;
+    background: $surface;
+    border: double $cyan;
+    padding: 1;
+}
+
+#file-picker-title {
+    text-align: center;
+    text-style: bold;
+    padding: 1;
+    background: $cyan 25%;
+    color: $cyan;
+    border-bottom: solid $cyan 50%;
+}
+
+#file-tree {
+    height: 1fr;
+    border: solid $border-bright;
+    margin: 1 0;
+    background: $bg;
+}
+
+DirectoryTree {
+    background: $bg;
+}
+
+DirectoryTree > .directory-tree--folder {
+    color: $cyan;
+    text-style: bold;
+}
+
+DirectoryTree > .directory-tree--file {
+    color: $text;
+}
+
+DirectoryTree > .directory-tree--cursor {
+    background: $cyan 30%;
+}
+
+DirectoryTree:focus > .directory-tree--cursor {
+    background: $cyan 50%;
+}
+
+#selected-path {
+    height: 3;
+    margin: 0 0 1 0;
+}
+
+#selected-path Label {
+    width: 10;
+    color: $magenta;
+    text-style: bold;
+    padding-top: 1;
+}
+
+#selected-path Input {
+    width: 1fr;
+}
+
+#path-input {
+    background: $surface-bright;
+    border: solid $border-bright;
+}
+
+#path-input:focus {
+    border: double $magenta;
+}
+
+#file-picker-buttons {
+    height: 3;
+    align: center middle;
+}
+
+#file-picker-buttons Button {
+    margin: 0 1;
+}
+
+#select-btn {
+    background: $cyan;
+    color: $void;
+    border: solid $neon-blue;
+}
+
+#select-btn:hover {
+    background: $neon-blue;
+}
+
+#cancel-btn {
+    background: $surface-bright;
+    color: $text;
+    border: solid $border-bright;
+}
+
+#cancel-btn:hover {
+    background: $error 30%;
+    border: solid $error;
+    color: $error;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    END OF THEME - "Wake up, Samurai. We have a city to burn."
    ═══════════════════════════════════════════════════════════════════════════ */
