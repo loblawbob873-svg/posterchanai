@@ -291,30 +291,25 @@ class STTController {
         this.recognition.onerror = (event) => {
             console.error('Web Speech error:', event.error);
 
-            // If service blocked, try Whisper fallback
-            if ((event.error === 'service-not-allowed' || event.error === 'not-allowed') && this.whisperAvailable) {
-                console.log('Switching to Whisper fallback');
+            // Try Whisper fallback for any error that blocks Web Speech
+            const fallbackErrors = ['service-not-allowed', 'not-allowed', 'network'];
+            if (fallbackErrors.includes(event.error) && this.whisperAvailable) {
+                console.log('Switching to Whisper fallback due to:', event.error);
                 this.useWhisper = true;
                 this.showNotification('Using local voice recognition', 'info');
                 this.startWhisper();
                 return;
             }
 
+            // Show appropriate error message
             if (event.error === 'not-allowed') {
-                this.showError('Microphone access denied. Click lock icon to allow.');
-            } else if (event.error === 'service-not-allowed') {
-                if (this.whisperAvailable) {
-                    this.useWhisper = true;
-                    this.startWhisper();
-                } else {
-                    this.showError('Speech blocked. Use Chrome or install faster-whisper on server.');
-                }
+                this.showError('Microphone access denied. Check browser permissions.');
+            } else if (event.error === 'service-not-allowed' || event.error === 'network') {
+                this.showError('Speech service unavailable. Install faster-whisper on server.');
             } else if (event.error === 'no-speech') {
                 if (this.finalTranscript.trim()) {
                     this.autoSend();
                 }
-            } else if (event.error === 'network') {
-                this.showError('Speech service unavailable.');
             } else if (event.error === 'audio-capture') {
                 this.showError('No microphone found.');
             } else if (event.error && event.error !== 'aborted') {
