@@ -69,21 +69,25 @@ class ChatApp(App):
                     return
                 except Exception as e:
                     error_msg = str(e).lower()
+                    error_str = str(e)
                     # Check if it's a connection error (server down) vs auth error
-                    if "401" in str(e) or "unauthorized" in error_msg or "invalid" in error_msg:
+                    if "401" in error_str or "unauthorized" in error_msg or ("invalid" in error_msg and "token" in error_msg):
                         # Auth error - token is invalid, clear and go to login
                         self.config.clear_token()
                         break
-                    elif "connect" in error_msg or "connection" in error_msg or "timeout" in error_msg:
-                        # Connection error - server might be starting up, retry indefinitely
+                    elif any(x in error_msg for x in ["connect", "connection", "timeout", "refused"]) or \
+                         any(x in error_str for x in ["502", "503", "504", "500"]):
+                        # Connection/server error - server might be starting up, retry indefinitely
                         attempt += 1
                         self.notify(f"Server unavailable, retrying in {retry_delay}s... (attempt {attempt})")
                         await asyncio.sleep(retry_delay)
                         retry_delay = min(retry_delay * 1.5, 30)  # Gradual backoff, max 30s
                     else:
-                        # Unknown error - clear token
-                        self.config.clear_token()
-                        break
+                        # Unknown error - log but don't clear token, retry
+                        attempt += 1
+                        self.notify(f"Error: {error_str[:50]}... retrying")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 1.5, 30)
 
         # Show login screen
         from tui.screens.login import LoginScreen
