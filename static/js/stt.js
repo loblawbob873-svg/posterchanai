@@ -15,10 +15,11 @@ const VOICE_COMMANDS = [
     { patterns: [/^(delete|remove|trash)\s+(\d+)$/i], command: 'mail delete $2' },
     { patterns: [/^archive\s+(\d+)$/i], command: 'mail archive $1' },
     // With "email/message": "read email 2", "delete message 3"
-    { patterns: [/^read\s+(e-?mail|message)\s+(\d+)$/i], command: 'mail read $2' },
-    { patterns: [/^(open|show)\s+(e-?mail|message)\s+(\d+)$/i], command: 'mail read $3' },
-    { patterns: [/^(delete|remove|trash)\s+(e-?mail|message)\s+(\d+)$/i], command: 'mail delete $3' },
-    { patterns: [/^archive\s+(e-?mail|message)\s+(\d+)$/i], command: 'mail archive $2' },
+    // Mishearings: "email" -> "e-moo", "emoo", "emo", "imoo"
+    { patterns: [/^read\s+(e-?mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail read $2' },
+    { patterns: [/^(open|show)\s+(e-?mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail read $3' },
+    { patterns: [/^(delete|remove|trash)\s+(e-?mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail delete $3' },
+    { patterns: [/^archive\s+(e-?mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail archive $2' },
 
     // "This email" commands - after reading an email
     { patterns: [/^reply(\s+to)?(\s+this)?$/i], command: 'mail reply THIS_EMAIL ' },
