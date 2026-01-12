@@ -41,6 +41,9 @@ COMMANDS = [
     "budget", "budget bills",  # Budget
     "reminder", "reminder add", "reminder list",
     "note", "note add", "note search",
+    "firewall",  # Firewall management
+    "logs",  # System logs
+    "miniflux",  # Miniflux RSS
     "help", "settings",
 ]
 
