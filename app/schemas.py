@@ -220,6 +220,28 @@ class SettingsResponse(BaseModel):
     logs_drives: str = "sda,sdb,nvme0n1"
     logs_exclude_patterns: str = ""
     logs_hosts: str = ""  # Comma-separated hostnames for remote log collection via SSH
+    # Built-in torrent client settings
+    bt_enabled: str = "false"
+    bt_server_url: str = ""  # Remote torrent server URL (empty = local)
+    bt_server_token: str = ""  # API token for remote torrent server auth
+    bt_download_dir: str = "/var/lib/posterchanai/torrents"
+    bt_proxy_host: str = ""
+    bt_proxy_port: str = "8118"
+    bt_listen_port: str = "6881"
+    # Built-in Tor settings
+    tor_enabled: str = "false"
+    tor_listen_host: str = "127.0.0.1"
+    tor_socks_port: str = "9050"
+    tor_control_port: str = "9051"
+    tor_exit_nodes: str = "{us}"
+    tor_data_dir: str = "/var/lib/posterchanai/tor"
+    tor_hidden_services: str = ""
+    # Built-in HTTP proxy settings
+    proxy_enabled: str = "false"
+    proxy_listen_host: str = "127.0.0.1"
+    proxy_listen_port: str = "8118"
+    proxy_socks_host: str = ""
+    proxy_socks_port: str = "9050"
 
     class Config:
         extra = "allow"  # Allow arbitrary extra settings
