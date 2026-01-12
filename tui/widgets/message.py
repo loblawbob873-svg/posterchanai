@@ -520,11 +520,13 @@ class MessageWidget(Widget):
 
             logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")
 
-            # Filter to essential action buttons (exclude torrents download - handled inline)
+            # Filter to essential action buttons (exclude torrents download and cal delete - handled inline)
             essential_prefixes = ("mail ", "cal ", "todo ", "news ", "miniflux ", "nyaa ", "music ")
+            excluded_commands = ("cal delete ",)  # These are inline, not bottom buttons
             actionable = [
                 (label, cmd) for label, cmd, _, _ in self._cmd_links
                 if any(cmd.startswith(p) for p in essential_prefixes)
+                and not any(cmd.startswith(exc) for exc in excluded_commands)
             ]
 
             logger.info(f"Actionable buttons: {actionable}")

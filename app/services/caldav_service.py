@@ -39,20 +39,20 @@ class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
 
 def create_caldav_client(url: str, username: str, password: str) -> caldav.DAVClient:
     """Create a CalDAV client with timeout configured."""
-    # Create a session with timeout
-    session = requests.Session()
-    adapter = TimeoutHTTPAdapter(timeout=CALDAV_TIMEOUT)
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
+    # Create caldav client with timeout via requests session
+    try:
+        # Create a custom session with timeout
+        session = requests.Session()
+        adapter = TimeoutHTTPAdapter(timeout=CALDAV_TIMEOUT)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        session.auth = (username, password)
 
-    # Create caldav client
-    client = caldav.DAVClient(url=url, username=username, password=password)
-    # Patch the client's session to use our timeout-configured session
-    if hasattr(client, 'session'):
-        old_session = client.session
-        client.session = session
-        client.session.auth = old_session.auth if old_session.auth else (username, password)
-    return client
+        # Try to create client with custom session (caldav >= 1.0)
+        return caldav.DAVClient(url=url, username=username, password=password, session=session)
+    except TypeError:
+        # Older caldav version doesn't support session parameter
+        return caldav.DAVClient(url=url, username=username, password=password)
 
 
 @dataclass
@@ -580,12 +580,18 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
             end_str = event.end.strftime("%I:%M %p").lstrip('0')
             time_str = f"{time_str} - {end_str}"
 
+        # Build delete link if event has UID
+        delete_link = ""
+        if event.uid:
+            delete_cmd = f"cal delete {event.uid}"
+            delete_link = f" [🗑️](cmd:{delete_cmd})"
+
         if cyberpunk:
             # Cyberpunk style event line with time in brackets
             time_bracket = event.start.strftime("%H:%M")
-            line = f"  ⏰ `{time_bracket}` **{event.summary}**"
+            line = f"  ⏰ `{time_bracket}` **{event.summary}**{delete_link}"
         else:
-            line = f"- {time_str}: {event.summary}"
+            line = f"- {time_str}: {event.summary}{delete_link}"
 
         if event.location:
             # Create Google Maps link for mobile
@@ -601,14 +607,6 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
                 lines.append(f"    _{event.description}_")
             else:
                 lines.append(f"  _{event.description}_")
-
-        # Add delete button if event has a UID
-        if event.uid:
-            delete_cmd = f"cal delete {event.uid}"
-            if cyberpunk:
-                lines.append(f"    [🗑️ Delete](cmd:{delete_cmd})")
-            else:
-                lines.append(f"  [Delete](cmd:{delete_cmd})")
 
     return "\n".join(lines)
 
@@ -860,18 +858,26 @@ def delete_event_from_calendar(
 
         for cal in calendars:
             try:
-                # Search for event by UID
-                events = cal.events()
-                for event in events:
-                    try:
-                        if hasattr(event.vobject_instance.vevent, 'uid'):
-                            if str(event.vobject_instance.vevent.uid.value) == event_uid:
-                                event.delete()
-                                logger.info(f"Deleted event with UID: {event_uid}")
-                                return True
-                    except Exception as e:
-                        logger.debug(f"Error checking event: {e}")
-                        continue
+                # Try to get event directly by UID (much faster than fetching all)
+                try:
+                    event = cal.event_by_uid(event_uid)
+                    if event:
+                        event.delete()
+                        logger.info(f"Deleted event with UID: {event_uid}")
+                        return True
+                except Exception:
+                    pass
+
+                # Fallback: search by UID
+                try:
+                    events = cal.search(uid=event_uid)
+                    if events:
+                        events[0].delete()
+                        logger.info(f"Deleted event with UID: {event_uid}")
+                        return True
+                except Exception:
+                    pass
+
             except Exception as e:
                 logger.debug(f"Error searching calendar: {e}")
                 continue
