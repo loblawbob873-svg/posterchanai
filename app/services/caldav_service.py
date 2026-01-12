@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 import caldav
 import vobject
+import requests
 from icalendar import Calendar, Event
 from sqlalchemy.orm import Session
 
@@ -20,6 +21,38 @@ from app.database import SessionLocal
 from app.models import User, UserSetting
 
 logger = logging.getLogger(__name__)
+
+# Timeout for CalDAV operations (in seconds)
+CALDAV_TIMEOUT = 30
+
+
+class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
+    """HTTP Adapter with default timeout."""
+    def __init__(self, timeout=CALDAV_TIMEOUT, *args, **kwargs):
+        self.timeout = timeout
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        kwargs['timeout'] = kwargs.get('timeout', self.timeout)
+        return super().send(request, **kwargs)
+
+
+def create_caldav_client(url: str, username: str, password: str) -> caldav.DAVClient:
+    """Create a CalDAV client with timeout configured."""
+    # Create a session with timeout
+    session = requests.Session()
+    adapter = TimeoutHTTPAdapter(timeout=CALDAV_TIMEOUT)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+
+    # Create caldav client - it will use this session internally
+    client = create_caldav_client(url, username, password)
+    # Patch the client's session to use our timeout-configured session
+    if hasattr(client, 'session'):
+        old_session = client.session
+        client.session = session
+        client.session.auth = old_session.auth if old_session.auth else (username, password)
+    return client
 
 
 @dataclass
@@ -102,7 +135,7 @@ def get_user_contacts_config(user_id: int, db: Session = None) -> Optional[Dict[
 def connect_calendar(url: str, username: str, password: str) -> Optional[caldav.DAVClient]:
     """Connect to a CalDAV server."""
     try:
-        client = caldav.DAVClient(url=url, username=username, password=password)
+        client = create_caldav_client(url, username, password)
         # Test connection
         client.principal()
         return client
@@ -140,7 +173,7 @@ def get_events_for_date_range(
     end_date = to_naive_local(end_date)
 
     try:
-        client = caldav.DAVClient(url=url, username=username, password=password)
+        client = create_caldav_client(url, username, password)
         principal = client.principal()
 
         # Try to get calendars from the URL directly first
@@ -228,7 +261,7 @@ def add_event_to_calendar(
         logger.info(f"Adding event '{summary}' to calendar at {url}")
         logger.debug(f"Event times: start={start_time}, end={end_time}")
 
-        client = caldav.DAVClient(url=url, username=username, password=password)
+        client = create_caldav_client(url, username, password)
 
         # Try to get calendar from URL directly
         try:
@@ -519,7 +552,7 @@ def add_user_contact(
 
 
 def format_events_for_display(events: List[CalendarEvent], include_description: bool = False, cyberpunk: bool = False) -> str:
-    """Format events for display with clickable map links for locations."""
+    """Format events for display with clickable map links for locations and delete buttons."""
     import urllib.parse
 
     if not events:
@@ -568,6 +601,14 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
                 lines.append(f"    _{event.description}_")
             else:
                 lines.append(f"  _{event.description}_")
+
+        # Add delete button if event has a UID
+        if event.uid:
+            delete_cmd = f"cal delete {event.uid}"
+            if cyberpunk:
+                lines.append(f"    [🗑️ Delete](cmd:{delete_cmd})")
+            else:
+                lines.append(f"  [Delete](cmd:{delete_cmd})")
 
     return "\n".join(lines)
 
@@ -622,7 +663,7 @@ def get_todos_from_calendar(
     todos = []
 
     try:
-        client = caldav.DAVClient(url=url, username=username, password=password)
+        client = create_caldav_client(url, username, password)
 
         # Try to get calendar from URL directly
         try:
@@ -713,7 +754,7 @@ def add_todo_to_calendar(
     try:
         logger.info(f"Adding todo '{summary}' to calendar at {url}")
 
-        client = caldav.DAVClient(url=url, username=username, password=password)
+        client = create_caldav_client(url, username, password)
 
         # Try to get calendar from URL directly
         try:
@@ -764,7 +805,7 @@ def delete_todo_from_calendar(
 ) -> bool:
     """Delete a VTODO item from a CalDAV calendar by UID."""
     try:
-        client = caldav.DAVClient(url=url, username=username, password=password)
+        client = create_caldav_client(url, username, password)
 
         # Try to get calendar from URL directly
         try:
@@ -796,6 +837,50 @@ def delete_todo_from_calendar(
 
     except Exception as e:
         logger.error(f"Failed to delete todo: {e}")
+        return False
+
+
+def delete_event_from_calendar(
+    url: str,
+    username: str,
+    password: str,
+    event_uid: str
+) -> bool:
+    """Delete a VEVENT item from a CalDAV calendar by UID."""
+    try:
+        client = create_caldav_client(url, username, password)
+
+        # Try to get calendar from URL directly
+        try:
+            calendar = caldav.Calendar(client=client, url=url)
+            calendars = [calendar]
+        except Exception:
+            principal = client.principal()
+            calendars = principal.calendars()
+
+        for cal in calendars:
+            try:
+                # Search for event by UID
+                events = cal.events()
+                for event in events:
+                    try:
+                        if hasattr(event.vobject_instance.vevent, 'uid'):
+                            if str(event.vobject_instance.vevent.uid.value) == event_uid:
+                                event.delete()
+                                logger.info(f"Deleted event with UID: {event_uid}")
+                                return True
+                    except Exception as e:
+                        logger.debug(f"Error checking event: {e}")
+                        continue
+            except Exception as e:
+                logger.debug(f"Error searching calendar: {e}")
+                continue
+
+        logger.warning(f"Event with UID {event_uid} not found")
+        return False
+
+    except Exception as e:
+        logger.error(f"Failed to delete event: {e}")
         return False
 
 

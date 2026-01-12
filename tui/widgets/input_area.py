@@ -351,14 +351,24 @@ class ChatInput(Widget):
             # Special case: mail forward/send <account> <id> -> suggest recipient emails
             # Strip numeric ID to get mail forward/send <account>
             effective_base_cmd = base_cmd
-            if re.match(r'^mail\s+(forward|send)\s+\S+\s+\d+$', base_cmd, re.I):
+            forward_match = re.match(r'^mail\s+(forward)\s+\S+\s+\d+$', base_cmd, re.I)
+            send_match = re.match(r'^mail\s+(send)\s+\S+$', base_cmd, re.I)
+            if forward_match:
                 effective_base_cmd = re.sub(r'\s+\d+$', '', base_cmd)
-
-            import logging
-            logger = logging.getLogger("tui")
-            logger.info(f"Autocomplete: base_cmd='{base_cmd}' effective='{effective_base_cmd}' partial='{partial}'")
-            logger.info(f"Subcommands keys: {list(self.subcommands.keys())}")
-            logger.info(f"Lookup result: {effective_base_cmd in self.subcommands}")
+                # If no contact emails loaded, show helpful hint
+                if effective_base_cmd not in self.subcommands or not self.subcommands.get(effective_base_cmd):
+                    hint = self.query_one("#autocomplete-hint", Static)
+                    hint.update("Type recipient email address")
+                    hint.remove_class("--hidden")
+                    self.autocomplete_suggestions = []
+                    return
+            elif send_match and effective_base_cmd not in self.subcommands:
+                # mail send <account> needs recipient
+                hint = self.query_one("#autocomplete-hint", Static)
+                hint.update("Type recipient email or contact name")
+                hint.remove_class("--hidden")
+                self.autocomplete_suggestions = []
+                return
 
             if effective_base_cmd in self.subcommands:
                 # Filter subcommand hints by partial match

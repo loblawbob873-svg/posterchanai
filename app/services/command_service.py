@@ -19,7 +19,7 @@ from app.routers.news import fetch_news_from_source, get_user_news_sources
 from app.services.caldav_service import (
     get_all_user_events, get_user_calendars, get_user_contacts,
     format_events_for_display, format_contacts_for_display,
-    add_event_to_calendar, add_user_contact,
+    add_event_to_calendar, add_user_contact, delete_event_from_calendar,
     get_all_user_todos, add_todo_to_calendar, delete_todo_from_calendar,
     format_todos_for_display
 )
@@ -1429,8 +1429,21 @@ Return ONLY valid JSON, no other text."""},
                     logger.error(f"Error adding event: {e}")
                     return {"type": "text", "content": f"Error adding event: {str(e)}"}
 
+            elif subcommand == "delete":
+                if not param:
+                    return {"type": "text", "content": "Usage: `cal delete <event_uid>`\n\nExample: `cal delete abc123-xyz789`"}
+
+                event_uid = param.strip()
+
+                # Try to delete from all calendars
+                for cal in calendars:
+                    if delete_event_from_calendar(cal['url'], cal['username'], cal['password'], event_uid):
+                        return {"type": "text", "content": f"✅ Event deleted successfully."}
+
+                return {"type": "text", "content": f"❌ Event not found or could not be deleted."}
+
             else:
-                return {"type": "text", "content": "Usage:\n- `cal` or `cal today` - Today's events\n- `cal week` - This week's events\n- `cal add <event> <time>` - Add an event"}
+                return {"type": "text", "content": "Usage:\n- `cal` or `cal today` - Today's events\n- `cal week` - This week's events\n- `cal add <event> <time>` - Add an event\n- `cal delete <uid>` - Delete an event"}
 
         except Exception as e:
             logger.error(f"Schedule command error: {e}")

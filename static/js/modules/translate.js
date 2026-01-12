@@ -39,7 +39,10 @@ function initTranslateModal() {
         if (!file) return;
 
         fileNameEl.textContent = `Processing: ${file.name}...`;
-        const targetLang = languageSelect.value;
+        let targetLang = languageSelect.value.trim();
+        if (!targetLang) {
+            targetLang = 'English';  // Default to English if empty
+        }
 
         const reader = new FileReader();
         reader.onload = (event) => {

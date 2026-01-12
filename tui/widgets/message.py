@@ -99,9 +99,9 @@ class MessageWidget(Widget):
         current_entry = None
 
         # Pattern: **1. [Title](url)** or **1. Title** or 1. [Title](url) (size)
-        title_pattern = re.compile(r'(?:\*\*)?(\d+)\.\s*(.+?)(?:\*\*)?$')
-        # Pattern: [Download](cmd:torrents download ...) or [Download](cmd:nyaa download ...)
-        download_pattern = re.compile(r'\[Download\]\(cmd:((?:torrents|nyaa) download [^)]+)\)')
+        title_pattern = re.compile(r'^\s*(?:\*\*)?(\d+)\.\s*(.+?)(?:\*\*)?$')
+        # Pattern: [Download](cmd:...) - capture any download command
+        download_pattern = re.compile(r'\[Download\]\(cmd:([^)]+)\)')
 
         for line in lines:
             title_match = title_pattern.search(line)
@@ -178,50 +178,99 @@ class MessageWidget(Widget):
         import logging
         logger = logging.getLogger("tui")
 
-        # Extract header (first lines before entries)
         lines = content.split("\n")
-        header_lines = []
-        for line in lines:
-            if re.match(r'\*\*\d+\.', line):
-                break
-            if line.strip():
-                header_lines.append(line)
 
-        # Render header
-        if header_lines:
-            header_text = "\n".join(header_lines)
+        # Track current category and entries
+        current_category = None
+        entries_by_category = []  # List of (category_name, entries_list)
+        current_entries = []
+        main_header = []
+        in_header = True
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Check for category header (### CATEGORY)
+            if stripped.startswith("### "):
+                # Save previous category if any
+                if current_category is not None:
+                    entries_by_category.append((current_category, current_entries))
+                    current_entries = []
+                current_category = stripped[4:].strip()
+                in_header = False
+                continue
+
+            # Check for main header (## ◈ TORRENTS ◈)
+            if stripped.startswith("## ") and in_header:
+                main_header.append(stripped)
+                continue
+
+            # Skip empty lines and "no torrents found" messages
+            if not stripped or stripped.startswith("*No "):
+                continue
+
+            # Check for numbered entry
+            if re.match(r'(?:\*\*)?\d+\.', stripped):
+                in_header = False
+                # Parse this entry
+                title_match = re.match(r'^\s*(?:\*\*)?(\d+)\.\s*(.+?)(?:\*\*)?$', line)
+                if title_match:
+                    num = title_match.group(1)
+                    title = title_match.group(2)
+                    # Clean up markdown links in title
+                    title = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', title)
+                    current_entries.append({"num": num, "title": title, "info": "", "command": None})
+            # Check for download command on subsequent line
+            elif current_entries:
+                dl_match = re.search(r'\[Download\]\(cmd:([^)]+)\)', line)
+                if dl_match:
+                    current_entries[-1]["command"] = dl_match.group(1)
+                    # Extract info if present
+                    info_match = re.search(r'\|\s*(S:\d+\s*L:\d+\s*\|\s*[\d.]+\s*[GMKT]iB)', line, re.I)
+                    if not info_match:
+                        info_match = re.search(r'\|\s*(S:\d+\s*L:\d+\s*\|\s*[\d.]+\s*[GMKT]B)', line, re.I)
+                    if info_match:
+                        current_entries[-1]["info"] = info_match.group(1)
+
+        # Don't forget last category
+        if current_entries:
+            entries_by_category.append((current_category, current_entries))
+
+        # Render main header
+        if main_header:
+            header_text = "\n".join(main_header)
             try:
-                rendered_header = parse_markdown(header_text)
-                container.mount(Static(rendered_header, classes="message-body"))
+                rendered = parse_markdown(header_text)
+                container.mount(Static(rendered, classes="message-body"))
             except Exception:
                 container.mount(Static(header_text, classes="message-body"))
 
-        # Parse and render torrent entries
-        entries = self._parse_torrent_entries(content)
-        logger.info(f"Parsed {len(entries)} torrent entries")
+        # Render each category
+        for category, entries in entries_by_category:
+            if category:
+                # Render category header
+                container.mount(Static(f"[bold cyan]{category}[/bold cyan]", classes="torrent-category"))
 
-        for entry in entries:
-            # Create row with text + button
-            row = Horizontal(classes="torrent-row")
+            for entry in entries:
+                row = Horizontal(classes="torrent-row")
+                title = escape_rich_brackets(entry['title'])
+                info_text = f"{entry['num']}. {title}"
+                if entry['info']:
+                    info_text += f" | {escape_rich_brackets(entry['info'])}"
 
-            # Torrent info text - escape brackets to prevent Rich markup errors
-            title = escape_rich_brackets(entry['title'])
-            info_text = f"{entry['num']}. {title}"
-            if entry['info']:
-                info_text += f" | {escape_rich_brackets(entry['info'])}"
+                row_text = Static(info_text, classes="torrent-text")
 
-            row_text = Static(info_text, classes="torrent-text")
+                if entry['command']:
+                    btn = Button("DL", classes="torrent-btn")
+                    btn.command = entry['command']
+                    container.mount(row)
+                    row.mount(row_text)
+                    row.mount(btn)
+                else:
+                    container.mount(row)
+                    row.mount(row_text)
 
-            # Download button
-            if entry['command']:
-                btn = Button("DL", classes="torrent-btn")
-                btn.command = entry['command']
-                container.mount(row)
-                row.mount(row_text)
-                row.mount(btn)
-            else:
-                container.mount(row)
-                row.mount(row_text)
+        logger.info(f"Rendered {sum(len(e) for _, e in entries_by_category)} torrent entries in {len(entries_by_category)} categories")
 
     def _render_bt_list(self, content: str, container: Vertical):
         """Render bt list with inline action buttons (pause/resume/delete)."""
@@ -516,6 +565,7 @@ class MessageWidget(Widget):
     def _copy_to_clipboard(self):
         """Copy message content to clipboard."""
         import subprocess
+        import shutil
         import os
         from tui.utils.markdown import strip_markdown
 
@@ -523,43 +573,79 @@ class MessageWidget(Widget):
         clean_content = strip_markdown(self.content)
         content = clean_content.encode('utf-8')
 
-        # Try wl-copy first (Wayland)
-        if os.environ.get('WAYLAND_DISPLAY'):
+        errors = []
+
+        # Try wl-copy first (Wayland) - don't rely only on WAYLAND_DISPLAY
+        wl_copy_path = shutil.which('wl-copy')
+        if wl_copy_path:
             try:
-                process = subprocess.Popen(['wl-copy'], stdin=subprocess.PIPE)
-                process.communicate(content)
+                process = subprocess.Popen(
+                    [wl_copy_path],
+                    stdin=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env={**os.environ}  # Pass full environment including WAYLAND_DISPLAY
+                )
+                _, stderr = process.communicate(content)
                 if process.returncode == 0:
                     self.notify("Copied to clipboard", severity="information", timeout=2)
                     return
-            except FileNotFoundError:
-                pass
+                else:
+                    errors.append(f"wl-copy failed: {stderr.decode().strip() or f'exit code {process.returncode}'}")
+            except Exception as e:
+                errors.append(f"wl-copy error: {e}")
 
         # Try xclip (X11)
-        try:
-            process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
-            process.communicate(content)
-            if process.returncode == 0:
-                self.notify("Copied to clipboard", severity="information", timeout=2)
-                return
-        except FileNotFoundError:
-            pass
+        xclip_path = shutil.which('xclip')
+        if xclip_path:
+            try:
+                process = subprocess.Popen(
+                    [xclip_path, '-selection', 'clipboard'],
+                    stdin=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                _, stderr = process.communicate(content)
+                if process.returncode == 0:
+                    self.notify("Copied to clipboard", severity="information", timeout=2)
+                    return
+                else:
+                    errors.append(f"xclip failed: {stderr.decode().strip() or f'exit code {process.returncode}'}")
+            except Exception as e:
+                errors.append(f"xclip error: {e}")
 
         # Try xsel (X11)
-        try:
-            process = subprocess.Popen(['xsel', '--clipboard', '--input'], stdin=subprocess.PIPE)
-            process.communicate(content)
-            if process.returncode == 0:
-                self.notify("Copied to clipboard", severity="information", timeout=2)
-                return
-        except FileNotFoundError:
-            pass
+        xsel_path = shutil.which('xsel')
+        if xsel_path:
+            try:
+                process = subprocess.Popen(
+                    [xsel_path, '--clipboard', '--input'],
+                    stdin=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                _, stderr = process.communicate(content)
+                if process.returncode == 0:
+                    self.notify("Copied to clipboard", severity="information", timeout=2)
+                    return
+                else:
+                    errors.append(f"xsel failed: {stderr.decode().strip() or f'exit code {process.returncode}'}")
+            except Exception as e:
+                errors.append(f"xsel error: {e}")
 
         # Try pyperclip as last resort
         try:
             import pyperclip
             pyperclip.copy(clean_content)
             self.notify("Copied to clipboard", severity="information", timeout=2)
-        except (ImportError, Exception):
+            return
+        except ImportError:
+            errors.append("pyperclip not installed")
+        except Exception as e:
+            errors.append(f"pyperclip: {e}")
+
+        # Show informative error
+        if errors:
+            logger.warning(f"Clipboard copy failed: {'; '.join(errors)}")
+            self.notify(f"Copy failed: {errors[0][:50]}", severity="warning", timeout=3)
+        else:
             self.notify("Install wl-copy (Wayland) or xclip (X11)", severity="warning", timeout=3)
 
     def finish_streaming(self):

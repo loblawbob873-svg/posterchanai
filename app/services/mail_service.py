@@ -452,6 +452,9 @@ def connect_imap(account: MailAccount) -> Optional[imaplib.IMAP4_SSL]:
         else:
             imap = imaplib.IMAP4(account.imap_server, account.imap_port, timeout=MAIL_CONNECTION_TIMEOUT)
 
+        # Set socket timeout for all subsequent operations
+        imap.socket().settimeout(MAIL_CONNECTION_TIMEOUT)
+
         imap.login(account.email, account.password)
         return imap
     except Exception as e:
@@ -965,7 +968,16 @@ def archive_message(
                 return False
 
             try:
-                imap.select(folder)
+                status, _ = imap.select(folder)
+                if status != "OK":
+                    logger.error(f"Failed to select folder {folder}")
+                    return False
+
+                # Verify message exists
+                status, data = imap.uid('SEARCH', None, f'UID {uid}')
+                if status != "OK" or not data[0]:
+                    logger.error(f"Message UID {uid} not found in {folder}")
+                    return False
 
                 # Use INBOX.Archive as the standard archive folder
                 archive_folder = "INBOX.Archive"

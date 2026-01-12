@@ -574,6 +574,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             logger.debug(f"Command result type: {result.get('type')}")
                         except Exception as cmd_err:
                             logger.error(f"Command execution failed: {type(cmd_err).__name__}: {cmd_err}", exc_info=True)
+                            # Rollback any uncommitted transaction to prevent session corruption
+                            try:
+                                db.rollback()
+                            except Exception:
+                                pass
                             result = {"type": "text", "content": f"Error: {cmd_err}"}
 
                         # Save generated image to disk
@@ -585,14 +590,23 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 generated_image_path = storage_service.save_image(user.username, conversation_id, result["image"], "generated")
 
                         # Save assistant response with image path
-                        assistant_msg = Message(
-                            conversation_id=conversation_id,
-                            role="assistant",
-                            content=result.get("content", ""),
-                            image_path=generated_image_path
-                        )
-                        db.add(assistant_msg)
-                        db.commit()
+                        assistant_msg = None
+                        try:
+                            assistant_msg = Message(
+                                conversation_id=conversation_id,
+                                role="assistant",
+                                content=result.get("content", ""),
+                                image_path=generated_image_path
+                            )
+                            db.add(assistant_msg)
+                            db.commit()
+                        except Exception as save_err:
+                            logger.error(f"Failed to save assistant message: {save_err}")
+                            assistant_msg = None
+                            try:
+                                db.rollback()
+                            except Exception:
+                                pass
 
                         # Add LLM follow-up for certain commands
                         if command in ("flood", "budget", "firewall"):
@@ -612,10 +626,16 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 follow_up_text = await chat_service.chat(follow_up_messages)
                                 if follow_up_text:
                                     result["content"] = result.get("content", "") + "\n\n" + follow_up_text
-                                    assistant_msg.content = result["content"]
-                                    db.commit()
+                                    # Update saved message if it exists
+                                    if assistant_msg:
+                                        assistant_msg.content = result["content"]
+                                        db.commit()
                             except Exception as e:
                                 logger.exception(f"LLM follow-up failed: {e}")
+                                try:
+                                    db.rollback()
+                                except Exception:
+                                    pass
 
                         # Send response (with conn_id to ensure it goes to correct chat, queue if stale)
                         await manager.send_json(user.id, {
