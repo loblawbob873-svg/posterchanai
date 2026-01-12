@@ -42,6 +42,42 @@ def parse_cmd_links(text: str) -> List[Tuple[str, str, int, int]]:
     return links
 
 
+def strip_html(text: str) -> str:
+    """Strip HTML tags and convert to plain text."""
+    import html as html_module
+
+    # Check if text contains HTML
+    lower = text.lower()
+    html_indicators = ['<html', '<body', '<div', '<p>', '<table', '<span', '<!doctype', '<br', '<a href', '<td', '<tr', '<img', '<style', '&nbsp;']
+    if not any(ind in lower for ind in html_indicators):
+        return text
+
+    result = text
+
+    # Replace common block elements with newlines
+    result = re.sub(r'<br\s*/?>', '\n', result, flags=re.IGNORECASE)
+    result = re.sub(r'</p>', '\n\n', result, flags=re.IGNORECASE)
+    result = re.sub(r'</div>', '\n', result, flags=re.IGNORECASE)
+    result = re.sub(r'</li>', '\n', result, flags=re.IGNORECASE)
+    result = re.sub(r'</tr>', '\n', result, flags=re.IGNORECASE)
+
+    # Remove style and script content entirely
+    result = re.sub(r'<style[^>]*>.*?</style>', '', result, flags=re.IGNORECASE | re.DOTALL)
+    result = re.sub(r'<script[^>]*>.*?</script>', '', result, flags=re.IGNORECASE | re.DOTALL)
+
+    # Remove all remaining HTML tags
+    result = re.sub(r'<[^>]+>', '', result)
+
+    # Decode HTML entities
+    result = html_module.unescape(result)
+
+    # Clean up whitespace
+    result = re.sub(r'[ \t]+', ' ', result)
+    result = re.sub(r'\n\s*\n\s*\n+', '\n\n', result)
+
+    return result.strip()
+
+
 def parse_markdown(text: str) -> Text:
     """
     Parse markdown text to Rich Text with basic formatting.
@@ -52,11 +88,15 @@ def parse_markdown(text: str) -> Text:
     - Inline code: `code`
     - Links are converted to [text](url) format
     - cmd: links are marked for special handling
+    - HTML is stripped and converted to plain text
     """
     result = Text()
 
+    # Strip any HTML first
+    processed = strip_html(text)
+
     # Remove cmd: links entirely - they're rendered as buttons separately
-    processed = CMD_LINK_PATTERN.sub('', text)
+    processed = CMD_LINK_PATTERN.sub('', processed)
 
     # Convert copy: links similarly - remove
     processed = COPY_LINK_PATTERN.sub('', processed)

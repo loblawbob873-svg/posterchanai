@@ -1841,16 +1841,29 @@ Return ONLY valid JSON, no other text."""},
                     temp_path = f.name
 
                 # Open with system default application
+                opened = False
                 try:
                     if platform.system() == "Darwin":  # macOS
                         subprocess.run(["open", temp_path], check=True)
+                        opened = True
                     elif platform.system() == "Windows":
                         os.startfile(temp_path)
-                    else:  # Linux
-                        subprocess.run(["xdg-open", temp_path], check=True)
+                        opened = True
+                    else:  # Linux - try multiple openers
+                        for opener in ["xdg-open", "gio open", "kde-open", "gnome-open"]:
+                            try:
+                                subprocess.run(opener.split() + [temp_path], check=True, stderr=subprocess.DEVNULL)
+                                opened = True
+                                break
+                            except (FileNotFoundError, subprocess.CalledProcessError):
+                                continue
+                except Exception:
+                    pass
+
+                if opened:
                     return {"type": "text", "content": f"📎 Opened: **{attachment.filename}** ({attachment.size / 1024:.1f} KB)"}
-                except Exception as e:
-                    return {"type": "text", "content": f"Saved to: `{temp_path}`\n\nCouldn't open automatically: {e}"}
+                else:
+                    return {"type": "text", "content": f"📎 Saved: `{temp_path}`\n\nOpen manually or install `xdg-utils`"}
 
             elif subcommand == "send":
                 # Explicit send: mail send [account] <recipient> <message>

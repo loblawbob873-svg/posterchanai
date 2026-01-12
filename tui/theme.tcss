@@ -1111,7 +1111,7 @@ Toast.-error {
 }
 
 .torrent-btn-danger {
-    background: $red;
+    background: #ff3333;
 }
 
 .torrent-btn-danger:hover {
