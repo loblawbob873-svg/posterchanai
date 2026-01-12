@@ -655,7 +655,12 @@ class MessageWidget(Widget):
                     row.mount(del_btn)
 
     def _render_buttons(self):
-        """Render cmd: link buttons for essential actions."""
+        """Render cmd: link buttons for essential actions.
+
+        Note: This is only called when inline rendering didn't happen
+        (either detection failed or inline render threw exception).
+        So we don't need to re-check list type detection here.
+        """
         import logging
         logger = logging.getLogger("tui")
 
@@ -663,20 +668,9 @@ class MessageWidget(Widget):
             button_container = self.query_one("#message-buttons", Horizontal)
             button_container.remove_children()
 
-            # Track which list types rendered inline
-            is_torrent = self._is_torrent_list(self.content)
-            is_bt = self._is_bt_list(self.content)
-            is_mail = self._is_mail_list(self.content)
-            is_cal = self._is_cal_list(self.content)
-
-            # Skip if already rendered inline (torrent list, bt list, mail list, or cal list)
-            if is_torrent or is_bt or is_mail or is_cal:
-                return
-
             logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")
 
             # Filter to essential action buttons
-            # Only exclude cal commands if calendar list was rendered inline (already handled above)
             essential_prefixes = ("mail ", "cal ", "todo ", "news ", "miniflux ", "nyaa ", "music ")
             actionable = [
                 (label, cmd) for label, cmd, _, _ in self._cmd_links
