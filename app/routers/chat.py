@@ -501,23 +501,63 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             def should_stop_command():
                                 return manager.should_stop(user.id, conn_id)
 
-                            # Prepare attachments for mail command if image attached
+                            # Prepare attachments for mail command
                             mail_attachments = None
-                            if command == "mail" and image_data:
+                            if command == "mail":
                                 import base64
-                                try:
-                                    # Decode base64 image data
-                                    img_bytes = base64.b64decode(image_data)
-                                    # Determine content type from prefix or default to png
-                                    content_type = "image/png"
-                                    if image_data.startswith("/9j/"):
-                                        content_type = "image/jpeg"
-                                    elif image_data.startswith("R0lGOD"):
-                                        content_type = "image/gif"
-                                    ext = content_type.split("/")[1]
-                                    mail_attachments = [(f"image.{ext}", img_bytes, content_type)]
-                                except Exception as att_err:
-                                    logger.warning(f"Failed to process image attachment: {att_err}")
+                                mail_attachments = []
+
+                                # Handle image attachment
+                                if image_data:
+                                    try:
+                                        img_bytes = base64.b64decode(image_data)
+                                        content_type = "image/png"
+                                        if image_data.startswith("/9j/"):
+                                            content_type = "image/jpeg"
+                                        elif image_data.startswith("R0lGOD"):
+                                            content_type = "image/gif"
+                                        ext = content_type.split("/")[1]
+                                        mail_attachments.append((f"image.{ext}", img_bytes, content_type))
+                                    except Exception as att_err:
+                                        logger.warning(f"Failed to process image attachment: {att_err}")
+
+                                # Handle PDF attachment
+                                if pdf_data:
+                                    try:
+                                        pdf_bytes = base64.b64decode(pdf_data)
+                                        mail_attachments.append(("document.pdf", pdf_bytes, "application/pdf"))
+                                    except Exception as att_err:
+                                        logger.warning(f"Failed to process PDF attachment: {att_err}")
+
+                                # Handle Office document attachment
+                                if document_data:
+                                    try:
+                                        doc_bytes = base64.b64decode(document_data)
+                                        # Try to guess type from content
+                                        content_type = "application/octet-stream"
+                                        filename = "document"
+                                        if doc_bytes[:4] == b'PK\x03\x04':  # ZIP-based (docx, xlsx, pptx)
+                                            if b'word/' in doc_bytes[:2000]:
+                                                content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                                filename = "document.docx"
+                                            elif b'xl/' in doc_bytes[:2000]:
+                                                content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                                filename = "spreadsheet.xlsx"
+                                            else:
+                                                filename = "document.docx"
+                                        mail_attachments.append((filename, doc_bytes, content_type))
+                                    except Exception as att_err:
+                                        logger.warning(f"Failed to process document attachment: {att_err}")
+
+                                # Handle text file as attachment (only if no PDF/document was sent)
+                                if file_content and not pdf_data and not document_data:
+                                    # Only attach raw text files, not extracted content
+                                    if not file_content.startswith("[PDF Document]") and not file_content.startswith("[Office Document]"):
+                                        if len(file_content) < 50000:  # Reasonable file size
+                                            mail_attachments.append(("attachment.txt", file_content.encode("utf-8"), "text/plain"))
+
+                                if not mail_attachments:
+                                    mail_attachments = None
 
                             result = await command_service.execute_command(
                                 command, arg, last_prompt,
