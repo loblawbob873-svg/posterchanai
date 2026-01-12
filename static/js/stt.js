@@ -3,12 +3,14 @@
 const VOICE_COMMANDS = [
     // ==================== EMAIL ====================
     // Check inbox - including common mishearings
-    { patterns: [/^(check|show|get|open|read)?\s*(my\s+)?(e-?)?mail$/i], command: 'mail' },
-    { patterns: [/^(check|show|get|open)?\s*(my\s+)?(inbox|messages?)$/i], command: 'mail' },
-    { patterns: [/^(any\s+)?(new|unread)\s*(mail|messages?)?$/i], command: 'mail unread' },
+    { patterns: [/^(check|show|get|open|read)?\s*(my\s+)?(e-?)?mail\.?$/i], command: 'mail' },
+    { patterns: [/^(check|show|get|open)?\s*(my\s+)?(inbox|messages?)\.?$/i], command: 'mail' },
+    { patterns: [/^(any\s+)?(new|unread)\s*(mail|messages?)?\.?$/i], command: 'mail unread' },
+    // "read email" without number = show inbox
+    { patterns: [/^read\s+(e-?mail|e-?moo|emoo?|imoo?|message)s?\.?$/i], command: 'mail' },
     // Mishearings: "check my mail" -> "check new", "check male", "check mail"
     { patterns: [/^check\.?\s*new\.?$/i], command: 'mail' },
-    { patterns: [/^check\s+(male|nail|mell|mel)$/i], command: 'mail' },
+    { patterns: [/^check\s+(male|nail|mell|mel)\.?$/i], command: 'mail' },
 
     // Read/delete/archive by number - SIMPLE: "read 2", "delete 3", "archive 1"
     { patterns: [/^read\s+(\d+)$/i], command: 'mail read $1' },
@@ -132,11 +134,18 @@ const VOICE_COMMANDS = [
  * @returns {string} - The command or original text if no match
  */
 function parseVoiceCommand(text) {
-    const trimmed = text.trim();
+    // Strip emojis, special characters, and extra whitespace
+    const cleaned = text
+        .replace(/[\u{1F300}-\u{1F9FF}]/gu, '')  // Emojis
+        .replace(/[\u{2600}-\u{26FF}]/gu, '')    // Misc symbols
+        .replace(/[\u{2700}-\u{27BF}]/gu, '')    // Dingbats
+        .replace(/[^\w\s\-\.\$\#\@]/g, '')       // Keep only word chars, spaces, common punctuation
+        .replace(/\s+/g, ' ')
+        .trim();
 
     for (const { patterns, command } of VOICE_COMMANDS) {
         for (const pattern of patterns) {
-            const match = trimmed.match(pattern);
+            const match = cleaned.match(pattern);
             if (match) {
                 // Replace $1, $2, etc. with captured groups
                 let result = command;
@@ -168,8 +177,8 @@ function parseVoiceCommand(text) {
         }
     }
 
-    // No match - return original text for LLM
-    return trimmed;
+    // No match - return cleaned text for LLM
+    return cleaned;
 }
 
 // Speech-to-Text Controller with Whisper fallback for Brave/Firefox
