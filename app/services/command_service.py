@@ -58,7 +58,7 @@ class CommandService:
         "geni": "Generate an AI image from your prompt",
         "yt": "YouTube summarize: yt <url> - get AI summary of video transcript",
         "ytdl": "YouTube download: ytdl <url> - download video as MP3 to WebDAV Music",
-        "torrents": "Torrents: torrents | torrents <category> | torrents dl <#> | torrents list | torrents add <url>",
+        "torrents": "Torrents: torrents | torrents <category> | torrents dl <cat> <#> | torrents list/add/pause/resume/rm/info <#>",
         "nyaa": "Search nyaa.si: nyaa <query> | nyaa download <#>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
         "firewall": "Firewall: firewall | firewall search <ip> [date] | firewall analyze <ip>",
@@ -71,7 +71,6 @@ class CommandService:
         "mail": "Email: mail | mail folders/folder/search/read/reply/delete/archive <acct> <id>",
         "todo": "Todo list (CalDAV): todo | todo add <task> | todo rm <#>",
         "music": "Music: music | music browse | music search <query> | music play <#> | music random | music skip | music mood <vibe>",
-        "bt": "Built-in torrent: bt list | bt add <magnet> | bt pause/resume/rm <#> | bt info <#>",
     }
 
     # Command aliases (alias -> canonical command)
@@ -160,8 +159,6 @@ class CommandService:
             return await self._todo_command(arg)
         elif command == "music":
             return await self._music_command(arg)
-        elif command == "bt":
-            return await self._bt_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -528,29 +525,146 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
         return {"type": "text", "content": format_download_result(result)}
 
+    def _get_bt_service(self):
+        """Get built-in torrent service if enabled, or None."""
+        from app.models import Setting
+
+        bt_enabled = self.db.query(Setting).filter(Setting.key == "bt_enabled").first()
+        if not bt_enabled or bt_enabled.value.lower() != "true":
+            return None
+
+        def get_setting(key: str, default: str = "") -> str:
+            s = self.db.query(Setting).filter(Setting.key == key).first()
+            return s.value if s and s.value else default
+
+        proxy_host = get_setting("bt_proxy_host")
+        if not proxy_host:
+            return None  # Proxy required
+
+        try:
+            from app.services.libtorrent_service import LibtorrentService
+            return LibtorrentService.get_instance(
+                download_dir=get_setting("bt_download_dir", "/var/lib/posterchanai/torrents"),
+                proxy_host=proxy_host,
+                proxy_port=int(get_setting("bt_proxy_port", "8118")),
+                scgi_host=get_setting("bt_scgi_host", "0.0.0.0"),
+                scgi_port=int(get_setting("bt_scgi_port", "5001")),
+            )
+        except ImportError:
+            return None
+
     async def _torrents_command(self, arg: str) -> dict:
-        """Browse torrents and manage Flood client"""
+        """Browse torrents and manage downloads (built-in or Flood)"""
         global _torrent_cache
 
         parts = arg.strip().split()
         subcommand = parts[0].lower() if parts else ""
         categories = ("movies", "tv", "music", "anime")
 
-        # Flood client management subcommands
+        # Get built-in service (None if disabled or not configured)
+        bt_service = self._get_bt_service()
+
+        # Client management subcommands - require built-in client
         if subcommand in ("list", "ls"):
-            return await self._flood_command("list")
+            if not bt_service:
+                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+            from app.services.libtorrent_service import format_torrent_list
+            torrents = bt_service.list_torrents()
+            return {"type": "text", "content": format_torrent_list(torrents)}
+
         elif subcommand == "add" and len(parts) > 1:
-            url = parts[1]
-            return await self._flood_command(f"add {url}")
+            if not bt_service:
+                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+            magnet = parts[1]
+            if magnet.startswith("magnet:"):
+                info_hash = bt_service.add_magnet(magnet)
+                return {"type": "text", "content": f"Added torrent: `{info_hash}`\n\nUse `torrents list` to check progress."}
+            return {"type": "text", "content": "Please provide a magnet link starting with `magnet:`"}
+
         elif subcommand in ("start", "resume") and len(parts) > 1:
-            num = parts[1]
-            return await self._flood_command(f"start {num}")
+            if not bt_service:
+                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+            try:
+                num = int(parts[1])
+                info_hash = bt_service.get_hash_by_number(num)
+                if info_hash and bt_service.resume(info_hash):
+                    return {"type": "text", "content": f"Resumed torrent #{num}"}
+                return {"type": "text", "content": f"Torrent #{num} not found"}
+            except ValueError:
+                return {"type": "text", "content": "Usage: `torrents resume <number>`"}
+
         elif subcommand in ("stop", "pause") and len(parts) > 1:
-            num = parts[1]
-            return await self._flood_command(f"stop {num}")
+            if not bt_service:
+                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+            try:
+                num = int(parts[1])
+                info_hash = bt_service.get_hash_by_number(num)
+                if info_hash and bt_service.pause(info_hash):
+                    return {"type": "text", "content": f"Paused torrent #{num}"}
+                return {"type": "text", "content": f"Torrent #{num} not found"}
+            except ValueError:
+                return {"type": "text", "content": "Usage: `torrents pause <number>`"}
+
         elif subcommand in ("del", "delete", "rm") and len(parts) > 1:
-            num = parts[1]
-            return await self._flood_command(f"delete {num}")
+            if not bt_service:
+                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+            try:
+                num = int(parts[1])
+                info_hash = bt_service.get_hash_by_number(num)
+                if info_hash and bt_service.remove(info_hash, delete_files=False):
+                    return {"type": "text", "content": f"Removed torrent #{num} (files kept)"}
+                return {"type": "text", "content": f"Torrent #{num} not found"}
+            except ValueError:
+                return {"type": "text", "content": "Usage: `torrents rm <number>`"}
+
+        elif subcommand == "purge" and len(parts) > 1:
+            if not bt_service:
+                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+            try:
+                num = int(parts[1])
+                info_hash = bt_service.get_hash_by_number(num)
+                if info_hash and bt_service.remove(info_hash, delete_files=True):
+                    return {"type": "text", "content": f"Removed torrent #{num} and deleted files"}
+                return {"type": "text", "content": f"Torrent #{num} not found"}
+            except ValueError:
+                return {"type": "text", "content": "Usage: `torrents purge <number>`"}
+
+        elif subcommand == "info" and len(parts) > 1:
+            if not bt_service:
+                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+            try:
+                num = int(parts[1])
+                info_hash = bt_service.get_hash_by_number(num)
+                if not info_hash:
+                    return {"type": "text", "content": f"Torrent #{num} not found"}
+
+                t = bt_service.get_torrent(info_hash)
+                if not t:
+                    return {"type": "text", "content": f"Torrent #{num} not found"}
+
+                files = bt_service.get_files(info_hash)
+                file_list = "\n".join([f"  - {f['path']} ({f['size'] / 1024 / 1024:.1f} MB)" for f in files[:10]])
+                if len(files) > 10:
+                    file_list += f"\n  ... and {len(files) - 10} more files"
+
+                info = f"""## {t.name}
+
+**Hash:** `{t.info_hash}`
+**Status:** {t.state} {'(paused)' if t.is_paused else ''}
+**Progress:** {t.progress:.1f}%
+**Size:** {t.size / 1024 / 1024:.1f} MB
+**Downloaded:** {t.downloaded / 1024 / 1024:.1f} MB
+**Uploaded:** {t.uploaded / 1024 / 1024:.1f} MB
+**Speed:** ↓{t.download_rate / 1024:.1f} KB/s ↑{t.upload_rate / 1024:.1f} KB/s
+**Peers:** {t.seeders} seeders, {t.peers} peers
+**Save Path:** {t.save_path}
+
+**Files:**
+{file_list}
+"""
+                return {"type": "text", "content": info}
+            except ValueError:
+                return {"type": "text", "content": "Usage: `torrents info <number>`"}
 
         # Handle download subcommand: torrents download <category> <number>
         if subcommand in ("download", "dl", "get"):
@@ -580,16 +694,14 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             torrent = cached[num - 1]
             magnet = torrent.magnet
 
-            # Use flood command to add the torrent
             if not self.user:
-                return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\nLogin required to add to Flood."}
+                return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\nLogin required to download."}
 
-            # Execute flood add command
-            result = await self._flood_command(f"add {magnet}")
-            if "error" in result.get("content", "").lower():
-                return result
+            if not bt_service:
+                return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\nBuilt-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
 
-            return {"type": "text", "content": f"**Adding to Flood:** {torrent.title}\n\n{result['content']}"}
+            info_hash = bt_service.add_magnet(magnet)
+            return {"type": "text", "content": f"**Downloading:** {torrent.title}\n\nAdded: `{info_hash}`\n\nUse `torrents list` to check progress."}
 
         # No subcommand - show all categories overview
         if not subcommand:
@@ -2002,151 +2114,6 @@ Return ONLY valid JSON, no other text."""},
 
         except Exception as e:
             logger.error(f"Music command error: {e}")
-            return {"type": "text", "content": f"Error: {str(e)}"}
-
-    async def _bt_command(self, arg: str) -> dict:
-        """Built-in torrent client (libtorrent with HTTP proxy)."""
-        from app.models import Setting
-
-        # Check if bt is enabled
-        bt_enabled = self.db.query(Setting).filter(Setting.key == "bt_enabled").first()
-        if not bt_enabled or bt_enabled.value.lower() != "true":
-            return {"type": "text", "content": "Built-in torrent client is disabled. Enable it in Admin Settings."}
-
-        # Get settings
-        def get_setting(key: str, default: str = "") -> str:
-            s = self.db.query(Setting).filter(Setting.key == key).first()
-            return s.value if s and s.value else default
-
-        proxy_host = get_setting("bt_proxy_host")
-        if not proxy_host:
-            return {"type": "text", "content": "No HTTP proxy configured. Torrenting requires a proxy for safety. Set it in Admin Settings."}
-
-        proxy_port = int(get_setting("bt_proxy_port", "8118"))
-        download_dir = get_setting("bt_download_dir", "/var/lib/posterchanai/torrents")
-        scgi_host = get_setting("bt_scgi_host", "0.0.0.0")
-        scgi_port = int(get_setting("bt_scgi_port", "5001"))
-
-        try:
-            from app.services.libtorrent_service import LibtorrentService, format_torrent_list
-
-            # Get or create singleton service
-            service = LibtorrentService.get_instance(
-                download_dir=download_dir,
-                proxy_host=proxy_host,
-                proxy_port=proxy_port,
-                scgi_host=scgi_host,
-                scgi_port=scgi_port,
-            )
-
-            parts = arg.split(None, 1)
-            subcommand = parts[0].lower() if parts else "list"
-            subarg = parts[1] if len(parts) > 1 else ""
-
-            # List torrents
-            if subcommand in ("list", "ls", ""):
-                torrents = service.list_torrents()
-                return {"type": "text", "content": format_torrent_list(torrents)}
-
-            # Add torrent
-            elif subcommand == "add":
-                if not subarg:
-                    return {"type": "text", "content": "Usage: `bt add <magnet_link>`"}
-
-                if subarg.startswith("magnet:"):
-                    info_hash = service.add_magnet(subarg)
-                    return {"type": "text", "content": f"Added torrent: `{info_hash}`\n\nUse `bt list` to check progress."}
-                else:
-                    return {"type": "text", "content": "Please provide a magnet link starting with `magnet:`"}
-
-            # Pause torrent
-            elif subcommand in ("pause", "stop"):
-                try:
-                    num = int(subarg)
-                    info_hash = service.get_hash_by_number(num)
-                    if info_hash and service.pause(info_hash):
-                        return {"type": "text", "content": f"Paused torrent #{num}"}
-                    return {"type": "text", "content": f"Torrent #{num} not found"}
-                except ValueError:
-                    return {"type": "text", "content": "Usage: `bt pause <number>`"}
-
-            # Resume torrent
-            elif subcommand in ("resume", "start"):
-                try:
-                    num = int(subarg)
-                    info_hash = service.get_hash_by_number(num)
-                    if info_hash and service.resume(info_hash):
-                        return {"type": "text", "content": f"Resumed torrent #{num}"}
-                    return {"type": "text", "content": f"Torrent #{num} not found"}
-                except ValueError:
-                    return {"type": "text", "content": "Usage: `bt resume <number>`"}
-
-            # Remove torrent
-            elif subcommand in ("rm", "remove", "delete"):
-                try:
-                    num = int(subarg)
-                    info_hash = service.get_hash_by_number(num)
-                    if info_hash and service.remove(info_hash, delete_files=False):
-                        return {"type": "text", "content": f"Removed torrent #{num} (files kept)"}
-                    return {"type": "text", "content": f"Torrent #{num} not found"}
-                except ValueError:
-                    return {"type": "text", "content": "Usage: `bt rm <number>`"}
-
-            # Delete torrent with files
-            elif subcommand in ("purge", "rmf"):
-                try:
-                    num = int(subarg)
-                    info_hash = service.get_hash_by_number(num)
-                    if info_hash and service.remove(info_hash, delete_files=True):
-                        return {"type": "text", "content": f"Removed torrent #{num} and deleted files"}
-                    return {"type": "text", "content": f"Torrent #{num} not found"}
-                except ValueError:
-                    return {"type": "text", "content": "Usage: `bt purge <number>`"}
-
-            # Torrent info
-            elif subcommand == "info":
-                try:
-                    num = int(subarg)
-                    info_hash = service.get_hash_by_number(num)
-                    if not info_hash:
-                        return {"type": "text", "content": f"Torrent #{num} not found"}
-
-                    t = service.get_torrent(info_hash)
-                    if not t:
-                        return {"type": "text", "content": f"Torrent #{num} not found"}
-
-                    files = service.get_files(info_hash)
-                    file_list = "\n".join([f"  - {f['path']} ({f['size'] / 1024 / 1024:.1f} MB)" for f in files[:10]])
-                    if len(files) > 10:
-                        file_list += f"\n  ... and {len(files) - 10} more files"
-
-                    info = f"""## {t.name}
-
-**Hash:** `{t.info_hash}`
-**Status:** {t.state} {'(paused)' if t.is_paused else ''}
-**Progress:** {t.progress:.1f}%
-**Size:** {t.size / 1024 / 1024:.1f} MB
-**Downloaded:** {t.downloaded / 1024 / 1024:.1f} MB
-**Uploaded:** {t.uploaded / 1024 / 1024:.1f} MB
-**Speed:** ↓{t.download_rate / 1024:.1f} KB/s ↑{t.upload_rate / 1024:.1f} KB/s
-**Peers:** {t.seeders} seeders, {t.peers} peers
-**Save Path:** {t.save_path}
-
-**Files:**
-{file_list}
-"""
-                    return {"type": "text", "content": info}
-                except ValueError:
-                    return {"type": "text", "content": "Usage: `bt info <number>`"}
-
-            else:
-                return {"type": "text", "content": "Usage:\n- `bt list` - Show all torrents\n- `bt add <magnet>` - Add torrent\n- `bt pause <#>` - Pause torrent\n- `bt resume <#>` - Resume torrent\n- `bt rm <#>` - Remove torrent (keep files)\n- `bt purge <#>` - Remove torrent and files\n- `bt info <#>` - Show torrent details"}
-
-        except ImportError as e:
-            logger.error(f"libtorrent not installed: {e}")
-            return {"type": "text", "content": "libtorrent is not installed. Run: `pip install libtorrent`"}
-        except Exception as e:
-            logger.error(f"BT command error: {e}")
             return {"type": "text", "content": f"Error: {str(e)}"}
 
 

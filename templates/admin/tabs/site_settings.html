@@ -109,9 +109,14 @@ newsweek.com|Newsweek"></textarea>
             <small>All torrent traffic is routed through the HTTP proxy (required)</small>
         </div>
         <div class="form-group">
+            <label for="bt_server_url">Remote Torrent Server URL</label>
+            <input type="text" id="bt_server_url" name="bt_server_url" placeholder="http://torrent-server:3051">
+            <small>Leave empty for local. Set URL to route to a different server (e.g., load balancing)</small>
+        </div>
+        <div class="form-group">
             <label for="bt_download_dir">Download Directory</label>
             <input type="text" id="bt_download_dir" name="bt_download_dir" placeholder="/var/lib/posterchanai/torrents">
-            <small>Where downloaded torrents are saved</small>
+            <small>Where downloaded torrents are saved (local server only)</small>
         </div>
         <div class="form-row">
             <div class="form-group">

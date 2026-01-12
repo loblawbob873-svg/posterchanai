@@ -268,6 +268,7 @@ When asked to write or modify code or files:
             "mcp_warmup": "true",              # Pre-load embeddings on startup
             # Built-in torrent client (libtorrent)
             "bt_enabled": "false",
+            "bt_server_url": "",              # Remote torrent server URL (empty = local)
             "bt_download_dir": "/var/lib/posterchanai/torrents",
             "bt_proxy_host": "",              # HTTP proxy host (required for torrenting)
             "bt_proxy_port": "8118",          # HTTP proxy port (e.g. Privoxy for Tor)

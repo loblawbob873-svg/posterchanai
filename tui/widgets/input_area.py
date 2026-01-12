@@ -30,7 +30,7 @@ COMMANDS = [
     "weather",
     "news", "dailynews",
     "torrents", "torrents list", "torrents add", "torrents download",
-    "bt", "bt list", "bt add", "bt pause", "bt resume", "bt rm", "bt info",  # Built-in torrent
+    "torrents pause", "torrents resume", "torrents rm", "torrents info", "torrents purge",
     "yt", "yt dl", "ytdl",  # YouTube summarize and download
     "todo", "todo add", "todo rm",  # Todo list
     "budget", "budget bills",  # Budget
