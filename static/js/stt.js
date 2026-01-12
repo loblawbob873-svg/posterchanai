@@ -2,10 +2,13 @@
 // Patterns are checked in order - first match wins
 const VOICE_COMMANDS = [
     // ==================== EMAIL ====================
-    // Check inbox
+    // Check inbox - including common mishearings
     { patterns: [/^(check|show|get|open|read)?\s*(my\s+)?(e-?)?mail$/i], command: 'mail' },
     { patterns: [/^(check|show|get|open)?\s*(my\s+)?(inbox|messages?)$/i], command: 'mail' },
     { patterns: [/^(any\s+)?(new|unread)\s*(mail|messages?)?$/i], command: 'mail unread' },
+    // Mishearings: "check my mail" -> "check new", "check male", "check mail"
+    { patterns: [/^check\.?\s*new\.?$/i], command: 'mail' },
+    { patterns: [/^check\s+(male|nail|mell|mel)$/i], command: 'mail' },
 
     // Read/delete/archive by number - SIMPLE: "read 2", "delete 3", "archive 1"
     { patterns: [/^read\s+(\d+)$/i], command: 'mail read $1' },
