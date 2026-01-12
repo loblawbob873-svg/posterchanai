@@ -13,11 +13,13 @@ const VOICE_COMMANDS = [
     { patterns: [/^check\s+(male|nail|mell|mel)\.?$/i], command: 'mail' },
 
     // Read/delete/archive by number - SIMPLE: "read 2", "delete 3", "archive 1"
+    // Note: normalizeNumbers() converts word numbers (four, forward, etc) to digits before matching
     { patterns: [/^read\s+(\d+)$/i], command: 'mail read $1' },
     { patterns: [/^(delete|remove|trash)\s+(\d+)$/i], command: 'mail delete $2' },
     { patterns: [/^archive\s+(\d+)$/i], command: 'mail archive $1' },
     // With "email/message": "read email 2", "delete message 3"
     // Mishearings: "email" -> "e-moo", "emoo", "emo", "imoo"
+    // Note: normalizeNumbers() converts word numbers to digits before matching
     { patterns: [/^read\s+(e-?mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail read $2' },
     { patterns: [/^(open|show)\s+(e-?mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail read $3' },
     { patterns: [/^(delete|remove|trash)\s+(e-?mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail delete $3' },
@@ -136,19 +138,60 @@ const VOICE_COMMANDS = [
 ];
 
 /**
+ * Convert number words to digits
+ */
+function normalizeNumbers(text) {
+    const wordToNum = {
+        'one': '1', 'won': '1',
+        'two': '2', 'to': '2', 'too': '2',
+        'three': '3', 'tree': '3', 'free': '3',
+        'four': '4', 'for': '4', 'forward': '4', 'fore': '4',
+        'five': '5', 'fife': '5',
+        'six': '6', 'sicks': '6',
+        'seven': '7',
+        'eight': '8', 'ate': '8',
+        'nine': '9', 'nein': '9',
+        'ten': '10'
+    };
+    // Only convert at end of string (where numbers typically appear in commands)
+    return text.replace(/\b(one|won|two|to|too|three|tree|free|four|for|forward|fore|five|fife|six|sicks|seven|eight|ate|nine|nein|ten)\s*$/i,
+        (match) => wordToNum[match.toLowerCase().trim()] || match);
+}
+
+/**
  * Convert natural language voice input to a command
  * @param {string} text - The transcribed voice input
  * @returns {string} - The command or original text if no match
  */
 function parseVoiceCommand(text) {
     // Strip emojis, special characters, and extra whitespace
-    const cleaned = text
+    let cleaned = text
         .replace(/[\u{1F300}-\u{1F9FF}]/gu, '')  // Emojis
         .replace(/[\u{2600}-\u{26FF}]/gu, '')    // Misc symbols
         .replace(/[\u{2700}-\u{27BF}]/gu, '')    // Dingbats
         .replace(/[^\w\s\-\.\$\#\@]/g, '')       // Keep only word chars, spaces, common punctuation
         .replace(/\s+/g, ' ')
         .trim();
+
+    // Convert number words to digits
+    cleaned = normalizeNumbers(cleaned);
+
+    // Filter out common Whisper hallucinations (output when audio unclear)
+    const hallucinations = [
+        /^thank(s|\s+you)?\.?$/i,
+        /^thanks\s+for\s+(watching|listening)\.?$/i,
+        /^please\s+subscribe\.?$/i,
+        /^(bye|goodbye)\.?$/i,
+        /^you\.?$/i,
+        /^\.+$/,
+        /^$/
+    ];
+    for (const pattern of hallucinations) {
+        if (pattern.test(cleaned)) {
+            console.warn('Filtered Whisper hallucination:', text);
+            return null;  // Signal to ignore this transcription
+        }
+    }
 
     for (const { patterns, command } of VOICE_COMMANDS) {
         for (const pattern of patterns) {
@@ -574,6 +617,15 @@ class STTController {
         if (this.messageInput && this.messageInput.value.trim()) {
             const originalText = this.messageInput.value.trim();
             const parsed = parseVoiceCommand(originalText);
+
+            // If null, it was a hallucination - ignore
+            if (parsed === null) {
+                this.showNotification('Unclear audio, try again', 'info');
+                this.messageInput.value = '';
+                this.finalTranscript = '';
+                this.interimTranscript = '';
+                return;
+            }
 
             if (parsed !== originalText) {
                 this.messageInput.value = parsed;
