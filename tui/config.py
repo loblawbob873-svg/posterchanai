@@ -11,24 +11,48 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 KEYRING_AVAILABLE = False
-try:
-    import keyring
-    import io
+_keyring = None
+
+def _check_keyring():
+    """Check if keyring is available, suppressing all output."""
+    global KEYRING_AVAILABLE, _keyring
+    import os
     import sys
-    # Suppress stderr during keyring check (it prints warnings)
-    old_stderr = sys.stderr
-    sys.stderr = io.StringIO()
+    import warnings
+    import logging
+
+    # Redirect stderr to devnull
+    old_stderr_fd = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+
+    # Suppress keyring logger
+    keyring_logger = logging.getLogger('keyring')
+    old_level = keyring_logger.level
+    keyring_logger.setLevel(logging.CRITICAL + 1)
+
     try:
-        # Test if a backend is actually available
-        kr = keyring.get_keyring()
-        # Check if it's a usable backend (not null or fail backend)
-        backend_name = type(kr).__name__.lower()
-        if 'fail' not in backend_name and 'null' not in backend_name:
-            KEYRING_AVAILABLE = True
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            import keyring as kr_module
+            _keyring = kr_module
+            # Test if a backend is actually available
+            kr = _keyring.get_keyring()
+            backend_name = type(kr).__name__.lower()
+            if 'fail' not in backend_name and 'null' not in backend_name:
+                KEYRING_AVAILABLE = True
+    except Exception:
+        pass
     finally:
-        sys.stderr = old_stderr
+        # Restore stderr
+        os.dup2(old_stderr_fd, 2)
+        os.close(old_stderr_fd)
+        keyring_logger.setLevel(old_level)
+
+try:
+    _check_keyring()
 except Exception:
-    # Keyring not installed or no backend available
     pass
 
 
@@ -85,9 +109,9 @@ class Config:
     def save_token(self, token: str):
         """Save auth token securely."""
         saved = False
-        if KEYRING_AVAILABLE:
+        if KEYRING_AVAILABLE and _keyring:
             try:
-                keyring.set_password(TOKEN_SERVICE, self.username or "default", token)
+                _keyring.set_password(TOKEN_SERVICE, self.username or "default", token)
                 saved = True
             except Exception:
                 pass  # Fall through to file storage
@@ -101,9 +125,9 @@ class Config:
 
     def load_token(self) -> Optional[str]:
         """Load auth token."""
-        if KEYRING_AVAILABLE and self.username:
+        if KEYRING_AVAILABLE and _keyring and self.username:
             try:
-                return keyring.get_password(TOKEN_SERVICE, self.username)
+                return _keyring.get_password(TOKEN_SERVICE, self.username)
             except Exception:
                 pass
 
@@ -119,9 +143,9 @@ class Config:
 
     def clear_token(self):
         """Clear stored token."""
-        if KEYRING_AVAILABLE and self.username:
+        if KEYRING_AVAILABLE and _keyring and self.username:
             try:
-                keyring.delete_password(TOKEN_SERVICE, self.username)
+                _keyring.delete_password(TOKEN_SERVICE, self.username)
             except Exception:
                 pass
 

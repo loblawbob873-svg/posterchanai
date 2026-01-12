@@ -75,7 +75,9 @@ class MessageWidget(Widget):
 
     def _is_torrent_list(self, content: str) -> bool:
         """Check if content is a torrent list with download commands."""
-        return "torrents download" in content and content.count("[Download]") >= 1
+        # Match both "torrents download" and "nyaa download" commands
+        has_download_cmd = "torrents download" in content or "nyaa download" in content
+        return has_download_cmd and content.count("[Download]") >= 1
 
     def _is_bt_list(self, content: str) -> bool:
         """Check if content is a bt list with action buttons."""
@@ -98,8 +100,8 @@ class MessageWidget(Widget):
 
         # Pattern: **1. [Title](url)** or **1. Title** or 1. [Title](url) (size)
         title_pattern = re.compile(r'(?:\*\*)?(\d+)\.\s*(.+?)(?:\*\*)?$')
-        # Pattern: [Download](cmd:torrents download category num)
-        download_pattern = re.compile(r'\[Download\]\(cmd:(torrents download [^)]+)\)')
+        # Pattern: [Download](cmd:torrents download ...) or [Download](cmd:nyaa download ...)
+        download_pattern = re.compile(r'\[Download\]\(cmd:((?:torrents|nyaa) download [^)]+)\)')
 
         for line in lines:
             title_match = title_pattern.search(line)
