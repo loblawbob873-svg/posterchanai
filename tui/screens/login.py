@@ -119,13 +119,20 @@ class LoginScreen(Screen):
             error_msg = str(e)
             if "401" in error_msg or "Invalid" in error_msg:
                 error_widget.update("Invalid username or password")
-            elif "Connection" in error_msg or "connect" in error_msg.lower():
-                error_widget.update(f"Cannot connect to server")
+                login_btn.disabled = False
+                login_btn.label = "Login"
+            elif "Connection" in error_msg or "connect" in error_msg.lower() or "timeout" in error_msg.lower():
+                # Connection error - offer to retry
+                error_widget.update("Server unavailable. Retrying...")
+                login_btn.label = "Retrying..."
+                # Wait and retry
+                import asyncio
+                await asyncio.sleep(3)
+                self.do_login()  # Retry login
             else:
                 error_widget.update(f"Error: {error_msg[:50]}")
-
-            login_btn.disabled = False
-            login_btn.label = "Login"
+                login_btn.disabled = False
+                login_btn.label = "Login"
 
     def action_quit(self):
         """Quit application."""

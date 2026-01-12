@@ -56,16 +56,37 @@ class ChatApp(App):
         token = self.config.load_token()
         if token:
             self.api.token = token
-            try:
-                user = await self.api.get_current_user()
-                self.current_user = user
-                # Go to main screen
-                from tui.screens.main import MainScreen
-                self.push_screen(MainScreen(user))
-                return
-            except Exception:
-                # Token expired or invalid
-                self.config.clear_token()
+            # Retry connection if server is temporarily down
+            max_retries = 5
+            retry_delay = 2
+            for attempt in range(max_retries):
+                try:
+                    user = await self.api.get_current_user()
+                    self.current_user = user
+                    # Go to main screen
+                    from tui.screens.main import MainScreen
+                    self.push_screen(MainScreen(user))
+                    return
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    # Check if it's a connection error (server down) vs auth error
+                    if "401" in str(e) or "unauthorized" in error_msg or "invalid" in error_msg:
+                        # Auth error - token is invalid, clear and go to login
+                        self.config.clear_token()
+                        break
+                    elif "connect" in error_msg or "connection" in error_msg or "timeout" in error_msg:
+                        # Connection error - server might be starting up, retry
+                        if attempt < max_retries - 1:
+                            self.notify(f"Server unavailable, retrying in {retry_delay}s... ({attempt + 1}/{max_retries})")
+                            await asyncio.sleep(retry_delay)
+                            retry_delay = min(retry_delay * 2, 10)  # Exponential backoff, max 10s
+                        else:
+                            # Max retries reached - go to login but keep token
+                            self.notify("Server unavailable. Token preserved for later.")
+                    else:
+                        # Unknown error - clear token
+                        self.config.clear_token()
+                        break
 
         # Show login screen
         from tui.screens.login import LoginScreen
