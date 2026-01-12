@@ -1538,6 +1538,7 @@ Return ONLY valid JSON, no other text."""},
                     try:
                         import json as json_module
                         parsed = await self.chat_service.chat(messages)
+                        logger.info(f"AI time parse response: {parsed[:500] if parsed else 'empty'}")
                         parsed = parsed.strip()
                         # Clean markdown
                         if "```" in parsed:
@@ -1546,6 +1547,7 @@ Return ONLY valid JSON, no other text."""},
                             if match:
                                 parsed = match.group(1).strip()
 
+                        logger.info(f"Cleaned JSON to parse: {parsed}")
                         time_data = json_module.loads(parsed)
                         new_start = date_parser.parse(time_data.get("start_time")) if time_data.get("start_time") else None
                         new_end = date_parser.parse(time_data.get("end_time")) if time_data.get("end_time") else None
@@ -1573,8 +1575,8 @@ Return ONLY valid JSON, no other text."""},
                                 return {"type": "text", "content": f"✅ Rescheduled to: **{time_str}**"}
                         return {"type": "text", "content": "❌ Failed to update event."}
                     except Exception as e:
-                        logger.error(f"Error parsing time change: {e}")
-                        return {"type": "text", "content": f"❌ Could not parse time. Try: `cal edit {event_uid} time tomorrow at 3pm`"}
+                        logger.error(f"Error parsing time change: {e}", exc_info=True)
+                        return {"type": "text", "content": f"❌ Could not parse time: {str(e)[:100]}. Try: `cal edit {event_uid} time tomorrow at 3pm`"}
 
                 else:
                     return {"type": "text", "content": "Usage: `cal edit <uid> <field> <value>`\n\nFields:\n- `title <new title>`\n- `location <new location>`\n- `description <new description>`\n- `time <new time>` or `move to <new time>`"}
