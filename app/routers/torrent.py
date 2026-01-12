@@ -47,6 +47,7 @@ def get_bt_service(db: Session):
             proxy_port=int(get_setting("bt_proxy_port", "8118")),
             scgi_host=get_setting("bt_scgi_host", "0.0.0.0"),
             scgi_port=int(get_setting("bt_scgi_port", "5001")),
+            listen_port=int(get_setting("bt_listen_port", "6881")),
         )
     except ImportError:
         return None

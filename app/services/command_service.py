@@ -526,12 +526,12 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
         return {"type": "text", "content": format_download_result(result)}
 
     def _get_bt_service(self):
-        """Get built-in torrent service if enabled, or None."""
+        """Get built-in torrent service if enabled, or None. Returns (service, error_msg)."""
         from app.models import Setting
 
         bt_enabled = self.db.query(Setting).filter(Setting.key == "bt_enabled").first()
         if not bt_enabled or bt_enabled.value.lower() != "true":
-            return None
+            return None, "Built-in torrent client is disabled. Enable it in Admin Settings."
 
         def get_setting(key: str, default: str = "") -> str:
             s = self.db.query(Setting).filter(Setting.key == key).first()
@@ -539,22 +539,26 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
         proxy_host = get_setting("bt_proxy_host")
         if not proxy_host:
-            return None  # Proxy required
+            return None, "HTTP Proxy Host not configured. Set it in Admin Settings (required for torrenting)."
 
         try:
             from app.services.libtorrent_service import LibtorrentService
-            return LibtorrentService.get_instance(
+            service = LibtorrentService.get_instance(
                 download_dir=get_setting("bt_download_dir", "/var/lib/posterchanai/torrents"),
                 proxy_host=proxy_host,
                 proxy_port=int(get_setting("bt_proxy_port", "8118")),
                 scgi_host=get_setting("bt_scgi_host", "0.0.0.0"),
                 scgi_port=int(get_setting("bt_scgi_port", "5001")),
+                listen_port=int(get_setting("bt_listen_port", "6881")),
             )
-        except ImportError:
-            return None
+            return service, None
+        except ImportError as e:
+            return None, f"libtorrent not installed: {e}. Run: pip install libtorrent"
+        except Exception as e:
+            return None, f"Failed to start torrent service: {e}"
 
     async def _torrents_command(self, arg: str) -> dict:
-        """Browse torrents and manage downloads (built-in or Flood)"""
+        """Browse torrents and manage downloads."""
         global _torrent_cache
 
         parts = arg.strip().split()
@@ -562,19 +566,19 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
         categories = ("movies", "tv", "music", "anime")
 
         # Get built-in service (None if disabled or not configured)
-        bt_service = self._get_bt_service()
+        bt_service, bt_error = self._get_bt_service()
 
         # Client management subcommands - require built-in client
         if subcommand in ("list", "ls"):
             if not bt_service:
-                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+                return {"type": "text", "content": bt_error}
             from app.services.libtorrent_service import format_torrent_list
             torrents = bt_service.list_torrents()
             return {"type": "text", "content": format_torrent_list(torrents)}
 
         elif subcommand == "add" and len(parts) > 1:
             if not bt_service:
-                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+                return {"type": "text", "content": bt_error}
             magnet = parts[1]
             if magnet.startswith("magnet:"):
                 info_hash = bt_service.add_magnet(magnet)
@@ -583,7 +587,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
         elif subcommand in ("start", "resume") and len(parts) > 1:
             if not bt_service:
-                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+                return {"type": "text", "content": bt_error}
             try:
                 num = int(parts[1])
                 info_hash = bt_service.get_hash_by_number(num)
@@ -595,7 +599,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
         elif subcommand in ("stop", "pause") and len(parts) > 1:
             if not bt_service:
-                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+                return {"type": "text", "content": bt_error}
             try:
                 num = int(parts[1])
                 info_hash = bt_service.get_hash_by_number(num)
@@ -607,7 +611,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
         elif subcommand in ("del", "delete", "rm") and len(parts) > 1:
             if not bt_service:
-                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+                return {"type": "text", "content": bt_error}
             try:
                 num = int(parts[1])
                 info_hash = bt_service.get_hash_by_number(num)
@@ -619,7 +623,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
         elif subcommand == "purge" and len(parts) > 1:
             if not bt_service:
-                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+                return {"type": "text", "content": bt_error}
             try:
                 num = int(parts[1])
                 info_hash = bt_service.get_hash_by_number(num)
@@ -631,7 +635,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
         elif subcommand == "info" and len(parts) > 1:
             if not bt_service:
-                return {"type": "text", "content": "Built-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+                return {"type": "text", "content": bt_error}
             try:
                 num = int(parts[1])
                 info_hash = bt_service.get_hash_by_number(num)
@@ -698,7 +702,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\nLogin required to download."}
 
             if not bt_service:
-                return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\nBuilt-in torrent client not configured. Enable it in Admin Settings with HTTP proxy."}
+                return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\n{bt_error}"}
 
             info_hash = bt_service.add_magnet(magnet)
             return {"type": "text", "content": f"**Downloading:** {torrent.title}\n\nAdded: `{info_hash}`\n\nUse `torrents list` to check progress."}

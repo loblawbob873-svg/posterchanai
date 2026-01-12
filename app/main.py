@@ -128,6 +128,40 @@ async def startup():
     from app.services.mcp_service import start_mcp_server
     start_mcp_server()
 
+    # Auto-start built-in torrent client if enabled
+    db3 = SessionLocal()
+    try:
+        bt_enabled = db3.query(Setting).filter(Setting.key == "bt_enabled").first()
+        if bt_enabled and bt_enabled.value.lower() == "true":
+            bt_proxy_host = db3.query(Setting).filter(Setting.key == "bt_proxy_host").first()
+            if bt_proxy_host and bt_proxy_host.value:
+                def get_bt_setting(key):
+                    s = db3.query(Setting).filter(Setting.key == key).first()
+                    return s.value if s else None
+
+                download_dir = get_bt_setting("bt_download_dir") or "/var/lib/posterchanai/torrents"
+                proxy_port = int(get_bt_setting("bt_proxy_port") or "8118")
+                scgi_host = get_bt_setting("bt_scgi_host") or "0.0.0.0"
+                scgi_port = int(get_bt_setting("bt_scgi_port") or "5001")
+                listen_port = int(get_bt_setting("bt_listen_port") or "6881")
+
+                from app.services.libtorrent_service import LibtorrentService
+                service = LibtorrentService.get_instance(
+                    download_dir=download_dir,
+                    proxy_host=bt_proxy_host.value,
+                    proxy_port=proxy_port,
+                    scgi_host=scgi_host,
+                    scgi_port=scgi_port,
+                    listen_port=listen_port
+                )
+                logging.info(f"Built-in torrent client started (SCGI port {scgi_port})")
+            else:
+                logging.warning("Built-in torrent client enabled but no proxy host configured")
+    except Exception as e:
+        logging.error(f"Failed to start built-in torrent client: {e}")
+    finally:
+        db3.close()
+
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -156,6 +190,15 @@ async def shutdown():
     # Stop MCP server
     from app.services.mcp_service import stop_mcp_server
     stop_mcp_server()
+
+    # Stop built-in torrent client if running
+    try:
+        from app.services.libtorrent_service import LibtorrentService
+        if LibtorrentService._instance is not None:
+            LibtorrentService._instance.stop()
+            logging.info("Built-in torrent client stopped")
+    except Exception as e:
+        logging.error(f"Error stopping torrent client: {e}")
 
 
 @app.get("/")

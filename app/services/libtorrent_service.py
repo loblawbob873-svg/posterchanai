@@ -3,7 +3,6 @@ Built-in torrent client using libtorrent with HTTP proxy support and SCGI server
 """
 
 import libtorrent as lt
-import asyncio
 import threading
 import socket
 import struct
@@ -54,6 +53,7 @@ class LibtorrentService:
         proxy_port: int = 8118,
         scgi_host: str = "0.0.0.0",
         scgi_port: int = 5001,
+        listen_port: int = 6881,
     ):
         self.download_dir = Path(download_dir)
         self.download_dir.mkdir(parents=True, exist_ok=True)
@@ -68,7 +68,7 @@ class LibtorrentService:
         # protocol.pex.set = yes
         settings = {
             'alert_mask': lt.alert.category_t.all_categories,
-            'listen_interfaces': '0.0.0.0:6881',
+            'listen_interfaces': f'0.0.0.0:{listen_port}',
             'download_rate_limit': 0,  # unlimited
             'upload_rate_limit': 0,
             # Enable DHT (dht.mode.set = auto)
@@ -125,6 +125,7 @@ class LibtorrentService:
         proxy_port: int = 8118,
         scgi_host: str = "0.0.0.0",
         scgi_port: int = 5001,
+        listen_port: int = 6881,
     ) -> 'LibtorrentService':
         """Get or create singleton instance."""
         with cls._lock:
@@ -135,6 +136,7 @@ class LibtorrentService:
                     proxy_port=proxy_port,
                     scgi_host=scgi_host,
                     scgi_port=scgi_port,
+                    listen_port=listen_port,
                 )
                 cls._instance.start()
             return cls._instance
