@@ -1118,6 +1118,49 @@ Toast.-error {
     background: #ff6666;
 }
 
+/* ═══════════ MAIL LIST BUTTONS ═══════════ */
+.mail-row {
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.mail-text {
+    width: 1fr;
+    padding: 0 1;
+    color: $text;
+    content-align: left middle;
+}
+
+.mail-btn {
+    width: 3;
+    min-width: 3;
+    height: 1;
+    padding: 0;
+    margin: 0;
+    background: $neon-blue;
+    color: $background;
+    border: none;
+    text-style: bold;
+}
+
+.mail-btn:hover {
+    background: $cyan;
+}
+
+.mail-btn:focus {
+    background: $green;
+}
+
+.mail-btn-danger {
+    background: #ff3333;
+}
+
+.mail-btn-danger:hover {
+    background: #ff6666;
+}
+
 /* ═══════════ ATTACH BUTTON - FILE UPLOAD ═══════════ */
 .attach-btn {
     width: 5;

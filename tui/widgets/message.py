@@ -76,6 +76,10 @@ class MessageWidget(Widget):
         """Check if content is a bt list with action buttons."""
         return "**Torrents:**" in content and ("cmd:bt " in content or "cmd:torrents " in content)
 
+    def _is_mail_list(self, content: str) -> bool:
+        """Check if content is a mail list with action buttons."""
+        return ("◈ INBOX ◈" in content or "◈ UNREAD ◈" in content or "◈ SEARCH" in content or ("◈" in content and "(cmd:mail " in content)) and content.count("[Read]") >= 1
+
     def _parse_torrent_entries(self, content: str) -> list[dict]:
         """Parse torrent list content into entries with inline buttons."""
         entries = []
@@ -134,6 +138,8 @@ class MessageWidget(Widget):
             self._render_torrent_list(content, content_container)
         elif self._is_bt_list(content):
             self._render_bt_list(content, content_container)
+        elif self._is_mail_list(content):
+            self._render_mail_list(content, content_container)
         else:
             # Standard markdown rendering
             try:
@@ -292,6 +298,110 @@ class MessageWidget(Widget):
                 del_btn.command = entry['delete_cmd']
                 row.mount(del_btn)
 
+    def _render_mail_list(self, content: str, container: Vertical):
+        """Render mail list with inline action buttons per message."""
+        import logging
+        logger = logging.getLogger("tui")
+
+        lines = content.split("\n")
+        entries = []
+        current_entry = None
+
+        # Pattern: 1. **[NEW]** **sender** - subject  OR  1. **sender** - subject
+        entry_pattern = re.compile(r'^(\d+)\.\s*(?:\*\*\[NEW\]\*\*\s*)?\*\*(.+?)\*\*\s*-\s*(.+)$')
+        # Pattern: [Read](cmd:mail read ...) | [Reply All](cmd:mail reply ...) ...
+        read_pattern = re.compile(r'\[Read\]\(cmd:(mail read [^)]+)\)')
+        reply_pattern = re.compile(r'\[Reply All\]\(cmd:(mail reply [^)]+)\)')
+        archive_pattern = re.compile(r'\[Archive\]\(cmd:(mail archive [^)]+)\)')
+        delete_pattern = re.compile(r'\[Delete\]\(cmd:(mail delete [^)]+)\)')
+
+        for line in lines:
+            entry_match = entry_pattern.match(line.strip())
+            if entry_match:
+                if current_entry:
+                    entries.append(current_entry)
+                num = entry_match.group(1)
+                sender = entry_match.group(2)
+                subject = entry_match.group(3)
+                is_new = "**[NEW]**" in line
+                current_entry = {
+                    "num": num,
+                    "sender": sender,
+                    "subject": subject,
+                    "is_new": is_new,
+                    "info": "",
+                    "read_cmd": None,
+                    "reply_cmd": None,
+                    "archive_cmd": None,
+                    "delete_cmd": None,
+                }
+            elif current_entry:
+                # Check for date/account info line
+                if "|" in line and not "[" in line:
+                    current_entry["info"] = line.strip()
+
+                # Check for action buttons
+                read_match = read_pattern.search(line)
+                if read_match:
+                    current_entry["read_cmd"] = read_match.group(1)
+
+                reply_match = reply_pattern.search(line)
+                if reply_match:
+                    current_entry["reply_cmd"] = reply_match.group(1)
+
+                archive_match = archive_pattern.search(line)
+                if archive_match:
+                    current_entry["archive_cmd"] = archive_match.group(1)
+
+                delete_match = delete_pattern.search(line)
+                if delete_match:
+                    current_entry["delete_cmd"] = delete_match.group(1)
+
+        if current_entry:
+            entries.append(current_entry)
+
+        logger.info(f"Parsed {len(entries)} mail entries")
+
+        # Render header
+        header_match = re.search(r'## ◈ (.+?) ◈', content)
+        if header_match:
+            container.mount(Static(f"[bold cyan]{header_match.group(1)}[/bold cyan]", classes="message-body"))
+
+        # Render each entry
+        for entry in entries:
+            row = Horizontal(classes="mail-row")
+
+            # Build info text
+            new_marker = "[NEW] " if entry['is_new'] else ""
+            info = f"{entry['num']}. {new_marker}{entry['sender']} - {entry['subject']}"
+            if entry['info']:
+                info += f"\n   {entry['info']}"
+
+            row_text = Static(info, classes="mail-text")
+            container.mount(row)
+            row.mount(row_text)
+
+            # Add action buttons
+            if entry['read_cmd']:
+                read_btn = Button("R", classes="mail-btn")
+                read_btn.command = entry['read_cmd']
+                row.mount(read_btn)
+
+            if entry['reply_cmd']:
+                reply_btn = Button("↩", classes="mail-btn")
+                reply_btn.command = entry['reply_cmd']
+                row.mount(reply_btn)
+
+            if entry['archive_cmd']:
+                archive_btn = Button("A", classes="mail-btn")
+                archive_btn.command = entry['archive_cmd']
+                row.mount(archive_btn)
+
+            if entry['delete_cmd']:
+                del_btn = Button("X", classes="mail-btn mail-btn-danger")
+                del_btn.command = entry['delete_cmd']
+                row.mount(del_btn)
+
     def _render_buttons(self):
         """Render cmd: link buttons for essential actions."""
         import logging
@@ -301,8 +411,8 @@ class MessageWidget(Widget):
             button_container = self.query_one("#message-buttons", Horizontal)
             button_container.remove_children()
 
-            # Skip if already rendered inline (torrent list or bt list)
-            if self._is_torrent_list(self.content) or self._is_bt_list(self.content):
+            # Skip if already rendered inline (torrent list, bt list, or mail list)
+            if self._is_torrent_list(self.content) or self._is_bt_list(self.content) or self._is_mail_list(self.content):
                 return
 
             logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")
