@@ -718,16 +718,23 @@ function initCalendarModal() {
     saveBtn?.addEventListener('click', () => {
         const title = document.getElementById('eventTitle').value.trim();
         const date = document.getElementById('eventDate').value;
-        const time = document.getElementById('eventTime').value;
+        let time = document.getElementById('eventTime').value;
         const endTime = document.getElementById('eventEndTime').value;
         const location = document.getElementById('eventLocation').value.trim();
         const description = document.getElementById('eventDescription').value.trim();
         const recurrence = document.getElementById('eventRecurrence').value.trim();
         const uid = document.getElementById('eventUid').value;
 
-        if (!title || !date || !time) {
-            alert('Please fill in required fields: Title, Date, and Time');
+        console.log('Calendar save:', { title, date, time, endTime, location, uid });
+
+        if (!title || !date) {
+            alert('Please fill in required fields: Title and Date');
             return;
+        }
+
+        // Default time to 9:00 AM if not provided
+        if (!time) {
+            time = '09:00';
         }
 
         // Build the command
