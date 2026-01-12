@@ -428,6 +428,14 @@ class STTController {
             this.updateUI();
             console.log('Whisper recording started');
 
+            // Auto-stop after 10 seconds max recording time
+            this.whisperTimeout = setTimeout(() => {
+                if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+                    console.log('Auto-stopping Whisper recording after timeout');
+                    this.stop();
+                }
+            }, 10000);
+
         } catch (e) {
             console.error('Failed to start Whisper recording:', e);
             if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
@@ -502,6 +510,12 @@ class STTController {
     stop() {
         this.userStopped = true;
         this.clearAutoSendTimer();
+
+        // Clear Whisper auto-stop timeout
+        if (this.whisperTimeout) {
+            clearTimeout(this.whisperTimeout);
+            this.whisperTimeout = null;
+        }
 
         if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
             this.mediaRecorder.stop();
