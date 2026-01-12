@@ -154,7 +154,13 @@ def to_naive_local(dt) -> datetime:
         return datetime.combine(dt, datetime.min.time())
     if dt.tzinfo is not None:
         # Convert to local time and strip timezone
-        return dt.astimezone().replace(tzinfo=None)
+        local_dt = dt.astimezone().replace(tzinfo=None)
+        logger.debug(f"to_naive_local: {dt} -> {local_dt}")
+        return local_dt
+    # Naive datetime - check if it looks like UTC (from iCalendar)
+    # Many CalDAV servers return UTC times without explicit tzinfo
+    # If the datetime string ended with 'Z', it's UTC
+    logger.warning(f"to_naive_local: naive datetime {dt} - assuming local time")
     return dt
 
 
@@ -207,12 +213,26 @@ def get_events_for_date_range(
 
                         # Get start time (convert to naive local)
                         start = vevent.dtstart.value
+                        logger.info(f"Fetched event start: {start} (type={type(start).__name__}, tzinfo={getattr(start, 'tzinfo', 'N/A')})")
+
+                        # Handle naive datetimes - assume they're UTC if from CalDAV
+                        if isinstance(start, datetime) and start.tzinfo is None:
+                            # Naive datetime from CalDAV is typically UTC
+                            from datetime import timezone as tz
+                            start = start.replace(tzinfo=tz.utc)
+                            logger.info(f"Assumed UTC: {start}")
+
                         start_dt = to_naive_local(start)
+                        logger.info(f"Converted to local: {start_dt}")
 
                         # Get end time (convert to naive local)
                         end_dt = None
                         if hasattr(vevent, 'dtend'):
-                            end_dt = to_naive_local(vevent.dtend.value)
+                            end_val = vevent.dtend.value
+                            if isinstance(end_val, datetime) and end_val.tzinfo is None:
+                                from datetime import timezone as tz
+                                end_val = end_val.replace(tzinfo=tz.utc)
+                            end_dt = to_naive_local(end_val)
 
                         events.append(CalendarEvent(
                             uid=str(vevent.uid.value) if hasattr(vevent, 'uid') else "",
@@ -296,9 +316,17 @@ def add_event_to_calendar(
         if end_time is None:
             end_time = start_time + timedelta(hours=1)
 
-        # Ensure times are local timezone-aware to avoid UTC conversion issues
+        # Convert to local timezone-aware, then to UTC for storage
+        # This ensures consistent handling across CalDAV servers
+        from datetime import timezone as tz
         start_time = to_local_aware(start_time)
         end_time = to_local_aware(end_time)
+
+        # Convert to UTC for iCalendar storage
+        start_utc = start_time.astimezone(tz.utc)
+        end_utc = end_time.astimezone(tz.utc)
+
+        logger.info(f"Storing event: local={start_time} -> UTC={start_utc}")
 
         cal = Calendar()
         cal.add('prodid', '-//Posterchanai//Calendar//EN')
@@ -306,8 +334,8 @@ def add_event_to_calendar(
 
         event = Event()
         event.add('summary', summary)
-        event.add('dtstart', start_time)
-        event.add('dtend', end_time)
+        event.add('dtstart', start_utc)
+        event.add('dtend', end_utc)
         if description:
             event.add('description', description)
         if location:
@@ -359,14 +387,22 @@ def get_event_by_uid(
                         start_dt = vevent.dtstart.value
                         if not isinstance(start_dt, datetime):
                             start_dt = datetime.combine(start_dt, datetime.min.time())
+                        # Naive datetime from CalDAV is typically UTC
+                        if isinstance(start_dt, datetime) and start_dt.tzinfo is None:
+                            start_dt = start_dt.replace(tzinfo=timezone.utc)
+                            logger.info(f"get_event_by_uid: assumed UTC for naive start: {start_dt}")
                         # Convert to local timezone
                         start_dt = to_local_aware(start_dt)
+                        logger.info(f"get_event_by_uid: start converted to local: {start_dt}")
 
                         end_dt = None
                         if hasattr(vevent, 'dtend'):
                             end_dt = vevent.dtend.value
                             if not isinstance(end_dt, datetime):
                                 end_dt = datetime.combine(end_dt, datetime.min.time())
+                            # Naive datetime from CalDAV is typically UTC
+                            if isinstance(end_dt, datetime) and end_dt.tzinfo is None:
+                                end_dt = end_dt.replace(tzinfo=timezone.utc)
                             # Convert to local timezone
                             end_dt = to_local_aware(end_dt)
 

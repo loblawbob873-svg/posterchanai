@@ -94,11 +94,29 @@ class MessageWidget(Widget):
 
     def _is_cal_list(self, content: str) -> bool:
         """Check if content is a calendar event list with action buttons."""
-        # Calendar output has edit/delete buttons with cal commands
-        has_cal_buttons = "cmd:cal get " in content or "cmd:cal delete " in content
-        # And has time indicators like "9:00 AM" or event formatting
+        import logging
+        logger = logging.getLogger("tui")
+
+        # Check for cmd:cal links (various formats)
+        has_cal_buttons = (
+            "cmd:cal get " in content or
+            "cmd:cal delete " in content or
+            "(cmd:cal get" in content or  # Without trailing space
+            "(cmd:cal delete" in content
+        )
+
+        # Check for calendar indicators (time patterns or calendar emoji/header)
         has_time = bool(re.search(r'\d{1,2}:\d{2}\s*(AM|PM|am|pm)?', content))
-        return has_cal_buttons and has_time
+        has_calendar_marker = "📅" in content or "⏰" in content
+        has_date_header = bool(re.search(r'\*\*\[?[A-Z]{3}\]?\*\*', content))  # **[MON]** or **MON**
+
+        # Calendar list if has cal buttons AND (time OR calendar marker OR date header)
+        result = has_cal_buttons and (has_time or has_calendar_marker or has_date_header)
+
+        logger.info(f"_is_cal_list: buttons={has_cal_buttons}, time={has_time}, marker={has_calendar_marker}, header={has_date_header}, result={result}")
+        if not result and has_cal_buttons:
+            logger.info(f"_is_cal_list MISS - content preview: {content[:300]}")
+        return result
 
     def _parse_torrent_entries(self, content: str) -> list[dict]:
         """Parse torrent list content into entries with inline buttons."""
@@ -645,20 +663,24 @@ class MessageWidget(Widget):
             button_container = self.query_one("#message-buttons", Horizontal)
             button_container.remove_children()
 
+            # Track which list types rendered inline
+            is_torrent = self._is_torrent_list(self.content)
+            is_bt = self._is_bt_list(self.content)
+            is_mail = self._is_mail_list(self.content)
+            is_cal = self._is_cal_list(self.content)
+
             # Skip if already rendered inline (torrent list, bt list, mail list, or cal list)
-            if self._is_torrent_list(self.content) or self._is_bt_list(self.content) or self._is_mail_list(self.content) or self._is_cal_list(self.content):
+            if is_torrent or is_bt or is_mail or is_cal:
                 return
 
             logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")
 
-            # Filter to essential action buttons (exclude torrents download - handled inline)
-            # Also exclude cal delete/get/edit - they're shown inline next to events
+            # Filter to essential action buttons
+            # Only exclude cal commands if calendar list was rendered inline (already handled above)
             essential_prefixes = ("mail ", "cal ", "todo ", "news ", "miniflux ", "nyaa ", "music ")
-            exclude_patterns = ("cal delete ", "cal get ", "cal edit ")
             actionable = [
                 (label, cmd) for label, cmd, _, _ in self._cmd_links
                 if any(cmd.startswith(p) for p in essential_prefixes)
-                and not any(cmd.startswith(e) for e in exclude_patterns)
             ]
 
             logger.info(f"Actionable buttons: {actionable}")
