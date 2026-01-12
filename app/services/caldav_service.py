@@ -294,6 +294,10 @@ def add_event_to_calendar(
         if end_time is None:
             end_time = start_time + timedelta(hours=1)
 
+        # Ensure times are local timezone-aware to avoid UTC conversion issues
+        start_time = to_local_aware(start_time)
+        end_time = to_local_aware(end_time)
+
         cal = Calendar()
         cal.add('prodid', '-//Posterchanai//Calendar//EN')
         cal.add('version', '2.0')
