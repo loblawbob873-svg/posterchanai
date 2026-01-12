@@ -182,7 +182,12 @@ HiddenServicePort 80 127.0.0.1:8080"></textarea>
         <div class="form-group">
             <label for="bt_server_url">Remote Torrent Server URL</label>
             <input type="text" id="bt_server_url" name="bt_server_url" placeholder="http://torrent-server:3051">
-            <small>Leave empty for local. Set URL to route to a different server (e.g., load balancing)</small>
+            <small>Leave empty for local. Set URL to forward requests to a remote torrent server</small>
+        </div>
+        <div class="form-group">
+            <label for="bt_server_token">Server API Token</label>
+            <input type="password" id="bt_server_token" name="bt_server_token" placeholder="shared-secret-token">
+            <small>Shared token for server-to-server auth. Set same token on both servers</small>
         </div>
         <div class="form-group">
             <label for="bt_download_dir">Download Directory</label>
