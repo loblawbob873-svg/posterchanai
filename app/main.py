@@ -128,6 +128,57 @@ async def startup():
     from app.services.mcp_service import start_mcp_server
     start_mcp_server()
 
+    # Auto-start built-in Tor if enabled
+    db_tor = SessionLocal()
+    try:
+        tor_enabled = db_tor.query(Setting).filter(Setting.key == "tor_enabled").first()
+        if tor_enabled and tor_enabled.value.lower() == "true":
+            def get_tor_setting(key, default=""):
+                s = db_tor.query(Setting).filter(Setting.key == key).first()
+                return s.value if s and s.value else default
+
+            from app.services.tor_service import start_tor_service
+            tor_service = start_tor_service(
+                socks_port=int(get_tor_setting("tor_socks_port", "9050")),
+                control_port=int(get_tor_setting("tor_control_port", "9051")),
+                exit_nodes=get_tor_setting("tor_exit_nodes", "{us}"),
+                data_dir=get_tor_setting("tor_data_dir", "/var/lib/posterchanai/tor"),
+            )
+            if tor_service:
+                logging.info(f"Built-in Tor started (SOCKS5 port {get_tor_setting('tor_socks_port', '9050')})")
+            else:
+                logging.error("Failed to start built-in Tor - check if 'tor' is installed")
+    except Exception as e:
+        logging.error(f"Failed to start built-in Tor: {e}")
+    finally:
+        db_tor.close()
+
+    # Auto-start built-in HTTP proxy if enabled
+    db_proxy = SessionLocal()
+    try:
+        proxy_enabled = db_proxy.query(Setting).filter(Setting.key == "proxy_enabled").first()
+        if proxy_enabled and proxy_enabled.value.lower() == "true":
+            def get_proxy_setting(key, default=""):
+                s = db_proxy.query(Setting).filter(Setting.key == key).first()
+                return s.value if s and s.value else default
+
+            socks_host = get_proxy_setting("proxy_socks_host")
+            if socks_host:
+                from app.services.http_proxy_service import start_http_proxy
+                start_http_proxy(
+                    listen_host=get_proxy_setting("proxy_listen_host", "127.0.0.1"),
+                    listen_port=int(get_proxy_setting("proxy_listen_port", "8118")),
+                    socks_host=socks_host,
+                    socks_port=int(get_proxy_setting("proxy_socks_port", "9050")),
+                )
+                logging.info(f"Built-in HTTP proxy started on port {get_proxy_setting('proxy_listen_port', '8118')}")
+            else:
+                logging.warning("HTTP proxy enabled but no SOCKS5 target host configured")
+    except Exception as e:
+        logging.error(f"Failed to start built-in HTTP proxy: {e}")
+    finally:
+        db_proxy.close()
+
     # Auto-start built-in torrent client if enabled
     db3 = SessionLocal()
     try:
@@ -199,6 +250,20 @@ async def shutdown():
             logging.info("Built-in torrent client stopped")
     except Exception as e:
         logging.error(f"Error stopping torrent client: {e}")
+
+    # Stop built-in HTTP proxy if running
+    try:
+        from app.services.http_proxy_service import stop_http_proxy
+        stop_http_proxy()
+    except Exception as e:
+        logging.error(f"Error stopping HTTP proxy: {e}")
+
+    # Stop built-in Tor if running
+    try:
+        from app.services.tor_service import stop_tor_service
+        stop_tor_service()
+    except Exception as e:
+        logging.error(f"Error stopping Tor: {e}")
 
 
 @app.get("/")

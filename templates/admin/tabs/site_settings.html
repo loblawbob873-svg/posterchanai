@@ -101,6 +101,66 @@ newsweek.com|Newsweek"></textarea>
     </fieldset>
 
     <fieldset>
+        <legend>Built-in Tor Client</legend>
+        <div class="form-group">
+            <label for="tor_enabled">
+                <input type="checkbox" id="tor_enabled" name="tor_enabled"> Enable Built-in Tor
+            </label>
+            <small>Run Tor locally for anonymous traffic routing (requires tor package installed)</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="tor_socks_port">SOCKS5 Port</label>
+                <input type="number" id="tor_socks_port" name="tor_socks_port" value="9050" min="1" max="65535">
+            </div>
+            <div class="form-group">
+                <label for="tor_control_port">Control Port</label>
+                <input type="number" id="tor_control_port" name="tor_control_port" value="9051" min="1" max="65535">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="tor_exit_nodes">Exit Nodes</label>
+            <input type="text" id="tor_exit_nodes" name="tor_exit_nodes" value="{us}" placeholder="{us},{ca},{gb}">
+            <small>Country codes for exit nodes. Format: <code>{us}</code> or <code>{us},{gb}</code>. Default: US only</small>
+        </div>
+        <div class="form-group">
+            <label for="tor_data_dir">Tor Data Directory</label>
+            <input type="text" id="tor_data_dir" name="tor_data_dir" value="/var/lib/posterchanai/tor">
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Built-in HTTP Proxy (HTTP→SOCKS5)</legend>
+        <div class="form-group">
+            <label for="proxy_enabled">
+                <input type="checkbox" id="proxy_enabled" name="proxy_enabled"> Enable Built-in HTTP Proxy
+            </label>
+            <small>HTTP proxy that forwards to SOCKS5 (Tor). Replaces Privoxy.</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="proxy_listen_host">Listen Address</label>
+                <input type="text" id="proxy_listen_host" name="proxy_listen_host" value="127.0.0.1" placeholder="127.0.0.1">
+            </div>
+            <div class="form-group">
+                <label for="proxy_listen_port">Listen Port</label>
+                <input type="number" id="proxy_listen_port" name="proxy_listen_port" value="8118" min="1" max="65535">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="proxy_socks_host">SOCKS5 Target Host</label>
+                <input type="text" id="proxy_socks_host" name="proxy_socks_host" placeholder="127.0.0.1 or tor-server-ip">
+            </div>
+            <div class="form-group">
+                <label for="proxy_socks_port">SOCKS5 Target Port</label>
+                <input type="number" id="proxy_socks_port" name="proxy_socks_port" value="9050" min="1" max="65535">
+            </div>
+        </div>
+        <small style="display:block; margin-top:8px;">For distributed setup: Set SOCKS5 host to your Tor server's IP. If using built-in Tor, use 127.0.0.1</small>
+    </fieldset>
+
+    <fieldset>
         <legend>Built-in Torrent Client (libtorrent)</legend>
         <div class="form-group">
             <label for="bt_enabled">
