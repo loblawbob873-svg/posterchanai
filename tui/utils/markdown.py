@@ -143,12 +143,12 @@ def parse_markdown(text: str) -> Text:
     # Strip any HTML first
     processed = strip_html(text)
 
-    # Keep cmd: link labels inline (icons like ✏️ 🗑️) - they're styled as buttons
-    # Format: [label](cmd:command) -> [button]label[/button]
-    processed = CMD_LINK_PATTERN.sub(r'[cyan]\1[/cyan]', processed)
+    # Keep cmd: link labels inline (icons like ✏️ 🗑️)
+    # Just show the label text (emoji icons)
+    processed = CMD_LINK_PATTERN.sub(r'\1', processed)
 
     # Convert copy: links similarly - keep label
-    processed = COPY_LINK_PATTERN.sub(r'[cyan]\1[/cyan]', processed)
+    processed = COPY_LINK_PATTERN.sub(r'\1', processed)
 
     # Convert regular links - show URL for Ctrl+Click in terminal
     # Use proper paren-balanced extraction
