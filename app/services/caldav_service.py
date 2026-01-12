@@ -289,12 +289,17 @@ def add_event_to_calendar(
     description: str,
     start_time: datetime,
     end_time: Optional[datetime] = None,
-    location: Optional[str] = None
+    location: Optional[str] = None,
+    rrule: Optional[str] = None
 ) -> bool:
-    """Add an event to a CalDAV calendar."""
+    """Add an event to a CalDAV calendar.
+
+    Args:
+        rrule: Optional iCalendar RRULE string (e.g., "FREQ=WEEKLY;BYDAY=MO,WE,FR")
+    """
     try:
         logger.info(f"Adding event '{summary}' to calendar at {url}")
-        logger.debug(f"Event times: start={start_time}, end={end_time}")
+        logger.debug(f"Event times: start={start_time}, end={end_time}, rrule={rrule}")
 
         client = create_caldav_client(url, username, password)
 
@@ -340,6 +345,26 @@ def add_event_to_calendar(
             event.add('description', description)
         if location:
             event.add('location', location)
+        if rrule:
+            # Parse RRULE string into components for icalendar
+            from icalendar import vRecur
+            try:
+                # Parse the RRULE string (e.g., "FREQ=WEEKLY;BYDAY=MO,WE,FR")
+                rrule_dict = {}
+                for part in rrule.split(';'):
+                    if '=' in part:
+                        key, value = part.split('=', 1)
+                        # Handle BYDAY which can have multiple values
+                        if key.upper() == 'BYDAY':
+                            rrule_dict[key.lower()] = value.split(',')
+                        elif value.isdigit():
+                            rrule_dict[key.lower()] = int(value)
+                        else:
+                            rrule_dict[key.lower()] = value
+                event.add('rrule', rrule_dict)
+                logger.info(f"Added RRULE: {rrule_dict}")
+            except Exception as e:
+                logger.warning(f"Failed to parse RRULE '{rrule}': {e}")
         event.add('dtstamp', datetime.now())
 
         import uuid

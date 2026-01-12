@@ -1362,16 +1362,28 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
                 # Use AI to parse the event
                 from datetime import date
+                import time as time_module
                 today = date.today()
+                local_tz = time_module.tzname[0]
                 messages = [
                     {"role": "system", "content": f"""Parse this event and return JSON with:
 - summary: event name
-- description: any details mentioned
-- start_time: ISO format datetime
-- end_time: ISO format datetime (default 1 hour after start)
+- description: any details mentioned (do NOT include recurrence info here)
+- start_time: ISO format datetime WITHOUT timezone suffix (e.g., "2026-01-13T09:00:00")
+- end_time: ISO format datetime WITHOUT timezone suffix (default 1 hour after start)
 - location: place if mentioned
+- rrule: iCalendar RRULE string if event repeats, null if not repeating
+
+For recurrence patterns:
+- "daily" -> "FREQ=DAILY"
+- "weekly" -> "FREQ=WEEKLY"
+- "weekly Mon Wed Fri" -> "FREQ=WEEKLY;BYDAY=MO,WE,FR"
+- "weekly Mon Fri" -> "FREQ=WEEKLY;BYDAY=MO,FR"
+- "monthly" -> "FREQ=MONTHLY"
+- "every weekday" -> "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
 
 IMPORTANT: Today is {today.strftime('%A, %B %d, %Y')}. Use the current year {today.year} for dates.
+Times are in local timezone ({local_tz}). Do NOT add Z suffix to times.
 Return ONLY valid JSON, no other text."""},
                     {"role": "user", "content": f"Parse this event: {param}"}
                 ]
@@ -1402,10 +1414,16 @@ Return ONLY valid JSON, no other text."""},
                     start_str = event_data.get("start_time", "")
                     end_str = event_data.get("end_time", "")
                     location = event_data.get("location")
+                    rrule = event_data.get("rrule")
 
-                    logger.info(f"Parsed event: summary={summary}, start={start_str}, end={end_str}")
+                    logger.info(f"Parsed event: summary={summary}, start={start_str}, end={end_str}, rrule={rrule}")
 
-                    # Parse dates
+                    # Parse dates - strip any Z suffix the AI might add
+                    if start_str and start_str.endswith('Z'):
+                        start_str = start_str[:-1]
+                    if end_str and end_str.endswith('Z'):
+                        end_str = end_str[:-1]
+
                     start_time = date_parser.parse(start_str) if start_str else datetime.now() + timedelta(hours=1)
                     end_time = date_parser.parse(end_str) if end_str else start_time + timedelta(hours=1)
 
@@ -1416,13 +1434,14 @@ Return ONLY valid JSON, no other text."""},
                     logger.info(f"Adding to calendar: {cal['name']} ({cal['url']})")
                     success = add_event_to_calendar(
                         cal['url'], cal['username'], cal['password'],
-                        summary, description, start_time, end_time, location
+                        summary, description, start_time, end_time, location, rrule
                     )
 
                     if success:
                         time_str = start_time.strftime("%A, %B %d at %I:%M %p")
+                        recurrence_msg = f"\n🔁 {rrule}" if rrule else ""
                         logger.info(f"Event added successfully: {summary} at {time_str}")
-                        return {"type": "text", "content": f"✅ Event added: **{summary}**\n\n📅 {time_str}"}
+                        return {"type": "text", "content": f"✅ Event added: **{summary}**\n\n📅 {time_str}{recurrence_msg}"}
                     else:
                         logger.error(f"Failed to add event: {summary}")
                         return {"type": "text", "content": "❌ Failed to add event to calendar."}
