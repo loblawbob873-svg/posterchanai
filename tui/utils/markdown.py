@@ -65,6 +65,10 @@ def strip_html(text: str) -> str:
     result = re.sub(r'<style[^>]*>.*?</style>', '', result, flags=re.IGNORECASE | re.DOTALL)
     result = re.sub(r'<script[^>]*>.*?</script>', '', result, flags=re.IGNORECASE | re.DOTALL)
 
+    # Remove CSS class/id definitions that leak through (e.g. .className { ... })
+    result = re.sub(r'\.[a-zA-Z_][a-zA-Z0-9_-]*\s*\{[^}]*\}', '', result, flags=re.DOTALL)
+    result = re.sub(r'#[a-zA-Z_][a-zA-Z0-9_-]*\s*\{[^}]*\}', '', result, flags=re.DOTALL)
+
     # Remove all remaining HTML tags
     result = re.sub(r'<[^>]+>', '', result)
 

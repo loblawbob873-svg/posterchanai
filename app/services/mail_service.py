@@ -184,6 +184,10 @@ def html_to_text(html: str) -> str:
     text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.IGNORECASE | re.DOTALL)
 
+    # Remove CSS class/id definitions that leak through (e.g. .className { ... })
+    text = re.sub(r'\.[a-zA-Z_][a-zA-Z0-9_-]*\s*\{[^}]*\}', '', text, flags=re.DOTALL)
+    text = re.sub(r'#[a-zA-Z_][a-zA-Z0-9_-]*\s*\{[^}]*\}', '', text, flags=re.DOTALL)
+
     # Remove all remaining HTML tags
     text = re.sub(r'<[^>]+>', '', text)
 
@@ -1268,7 +1272,7 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
         body_content = msg.body_text
         # Check if body_text actually contains HTML (some clients put HTML in plain part)
         lower_body = body_content.lower()
-        html_indicators = ['<html', '<body', '<div', '<p>', '<p ', '<table', '<span', '<!doctype', '<br', '<br/', '<a href', '<td', '<tr', '<img', '<style', '<head', '<meta', '&nbsp;', '&quot;', '&#']
+        html_indicators = ['<html', '<body', '<div', '<p>', '<p ', '<table', '<span', '<!doctype', '<br', '<br/', '<a href', '<td', '<tr', '<img', '<style', '<head', '<meta', '&nbsp;', '&quot;', '&#', '.t{', 'background-color:', 'font-family:', 'color:#', 'color: #']
         if any(indicator in lower_body for indicator in html_indicators):
             body_content = html_to_text(body_content)
     elif msg.body_html:
