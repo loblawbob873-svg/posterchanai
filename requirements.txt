@@ -58,3 +58,4 @@ faster-whisper>=1.0.0
 #   Debian/Ubuntu: apt install python3-libtorrent
 #   Then create venv with: python -m venv venv --system-site-packages
 # libtorrent>=2.0.0  # Commented - use system package instead
+torpy

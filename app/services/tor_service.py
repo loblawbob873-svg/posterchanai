@@ -1,6 +1,6 @@
 """
 Built-in Tor client service.
-Manages a Tor process with configurable exit nodes.
+Uses system Tor binary with configurable exit nodes.
 """
 
 import os
@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 class TorService:
     """
-    Manages a built-in Tor process with configurable exit nodes.
+    Manages a Tor SOCKS5 proxy using the system Tor binary.
+    Supports exit node country selection and control port.
     """
 
     _instance: Optional['TorService'] = None
@@ -30,14 +31,12 @@ class TorService:
         control_port: int = 9053,
         exit_nodes: str = "{us}",
         data_dir: str = "/var/lib/posterchanai/tor",
-        hidden_services: str = "",
     ):
         self.listen_host = listen_host
         self.socks_port = socks_port
         self.control_port = control_port
         self.exit_nodes = exit_nodes
         self.data_dir = Path(data_dir)
-        self.hidden_services = hidden_services
 
         self._process: Optional[subprocess.Popen] = None
         self._running = False
@@ -51,7 +50,6 @@ class TorService:
         control_port: int = 9053,
         exit_nodes: str = "{us}",
         data_dir: str = "/var/lib/posterchanai/tor",
-        hidden_services: str = "",
     ) -> 'TorService':
         """Get or create singleton instance."""
         with cls._lock:
@@ -62,17 +60,15 @@ class TorService:
                     control_port=control_port,
                     exit_nodes=exit_nodes,
                     data_dir=data_dir,
-                    hidden_services=hidden_services,
                 )
             return cls._instance
 
     def _find_tor_binary(self) -> Optional[str]:
         """Find the Tor binary."""
-        # Check common locations
         paths = [
             "/usr/bin/tor",
             "/usr/local/bin/tor",
-            "/opt/homebrew/bin/tor",  # macOS Homebrew
+            "/opt/homebrew/bin/tor",
             shutil.which("tor"),
         ]
         for path in paths:
@@ -85,7 +81,7 @@ class TorService:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         torrc_path = self.data_dir / "torrc"
 
-        config = f"""# Posterchanai dedicated Tor instance
+        config = f"""# Posterchanai Tor instance
 SocksPort {self.listen_host}:{self.socks_port}
 ControlPort {self.control_port}
 DataDirectory {self.data_dir}
@@ -94,7 +90,7 @@ DataDirectory {self.data_dir}
 ExitNodes {self.exit_nodes}
 StrictNodes 1
 
-# Performance settings
+# Performance
 CircuitBuildTimeout 30
 LearnCircuitBuildTimeout 0
 MaxCircuitDirtiness 600
@@ -105,43 +101,24 @@ Log notice file {self.data_dir}/tor.log
 # Disable unnecessary features
 AvoidDiskWrites 1
 """
-
-        # Add hidden services if configured
-        if self.hidden_services and self.hidden_services.strip():
-            import re
-            for match in re.finditer(r'HiddenServiceDir\s+(\S+)', self.hidden_services):
-                hs_dir = Path(match.group(1))
-                try:
-                    hs_dir.mkdir(parents=True, exist_ok=True)
-                    os.chmod(hs_dir, 0o700)
-                    logger.info(f"[TOR] Created hidden service dir: {hs_dir}")
-                except Exception as e:
-                    logger.error(f"[TOR] Failed to create hidden service dir {hs_dir}: {e}")
-
-            config += f"""
-# Hidden Services
-{self.hidden_services.strip()}
-"""
-
-        logger.info(f"[TOR] Creating torrc: listen={self.listen_host}:{self.socks_port}, exits={self.exit_nodes}")
+        logger.info(f"[TOR] Creating torrc: SOCKS {self.listen_host}:{self.socks_port}, exits={self.exit_nodes}")
         torrc_path.write_text(config)
         return torrc_path
 
     def start(self) -> bool:
         """Start the Tor process."""
         if self._running:
-            logger.warning("Tor already running")
+            logger.warning("[TOR] Already running")
             return True
 
         tor_binary = self._find_tor_binary()
         if not tor_binary:
-            logger.error("Tor binary not found. Install Tor: apt install tor")
+            logger.error("[TOR] Tor binary not found. Install: apt install tor")
             return False
 
         try:
             torrc_path = self._create_torrc()
 
-            # Start Tor process
             self._process = subprocess.Popen(
                 [tor_binary, "-f", str(torrc_path)],
                 stdout=subprocess.PIPE,
@@ -151,25 +128,23 @@ AvoidDiskWrites 1
 
             self._running = True
 
-            # Start monitor thread
             self._monitor_thread = threading.Thread(target=self._monitor, daemon=True)
             self._monitor_thread.start()
 
-            # Wait for Tor to bootstrap
             if self._wait_for_bootstrap():
-                logger.info(f"Tor started successfully - SOCKS5 on port {self.socks_port}")
+                logger.info(f"[TOR] Started - SOCKS5 on {self.listen_host}:{self.socks_port}")
                 return True
             else:
-                logger.error("Tor failed to bootstrap within timeout")
+                logger.error("[TOR] Bootstrap timeout")
                 self.stop()
                 return False
 
         except Exception as e:
-            logger.error(f"Failed to start Tor: {e}")
+            logger.error(f"[TOR] Failed to start: {e}")
             return False
 
     def _wait_for_bootstrap(self, timeout: int = 60) -> bool:
-        """Wait for Tor to complete bootstrapping via control port."""
+        """Wait for Tor to bootstrap via control port."""
         import socket
 
         start_time = time.time()
@@ -177,7 +152,6 @@ AvoidDiskWrites 1
             if not self._running or not self._process:
                 return False
 
-            # Check bootstrap status via control port (more reliable than SOCKS handshake)
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(5)
@@ -189,17 +163,12 @@ AvoidDiskWrites 1
                     response = sock.recv(1024)
                     sock.close()
                     if b'Bootstrapped 100%' in response or b'TAG=done' in response:
-                        logger.info("[TOR] Bootstrap complete (verified via control port)")
+                        logger.info("[TOR] Bootstrap complete")
                         return True
-                    else:
-                        # Log progress
-                        progress = response.decode('utf-8', errors='ignore').strip()
-                        if 'PROGRESS=' in progress:
-                            logger.debug(f"[TOR] Bootstrap progress: {progress}")
                 else:
                     sock.close()
-            except Exception as e:
-                logger.debug(f"[TOR] Bootstrap check failed: {e}")
+            except Exception:
+                pass
 
             time.sleep(2)
 
@@ -210,10 +179,9 @@ AvoidDiskWrites 1
         while self._running and self._process:
             ret = self._process.poll()
             if ret is not None:
-                logger.warning(f"Tor process exited with code {ret}")
+                logger.warning(f"[TOR] Process exited: {ret}")
                 if self._running:
-                    # Attempt restart
-                    logger.info("Attempting to restart Tor...")
+                    logger.info("[TOR] Restarting...")
                     time.sleep(5)
                     self.start()
                 break
@@ -230,14 +198,14 @@ AvoidDiskWrites 1
             except subprocess.TimeoutExpired:
                 self._process.kill()
             except Exception as e:
-                logger.error(f"Error stopping Tor: {e}")
+                logger.error(f"[TOR] Stop error: {e}")
             finally:
                 self._process = None
 
-        logger.info("Tor stopped")
+        logger.info("[TOR] Stopped")
 
     def get_new_identity(self) -> bool:
-        """Request a new Tor circuit (new identity)."""
+        """Request a new Tor circuit."""
         try:
             import socket
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -249,11 +217,11 @@ AvoidDiskWrites 1
                 response = sock.recv(1024)
                 sock.close()
                 if b'250' in response:
-                    logger.info("Got new Tor identity")
+                    logger.info("[TOR] New identity")
                     return True
             sock.close()
         except Exception as e:
-            logger.error(f"Failed to get new identity: {e}")
+            logger.error(f"[TOR] New identity failed: {e}")
         return False
 
     def is_running(self) -> bool:
@@ -267,7 +235,7 @@ AvoidDiskWrites 1
             "socks_port": self.socks_port,
             "control_port": self.control_port,
             "exit_nodes": self.exit_nodes,
-            "data_dir": str(self.data_dir),
+            "listen_host": self.listen_host,
         }
 
 
@@ -277,7 +245,6 @@ def start_tor_service(
     control_port: int = 9053,
     exit_nodes: str = "{us}",
     data_dir: str = "/var/lib/posterchanai/tor",
-    hidden_services: str = "",
 ) -> Optional[TorService]:
     """Start Tor service and return instance."""
     service = TorService.get_instance(
@@ -286,7 +253,6 @@ def start_tor_service(
         control_port=control_port,
         exit_nodes=exit_nodes,
         data_dir=data_dir,
-        hidden_services=hidden_services,
     )
     if service.start():
         return service

@@ -147,12 +147,11 @@ async def startup():
                 control_port=int(get_tor_setting("tor_control_port", "9053")),
                 exit_nodes=get_tor_setting("tor_exit_nodes", "{us}"),
                 data_dir=get_tor_setting("tor_data_dir", "/var/lib/posterchanai/tor"),
-                hidden_services=get_tor_setting("tor_hidden_services", ""),
             )
             if tor_service:
                 logging.info(f"Built-in Tor started (SOCKS5 on {listen_host}:{socks_port})")
             else:
-                logging.error("Failed to start built-in Tor - check if 'tor' is installed")
+                logging.error("Failed to start built-in Tor")
     except Exception as e:
         logging.error(f"Failed to start built-in Tor: {e}")
     finally:
