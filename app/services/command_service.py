@@ -127,6 +127,7 @@ class CommandService:
         "sched": "cal",
         "flood": "torrents",  # Combine flood into torrents command
         "torrent": "torrents",  # Allow singular form
+        "bt": "torrents",  # Short alias for torrents
         "yt-dlp": "ytdl",  # YouTube download alias
         "youtube": "yt",  # YouTube summarize alias
     }
