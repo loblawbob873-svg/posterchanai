@@ -214,9 +214,29 @@ class CalendarEventScreen(ModalScreen):
         # Build command
         if self.is_edit:
             uid = self.event_data.get('uid')
-            # For edit, we need to send multiple edit commands or a compound one
-            # Return the edit command for the title as a starting point
-            command = f"cal edit {uid} title {title}"
+            # Build a natural language edit command with all changes
+            changes = []
+            if title != self.event_data.get('title', ''):
+                changes.append(f"title to {title}")
+            if date_str != self.event_data.get('date', ''):
+                changes.append(f"date to {date_str}")
+            if time_str != self.event_data.get('time', ''):
+                changes.append(f"time to {time_str}")
+            if end_time_str != self.event_data.get('end_time', ''):
+                changes.append(f"end time to {end_time_str}")
+            if location != self.event_data.get('location', ''):
+                if location:
+                    changes.append(f"location to {location}")
+            if description != self.event_data.get('description', ''):
+                if description:
+                    changes.append(f"description to {description}")
+
+            if changes:
+                command = f"cal edit {uid} change {', '.join(changes)}"
+            else:
+                # No changes made
+                self.dismiss(None)
+                return
         else:
             # Build natural language add command
             event_desc = title

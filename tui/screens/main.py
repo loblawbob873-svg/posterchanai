@@ -509,8 +509,16 @@ class MainScreen(Screen):
 
     def on_message_widget_command_clicked(self, event):
         """Handle command button clicks from messages."""
+        import re
         command = event.command
         if command:
+            # Check if this is a cal get command (edit button)
+            cal_get_match = re.match(r'^cal\s+get\s+(\S+)', command, re.IGNORECASE)
+            if cal_get_match:
+                uid = cal_get_match.group(1)
+                self._open_calendar_edit(uid)
+                return
+
             # Commands ending with space need user input (e.g., mail reply)
             if command.endswith(' '):
                 # Populate input field for user to complete
@@ -533,6 +541,41 @@ class MainScreen(Screen):
             else:
                 # Send the command as a message
                 self._send_message_worker(command)
+
+    @work(exclusive=True)
+    async def _open_calendar_edit(self, uid: str):
+        """Open calendar edit screen by fetching event data from API."""
+        import httpx
+        from tui.screens.calendar_event import CalendarEventScreen
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.app.config.server_url}/api/auth/calendar/event/{uid}",
+                    headers={"Authorization": f"Bearer {self.app.api.token}"},
+                    timeout=10.0
+                )
+                if response.status_code == 200:
+                    event_data = response.json()
+                    # Map API response to screen format
+                    screen_data = {
+                        'uid': event_data.get('uid'),
+                        'title': event_data.get('title', ''),
+                        'date': event_data.get('date', ''),
+                        'time': event_data.get('time', ''),
+                        'end_time': event_data.get('endTime', ''),
+                        'location': event_data.get('location', ''),
+                        'description': event_data.get('description', ''),
+                        'recurrence': event_data.get('recurrence', '')
+                    }
+                    def handle_event_saved(command: str | None):
+                        if command:
+                            self._send_message_worker(command)
+                    self.app.push_screen(CalendarEventScreen(event_data=screen_data), handle_event_saved)
+                else:
+                    self.notify(f"Could not fetch event: {response.status_code}", severity="error")
+        except Exception as e:
+            self.notify(f"Error fetching event: {str(e)[:50]}", severity="error")
 
     def on_chat_input_open_links_requested(self, event):
         """Handle open links request from quick buttons."""

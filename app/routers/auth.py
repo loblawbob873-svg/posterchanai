@@ -890,3 +890,48 @@ async def test_custom_image_connection(
             success=False,
             message=f"Error: {str(e)}"
         )
+
+
+# ============== Calendar Event API ==============
+
+@router.get("/calendar/event/{uid}")
+async def get_calendar_event(
+    uid: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get calendar event by UID for editing"""
+    from app.services.caldav_service import get_event_by_uid
+    import json
+
+    # Get user's calendar settings
+    from app.models import UserSetting
+    calendars_setting = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == "caldav_calendars"
+    ).first()
+
+    if not calendars_setting or not calendars_setting.value:
+        raise HTTPException(status_code=404, detail="No calendars configured")
+
+    try:
+        calendars = json.loads(calendars_setting.value)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="Invalid calendar configuration")
+
+    # Search all calendars for the event
+    for cal in calendars:
+        event = get_event_by_uid(cal['url'], cal['username'], cal['password'], uid)
+        if event:
+            return {
+                "uid": event.uid,
+                "title": event.summary,
+                "date": event.start.strftime('%Y-%m-%d'),
+                "time": event.start.strftime('%H:%M'),
+                "endTime": event.end.strftime('%H:%M') if event.end else "",
+                "location": event.location or "",
+                "description": event.description or "",
+                "recurrence": event.rrule or ""
+            }
+
+    raise HTTPException(status_code=404, detail="Event not found")

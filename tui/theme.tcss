@@ -1183,6 +1183,57 @@ Toast.-error {
     background: #ff6666;
 }
 
+/* ═══════════ CALENDAR LIST - INLINE BUTTONS ═══════════ */
+.cal-row {
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    layout: horizontal;
+    align: left middle;
+}
+
+.cal-header {
+    margin-top: 1;
+    color: $orange;
+    text-style: bold;
+}
+
+.cal-text {
+    width: 1fr;
+    padding: 0 1;
+    color: $text;
+    content-align: left middle;
+}
+
+.cal-btn {
+    width: 3;
+    min-width: 3;
+    height: 1;
+    padding: 0;
+    margin: 0;
+    background: $orange;
+    color: $background;
+    border: none;
+    text-style: bold;
+}
+
+.cal-btn:hover {
+    background: $cyan;
+}
+
+.cal-btn:focus {
+    background: $green;
+}
+
+.cal-btn-danger {
+    background: #ff3333;
+}
+
+.cal-btn-danger:hover {
+    background: #ff6666;
+}
+
 /* ═══════════ ATTACH BUTTON - FILE UPLOAD ═══════════ */
 .attach-btn {
     width: 5;

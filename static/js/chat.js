@@ -1278,7 +1278,20 @@ class ChatHandler {
         const calGetMatch = decodedCmd.match(/^cal\s+get\s+(\S+)/i);
         if (calGetMatch && window.openCalendarModal) {
             const uid = calGetMatch[1];
-            window.openCalendarModal({ uid: uid });
+            // Fetch event data from API before opening modal
+            fetch(`/api/auth/calendar/event/${encodeURIComponent(uid)}`)
+                .then(response => {
+                    if (!response.ok) throw new Error('Event not found');
+                    return response.json();
+                })
+                .then(eventData => {
+                    window.openCalendarModal(eventData);
+                })
+                .catch(err => {
+                    console.error('Failed to fetch event:', err);
+                    // Fall back to opening modal with just UID
+                    window.openCalendarModal({ uid: uid });
+                });
             return;  // Don't send to server
         }
 

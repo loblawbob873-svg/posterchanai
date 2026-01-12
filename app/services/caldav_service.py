@@ -65,6 +65,7 @@ class CalendarEvent:
     end: Optional[datetime]
     location: Optional[str]
     calendar_name: str
+    rrule: Optional[str] = None
 
 
 @dataclass
@@ -363,6 +364,11 @@ def get_event_by_uid(
                             if not isinstance(end_dt, datetime):
                                 end_dt = datetime.combine(end_dt, datetime.min.time())
 
+                        # Extract RRULE if present
+                        rrule_str = None
+                        if hasattr(vevent, 'rrule'):
+                            rrule_str = str(vevent.rrule.value)
+
                         return CalendarEvent(
                             uid=str(vevent.uid.value) if hasattr(vevent, 'uid') else "",
                             summary=str(vevent.summary.value) if hasattr(vevent, 'summary') else "",
@@ -370,7 +376,8 @@ def get_event_by_uid(
                             start=start_dt,
                             end=end_dt,
                             location=str(vevent.location.value) if hasattr(vevent, 'location') else None,
-                            calendar_name=""
+                            calendar_name="",
+                            rrule=rrule_str
                         )
                 except Exception:
                     pass

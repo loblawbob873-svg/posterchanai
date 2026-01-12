@@ -92,6 +92,14 @@ class MessageWidget(Widget):
         """Check if content is a mail list with action buttons."""
         return ("◈ INBOX ◈" in content or "◈ UNREAD ◈" in content or "◈ SEARCH" in content or ("◈" in content and "(cmd:mail " in content)) and content.count("[Read]") >= 1
 
+    def _is_cal_list(self, content: str) -> bool:
+        """Check if content is a calendar event list with action buttons."""
+        # Calendar output has edit/delete buttons with cal commands
+        has_cal_buttons = "cmd:cal get " in content or "cmd:cal delete " in content
+        # And has time indicators like "9:00 AM" or event formatting
+        has_time = bool(re.search(r'\d{1,2}:\d{2}\s*(AM|PM|am|pm)?', content))
+        return has_cal_buttons and has_time
+
     def _parse_torrent_entries(self, content: str) -> list[dict]:
         """Parse torrent list content into entries with inline buttons."""
         entries = []
@@ -156,6 +164,9 @@ class MessageWidget(Widget):
                 return
             elif self._is_mail_list(content):
                 self._render_mail_list(content, content_container)
+                return
+            elif self._is_cal_list(content):
+                self._render_cal_list(content, content_container)
                 return
         except Exception as e:
             import logging
@@ -505,6 +516,126 @@ class MessageWidget(Widget):
                 del_btn.command = entry['delete_cmd']
                 row.mount(del_btn)
 
+    def _render_cal_list(self, content: str, container: Vertical):
+        """Render calendar event list with inline edit/delete buttons."""
+        import logging
+        logger = logging.getLogger("tui")
+
+        lines = content.split("\n")
+        entries = []
+        current_date_header = None
+
+        # Pattern for date headers: **[TUE]** Jan 14 or **Tuesday, January 14, 2025**
+        date_header_pattern = re.compile(r'^\*\*\[?([A-Z]{3})\]?\*\*\s*(.+)$|^\*\*([A-Za-z]+,\s+.+)\*\*$')
+        # Cyberpunk event: ⏰ `09:00` **Event Name** [✏️](cmd:cal get uid) [🗑️](cmd:cal delete uid)
+        cyberpunk_event_pattern = re.compile(r'^\s*⏰\s*`(\d{2}:\d{2})`\s*\*\*(.+?)\*\*')
+        # Regular event: - 9:00 AM - 10:00 AM: Event Name [✏️](cmd:...) [🗑️](cmd:...)
+        regular_event_pattern = re.compile(r'^\s*-\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?(?:\s*-\s*\d{1,2}:\d{2}\s*(?:AM|PM)?)?)\s*:\s*(.+?)(?:\s*\[✏️\]|$)')
+        # Extract edit/delete commands
+        edit_pattern = re.compile(r'\[✏️\]\(cmd:(cal get [^)]+)\)')
+        delete_pattern = re.compile(r'\[🗑️\]\(cmd:(cal delete [^)]+)\)')
+        # Location line
+        location_pattern = re.compile(r'^\s*📍\s*\[(.+?)\]\(')
+
+        current_entry = None
+
+        for line in lines:
+            # Check for date header
+            date_match = date_header_pattern.match(line.strip())
+            if date_match:
+                if current_entry:
+                    entries.append(current_entry)
+                    current_entry = None
+                if date_match.group(1):
+                    # Cyberpunk format: [TUE] Jan 14
+                    current_date_header = f"[{date_match.group(1)}] {date_match.group(2)}"
+                else:
+                    # Regular format
+                    current_date_header = date_match.group(3)
+                entries.append({"type": "header", "text": current_date_header})
+                continue
+
+            # Check for cyberpunk event
+            cyber_match = cyberpunk_event_pattern.search(line)
+            if cyber_match:
+                if current_entry:
+                    entries.append(current_entry)
+                time_str = cyber_match.group(1)
+                name = cyber_match.group(2)
+                edit_match = edit_pattern.search(line)
+                delete_match = delete_pattern.search(line)
+                current_entry = {
+                    "type": "event",
+                    "time": time_str,
+                    "name": name,
+                    "location": None,
+                    "edit_cmd": edit_match.group(1) if edit_match else None,
+                    "delete_cmd": delete_match.group(1) if delete_match else None,
+                }
+                continue
+
+            # Check for regular event
+            regular_match = regular_event_pattern.search(line)
+            if regular_match:
+                if current_entry:
+                    entries.append(current_entry)
+                time_str = regular_match.group(1)
+                name = regular_match.group(2).strip()
+                # Clean up markdown from name
+                name = re.sub(r'\s*\[✏️\].*$', '', name)
+                edit_match = edit_pattern.search(line)
+                delete_match = delete_pattern.search(line)
+                current_entry = {
+                    "type": "event",
+                    "time": time_str,
+                    "name": name,
+                    "location": None,
+                    "edit_cmd": edit_match.group(1) if edit_match else None,
+                    "delete_cmd": delete_match.group(1) if delete_match else None,
+                }
+                continue
+
+            # Check for location line (belongs to current entry)
+            if current_entry:
+                loc_match = location_pattern.search(line)
+                if loc_match:
+                    current_entry["location"] = loc_match.group(1)
+
+        if current_entry:
+            entries.append(current_entry)
+
+        logger.info(f"Parsed {len([e for e in entries if e.get('type') == 'event'])} calendar entries")
+
+        # Render header
+        container.mount(Static("[bold cyan]📅 Calendar[/bold cyan]", classes="message-body"))
+
+        # Render entries
+        for entry in entries:
+            if entry.get("type") == "header":
+                container.mount(Static(f"[bold]{escape_rich_brackets(entry['text'])}[/bold]", classes="cal-header"))
+            elif entry.get("type") == "event":
+                row = Horizontal(classes="cal-row")
+
+                # Build info text
+                info = f"  {entry['time']} - {escape_rich_brackets(entry['name'])}"
+                if entry.get('location'):
+                    info += f"\n    📍 {escape_rich_brackets(entry['location'])}"
+
+                row_text = Static(info, classes="cal-text")
+                container.mount(row)
+                row.mount(row_text)
+
+                # Add action buttons
+                if entry.get('edit_cmd'):
+                    edit_btn = Button("E", classes="cal-btn")
+                    edit_btn.command = entry['edit_cmd']
+                    row.mount(edit_btn)
+
+                if entry.get('delete_cmd'):
+                    del_btn = Button("X", classes="cal-btn cal-btn-danger")
+                    del_btn.command = entry['delete_cmd']
+                    row.mount(del_btn)
+
     def _render_buttons(self):
         """Render cmd: link buttons for essential actions."""
         import logging
@@ -514,8 +645,8 @@ class MessageWidget(Widget):
             button_container = self.query_one("#message-buttons", Horizontal)
             button_container.remove_children()
 
-            # Skip if already rendered inline (torrent list, bt list, or mail list)
-            if self._is_torrent_list(self.content) or self._is_bt_list(self.content) or self._is_mail_list(self.content):
+            # Skip if already rendered inline (torrent list, bt list, mail list, or cal list)
+            if self._is_torrent_list(self.content) or self._is_bt_list(self.content) or self._is_mail_list(self.content) or self._is_cal_list(self.content):
                 return
 
             logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")
@@ -560,7 +691,7 @@ class MessageWidget(Widget):
         else:
             # Check for command in both attribute and name
             command = getattr(button, 'command', None) or button.name
-            if command and command.startswith(('bt ', 'mail ', 'torrents ', 'music ', 'news ')):
+            if command and command.startswith(('bt ', 'mail ', 'torrents ', 'music ', 'news ', 'cal ')):
                 logger.info(f"Posting command: {command}")
                 self.post_message(self.CommandClicked(command))
                 event.stop()
