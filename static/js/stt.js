@@ -49,10 +49,12 @@ const VOICE_COMMANDS = [
     { patterns: [/^(add|new)\s+contact\s+(.+)$/i], command: 'contacts add $2' },
 
     // ==================== TODO ====================
-    { patterns: [/^(my\s+)?to-?do('?s)?(\s+list)?$/i], command: 'todo' },
-    { patterns: [/^(add|new)\s+to-?do\s+(.+)$/i], command: 'todo add $2' },
+    // "todo", "my todos", "show my to do list", "to do" (two words)
+    { patterns: [/^(show\s+)?(my\s+)?to-?\s?do('?s)?(\s+list)?\.?$/i], command: 'todo' },
+    { patterns: [/^(add|new)\s+to-?\s?do\s+(.+)$/i], command: 'todo add $2' },
+    { patterns: [/^add\s+(.+)\s+to\s+(my\s+)?to-?\s?do(\s+list)?$/i], command: 'todo add $1' },
     { patterns: [/^remind\s+me\s+to\s+(.+)$/i], command: 'todo add $1' },
-    { patterns: [/^(delete|remove|done)\s+to-?do\s+(\d+)$/i], command: 'todo rm $2' },
+    { patterns: [/^(delete|remove|done)\s+to-?\s?do\s+(\d+)$/i], command: 'todo rm $2' },
     { patterns: [/^(complete|finish)\s+task\s+(\d+)$/i], command: 'todo rm $2' },
 
     // ==================== MUSIC ====================
