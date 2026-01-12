@@ -86,6 +86,9 @@ SocksPort {self.listen_host}:{self.socks_port}
 ControlPort {self.control_port}
 DataDirectory {self.data_dir}
 
+# Control port authentication (for nyx monitoring)
+CookieAuthentication 1
+
 # Exit node restrictions
 ExitNodes {self.exit_nodes}
 StrictNodes 1
@@ -143,6 +146,30 @@ AvoidDiskWrites 1
             logger.error(f"[TOR] Failed to start: {e}")
             return False
 
+    def _read_cookie(self) -> Optional[bytes]:
+        """Read the control auth cookie file."""
+        cookie_path = self.data_dir / "control_auth_cookie"
+        try:
+            if cookie_path.exists():
+                return cookie_path.read_bytes()
+        except Exception as e:
+            logger.debug(f"[TOR] Could not read cookie: {e}")
+        return None
+
+    def _authenticate(self, sock) -> bool:
+        """Authenticate to control port using cookie or empty auth."""
+        cookie = self._read_cookie()
+        if cookie:
+            # Use cookie authentication
+            auth_cmd = b'AUTHENTICATE ' + cookie.hex().encode() + b'\r\n'
+        else:
+            # Fall back to empty auth (during bootstrap before cookie exists)
+            auth_cmd = b'AUTHENTICATE ""\r\n'
+
+        sock.send(auth_cmd)
+        response = sock.recv(1024)
+        return b'250' in response
+
     def _wait_for_bootstrap(self, timeout: int = 60) -> bool:
         """Wait for Tor to bootstrap via control port."""
         import socket
@@ -156,9 +183,7 @@ AvoidDiskWrites 1
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(5)
                 sock.connect(('127.0.0.1', self.control_port))
-                sock.send(b'AUTHENTICATE ""\r\n')
-                response = sock.recv(1024)
-                if b'250' in response:
+                if self._authenticate(sock):
                     sock.send(b'GETINFO status/bootstrap-phase\r\n')
                     response = sock.recv(1024)
                     sock.close()
@@ -211,9 +236,7 @@ AvoidDiskWrites 1
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(10)
             sock.connect(('127.0.0.1', self.control_port))
-            sock.send(b'AUTHENTICATE ""\r\n')
-            response = sock.recv(1024)
-            if b'250' in response:
+            if self._authenticate(sock):
                 sock.send(b'SIGNAL NEWNYM\r\n')
                 response = sock.recv(1024)
                 sock.close()
