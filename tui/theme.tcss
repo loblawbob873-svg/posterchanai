@@ -1,37 +1,66 @@
-/* Posterchanai TUI - Cyberpunk Theme */
+/* ═══════════════════════════════════════════════════════════════════════════
+   POSTERCHANAI TUI - NEON CYBERPUNK THEME
+   "The future is now, choom"
+   ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ======== COLOR VARIABLES ======== */
-$cyan: #00ffff;
-$magenta: #ff00ff;
-$orange: #ff6b00;
-$bg: #0a0a0f;
-$surface: #12121a;
-$surface-bright: #1a1a25;
-$surface-hover: #22222e;
-$text: #e0e0e0;
-$text-dim: #808090;
-$text-muted: #505060;
-$border: #2a2a40;
-$border-bright: #3a3a55;
-$error: #ff4444;
-$success: #44ff88;
+/* ═══════════ NEON COLOR PALETTE ═══════════ */
+$neon-cyan: #00ffff;
+$neon-magenta: #ff00ff;
+$neon-pink: #ff1493;
+$neon-orange: #ff6b00;
+$neon-yellow: #ffff00;
+$neon-green: #39ff14;
+$neon-blue: #00bfff;
+$neon-purple: #bf00ff;
+
+/* Core colors */
+$cyan: $neon-cyan;
+$magenta: $neon-magenta;
+$orange: $neon-orange;
+$yellow: $neon-yellow;
+$green: $neon-green;
+
+/* Dark backgrounds */
+$void: #05050a;
+$bg: #0a0a12;
+$surface: #0f0f1a;
+$surface-bright: #161625;
+$surface-hover: #1e1e32;
+$surface-glow: #252540;
+
+/* Text colors */
+$text: #e8e8f0;
+$text-dim: #9090a8;
+$text-muted: #606078;
+$text-glow: #ffffff;
+
+/* Border colors */
+$border: #303050;
+$border-bright: #4a4a70;
+$border-glow: #6060a0;
+
+/* Status colors */
+$error: #ff2255;
+$success: #00ff88;
 $warning: #ffaa00;
 
-/* ======== GLOBAL ======== */
+/* ═══════════ GLOBAL ═══════════ */
 Screen {
-    background: $bg;
+    background: $void;
 }
 
-/* ======== HEADER/FOOTER ======== */
+/* ═══════════ HEADER - NEON TITLE BAR ═══════════ */
 Header {
     background: $surface;
     color: $cyan;
     text-style: bold;
+    border-bottom: heavy $cyan 60%;
 }
 
 Footer {
     background: $surface;
     color: $text-dim;
+    border-top: solid $magenta 30%;
 }
 
 FooterKey {
@@ -41,14 +70,15 @@ FooterKey {
 
 FooterKey > .footer-key--key {
     background: $cyan;
-    color: $bg;
+    color: $void;
+    text-style: bold;
 }
 
-/* ======== SIDEBAR ======== */
+/* ═══════════ SIDEBAR - NEURAL NETWORK PANEL ═══════════ */
 #sidebar {
-    width: 32;
+    width: 34;
     background: $surface;
-    border-right: solid $border;
+    border-right: double $cyan 50%;
 }
 
 #sidebar-content {
@@ -56,33 +86,35 @@ FooterKey > .footer-key--key {
 }
 
 #sidebar-title {
-    height: 2;
-    background: $surface-bright;
-    padding: 0 1;
+    height: 3;
+    background: $cyan 15%;
+    padding: 1 1;
     text-style: bold;
     color: $cyan;
-    border-bottom: solid $border;
+    border-bottom: heavy $cyan 40%;
 }
 
 #sidebar-header {
     height: 3;
-    background: $surface-bright;
+    background: $cyan 10%;
     padding: 1;
     text-style: bold;
     color: $cyan;
-    border-bottom: solid $border;
+    border-bottom: solid $cyan 30%;
 }
 
 #new-chat-btn {
     width: 100%;
     background: $cyan;
-    color: $bg;
+    color: $void;
     text-style: bold;
     margin: 1;
+    border: solid $neon-blue;
 }
 
 #new-chat-btn:hover {
-    background: $cyan 80%;
+    background: $neon-blue;
+    color: $void;
 }
 
 #conversation-list {
@@ -92,16 +124,19 @@ FooterKey > .footer-key--key {
 .conversation-item {
     height: 3;
     padding: 0 1;
-    border-bottom: solid $border 30%;
+    border-bottom: solid $border 20%;
+    border-left: solid $magenta 0%;
 }
 
 .conversation-item:hover {
     background: $surface-hover;
+    border-left: thick $magenta 50%;
 }
 
 .conversation-item.--selected {
-    background: $cyan 15%;
+    background: $cyan 20%;
     border-left: thick $cyan;
+    color: $text-glow;
 }
 
 .conversation-title {
@@ -114,7 +149,7 @@ FooterKey > .footer-key--key {
     text-style: italic;
 }
 
-/* ======== CHAT AREA ======== */
+/* ═══════════ CHAT AREA - DATASTREAM VIEWPORT ═══════════ */
 #main-container {
     height: 1fr;
 }
@@ -128,12 +163,12 @@ FooterKey > .footer-key--key {
     height: 3;
     background: $surface;
     padding: 0 2;
-    border-bottom: solid $border;
+    border-bottom: heavy $magenta 40%;
     content-align: center middle;
 }
 
 #chat-title {
-    color: $cyan;
+    color: $magenta;
     text-style: bold;
 }
 
@@ -146,22 +181,23 @@ FooterKey > .footer-key--key {
     padding: 1;
 }
 
+/* ═══════════ TYPING INDICATOR - NEURAL SYNC ═══════════ */
 #typing-indicator {
     dock: bottom;
     height: 2;
-    background: $magenta 20%;
+    background: $magenta 25%;
     color: $magenta;
     text-align: center;
     text-style: bold italic;
     padding: 0 1;
-    border: solid $magenta 50%;
+    border: double $magenta 70%;
 }
 
 #typing-indicator.--hidden {
     display: none;
 }
 
-/* ======== MESSAGES ======== */
+/* ═══════════ MESSAGES - DATA PACKETS ═══════════ */
 MessageWidget {
     height: auto;
     margin: 0 1 1 1;
@@ -172,41 +208,49 @@ MessageWidget {
     padding: 1;
 }
 
+/* USER MESSAGES - Cyan Transmission */
 .message-user {
-    background: $cyan 12%;
-    border: solid $cyan 40%;
-    margin-left: 20;
+    background: $cyan 15%;
+    border: double $cyan 50%;
+    border-left: thick $cyan;
+    margin-left: 15;
 }
 
 .message-user .message-role {
     color: $cyan;
     text-align: right;
+    text-style: bold;
 }
 
 .message-user .message-body {
     text-align: right;
 }
 
+/* ASSISTANT MESSAGES - Magenta Response */
 .message-assistant {
-    background: $magenta 12%;
-    border: solid $magenta 40%;
-    margin-right: 20;
+    background: $magenta 15%;
+    border: double $magenta 50%;
+    border-left: thick $magenta;
+    margin-right: 15;
 }
 
 .message-assistant.message-streaming {
-    border: solid $magenta 80%;
+    border: double $neon-pink;
+    background: $magenta 20%;
 }
 
 .message-assistant .message-role {
     color: $magenta;
+    text-style: bold;
 }
 
+/* SYSTEM MESSAGES - Yellow Alert */
 .message-system {
-    background: $surface;
+    background: $yellow 10%;
     text-align: center;
-    color: $text-dim;
-    border: solid $border;
-    margin: 1 10;
+    color: $yellow;
+    border: solid $yellow 40%;
+    margin: 1 8;
 }
 
 .message-role {
@@ -228,27 +272,28 @@ MessageWidget {
     text-style: italic;
 }
 
-/* ======== CODE BLOCKS ======== */
+/* ═══════════ CODE BLOCKS - HACKER TERMINAL ═══════════ */
 .code-block {
-    background: #1a1a2e;
-    border: solid $border-bright;
+    background: #0a0a18;
+    border: double $green 40%;
     padding: 1;
     margin: 1 0;
 }
 
 .code-header {
-    color: $text-muted;
-    background: $surface-bright;
+    color: $green;
+    background: $green 15%;
     padding: 0 1;
+    text-style: bold;
 }
 
-/* ======== INPUT AREA ======== */
+/* ═══════════ INPUT AREA - COMMAND INTERFACE ═══════════ */
 #input-area {
     dock: bottom;
     height: auto;
     max-height: 12;
     background: $surface;
-    border-top: double $border-bright;
+    border-top: double $cyan 60%;
     padding: 1;
 }
 
@@ -258,86 +303,95 @@ MessageWidget {
 
 #message-input {
     background: $surface-bright;
-    border: solid $border;
+    border: solid $border-bright;
     color: $text;
     padding: 0 1;
 }
 
 #message-input:focus {
-    border: solid $cyan;
+    border: double $cyan;
+    background: $surface-glow;
 }
 
 #send-btn {
-    width: 10;
+    width: 12;
     background: $cyan;
-    color: $bg;
+    color: $void;
     text-style: bold;
     margin-left: 1;
+    border: solid $neon-blue;
 }
 
 #send-btn:hover {
-    background: $cyan 80%;
+    background: $neon-blue;
 }
 
 #send-btn.--streaming {
     background: $error;
+    border: solid $neon-pink;
 }
 
 #stop-btn {
-    width: 10;
+    width: 12;
     background: $error;
     color: $text;
     text-style: bold;
     margin-left: 1;
+    border: solid $neon-pink;
 }
 
-/* ======== BUTTONS ======== */
+/* ═══════════ BUTTONS - NEON CONTROLS ═══════════ */
 Button {
     background: $surface-bright;
     color: $text;
-    border: solid $border;
+    border: solid $border-bright;
 }
 
 Button:hover {
     background: $surface-hover;
-    border: solid $border-bright;
+    border: solid $cyan 50%;
+    color: $cyan;
 }
 
 Button:focus {
-    border: solid $cyan;
+    border: double $cyan;
 }
 
 Button.primary, Button.-primary {
     background: $cyan;
-    color: $bg;
-    border: none;
+    color: $void;
+    border: solid $neon-blue;
+    text-style: bold;
 }
 
 Button.primary:hover, Button.-primary:hover {
-    background: $cyan 80%;
+    background: $neon-blue;
 }
 
 Button.danger, Button.-danger {
     background: $error;
     color: $text;
-    border: none;
+    border: solid $neon-pink;
+    text-style: bold;
 }
 
 Button.danger:hover, Button.-danger:hover {
-    background: $error 80%;
+    background: $neon-pink;
 }
 
 Button.-warning, Button.warning {
     background: $warning;
-    color: $bg;
-    border: none;
+    color: $void;
+    border: solid $yellow;
+    text-style: bold;
 }
 
 Button.-warning:hover, Button.warning:hover {
-    background: $warning 80%;
+    background: $yellow;
+    color: $void;
 }
 
-/* ======== CMD BUTTONS (inline command links) ======== */
+/* ═══════════ CMD BUTTONS - QUICK HACK LINKS ═══════════ */
 #message-buttons {
     height: auto;
     margin-top: 1;
@@ -345,21 +399,23 @@ Button.-warning:hover, Button.warning:hover {
 }
 
 .cmd-button {
-    background: $cyan 15%;
+    background: $cyan 20%;
     color: $cyan;
     padding: 0 1;
     margin-right: 1;
-    border: solid $cyan 40%;
+    border: solid $cyan 60%;
     height: 3;
     min-width: 10;
+    text-style: bold;
 }
 
 .cmd-button:hover {
-    background: $cyan 30%;
-    border: solid $cyan 60%;
+    background: $cyan 40%;
+    border: double $cyan;
+    color: $text-glow;
 }
 
-/* ======== INPUTS ======== */
+/* ═══════════ INPUTS - DATA ENTRY ═══════════ */
 Input {
     background: $surface-bright;
     border: solid $border;
@@ -367,17 +423,18 @@ Input {
 }
 
 Input:focus {
-    border: solid $cyan;
+    border: double $cyan;
+    background: $surface-glow;
 }
 
 Input.-invalid {
-    border: solid $error;
+    border: double $error;
 }
 
-/* ======== LOGIN SCREEN ======== */
+/* ═══════════ LOGIN SCREEN - SYSTEM ACCESS ═══════════ */
 #login-container {
     align: center middle;
-    width: 50;
+    width: 60;
     height: auto;
     background: $surface;
     border: double $cyan;
@@ -393,7 +450,7 @@ Input.-invalid {
 
 #login-subtitle {
     text-align: center;
-    color: $text-dim;
+    color: $magenta;
     padding-bottom: 2;
 }
 
@@ -403,9 +460,10 @@ Input.-invalid {
 }
 
 .form-label {
-    width: 12;
-    color: $text-dim;
+    width: 14;
+    color: $cyan;
     padding-top: 1;
+    text-style: bold;
 }
 
 .form-input {
@@ -416,23 +474,29 @@ Input.-invalid {
     width: 100%;
     margin-top: 1;
     background: $cyan;
-    color: $bg;
+    color: $void;
     text-style: bold;
+    border: solid $neon-blue;
+}
+
+#login-btn:hover {
+    background: $neon-blue;
 }
 
 #login-error {
     color: $error;
     text-align: center;
     padding: 1;
+    text-style: bold;
 }
 
-/* ======== MUSIC PLAYER ======== */
+/* ═══════════ MUSIC PLAYER - AUDIO MATRIX ═══════════ */
 #music-player {
     dock: bottom;
     height: auto;
-    max-height: 10;
+    max-height: 12;
     background: $surface;
-    border-top: double $magenta;
+    border-top: double $magenta 80%;
 }
 
 #music-player.--hidden {
@@ -459,11 +523,12 @@ Input.-invalid {
     color: $cyan;
     text-align: center;
     width: 1fr;
+    text-style: bold;
 }
 
 #visualizer {
     text-align: center;
-    color: $cyan;
+    color: $green;
     height: 1;
 }
 
@@ -474,7 +539,7 @@ Input.-invalid {
 
 #time-current, #time-total {
     width: 6;
-    color: $text-dim;
+    color: $magenta;
 }
 
 #progress-bar {
@@ -489,19 +554,21 @@ Input.-invalid {
 .player-btn {
     background: $surface-bright;
     color: $magenta;
-    border: solid $magenta 50%;
-    min-width: 6;
+    border: solid $magenta 60%;
+    min-width: 7;
     margin: 0 1;
 }
 
 .player-btn:hover {
-    background: $magenta 20%;
-    color: $cyan;
+    background: $magenta 30%;
+    color: $text-glow;
+    border: double $magenta;
 }
 
 .player-btn-main {
-    min-width: 8;
-    background: $magenta 20%;
+    min-width: 9;
+    background: $magenta 25%;
+    text-style: bold;
 }
 
 /* Minimized player */
@@ -509,7 +576,7 @@ Input.-invalid {
     height: 3;
     padding: 0 1;
     background: $surface;
-    border-top: solid $magenta;
+    border-top: heavy $magenta;
 }
 
 #player-minimized.--hidden {
@@ -524,22 +591,24 @@ Input.-invalid {
     width: 1fr;
     color: $cyan;
     padding: 0 1;
+    text-style: bold;
 }
 
 .player-btn-mini {
     background: $surface-bright;
     color: $magenta;
-    min-width: 4;
+    min-width: 5;
     height: 3;
     margin: 0;
-    border: none;
+    border: solid $magenta 40%;
 }
 
 .player-btn-mini:hover {
-    background: $magenta 20%;
+    background: $magenta 30%;
+    border: solid $magenta;
 }
 
-/* ======== SETTINGS ======== */
+/* ═══════════ SETTINGS - SYSTEM CONFIG ═══════════ */
 #settings-container {
     padding: 2;
 }
@@ -548,7 +617,7 @@ Input.-invalid {
     background: $surface;
     margin: 1;
     padding: 1;
-    border: solid $border;
+    border: double $border-bright;
 }
 
 .settings-title {
@@ -562,7 +631,7 @@ Input.-invalid {
     margin-bottom: 1;
 }
 
-/* ======== TABS ======== */
+/* ═══════════ TABS - INTERFACE PANELS ═══════════ */
 Tabs {
     background: $surface;
 }
@@ -575,46 +644,47 @@ Tab {
 
 Tab:hover {
     background: $surface-hover;
-    color: $text;
+    color: $cyan;
 }
 
 Tab.-active {
-    background: $cyan 20%;
+    background: $cyan 25%;
     color: $cyan;
+    text-style: bold;
 }
 
 TabPane {
     padding: 1;
 }
 
-/* ======== SCROLLBARS ======== */
+/* ═══════════ SCROLLBARS - DATA FLOW ═══════════ */
 ScrollBar {
     background: $surface;
 }
 
 ScrollBar > .scrollbar--bar {
-    background: $cyan 30%;
+    background: $cyan 40%;
 }
 
 ScrollBar > .scrollbar--bar:hover {
-    background: $cyan 50%;
+    background: $cyan 70%;
 }
 
-/* ======== LOADING/SPINNER ======== */
+/* ═══════════ LOADING - PROCESSING ═══════════ */
 LoadingIndicator {
     color: $cyan;
 }
 
-/* ======== PROGRESS BAR ======== */
+/* ═══════════ PROGRESS BAR - DATA TRANSFER ═══════════ */
 ProgressBar > .bar--bar {
     color: $cyan;
 }
 
 ProgressBar > .bar--complete {
-    color: $magenta;
+    color: $green;
 }
 
-/* ======== SPECIAL CONTENT ======== */
+/* ═══════════ SEARCH RESULTS - DATA QUERY ═══════════ */
 .search-results {
     padding: 1;
 }
@@ -623,7 +693,7 @@ ProgressBar > .bar--complete {
     background: $surface;
     padding: 1;
     margin-bottom: 1;
-    border: solid $border;
+    border: solid $cyan 40%;
 }
 
 .search-result-title {
@@ -635,7 +705,7 @@ ProgressBar > .bar--complete {
     color: $text-muted;
 }
 
-/* ======== HELP SCREEN ======== */
+/* ═══════════ HELP SCREEN - DOCUMENTATION ═══════════ */
 #help-container {
     padding: 1;
     height: 1fr;
@@ -643,13 +713,13 @@ ProgressBar > .bar--complete {
 
 #help-title {
     dock: top;
-    height: 2;
-    background: $surface-bright;
-    color: $magenta;
+    height: 3;
+    background: $cyan 15%;
+    color: $cyan;
     text-style: bold;
     text-align: center;
-    padding: 0 1;
-    border-bottom: solid $border;
+    padding: 1;
+    border-bottom: double $cyan 50%;
 }
 
 #help-scroll {
@@ -673,24 +743,25 @@ ProgressBar > .bar--complete {
 }
 
 .help-title {
-    color: $cyan;
+    color: $magenta;
     text-style: bold;
 }
 
 .help-key {
-    background: $surface-bright;
-    color: $magenta;
+    background: $cyan 20%;
+    color: $cyan;
     padding: 0 1;
+    text-style: bold;
 }
 
-/* ======== CHAT INPUT ======== */
+/* ═══════════ CHAT INPUT - TRANSMISSION TERMINAL ═══════════ */
 #chat-input {
     dock: bottom;
     height: auto;
     min-height: 7;
     max-height: 12;
     background: $surface;
-    border-top: solid $cyan 50%;
+    border-top: double $cyan 70%;
     padding: 1;
 }
 
@@ -703,17 +774,18 @@ ProgressBar > .bar--complete {
 }
 
 #autocomplete-hint {
-    color: $cyan;
-    background: $surface-bright;
+    color: $green;
+    background: $green 15%;
     padding: 0 1;
     height: 1;
+    text-style: italic;
 }
 
 #autocomplete-hint.--hidden {
     display: none;
 }
 
-/* ======== SETTINGS SCREEN ======== */
+/* ═══════════ SETTINGS SCREEN - SYSTEM CONFIGURATION ═══════════ */
 SettingsScreen {
     align: center middle;
 }
@@ -722,7 +794,7 @@ SettingsScreen {
     dock: top;
     height: 3;
     background: $surface;
-    border-bottom: double $magenta;
+    border-bottom: double $magenta 70%;
     content-align: center middle;
 }
 
@@ -745,7 +817,7 @@ SettingsScreen {
     dock: bottom;
     height: 3;
     background: $surface;
-    border-top: solid $border;
+    border-top: solid $cyan 40%;
     align: center middle;
     padding: 0 2;
 }
@@ -772,8 +844,9 @@ SettingsScreen {
 }
 
 .settings-label {
-    width: 20;
+    width: 22;
     padding-right: 1;
+    color: $cyan;
 }
 
 .settings-input {
@@ -788,14 +861,14 @@ SettingsScreen {
     height: 1;
 }
 
-/* ======== TABBED CONTENT ======== */
+/* ═══════════ TABBED CONTENT - MULTI-PANEL ═══════════ */
 TabbedContent {
     background: $bg;
 }
 
 Tabs {
     background: $surface;
-    border-bottom: solid $border;
+    border-bottom: solid $magenta 40%;
 }
 
 Tab {
@@ -806,17 +879,17 @@ Tab {
 
 Tab:hover {
     background: $surface-bright;
-    color: $text;
+    color: $magenta;
 }
 
 Tab.-active {
-    background: $bg;
-    color: $cyan;
+    background: $magenta 20%;
+    color: $magenta;
     text-style: bold;
 }
 
 Underline {
-    color: $cyan;
+    color: $magenta;
 }
 
 TabPane {
@@ -824,7 +897,7 @@ TabPane {
     padding: 1;
 }
 
-/* Quick action buttons */
+/* ═══════════ QUICK ACTIONS - NEURAL SHORTCUTS ═══════════ */
 #quick-actions {
     height: 3;
     dock: top;
@@ -832,19 +905,102 @@ TabPane {
 }
 
 .quick-btn {
-    min-width: 6;
+    min-width: 8;
     height: 3;
     margin: 0;
     padding: 0 1;
     background: $surface;
     color: $cyan;
-    border: solid $cyan 30%;
+    border: solid $cyan 40%;
+    text-style: bold;
 }
 
 .quick-btn:hover {
-    background: $cyan 30%;
+    background: $cyan 35%;
+    border: solid $cyan 80%;
 }
 
 .quick-btn:focus {
-    background: $cyan 40%;
+    background: $cyan 45%;
+    border: double $cyan;
 }
+
+/* ═══════════ DIALOGS - MODAL OVERLAYS ═══════════ */
+ModalScreen {
+    background: $void 80%;
+}
+
+#dialog {
+    background: $surface;
+    border: double $cyan;
+    padding: 2;
+    width: 60;
+    height: auto;
+}
+
+#dialog-title {
+    color: $cyan;
+    text-style: bold;
+    text-align: center;
+    padding-bottom: 1;
+    border-bottom: solid $cyan 40%;
+}
+
+#dialog-body {
+    padding: 1;
+    color: $text;
+}
+
+#dialog-buttons {
+    align: center middle;
+    padding-top: 1;
+}
+
+/* ═══════════ NOTIFICATIONS - SYSTEM ALERTS ═══════════ */
+Toast {
+    background: $surface;
+    border: double $cyan;
+    color: $text;
+}
+
+Toast.-information {
+    border: double $cyan;
+}
+
+Toast.-warning {
+    border: double $warning;
+    color: $warning;
+}
+
+Toast.-error {
+    border: double $error;
+    color: $error;
+}
+
+/* ═══════════ SPECIAL EFFECTS ═══════════ */
+
+/* Glowing borders for focused elements */
+*:focus {
+    border: double $cyan;
+}
+
+/* Selection highlighting */
+.--highlight {
+    background: $cyan 30%;
+}
+
+/* Error states */
+.--error {
+    border: double $error;
+    color: $error;
+}
+
+/* Success states */
+.--success {
+    border: double $green;
+    color: $green;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   END OF THEME - "Wake up, Samurai. We have a city to burn."
+   ═══════════════════════════════════════════════════════════════════════════ */
