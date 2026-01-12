@@ -1274,6 +1274,14 @@ class ChatHandler {
         textarea.innerHTML = cmd;
         const decodedCmd = textarea.value;
 
+        // Intercept cal get commands to open edit modal in WebUI
+        const calGetMatch = decodedCmd.match(/^cal\s+get\s+(\S+)/i);
+        if (calGetMatch && window.openCalendarModal) {
+            const uid = calGetMatch[1];
+            window.openCalendarModal({ uid: uid });
+            return;  // Don't send to server
+        }
+
         // Track mail read commands for "this email" voice support
         // Format: "mail read <id>" or "mail read <account> <id>"
         const mailReadMatch = decodedCmd.match(/^mail\s+read\s+(\S+)(?:\s+(\S+))?/i);
