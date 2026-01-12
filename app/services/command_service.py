@@ -56,7 +56,8 @@ class CommandService:
         "search": "Search the web and get AI-summarized results",
         "images": "Search for images",
         "geni": "Generate an AI image from your prompt",
-        "yt": "YouTube: yt <url> (summarize) | yt dl <url> (download MP3 to WebDAV)",
+        "yt": "YouTube summarize: yt <url> - get AI summary of video transcript",
+        "ytdl": "YouTube download: ytdl <url> - download video as MP3 to WebDAV Music",
         "torrents": "Torrents: torrents | torrents <category> | torrents dl <#> | torrents list | torrents add <url>",
         "nyaa": "Search nyaa.si: nyaa <query> | nyaa download <#>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
@@ -78,6 +79,8 @@ class CommandService:
         "sched": "cal",
         "flood": "torrents",  # Combine flood into torrents command
         "torrent": "torrents",  # Allow singular form
+        "yt-dlp": "ytdl",  # YouTube download alias
+        "youtube": "yt",  # YouTube summarize alias
     }
 
     def __init__(self, db: Session, user: Optional["User"] = None):
@@ -132,6 +135,8 @@ class CommandService:
             return await self._firewall_command(arg)
         elif command == "yt":
             return await self._youtube_command(arg)
+        elif command == "ytdl":
+            return await self._youtube_download_command(arg)
         elif command == "torrents":
             return await self._torrents_command(arg)
         elif command == "nyaa":
@@ -466,7 +471,7 @@ class CommandService:
             return {"type": "text", "content": f"Firewall error: {str(e)}"}
 
     async def _youtube_command(self, arg: str) -> dict:
-        """Summarize or download a YouTube video"""
+        """Summarize a YouTube video transcript"""
         if not arg:
             return {"type": "text", "content": """## YouTube Commands
 
@@ -474,40 +479,11 @@ class CommandService:
 `yt <url>` - Get AI summary of video transcript
 
 **Download as MP3:**
-`yt dl <url>` - Download video as MP3 to your WebDAV Music folder
+`ytdl <url>` - Download video as MP3 to your WebDAV Music folder
 
-Example: `yt dl https://youtube.com/watch?v=...`"""}
+Example: `yt https://youtube.com/watch?v=...`"""}
 
-        parts = arg.strip().split()
-        subcommand = parts[0].lower() if parts else ""
-
-        # Handle download subcommand
-        if subcommand in ("dl", "download"):
-            if len(parts) < 2:
-                return {"type": "text", "content": "Please provide a YouTube URL. Example: `yt dl https://youtube.com/watch?v=...`"}
-
-            # Check if yt-dlp is available
-            if not check_ytdlp_available():
-                return {"type": "text", "content": "❌ yt-dlp not installed. Install with: `pip install yt-dlp`"}
-
-            # Extract URL
-            url_text = " ".join(parts[1:])
-            urls = extract_youtube_urls(url_text)
-            if not urls:
-                return {"type": "text", "content": "Could not find a valid YouTube URL."}
-
-            target_url = urls[0]
-
-            # Download and upload to WebDAV
-            result = await download_and_upload_to_webdav(
-                url=target_url,
-                user_id=self.user.id,
-                db=self.db
-            )
-
-            return {"type": "text", "content": format_download_result(result)}
-
-        # Default: summarize video
+        # Extract URL
         urls = extract_youtube_urls(arg)
         if not urls:
             return {"type": "text", "content": "Could not find a valid YouTube URL."}
@@ -515,6 +491,39 @@ Example: `yt dl https://youtube.com/watch?v=...`"""}
         target_url = urls[0]
         success, result = await summarize_youtube(target_url, self.chat_service)
         return {"type": "text", "content": result}
+
+    async def _youtube_download_command(self, arg: str) -> dict:
+        """Download a YouTube video as MP3 to WebDAV"""
+        if not arg:
+            return {"type": "text", "content": """## YouTube Download
+
+**Usage:** `ytdl <url>`
+
+Downloads YouTube video as MP3 and saves to your WebDAV Music folder.
+
+Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
+
+**Note:** Requires WebDAV Music to be configured in Settings."""}
+
+        # Check if yt-dlp is available
+        if not check_ytdlp_available():
+            return {"type": "text", "content": "❌ yt-dlp not installed. Install with: `pip install yt-dlp`"}
+
+        # Extract URL
+        urls = extract_youtube_urls(arg)
+        if not urls:
+            return {"type": "text", "content": "Could not find a valid YouTube URL."}
+
+        target_url = urls[0]
+
+        # Download and upload to WebDAV
+        result = await download_and_upload_to_webdav(
+            url=target_url,
+            user_id=self.user.id,
+            db=self.db
+        )
+
+        return {"type": "text", "content": format_download_result(result)}
 
     async def _torrents_command(self, arg: str) -> dict:
         """Browse torrents and manage Flood client"""

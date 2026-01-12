@@ -30,6 +30,9 @@ COMMANDS = [
     "weather",
     "news", "dailynews",
     "torrents", "torrents list", "torrents add", "torrents download",
+    "yt", "yt dl", "ytdl",  # YouTube summarize and download
+    "todo", "todo add", "todo rm",  # Todo list
+    "budget", "budget bills",  # Budget
     "reminder", "reminder add", "reminder list",
     "note", "note add", "note search",
     "help", "settings",
