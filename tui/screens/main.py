@@ -91,31 +91,27 @@ class MainScreen(Screen):
 
     @work(exclusive=True)
     async def load_mail_accounts(self):
-        """Load mail accounts for autocomplete."""
+        """Load mail accounts and contact emails for autocomplete."""
         try:
+            # Load mail accounts
             settings = await self.app.api.get_user_settings()
             mail_accounts = settings.get("mail_accounts", [])
             if mail_accounts:
                 chat_input = self.query_one("#chat-input", ChatInput)
                 chat_input.set_mail_accounts(mail_accounts)
-                # Load contact emails after mail accounts are set
-                self.load_contact_emails()
+
+                # Load contact emails immediately after (in same worker)
+                try:
+                    contacts = await self.app.api.get_contact_emails()
+                    if contacts:
+                        emails = [c.get("email", "") for c in contacts if c.get("email")]
+                        if emails:
+                            chat_input.set_contact_emails(emails)
+                except Exception:
+                    # Silently fail - autocomplete just won't have contact emails
+                    pass
         except Exception as e:
             # Silently fail - autocomplete just won't have account hints
-            pass
-
-    @work(exclusive=True)
-    async def load_contact_emails(self):
-        """Load contact emails for autocomplete."""
-        try:
-            contacts = await self.app.api.get_contact_emails()
-            if contacts:
-                emails = [c.get("email", "") for c in contacts if c.get("email")]
-                if emails:
-                    chat_input = self.query_one("#chat-input", ChatInput)
-                    chat_input.set_contact_emails(emails)
-        except Exception:
-            # Silently fail - autocomplete just won't have contact emails
             pass
 
     @work(exclusive=True, group="sync")

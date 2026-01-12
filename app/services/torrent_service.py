@@ -182,12 +182,14 @@ def format_torrent_results(results: list[TorrentResult], category: str) -> str:
     for i, t in enumerate(results, 1):
         # Truncate long titles
         title = t.title[:70] + "..." if len(t.title) > 70 else t.title
+        # Escape brackets in title to prevent Rich markup parsing errors
+        title_escaped = title.replace("[", "(").replace("]", ")")
 
         # Make title a clickable link if URL available
         if t.url:
-            title_display = f"[{title}]({t.url})"
+            title_display = f"[{title_escaped}]({t.url})"
         else:
-            title_display = title
+            title_display = title_escaped
 
         # Download button with numbered reference (magnet stored in cache)
         dl_cmd = f"torrents download {category} {i}"
@@ -255,12 +257,14 @@ def format_all_categories(all_results: dict[str, list[TorrentResult]]) -> str:
 
         for i, t in enumerate(results, 1):
             title = t.title[:60] + "..." if len(t.title) > 60 else t.title
+            # Escape brackets in title to prevent Rich markup parsing errors
+            title_escaped = title.replace("[", "(").replace("]", ")")
 
             # Make title a clickable link if URL available
             if t.url:
-                title_display = f"[{title}]({t.url})"
+                title_display = f"[{title_escaped}]({t.url})"
             else:
-                title_display = title
+                title_display = title_escaped
 
             # Download button with numbered reference
             dl_cmd = f"torrents download {category} {i}"

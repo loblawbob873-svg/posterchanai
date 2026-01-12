@@ -139,12 +139,14 @@ def format_nyaa_results(results: list[NyaaResult], query: str) -> str:
     for i, t in enumerate(results, 1):
         # Truncate long titles
         title = t.title[:70] + "..." if len(t.title) > 70 else t.title
+        # Escape brackets in title to prevent Rich markup parsing errors
+        title_escaped = title.replace("[", "(").replace("]", ")")
 
         # Make title a clickable link
         if t.url:
-            title_display = f"[{title}]({t.url})"
+            title_display = f"[{title_escaped}]({t.url})"
         else:
-            title_display = title
+            title_display = title_escaped
 
         # Download button with numbered reference
         dl_cmd = f"nyaa download {i}"
