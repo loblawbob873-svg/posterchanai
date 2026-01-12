@@ -26,8 +26,8 @@ class TorService:
     def __init__(
         self,
         listen_host: str = "127.0.0.1",
-        socks_port: int = 9050,
-        control_port: int = 9051,
+        socks_port: int = 9052,
+        control_port: int = 9053,
         exit_nodes: str = "{us}",
         data_dir: str = "/var/lib/posterchanai/tor",
         hidden_services: str = "",
@@ -47,8 +47,8 @@ class TorService:
     def get_instance(
         cls,
         listen_host: str = "127.0.0.1",
-        socks_port: int = 9050,
-        control_port: int = 9051,
+        socks_port: int = 9052,
+        control_port: int = 9053,
         exit_nodes: str = "{us}",
         data_dir: str = "/var/lib/posterchanai/tor",
         hidden_services: str = "",
@@ -85,31 +85,10 @@ class TorService:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         torrc_path = self.data_dir / "torrc"
 
-        # Build SocksPolicy based on listen address
-        if self.listen_host in ("0.0.0.0", "::"):
-            # Listening on all interfaces - allow private networks
-            socks_policy = """# Allow connections from private networks
-SocksPolicy accept 127.0.0.0/8
-SocksPolicy accept 10.0.0.0/8
-SocksPolicy accept 172.16.0.0/12
-SocksPolicy accept 192.168.0.0/16
-SocksPolicy reject *"""
-        elif self.listen_host == "127.0.0.1":
-            # Localhost only
-            socks_policy = "SocksPolicy accept 127.0.0.0/8\nSocksPolicy reject *"
-        else:
-            # Specific IP - allow that subnet
-            socks_policy = f"""# Allow connections from local network
-SocksPolicy accept 127.0.0.0/8
-SocksPolicy accept {self.listen_host.rsplit('.', 1)[0]}.0/24
-SocksPolicy reject *"""
-
-        config = f"""# Auto-generated torrc for posterchanai
+        config = f"""# Posterchanai dedicated Tor instance
 SocksPort {self.listen_host}:{self.socks_port}
 ControlPort {self.control_port}
 DataDirectory {self.data_dir}
-
-{socks_policy}
 
 # Exit node restrictions
 ExitNodes {self.exit_nodes}
@@ -129,13 +108,12 @@ AvoidDiskWrites 1
 
         # Add hidden services if configured
         if self.hidden_services and self.hidden_services.strip():
-            # Auto-create hidden service directories
             import re
             for match in re.finditer(r'HiddenServiceDir\s+(\S+)', self.hidden_services):
                 hs_dir = Path(match.group(1))
                 try:
                     hs_dir.mkdir(parents=True, exist_ok=True)
-                    os.chmod(hs_dir, 0o700)  # Tor requires 700 permissions
+                    os.chmod(hs_dir, 0o700)
                     logger.info(f"[TOR] Created hidden service dir: {hs_dir}")
                 except Exception as e:
                     logger.error(f"[TOR] Failed to create hidden service dir {hs_dir}: {e}")
@@ -144,12 +122,9 @@ AvoidDiskWrites 1
 # Hidden Services
 {self.hidden_services.strip()}
 """
-            logger.info(f"[TOR] Hidden services configured")
 
         logger.info(f"[TOR] Creating torrc: listen={self.listen_host}:{self.socks_port}, exits={self.exit_nodes}")
-
         torrc_path.write_text(config)
-        logger.info(f"Created torrc at {torrc_path}")
         return torrc_path
 
     def start(self) -> bool:
@@ -194,40 +169,39 @@ AvoidDiskWrites 1
             return False
 
     def _wait_for_bootstrap(self, timeout: int = 60) -> bool:
-        """Wait for Tor to complete bootstrapping."""
+        """Wait for Tor to complete bootstrapping via control port."""
         import socket
-
-        # Use 127.0.0.1 to check if listen_host is 0.0.0.0, otherwise use listen_host
-        check_host = "127.0.0.1" if self.listen_host == "0.0.0.0" else self.listen_host
 
         start_time = time.time()
         while time.time() - start_time < timeout:
             if not self._running or not self._process:
                 return False
 
-            # Try to connect to SOCKS port
+            # Check bootstrap status via control port (more reliable than SOCKS handshake)
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(1)
-                result = sock.connect_ex((check_host, self.socks_port))
-                sock.close()
-                if result == 0:
-                    # Port is open, try SOCKS5 handshake
-                    try:
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.settimeout(5)
-                        sock.connect((check_host, self.socks_port))
-                        sock.send(b'\x05\x01\x00')  # SOCKS5 greeting
-                        response = sock.recv(2)
-                        sock.close()
-                        if response == b'\x05\x00':
-                            return True
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                sock.settimeout(5)
+                sock.connect(('127.0.0.1', self.control_port))
+                sock.send(b'AUTHENTICATE ""\r\n')
+                response = sock.recv(1024)
+                if b'250' in response:
+                    sock.send(b'GETINFO status/bootstrap-phase\r\n')
+                    response = sock.recv(1024)
+                    sock.close()
+                    if b'Bootstrapped 100%' in response or b'TAG=done' in response:
+                        logger.info("[TOR] Bootstrap complete (verified via control port)")
+                        return True
+                    else:
+                        # Log progress
+                        progress = response.decode('utf-8', errors='ignore').strip()
+                        if 'PROGRESS=' in progress:
+                            logger.debug(f"[TOR] Bootstrap progress: {progress}")
+                else:
+                    sock.close()
+            except Exception as e:
+                logger.debug(f"[TOR] Bootstrap check failed: {e}")
 
-            time.sleep(1)
+            time.sleep(2)
 
         return False
 
@@ -299,8 +273,8 @@ AvoidDiskWrites 1
 
 def start_tor_service(
     listen_host: str = "127.0.0.1",
-    socks_port: int = 9050,
-    control_port: int = 9051,
+    socks_port: int = 9052,
+    control_port: int = 9053,
     exit_nodes: str = "{us}",
     data_dir: str = "/var/lib/posterchanai/tor",
     hidden_services: str = "",

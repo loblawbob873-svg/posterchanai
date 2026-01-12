@@ -17,13 +17,13 @@ const VOICE_COMMANDS = [
     { patterns: [/^read\s+(\d+)$/i], command: 'mail read $1' },
     { patterns: [/^(delete|remove|trash)\s+(\d+)$/i], command: 'mail delete $2' },
     { patterns: [/^archive\s+(\d+)$/i], command: 'mail archive $1' },
-    // With "email/message": "read email 2", "delete message 3"
+    // With "email/mail/message": "read email 2", "delete message 3", "delete mail 5"
     // Mishearings: "email" -> "e-moo", "emoo", "emo", "imoo"
     // Note: normalizeNumbers() converts word numbers to digits before matching
-    { patterns: [/^read\s+(e-?mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail read $2' },
-    { patterns: [/^(open|show)\s+(e-?mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail read $3' },
-    { patterns: [/^(delete|remove|trash)\s+(e-?mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail delete $3' },
-    { patterns: [/^archive\s+(e-?mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail archive $2' },
+    { patterns: [/^read\s+(e-?mail|mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail read $2' },
+    { patterns: [/^(open|show)\s+(e-?mail|mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail read $3' },
+    { patterns: [/^(delete|remove|trash)\s+(e-?mail|mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail delete $3' },
+    { patterns: [/^archive\s+(e-?mail|mail|e-?moo|emoo?|imoo?|message)\s+(\d+)$/i], command: 'mail archive $2' },
 
     // "This email" commands - after reading an email
     { patterns: [/^reply(\s+to)?(\s+this)?$/i], command: 'mail reply THIS_EMAIL ' },
@@ -171,6 +171,7 @@ function parseVoiceCommand(text) {
         .replace(/[\u{2700}-\u{27BF}]/gu, '')    // Dingbats
         .replace(/[^\w\s\-\.\$\#\@]/g, '')       // Keep only word chars, spaces, common punctuation
         .replace(/\s+/g, ' ')
+        .replace(/[.,!?;:]+$/g, '')              // Strip trailing punctuation (Whisper often adds these)
         .trim();
 
     // Convert number words to digits

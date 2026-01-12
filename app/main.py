@@ -140,11 +140,11 @@ async def startup():
 
             from app.services.tor_service import start_tor_service
             listen_host = get_tor_setting("tor_listen_host", "127.0.0.1")
-            socks_port = get_tor_setting("tor_socks_port", "9050")
+            socks_port = get_tor_setting("tor_socks_port", "9052")
             tor_service = start_tor_service(
                 listen_host=listen_host,
                 socks_port=int(socks_port),
-                control_port=int(get_tor_setting("tor_control_port", "9051")),
+                control_port=int(get_tor_setting("tor_control_port", "9053")),
                 exit_nodes=get_tor_setting("tor_exit_nodes", "{us}"),
                 data_dir=get_tor_setting("tor_data_dir", "/var/lib/posterchanai/tor"),
                 hidden_services=get_tor_setting("tor_hidden_services", ""),
@@ -174,7 +174,7 @@ async def startup():
                     listen_host=get_proxy_setting("proxy_listen_host", "127.0.0.1"),
                     listen_port=int(get_proxy_setting("proxy_listen_port", "8118")),
                     socks_host=socks_host,
-                    socks_port=int(get_proxy_setting("proxy_socks_port", "9050")),
+                    socks_port=int(get_proxy_setting("proxy_socks_port", "9052")),
                 )
                 logging.info(f"Built-in HTTP proxy started on port {get_proxy_setting('proxy_listen_port', '8118')}")
             else:

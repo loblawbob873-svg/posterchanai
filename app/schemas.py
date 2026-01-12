@@ -231,8 +231,8 @@ class SettingsResponse(BaseModel):
     # Built-in Tor settings
     tor_enabled: str = "false"
     tor_listen_host: str = "127.0.0.1"
-    tor_socks_port: str = "9050"
-    tor_control_port: str = "9051"
+    tor_socks_port: str = "9052"
+    tor_control_port: str = "9053"
     tor_exit_nodes: str = "{us}"
     tor_data_dir: str = "/var/lib/posterchanai/tor"
     tor_hidden_services: str = ""
@@ -241,7 +241,7 @@ class SettingsResponse(BaseModel):
     proxy_listen_host: str = "127.0.0.1"
     proxy_listen_port: str = "8118"
     proxy_socks_host: str = ""
-    proxy_socks_port: str = "9050"
+    proxy_socks_port: str = "9052"
 
     class Config:
         extra = "allow"  # Allow arbitrary extra settings

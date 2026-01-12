@@ -27,7 +27,7 @@ class HttpToSocksProxy:
         listen_host: str = "127.0.0.1",
         listen_port: int = 8118,
         socks_host: str = "127.0.0.1",
-        socks_port: int = 9050,
+        socks_port: int = 9052,
     ):
         self.listen_host = listen_host
         self.listen_port = listen_port
@@ -45,7 +45,7 @@ class HttpToSocksProxy:
         listen_host: str = "127.0.0.1",
         listen_port: int = 8118,
         socks_host: str = "127.0.0.1",
-        socks_port: int = 9050,
+        socks_port: int = 9052,
     ) -> 'HttpToSocksProxy':
         """Get or create singleton instance."""
         with cls._lock:
@@ -386,7 +386,7 @@ def start_http_proxy(
     listen_host: str = "127.0.0.1",
     listen_port: int = 8118,
     socks_host: str = "127.0.0.1",
-    socks_port: int = 9050,
+    socks_port: int = 9052,
 ) -> HttpToSocksProxy:
     """Start the HTTP proxy and return the instance."""
     proxy = HttpToSocksProxy.get_instance(
