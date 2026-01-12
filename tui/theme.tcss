@@ -200,12 +200,12 @@ FooterKey > .footer-key--key {
 /* ═══════════ MESSAGES - DATA PACKETS ═══════════ */
 MessageWidget {
     height: auto;
-    margin: 0 1 1 1;
+    margin: 0 1 0 1;
 }
 
 .message-inner {
     height: auto;
-    padding: 1;
+    padding: 0 1;
 }
 
 /* USER MESSAGES - Cyan Transmission */
@@ -256,7 +256,7 @@ MessageWidget {
 .message-role {
     text-style: bold;
     height: 1;
-    margin-bottom: 1;
+    margin-bottom: 0;
 }
 
 .message-body {
