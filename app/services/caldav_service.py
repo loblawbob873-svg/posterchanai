@@ -157,6 +157,19 @@ def to_naive_local(dt) -> datetime:
     return dt
 
 
+def to_local_aware(dt) -> datetime:
+    """Convert naive datetime to local timezone-aware datetime."""
+    if dt is None:
+        return None
+    if not isinstance(dt, datetime):
+        # It's a date, convert to datetime at midnight
+        dt = datetime.combine(dt, datetime.min.time())
+    if dt.tzinfo is None:
+        # Naive datetime - assume it's local time, make it aware
+        return dt.astimezone()
+    return dt
+
+
 def get_events_for_date_range(
     url: str,
     username: str,
