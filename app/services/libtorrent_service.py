@@ -506,7 +506,10 @@ class LibtorrentService:
         """Pause a torrent."""
         handle = self.torrents.get(info_hash)
         if handle:
+            # Disable auto-manage so session doesn't resume it
+            handle.unset_flags(lt.torrent_flags.auto_managed)
             handle.pause()
+            logger.info(f"[BT] Paused torrent: {handle.status().name}")
             return True
         return False
 
@@ -515,6 +518,9 @@ class LibtorrentService:
         handle = self.torrents.get(info_hash)
         if handle:
             handle.resume()
+            # Re-enable auto-manage
+            handle.set_flags(lt.torrent_flags.auto_managed)
+            logger.info(f"[BT] Resumed torrent: {handle.status().name}")
             return True
         return False
 
