@@ -448,13 +448,13 @@ class STTController {
             this.updateUI();
             console.log('Whisper recording started');
 
-            // Auto-stop after 10 seconds max recording time
+            // Auto-stop after 5 seconds max recording time
             this.whisperTimeout = setTimeout(() => {
                 if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
                     console.log('Auto-stopping Whisper recording after timeout');
                     this.stop();
                 }
-            }, 10000);
+            }, 5000);
 
         } catch (e) {
             console.error('Failed to start Whisper recording:', e);
@@ -596,7 +596,7 @@ class STTController {
         if (this.isListening) {
             this.voiceBtn.classList.add('listening');
             this.voiceBtn.textContent = '🎙️';
-            this.voiceBtn.title = this.useWhisper ? 'Recording... (click to send)' : 'Listening... (click to send)';
+            this.voiceBtn.title = this.useWhisper ? 'Recording... (click to stop or wait 5s)' : 'Listening... (click to send)';
         } else {
             this.voiceBtn.classList.remove('listening');
             this.voiceBtn.textContent = '🎤';
