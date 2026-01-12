@@ -61,22 +61,24 @@ class LibtorrentService:
         # Create libtorrent session
         self.session = lt.session()
 
-        # Configure session settings - equivalent to rtorrent config:
-        # system.daemon.set = true (we run as part of the app)
-        # trackers.use_udp.set = yes
-        # dht.mode.set = auto
-        # protocol.pex.set = yes
+        # Configure session settings for Tor compatibility
+        # UDP does NOT work over Tor - disable ALL UDP features
         settings = {
             'alert_mask': lt.alert.category_t.all_categories,
             'listen_interfaces': f'0.0.0.0:{listen_port}',
             'download_rate_limit': 0,  # unlimited
             'upload_rate_limit': 0,
-            # Enable DHT (dht.mode.set = auto)
-            'enable_dht': True,
-            'dht_bootstrap_nodes': 'router.bittorrent.com:6881,router.utorrent.com:6881,dht.transmissionbt.com:6881',
-            # Enable PEX (protocol.pex.set = yes)
-            'enable_lsd': True,  # Local Service Discovery
-            # Enable UDP trackers (trackers.use_udp.set = yes)
+            # DISABLE DHT - uses UDP, won't work over Tor
+            'enable_dht': False,
+            # DISABLE LSD (Local Service Discovery) - uses UDP multicast
+            'enable_lsd': False,
+            # DISABLE uTP (micro Transport Protocol) - uses UDP
+            'enable_outgoing_utp': False,
+            'enable_incoming_utp': False,
+            # Only use TCP connections
+            'enable_outgoing_tcp': True,
+            'enable_incoming_tcp': True,
+            # Use HTTP/HTTPS trackers only (announce to all for redundancy)
             'announce_to_all_trackers': True,
             'announce_to_all_tiers': True,
             # Performance settings
