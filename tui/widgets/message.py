@@ -45,7 +45,11 @@ class MessageWidget(Widget):
     def compose(self) -> ComposeResult:
         role_label = self.get_role_label()
         yield Vertical(
-            Static(role_label, classes="message-role"),
+            Horizontal(
+                Static(role_label, classes="message-role"),
+                Button("Copy", id="copy-btn", classes="copy-btn"),
+                classes="message-header"
+            ),
             Vertical(id="message-content-container"),
             Horizontal(id="message-buttons"),
             classes="message-inner"
@@ -226,10 +230,34 @@ class MessageWidget(Widget):
     def on_button_pressed(self, event: Button.Pressed):
         """Handle action button clicks."""
         button = event.button
-        if hasattr(button, 'command') and button.command:
+        if button.id == "copy-btn":
+            self._copy_to_clipboard()
+            event.stop()
+        elif hasattr(button, 'command') and button.command:
             # Post command to be handled by main screen
             self.post_message(self.CommandClicked(button.command))
             event.stop()
+
+    def _copy_to_clipboard(self):
+        """Copy message content to clipboard."""
+        try:
+            import pyperclip
+            pyperclip.copy(self.content)
+            self.notify("Copied to clipboard", severity="information", timeout=2)
+        except ImportError:
+            # Fallback to xclip/xsel on Linux
+            import subprocess
+            try:
+                process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
+                process.communicate(self.content.encode('utf-8'))
+                self.notify("Copied to clipboard", severity="information", timeout=2)
+            except FileNotFoundError:
+                try:
+                    process = subprocess.Popen(['xsel', '--clipboard', '--input'], stdin=subprocess.PIPE)
+                    process.communicate(self.content.encode('utf-8'))
+                    self.notify("Copied to clipboard", severity="information", timeout=2)
+                except FileNotFoundError:
+                    self.notify("Install xclip or pyperclip to copy", severity="warning", timeout=3)
 
     def finish_streaming(self):
         """Mark streaming as complete and re-render."""

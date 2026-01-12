@@ -90,7 +90,6 @@ class ChatInput(Widget):
                 Button("PIM ▾", id="quick-pim", classes="quick-btn dropdown-toggle"),
                 Button("Music", id="quick-music", classes="quick-btn"),
                 Button("Torrent ▾", id="quick-torrent-toggle", classes="quick-btn dropdown-toggle"),
-                Button("Weather", id="quick-weather", classes="quick-btn"),
                 id="quick-actions"
             ),
             Static("", id="autocomplete-hint", classes="--hidden"),
@@ -141,8 +140,6 @@ class ChatInput(Widget):
         # Other quick buttons
         elif btn_id == "quick-music":
             self.send_command("music")
-        elif btn_id == "quick-weather":
-            self.send_command("weather")
 
     def toggle_dropdown(self, menu_id: str):
         """Toggle a dropdown menu visibility."""
