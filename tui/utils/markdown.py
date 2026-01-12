@@ -55,16 +55,11 @@ def parse_markdown(text: str) -> Text:
     """
     result = Text()
 
-    # Replace cmd: links with placeholders that will be rendered as buttons
-    # For now, just show them as highlighted text
-    def replace_cmd_link(match):
-        label = match.group(1)
-        return f"[{label}]"
+    # Remove cmd: links entirely - they're rendered as buttons separately
+    processed = CMD_LINK_PATTERN.sub('', text)
 
-    processed = CMD_LINK_PATTERN.sub(replace_cmd_link, text)
-
-    # Convert copy: links similarly
-    processed = COPY_LINK_PATTERN.sub(replace_cmd_link, processed)
+    # Convert copy: links similarly - remove
+    processed = COPY_LINK_PATTERN.sub('', processed)
 
     # Convert regular links to display text
     def replace_link(match):

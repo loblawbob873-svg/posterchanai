@@ -78,11 +78,20 @@ def _format_bt_list_from_dicts(torrents: list[dict]) -> str:
         name = t.get("name", "Unknown")
         seeders = t.get("seeders", 0)
         peers = t.get("peers", 0)
+        is_paused = t.get("is_paused", False)
+
+        # Action buttons
+        if is_paused or state == "paused":
+            toggle_btn = f"[▶ Resume](cmd:bt resume {i})"
+        else:
+            toggle_btn = f"[⏸ Pause](cmd:bt pause {i})"
+        delete_btn = f"[🗑 Delete](cmd:bt rm {i})"
 
         lines.append(
             f"{i}. {state_icon} **{name}**\n"
             f"   [{bar}] {progress:.1f}% | {size_str}\n"
-            f"   ↓{down} ↑{up} | {seeders}S/{peers}P"
+            f"   ↓{down} ↑{up} | {seeders}S/{peers}P\n"
+            f"   {toggle_btn} | {delete_btn}"
         )
 
     return "\n".join(lines)
@@ -1221,11 +1230,11 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             return {"type": "text", "content": "No calendars configured. Add calendars in User Settings."}
 
         parts = arg.strip().split(maxsplit=1)
-        subcommand = parts[0].lower() if parts else "today"
+        subcommand = parts[0].lower() if parts else "week"
         param = parts[1] if len(parts) > 1 else ""
 
         try:
-            if subcommand in ("today", ""):
+            if subcommand == "today":
                 # Get today's events
                 today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
                 tomorrow = today + timedelta(days=1)
@@ -1235,7 +1244,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 date_str = today.strftime("%A, %B %d")
                 return {"type": "text", "content": f"## ◈ SCHEDULE - {date_str.upper()} ◈\n\n{events_text}"}
 
-            elif subcommand == "week":
+            elif subcommand in ("week", ""):
                 # Get this week's events
                 today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
                 week_end = today + timedelta(days=7)
@@ -1812,7 +1821,7 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Account '{account_hint}' not found."}
 
                 # Get the attachment
-                attachment = get_attachment(self.user.id, self.db, account_email, uid, "INBOX", att_index)
+                attachment = get_attachment(self.user.id, self.db, account_email, uid, att_index)
                 if not attachment:
                     return {"type": "text", "content": f"Attachment not found."}
 

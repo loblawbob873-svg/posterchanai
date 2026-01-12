@@ -1110,6 +1110,14 @@ Toast.-error {
     background: $green;
 }
 
+.torrent-btn-danger {
+    background: $red;
+}
+
+.torrent-btn-danger:hover {
+    background: #ff6666;
+}
+
 /* ═══════════ ATTACH BUTTON - FILE UPLOAD ═══════════ */
 .attach-btn {
     width: 5;

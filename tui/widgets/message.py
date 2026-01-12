@@ -72,6 +72,10 @@ class MessageWidget(Widget):
         """Check if content is a torrent list with download commands."""
         return "torrents download" in content and content.count("[Download]") >= 2
 
+    def _is_bt_list(self, content: str) -> bool:
+        """Check if content is a bt list with action buttons."""
+        return "**Torrents:**" in content and ("cmd:bt " in content or "cmd:torrents " in content)
+
     def _parse_torrent_entries(self, content: str) -> list[dict]:
         """Parse torrent list content into entries with inline buttons."""
         entries = []
@@ -128,6 +132,8 @@ class MessageWidget(Widget):
         # Check if this is a torrent list - render with inline buttons
         if self._is_torrent_list(content):
             self._render_torrent_list(content, content_container)
+        elif self._is_bt_list(content):
+            self._render_bt_list(content, content_container)
         else:
             # Standard markdown rendering
             try:
@@ -189,6 +195,103 @@ class MessageWidget(Widget):
                 container.mount(row)
                 row.mount(row_text)
 
+    def _render_bt_list(self, content: str, container: Vertical):
+        """Render bt list with inline action buttons (pause/resume/delete)."""
+        import logging
+        logger = logging.getLogger("tui")
+
+        # Parse bt list entries
+        lines = content.split("\n")
+        current_entry = None
+        entries = []
+
+        # Pattern: 1. ⬇️ **Torrent Name**
+        title_pattern = re.compile(r'^(\d+)\.\s*([^\s]+)\s*\*\*(.+?)\*\*')
+        # Pattern: [▶ Resume](cmd:bt resume 1) or [⏸ Pause](cmd:bt pause 1)
+        pause_resume_pattern = re.compile(r'\[(▶ Resume|⏸ Pause)\]\(cmd:(bt (?:resume|pause) \d+)\)')
+        # Pattern: [🗑 Delete](cmd:bt rm 1)
+        delete_pattern = re.compile(r'\[🗑 Delete\]\(cmd:(bt rm \d+)\)')
+        # Progress line: [██████████] 100.0% | 1.5 GB
+        progress_pattern = re.compile(r'\[([█░]+)\]\s*([\d.]+)%\s*\|\s*(.+)')
+
+        for line in lines:
+            title_match = title_pattern.match(line.strip())
+            if title_match:
+                if current_entry:
+                    entries.append(current_entry)
+                num = title_match.group(1)
+                icon = title_match.group(2)
+                name = title_match.group(3)
+                current_entry = {
+                    "num": num,
+                    "icon": icon,
+                    "name": name,
+                    "progress": "",
+                    "stats": "",
+                    "toggle_cmd": None,
+                    "toggle_label": None,
+                    "delete_cmd": None,
+                }
+            elif current_entry:
+                # Check for progress
+                progress_match = progress_pattern.search(line)
+                if progress_match:
+                    bar = progress_match.group(1)
+                    pct = progress_match.group(2)
+                    size = progress_match.group(3)
+                    current_entry["progress"] = f"[{bar}] {pct}% | {size}"
+
+                # Check for stats (↓ ↑ | S/P)
+                if "↓" in line and "↑" in line:
+                    stats_match = re.search(r'↓[\d.]+\s*[KMG]?B?/s\s*↑[\d.]+\s*[KMG]?B?/s\s*\|\s*\d+S/\d+P', line)
+                    if stats_match:
+                        current_entry["stats"] = stats_match.group(0)
+
+                # Check for pause/resume button
+                pr_match = pause_resume_pattern.search(line)
+                if pr_match:
+                    current_entry["toggle_label"] = pr_match.group(1)
+                    current_entry["toggle_cmd"] = pr_match.group(2)
+
+                # Check for delete button
+                del_match = delete_pattern.search(line)
+                if del_match:
+                    current_entry["delete_cmd"] = del_match.group(1)
+
+        if current_entry:
+            entries.append(current_entry)
+
+        logger.info(f"Parsed {len(entries)} bt entries")
+
+        # Render header
+        container.mount(Static("**Torrents:**", classes="message-body"))
+
+        # Render each entry
+        for entry in entries:
+            row = Horizontal(classes="torrent-row")
+
+            # Build info text
+            info = f"{entry['num']}. {entry['icon']} {entry['name']}"
+            if entry['progress']:
+                info += f"\n   {entry['progress']}"
+            if entry['stats']:
+                info += f" | {entry['stats']}"
+
+            row_text = Static(info, classes="torrent-text")
+            container.mount(row)
+            row.mount(row_text)
+
+            # Add action buttons
+            if entry['toggle_cmd']:
+                toggle_btn = Button(entry['toggle_label'][:1] if entry['toggle_label'] else "P", classes="torrent-btn")
+                toggle_btn.command = entry['toggle_cmd']
+                row.mount(toggle_btn)
+
+            if entry['delete_cmd']:
+                del_btn = Button("X", classes="torrent-btn torrent-btn-danger")
+                del_btn.command = entry['delete_cmd']
+                row.mount(del_btn)
+
     def _render_buttons(self):
         """Render cmd: link buttons for essential actions."""
         import logging
@@ -198,8 +301,8 @@ class MessageWidget(Widget):
             button_container = self.query_one("#message-buttons", Horizontal)
             button_container.remove_children()
 
-            # Skip if already rendered inline (torrent list)
-            if self._is_torrent_list(self.content):
+            # Skip if already rendered inline (torrent list or bt list)
+            if self._is_torrent_list(self.content) or self._is_bt_list(self.content):
                 return
 
             logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")

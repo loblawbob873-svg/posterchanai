@@ -462,10 +462,18 @@ def format_torrent_list(torrents: list[TorrentInfo]) -> str:
             "metadata": "📥",
         }.get(t.state, "❓")
 
+        # Action buttons
+        if t.is_paused or t.state == "paused":
+            toggle_btn = f"[▶ Resume](cmd:bt resume {i})"
+        else:
+            toggle_btn = f"[⏸ Pause](cmd:bt pause {i})"
+        delete_btn = f"[🗑 Delete](cmd:bt rm {i})"
+
         lines.append(
             f"{i}. {state_icon} **{t.name}**\n"
             f"   [{bar}] {t.progress:.1f}% | {size_str}\n"
-            f"   ↓{down} ↑{up} | {t.seeders}S/{t.peers}P"
+            f"   ↓{down} ↑{up} | {t.seeders}S/{t.peers}P\n"
+            f"   {toggle_btn} | {delete_btn}"
         )
 
     return "\n".join(lines)
@@ -509,11 +517,20 @@ def format_torrent_list_from_dicts(torrents: list[dict]) -> str:
         name = t.get("name", "Unknown")
         seeders = t.get("seeders", 0)
         peers = t.get("peers", 0)
+        is_paused = t.get("is_paused", False)
+
+        # Action buttons
+        if is_paused or state == "paused":
+            toggle_btn = f"[▶ Resume](cmd:bt resume {i})"
+        else:
+            toggle_btn = f"[⏸ Pause](cmd:bt pause {i})"
+        delete_btn = f"[🗑 Delete](cmd:bt rm {i})"
 
         lines.append(
             f"{i}. {state_icon} **{name}**\n"
             f"   [{bar}] {progress:.1f}% | {size_str}\n"
-            f"   ↓{down} ↑{up} | {seeders}S/{peers}P"
+            f"   ↓{down} ↑{up} | {seeders}S/{peers}P\n"
+            f"   {toggle_btn} | {delete_btn}"
         )
 
     return "\n".join(lines)
