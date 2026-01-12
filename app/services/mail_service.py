@@ -177,8 +177,18 @@ def html_to_text(html: str) -> str:
     text = re.sub(r'<hr\s*/?>', '\n---\n', text, flags=re.IGNORECASE)
 
     # Extract link URLs: <a href="url">text</a> -> [text](url) for clickable markdown
-    text = re.sub(r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>([^<]*)</a>',
-                  r'[\2](\1)', text, flags=re.IGNORECASE)
+    # Handle nested tags by extracting inner text more carefully
+    def replace_link(m):
+        url = m.group(1)
+        inner = m.group(2)
+        # Strip any remaining HTML tags from inner text
+        inner_text = re.sub(r'<[^>]+>', '', inner).strip()
+        # If no text, use URL as text
+        if not inner_text:
+            inner_text = url
+        return f'[{inner_text}]({url})'
+    text = re.sub(r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+                  replace_link, text, flags=re.IGNORECASE | re.DOTALL)
 
     # Remove style and script content entirely
     text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.IGNORECASE | re.DOTALL)

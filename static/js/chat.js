@@ -2133,6 +2133,14 @@ class ChatHandler {
             links.push({ text, content: decodeURIComponent(content), isCopy: true });
             return `\x00LINK${index}\x00`;
         });
+        // Catch-all for any remaining markdown links (e.g., tracking URLs, other protocols)
+        processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+            const index = links.length;
+            // Determine if external based on URL format
+            const isExternal = url.startsWith('http') || url.startsWith('//') || url.includes('.');
+            links.push({ text, url, external: isExternal });
+            return `\x00LINK${index}\x00`;
+        });
 
         // Escape HTML
         let html = processed
