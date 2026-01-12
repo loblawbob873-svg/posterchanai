@@ -521,10 +521,13 @@ class MessageWidget(Widget):
             logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")
 
             # Filter to essential action buttons (exclude torrents download - handled inline)
+            # Also exclude cal delete/get/edit - they're shown inline next to events
             essential_prefixes = ("mail ", "cal ", "todo ", "news ", "miniflux ", "nyaa ", "music ")
+            exclude_patterns = ("cal delete ", "cal get ", "cal edit ")
             actionable = [
                 (label, cmd) for label, cmd, _, _ in self._cmd_links
                 if any(cmd.startswith(p) for p in essential_prefixes)
+                and not any(cmd.startswith(e) for e in exclude_patterns)
             ]
 
             logger.info(f"Actionable buttons: {actionable}")

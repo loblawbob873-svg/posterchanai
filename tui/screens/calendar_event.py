@@ -18,23 +18,22 @@ class CalendarEventScreen(ModalScreen):
 
     #calendar-event-container {
         width: 60;
-        height: auto;
+        max-height: 90%;
         background: $surface;
         border: thick $primary;
         padding: 1 2;
+        overflow-y: auto;
     }
 
     #calendar-event-title {
         text-align: center;
         text-style: bold;
         color: $text;
-        margin-bottom: 1;
     }
 
     .form-row {
         width: 100%;
         height: auto;
-        margin-bottom: 1;
     }
 
     .form-label {

@@ -784,10 +784,12 @@ function initCalendarModal() {
 
     // Expose function to open modal for adding
     window.openCalendarModal = function(eventData = null) {
-        if (eventData) {
+        const today = new Date().toISOString().split('T')[0];
+        if (eventData && eventData.uid) {
+            // Edit mode - set defaults for fields not provided
             document.getElementById('calendarModalTitle').textContent = 'Edit Event';
             document.getElementById('eventTitle').value = eventData.title || '';
-            document.getElementById('eventDate').value = eventData.date || '';
+            document.getElementById('eventDate').value = eventData.date || today;
             document.getElementById('eventTime').value = eventData.time || '';
             document.getElementById('eventEndTime').value = eventData.endTime || '';
             document.getElementById('eventLocation').value = eventData.location || '';
@@ -797,7 +799,6 @@ function initCalendarModal() {
         } else {
             clearCalendarForm();
             // Set default date to today
-            const today = new Date().toISOString().split('T')[0];
             document.getElementById('eventDate').value = today;
         }
         calendarModal.style.display = 'flex';
