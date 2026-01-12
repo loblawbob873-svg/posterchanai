@@ -310,14 +310,16 @@ class MessageWidget(Widget):
             if entry['toggle_cmd']:
                 # Show ▶ or ⏸ based on current state
                 label = "▶" if "Start" in (entry['toggle_label'] or "") or "Resume" in (entry['toggle_label'] or "") else "⏸"
-                toggle_btn = Button(label, classes="torrent-btn")
+                toggle_btn = Button(label, classes="torrent-btn", name=entry['toggle_cmd'])
                 toggle_btn.command = entry['toggle_cmd']
                 row.mount(toggle_btn)
+                logger.info(f"Created toggle button: {label} -> {entry['toggle_cmd']}")
 
             if entry['delete_cmd']:
-                del_btn = Button("🗑", classes="torrent-btn torrent-btn-danger")
+                del_btn = Button("🗑", classes="torrent-btn torrent-btn-danger", name=entry['delete_cmd'])
                 del_btn.command = entry['delete_cmd']
                 row.mount(del_btn)
+                logger.info(f"Created delete button: 🗑 -> {entry['delete_cmd']}")
 
     def _render_mail_list(self, content: str, container: Vertical):
         """Render mail list with inline action buttons per message."""
@@ -463,14 +465,22 @@ class MessageWidget(Widget):
 
     def on_button_pressed(self, event: Button.Pressed):
         """Handle action button clicks."""
+        import logging
+        logger = logging.getLogger("tui")
+
         button = event.button
+        logger.info(f"Button pressed: id={button.id}, name={button.name}, has_command={hasattr(button, 'command')}")
+
         if button.id == "copy-btn":
             self._copy_to_clipboard()
             event.stop()
-        elif hasattr(button, 'command') and button.command:
-            # Post command to be handled by main screen
-            self.post_message(self.CommandClicked(button.command))
-            event.stop()
+        else:
+            # Check for command in both attribute and name
+            command = getattr(button, 'command', None) or button.name
+            if command and command.startswith(('bt ', 'mail ', 'torrents ', 'music ', 'news ')):
+                logger.info(f"Posting command: {command}")
+                self.post_message(self.CommandClicked(command))
+                event.stop()
 
     def _copy_to_clipboard(self):
         """Copy message content to clipboard."""
