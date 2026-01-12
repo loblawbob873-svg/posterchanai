@@ -682,7 +682,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 if result and "torrents" in result:
                     return {"type": "text", "content": _format_bt_list_from_dicts(result["torrents"])}
                 return {"type": "text", "content": "No response from remote server"}
-            from app.services.libtorrent_service import format_torrent_list
+            from app.services.libtorrent_service import format_torrent_list, format_torrent_list_from_dicts
             torrents = bt_service.list_torrents()
             return {"type": "text", "content": format_torrent_list(torrents)}
 
@@ -714,7 +714,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                     # Return updated list after action
                     list_result = await self._remote_bt_request("/list")
                     if list_result and "torrents" in list_result:
-                        return {"type": "text", "content": f"▶️ Started torrent #{num}\n\n" + format_torrent_list_from_api(list_result["torrents"])}
+                        return {"type": "text", "content": f"▶️ Started torrent #{num}\n\n" + format_torrent_list_from_dicts(list_result["torrents"])}
                     return {"type": "text", "content": f"▶️ Started torrent #{num}"}
                 info_hash = bt_service.get_hash_by_number(num)
                 if info_hash and bt_service.resume(info_hash):
@@ -724,7 +724,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                                      "download_rate": t.download_rate, "upload_rate": t.upload_rate,
                                      "state": t.state, "seeders": t.seeders, "peers": t.peers,
                                      "is_paused": t.is_paused} for t in torrents]
-                    return {"type": "text", "content": f"▶️ Started torrent #{num}\n\n" + format_torrent_list_from_api(torrent_dicts)}
+                    return {"type": "text", "content": f"▶️ Started torrent #{num}\n\n" + format_torrent_list_from_dicts(torrent_dicts)}
                 return {"type": "text", "content": f"Torrent #{num} not found"}
             except ValueError:
                 return {"type": "text", "content": "Usage: `torrents resume <number>`"}
@@ -741,7 +741,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                     # Return updated list after action
                     list_result = await self._remote_bt_request("/list")
                     if list_result and "torrents" in list_result:
-                        return {"type": "text", "content": f"⏸️ Paused torrent #{num}\n\n" + format_torrent_list_from_api(list_result["torrents"])}
+                        return {"type": "text", "content": f"⏸️ Paused torrent #{num}\n\n" + format_torrent_list_from_dicts(list_result["torrents"])}
                     return {"type": "text", "content": f"⏸️ Paused torrent #{num}"}
                 info_hash = bt_service.get_hash_by_number(num)
                 if info_hash and bt_service.pause(info_hash):
@@ -751,7 +751,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                                      "download_rate": t.download_rate, "upload_rate": t.upload_rate,
                                      "state": t.state, "seeders": t.seeders, "peers": t.peers,
                                      "is_paused": t.is_paused} for t in torrents]
-                    return {"type": "text", "content": f"⏸️ Paused torrent #{num}\n\n" + format_torrent_list_from_api(torrent_dicts)}
+                    return {"type": "text", "content": f"⏸️ Paused torrent #{num}\n\n" + format_torrent_list_from_dicts(torrent_dicts)}
                 return {"type": "text", "content": f"Torrent #{num} not found"}
             except ValueError:
                 return {"type": "text", "content": "Usage: `torrents pause <number>`"}
@@ -768,7 +768,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                     # Return updated list after action
                     list_result = await self._remote_bt_request("/list")
                     if list_result and "torrents" in list_result:
-                        return {"type": "text", "content": f"🗑️ Removed torrent #{num} (files kept)\n\n" + format_torrent_list_from_api(list_result["torrents"])}
+                        return {"type": "text", "content": f"🗑️ Removed torrent #{num} (files kept)\n\n" + format_torrent_list_from_dicts(list_result["torrents"])}
                     return {"type": "text", "content": f"🗑️ Removed torrent #{num} (files kept)"}
                 info_hash = bt_service.get_hash_by_number(num)
                 if info_hash and bt_service.remove(info_hash, delete_files=False):
@@ -778,7 +778,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                                      "download_rate": t.download_rate, "upload_rate": t.upload_rate,
                                      "state": t.state, "seeders": t.seeders, "peers": t.peers,
                                      "is_paused": t.is_paused} for t in torrents]
-                    return {"type": "text", "content": f"🗑️ Removed torrent #{num} (files kept)\n\n" + format_torrent_list_from_api(torrent_dicts)}
+                    return {"type": "text", "content": f"🗑️ Removed torrent #{num} (files kept)\n\n" + format_torrent_list_from_dicts(torrent_dicts)}
                 return {"type": "text", "content": f"Torrent #{num} not found"}
             except ValueError:
                 return {"type": "text", "content": "Usage: `torrents rm <number>`"}
@@ -795,7 +795,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                     # Return updated list after action
                     list_result = await self._remote_bt_request("/list")
                     if list_result and "torrents" in list_result:
-                        return {"type": "text", "content": f"🗑️ Purged torrent #{num} (files deleted)\n\n" + format_torrent_list_from_api(list_result["torrents"])}
+                        return {"type": "text", "content": f"🗑️ Purged torrent #{num} (files deleted)\n\n" + format_torrent_list_from_dicts(list_result["torrents"])}
                     return {"type": "text", "content": f"🗑️ Purged torrent #{num} (files deleted)"}
                 info_hash = bt_service.get_hash_by_number(num)
                 if info_hash and bt_service.remove(info_hash, delete_files=True):
@@ -805,7 +805,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                                      "download_rate": t.download_rate, "upload_rate": t.upload_rate,
                                      "state": t.state, "seeders": t.seeders, "peers": t.peers,
                                      "is_paused": t.is_paused} for t in torrents]
-                    return {"type": "text", "content": f"🗑️ Purged torrent #{num} (files deleted)\n\n" + format_torrent_list_from_api(torrent_dicts)}
+                    return {"type": "text", "content": f"🗑️ Purged torrent #{num} (files deleted)\n\n" + format_torrent_list_from_dicts(torrent_dicts)}
                 return {"type": "text", "content": f"Torrent #{num} not found"}
             except ValueError:
                 return {"type": "text", "content": "Usage: `torrents purge <number>`"}
