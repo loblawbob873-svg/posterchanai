@@ -1518,15 +1518,19 @@ Return ONLY valid JSON, no other text."""},
                 elif change_lower.startswith("time ") or change_lower.startswith("move ") or change_lower.startswith("reschedule "):
                     # Use AI to parse the new time
                     time_request = change_request.split(maxsplit=1)[1] if " " in change_request else change_request
+                    from datetime import timezone
+                    import time as time_module
+                    local_tz_name = time_module.tzname[0]
                     messages = [
                         {"role": "system", "content": f"""Parse this time change request and return JSON with:
-- start_time: ISO format datetime
-- end_time: ISO format datetime (keep same duration as original unless specified)
+- start_time: ISO format datetime in local timezone ({local_tz_name})
+- end_time: ISO format datetime in local timezone (keep same duration as original unless specified)
 
 Current event:
 - Start: {event.start.isoformat()}
 - End: {event.end.isoformat() if event.end else 'not set'}
 
+IMPORTANT: Return times in local timezone without timezone suffix (e.g., "2026-01-19T14:00:00" not "2026-01-19T14:00:00Z").
 Return ONLY valid JSON, no other text."""},
                         {"role": "user", "content": f"Change time to: {time_request}"}
                     ]
@@ -1546,9 +1550,26 @@ Return ONLY valid JSON, no other text."""},
                         new_start = date_parser.parse(time_data.get("start_time")) if time_data.get("start_time") else None
                         new_end = date_parser.parse(time_data.get("end_time")) if time_data.get("end_time") else None
 
+                        # Ensure datetimes are in local timezone
+                        # If naive, assume local time. If aware (e.g., UTC), convert to local.
+                        if new_start:
+                            if new_start.tzinfo is None:
+                                # Naive - assume it's local time, make it aware
+                                new_start = new_start.astimezone()
+                            else:
+                                # Already aware - convert to local timezone
+                                new_start = new_start.astimezone()
+                        if new_end:
+                            if new_end.tzinfo is None:
+                                new_end = new_end.astimezone()
+                            else:
+                                new_end = new_end.astimezone()
+
+                        logger.info(f"Updating event {event_uid} to start={new_start}, end={new_end}")
+
                         for cal in calendars:
                             if update_event_in_calendar(cal['url'], cal['username'], cal['password'], event_uid, start_time=new_start, end_time=new_end):
-                                time_str = new_start.strftime("%A, %B %d at %I:%M %p") if new_start else "updated"
+                                time_str = new_start.strftime("%A, %B %d, %Y at %I:%M %p") if new_start else "updated"
                                 return {"type": "text", "content": f"✅ Rescheduled to: **{time_str}**"}
                         return {"type": "text", "content": "❌ Failed to update event."}
                     except Exception as e:

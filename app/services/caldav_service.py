@@ -433,11 +433,14 @@ def update_event_in_calendar(
                         else:
                             vevent.add('description').value = description
                     if start_time is not None:
+                        logger.info(f"Setting start_time to {start_time} (was {vevent.dtstart.value})")
                         vevent.dtstart.value = start_time
                     if end_time is not None:
                         if hasattr(vevent, 'dtend'):
+                            logger.info(f"Setting end_time to {end_time} (was {vevent.dtend.value})")
                             vevent.dtend.value = end_time
                         else:
+                            logger.info(f"Adding end_time {end_time}")
                             vevent.add('dtend').value = end_time
                     if location is not None:
                         if hasattr(vevent, 'location'):
@@ -445,8 +448,10 @@ def update_event_in_calendar(
                         else:
                             vevent.add('location').value = location
 
+                    # Force save by modifying the event data
+                    logger.info(f"Saving event {event_uid}...")
                     event.save()
-                    logger.info(f"Updated event with UID: {event_uid}")
+                    logger.info(f"Successfully updated event with UID: {event_uid}")
                     return True
             except Exception as e:
                 logger.debug(f"Error updating in calendar: {e}")
