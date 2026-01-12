@@ -49,5 +49,9 @@ vobject>=0.9.6
 icalendar>=5.0.0
 python-dateutil>=2.8.0
 
-# Built-in torrent client (optional - requires HTTP proxy for security)
-libtorrent>=2.0.0
+# Built-in torrent client (optional - requires system libtorrent-rasterbar)
+# Install system package first:
+#   Gentoo: emerge net-libs/libtorrent-rasterbar
+#   Debian/Ubuntu: apt install python3-libtorrent
+#   Then create venv with: python -m venv venv --system-site-packages
+# libtorrent>=2.0.0  # Commented - use system package instead
