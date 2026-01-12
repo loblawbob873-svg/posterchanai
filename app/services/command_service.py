@@ -553,15 +553,27 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
+                logger.info(f"[TORRENT] TUI request to {url} with auth: {'token' if server_token and server_token.value else 'none'}")
                 if method == "GET":
                     response = await client.get(url, headers=headers)
                 else:
                     response = await client.post(url, headers=headers, json=json_body)
 
+                logger.info(f"[TORRENT] Remote response: {response.status_code}")
+
                 if response.status_code == 200:
-                    return response.json()
+                    try:
+                        return response.json()
+                    except Exception as e:
+                        logger.error(f"[TORRENT] Failed to parse JSON: {e}, body: {response.text[:500]}")
+                        return {"error": "Remote server returned invalid response"}
                 else:
-                    error = response.json().get("detail", "Remote server error")
+                    # Try to get error detail from JSON, fall back to text
+                    try:
+                        error = response.json().get("detail", "Remote server error")
+                    except Exception:
+                        error = response.text[:200] if response.text else f"HTTP {response.status_code}"
+                    logger.error(f"[TORRENT] Remote error: {response.status_code} - {error}")
                     return {"error": error}
         except httpx.RequestError as e:
             logger.error(f"Failed to connect to remote torrent server: {e}")

@@ -80,17 +80,30 @@ async def forward_to_remote(
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
+            logger.info(f"[TORRENT] Forwarding to {url} with auth: {'token' if server_token and server_token.value else 'cookie' if access_token else 'none'}")
             if method == "GET":
                 response = await client.get(url, headers=headers)
             else:
                 response = await client.post(url, headers=headers, json=json_body)
 
+            logger.info(f"[TORRENT] Remote response: {response.status_code}")
+
             if response.status_code == 200:
-                return response.json()
+                try:
+                    return response.json()
+                except Exception as e:
+                    logger.error(f"[TORRENT] Failed to parse JSON response: {e}, body: {response.text[:500]}")
+                    raise HTTPException(status_code=502, detail="Remote server returned invalid JSON")
             else:
+                # Try to get error detail from JSON, fall back to text
+                try:
+                    error_detail = response.json().get("detail", "Remote server error")
+                except Exception:
+                    error_detail = response.text[:200] if response.text else f"HTTP {response.status_code}"
+                logger.error(f"[TORRENT] Remote error: {response.status_code} - {error_detail}")
                 raise HTTPException(
                     status_code=response.status_code,
-                    detail=response.json().get("detail", "Remote server error")
+                    detail=error_detail
                 )
     except httpx.RequestError as e:
         logger.error(f"Failed to connect to remote torrent server: {e}")
