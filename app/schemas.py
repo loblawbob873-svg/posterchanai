@@ -235,7 +235,6 @@ class SettingsResponse(BaseModel):
     tor_control_port: str = "9053"
     tor_exit_nodes: str = "{us}"
     tor_data_dir: str = "/var/lib/posterchanai/tor"
-    tor_hidden_services: str = ""
     # Built-in HTTP proxy settings
     proxy_enabled: str = "false"
     proxy_listen_host: str = "127.0.0.1"

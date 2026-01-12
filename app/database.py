@@ -287,7 +287,6 @@ When asked to write or modify code or files:
             "tor_control_port": "9053",       # Tor control port
             "tor_exit_nodes": "{us}",         # Exit node country codes (e.g., {us},{ca},{gb})
             "tor_data_dir": "/var/lib/posterchanai/tor",  # Tor data directory
-            "tor_hidden_services": "",        # Hidden service config (HiddenServiceDir, HiddenServicePort lines)
         }
 
         added_settings = []

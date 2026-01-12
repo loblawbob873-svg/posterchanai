@@ -78,27 +78,27 @@ class LibtorrentService:
         # Create libtorrent session
         self.session = lt.session()
 
-        # Configure session settings - mirror rtorrent config:
-        # system.daemon.set = true (we run as part of the app)
-        # trackers.use_udp.set = yes (enable, proxy will block/fallback)
-        # dht.mode.set = auto (enable, proxy will block/fallback)
+        # Configure session settings for Tor operation:
+        # - Trackers (including UDP) work directly to get peer lists
+        # - All peer DATA transfers go through HTTP proxy -> Tor
+        # This reveals your IP to trackers only, not to peers you download from
         settings = {
             'alert_mask': lt.alert.category_t.all_categories,
             'listen_interfaces': f'0.0.0.0:{listen_port}',
             'download_rate_limit': 0,  # unlimited
             'upload_rate_limit': 0,
-            # dht.mode.set = auto - enable DHT, will fallback if proxy blocks UDP
+            # Enable DHT for better peer discovery (reveals IP to DHT nodes only)
             'enable_dht': True,
             'dht_bootstrap_nodes': 'router.bittorrent.com:6881,router.utorrent.com:6881,dht.transmissionbt.com:6881',
-            # Enable LSD (Local Service Discovery)
-            'enable_lsd': True,
-            # PEX (Peer Exchange) is enabled by default in libtorrent 2.x
-            # Enable uTP - proxy will force TCP fallback
+            # Disable LSD (Local Service Discovery) - not useful for Tor
+            'enable_lsd': False,
+            # Enable uTP for UDP-based peer discovery (actual transfers proxied)
             'enable_outgoing_utp': True,
             'enable_incoming_utp': True,
+            # TCP for actual data transfers through proxy
             'enable_outgoing_tcp': True,
             'enable_incoming_tcp': True,
-            # trackers.use_udp.set = yes - enable UDP trackers, HTTP proxy forces HTTP fallback
+            # Announce to all trackers (UDP and HTTP)
             'announce_to_all_trackers': True,
             'announce_to_all_tiers': True,
             # Performance settings
@@ -108,7 +108,7 @@ class LibtorrentService:
             'active_limit': 15,
         }
 
-        # REQUIRE proxy - all traffic through tinyproxy + tor
+        # REQUIRE proxy for peer connections
         if not proxy_host:
             raise ValueError("Proxy is REQUIRED for torrenting. Configure HTTP proxy in Admin Settings.")
 
@@ -123,26 +123,29 @@ class LibtorrentService:
             'proxy_type': lt.proxy_type_t.http,
             'proxy_hostname': proxy_host,
             'proxy_port': proxy_port,
-            # Proxy TCP peer connections for privacy
-            'proxy_peer_connections': True,
-            # Allow direct tracker connections (UDP trackers need direct)
-            'proxy_tracker_connections': False,
-            # Don't proxy hostname lookups (needed for UDP)
-            'proxy_hostnames': False,
-            # Allow direct connections for UDP (DHT, UDP trackers)
+            # Don't force ALL traffic through proxy (trackers can be direct)
             'force_proxy': False,
-            'anonymous_mode': False,
+            # IMPORTANT: Proxy peer connections (actual data transfers) through Tor
+            'proxy_peer_connections': True,
+            # Allow direct tracker connections (UDP trackers need this)
+            'proxy_tracker_connections': False,
+            # Don't proxy hostname lookups (trackers need direct DNS)
+            'proxy_hostnames': False,
+            # Anonymous mode - don't leak peer_id in extensions
+            'anonymous_mode': True,
         })
 
         # Log startup configuration
-        logger.info(f"[BT] ========== TORRENT ENGINE STARTING ==========")
-        logger.info(f"[BT] Proxy: {proxy_host}:{proxy_port} (HTTP via tinyproxy)")
+        logger.info(f"[BT] ========== TORRENT ENGINE STARTING (TOR DATA MODE) ==========")
+        logger.info(f"[BT] HTTP Proxy: {proxy_host}:{proxy_port} -> Tor SOCKS5")
         logger.info(f"[BT] Download dir: {self.download_dir}")
         logger.info(f"[BT] Listen port: {listen_port}")
-        logger.info(f"[BT] DHT: enabled (dht.mode.set = auto)")
-        logger.info(f"[BT] UDP trackers: enabled (trackers.use_udp.set = yes)")
-        logger.info(f"[BT] PEX: enabled by default (protocol.pex.set = yes)")
-        logger.info(f"[BT] ==============================================")
+        logger.info(f"[BT] Trackers: DIRECT (UDP+HTTP) - reveals IP to trackers only")
+        logger.info(f"[BT] Peer data: PROXIED through Tor - anonymous downloads")
+        logger.info(f"[BT] DHT: ENABLED (reveals IP to DHT)")
+        logger.info(f"[BT] PEX: ENABLED (peer exchange)")
+        logger.info(f"[BT] Anonymous mode: ENABLED")
+        logger.info(f"[BT] ============================================================")
 
         self.session.apply_settings(settings)
 
@@ -303,7 +306,31 @@ class LibtorrentService:
 
     def _process_alerts(self):
         """Process libtorrent alerts in background with detailed logging."""
+        proxy_check_counter = 0
+        proxy_was_down = False
+
         while self._running:
+            # Periodic proxy check - every 60 iterations (~30 seconds)
+            proxy_check_counter += 1
+            if proxy_check_counter >= 60:
+                proxy_check_counter = 0
+                proxy_ok = self._check_proxy(self.proxy_host, self.proxy_port)
+                if not proxy_ok and not proxy_was_down:
+                    # Proxy went down - pause all active torrents for safety
+                    logger.warning(f"[BT] PROXY DOWN! Pausing all torrents for anonymity protection.")
+                    proxy_was_down = True
+                    for info_hash, handle in self.torrents.items():
+                        try:
+                            if not (handle.flags() & lt.torrent_flags.paused):
+                                handle.unset_flags(lt.torrent_flags.auto_managed)
+                                handle.pause()
+                                logger.warning(f"[BT] Auto-paused: {handle.status().name}")
+                        except Exception as e:
+                            logger.error(f"[BT] Error pausing {info_hash}: {e}")
+                elif proxy_ok and proxy_was_down:
+                    logger.info(f"[BT] Proxy restored. Torrents remain paused - resume manually.")
+                    proxy_was_down = False
+
             alerts = self.session.pop_alerts()
             for alert in alerts:
                 alert_type = type(alert).__name__
@@ -443,10 +470,10 @@ class LibtorrentService:
                 status = handle.status()
                 info = handle.torrent_file()
 
-                # Debug log each torrent state
-                logger.info(f"[BT] {status.name[:30]}: state={self._state_str(status.state)}, "
-                           f"peers={status.num_peers}, seeds={status.num_seeds}, "
-                           f"progress={status.progress*100:.1f}%")
+                # Debug log each torrent state (debug level to avoid spam)
+                logger.debug(f"[BT] {status.name[:30]}: state={self._state_str(status.state)}, "
+                            f"peers={status.num_peers}, seeds={status.num_seeds}, "
+                            f"progress={status.progress*100:.1f}%")
 
                 # Calculate ETA
                 eta = -1
@@ -454,8 +481,16 @@ class LibtorrentService:
                     remaining = status.total_wanted - status.total_wanted_done
                     eta = int(remaining / status.download_rate)
 
-                # Check paused state using handle.flags() (reliable in libtorrent v2)
-                is_paused = bool(handle.flags() & lt.torrent_flags.paused)
+                # Check paused state - multiple methods for reliability
+                flags = handle.flags()
+                is_paused_flag = bool(flags & lt.torrent_flags.paused)
+                is_auto_managed = bool(flags & lt.torrent_flags.auto_managed)
+
+                # Torrent is paused if: paused flag is set, or not auto-managed with 0 rates
+                # Also check status.paused in older libtorrent versions
+                is_paused = is_paused_flag or (hasattr(status, 'paused') and status.paused)
+
+                logger.debug(f"[BT] {status.name[:20]}: paused_flag={is_paused_flag}, auto_managed={is_auto_managed}, is_paused={is_paused}")
 
                 # Use "paused" state if paused, otherwise normal state
                 state = "paused" if is_paused else self._state_str(status.state)
@@ -518,7 +553,10 @@ class LibtorrentService:
         return False
 
     def resume(self, info_hash: str) -> bool:
-        """Resume a torrent."""
+        """Resume a torrent. Requires proxy to be available."""
+        # Verify proxy is available before resuming - don't allow downloads without Tor
+        self._verify_proxy_or_fail()
+
         handle = self.torrents.get(info_hash)
         if handle:
             handle.resume()
@@ -580,25 +618,32 @@ def format_torrent_list(torrents: list[TorrentInfo]) -> str:
         size_mb = t.size / (1024 * 1024)
         size_str = f"{size_mb:.1f} MB" if size_mb < 1024 else f"{size_mb/1024:.2f} GB"
 
-        # State icon
-        state_icon = {
-            "downloading": "⬇️",
-            "seeding": "⬆️",
-            "finished": "✅",
-            "paused": "⏸️",
-            "checking": "🔍",
-            "metadata": "📥",
-        }.get(t.state, "❓")
-
-        # Action buttons
+        # Clear status with icon AND text
         if t.is_paused or t.state == "paused":
-            toggle_btn = f"[▶ Start](cmd:bt start {i})"
+            status = "⏸️ **PAUSED**"
+        elif t.state == "downloading":
+            status = "⬇️ **DOWNLOADING**"
+        elif t.state == "seeding":
+            status = "⬆️ **SEEDING**"
+        elif t.state == "finished":
+            status = "✅ **FINISHED**"
+        elif t.state == "checking":
+            status = "🔍 **CHECKING**"
+        elif t.state == "metadata":
+            status = "📥 **FETCHING METADATA**"
         else:
-            toggle_btn = f"[⏸ Pause](cmd:bt pause {i})"
-        delete_btn = f"[🗑 Delete](cmd:bt rm {i})"
+            status = f"❓ **{t.state.upper()}**"
+
+        # Action buttons - clear labels
+        if t.is_paused or t.state == "paused":
+            toggle_btn = f"[▶ Resume](cmd:torrents resume {i})"
+        else:
+            toggle_btn = f"[⏸ Pause](cmd:torrents pause {i})"
+        delete_btn = f"[🗑 Remove](cmd:torrents rm {i})"
 
         lines.append(
-            f"{i}. {state_icon} **{t.name}**\n"
+            f"**{i}. {t.name}**\n"
+            f"   Status: {status}\n"
             f"   [{bar}] {t.progress:.1f}% | {size_str}\n"
             f"   ↓{down} ↑{up} | {t.seeders}S/{t.peers}P\n"
             f"   {toggle_btn} | {delete_btn}"
@@ -631,31 +676,39 @@ def format_torrent_list_from_dicts(torrents: list[dict]) -> str:
         size_mb = size / (1024 * 1024)
         size_str = f"{size_mb:.1f} MB" if size_mb < 1024 else f"{size_mb/1024:.2f} GB"
 
-        # State icon
         state = t.get("state", "unknown")
-        state_icon = {
-            "downloading": "⬇️",
-            "seeding": "⬆️",
-            "finished": "✅",
-            "paused": "⏸️",
-            "checking": "🔍",
-            "metadata": "📥",
-        }.get(state, "❓")
+        is_paused = t.get("is_paused", False)
+
+        # Clear status with icon AND text
+        if is_paused or state == "paused":
+            status = "⏸️ **PAUSED**"
+        elif state == "downloading":
+            status = "⬇️ **DOWNLOADING**"
+        elif state == "seeding":
+            status = "⬆️ **SEEDING**"
+        elif state == "finished":
+            status = "✅ **FINISHED**"
+        elif state == "checking":
+            status = "🔍 **CHECKING**"
+        elif state == "metadata":
+            status = "📥 **FETCHING METADATA**"
+        else:
+            status = f"❓ **{state.upper()}**"
 
         name = t.get("name", "Unknown")
         seeders = t.get("seeders", 0)
         peers = t.get("peers", 0)
-        is_paused = t.get("is_paused", False)
 
-        # Action buttons
+        # Action buttons - clear labels
         if is_paused or state == "paused":
-            toggle_btn = f"[▶ Start](cmd:bt start {i})"
+            toggle_btn = f"[▶ Resume](cmd:torrents resume {i})"
         else:
-            toggle_btn = f"[⏸ Pause](cmd:bt pause {i})"
-        delete_btn = f"[🗑 Delete](cmd:bt rm {i})"
+            toggle_btn = f"[⏸ Pause](cmd:torrents pause {i})"
+        delete_btn = f"[🗑 Remove](cmd:torrents rm {i})"
 
         lines.append(
-            f"{i}. {state_icon} **{name}**\n"
+            f"**{i}. {name}**\n"
+            f"   Status: {status}\n"
             f"   [{bar}] {progress:.1f}% | {size_str}\n"
             f"   ↓{down} ↑{up} | {seeders}S/{peers}P\n"
             f"   {toggle_btn} | {delete_btn}"

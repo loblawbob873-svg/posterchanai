@@ -72,23 +72,38 @@ def _format_bt_list_from_dicts(torrents: list[dict]) -> str:
         size_str = f"{size_mb:.1f} MB" if size_mb < 1024 else f"{size_mb/1024:.2f} GB"
 
         state = t.get("state", "unknown")
-        state_icon = {"downloading": "⬇️", "seeding": "⬆️", "finished": "✅",
-                      "paused": "⏸️", "checking": "🔍", "metadata": "📥"}.get(state, "❓")
+        is_paused = t.get("is_paused", False)
+
+        # Clear status with icon AND text
+        if is_paused or state == "paused":
+            status = "⏸️ **PAUSED**"
+        elif state == "downloading":
+            status = "⬇️ **DOWNLOADING**"
+        elif state == "seeding":
+            status = "⬆️ **SEEDING**"
+        elif state == "finished":
+            status = "✅ **FINISHED**"
+        elif state == "checking":
+            status = "🔍 **CHECKING**"
+        elif state == "metadata":
+            status = "📥 **FETCHING METADATA**"
+        else:
+            status = f"❓ **{state.upper()}**"
 
         name = t.get("name", "Unknown")
         seeders = t.get("seeders", 0)
         peers = t.get("peers", 0)
-        is_paused = t.get("is_paused", False)
 
-        # Action buttons
+        # Action buttons - clear labels
         if is_paused or state == "paused":
-            toggle_btn = f"[▶ Start](cmd:bt start {i})"
+            toggle_btn = f"[▶ Resume](cmd:torrents resume {i})"
         else:
-            toggle_btn = f"[⏸ Pause](cmd:bt pause {i})"
-        delete_btn = f"[🗑 Delete](cmd:bt rm {i})"
+            toggle_btn = f"[⏸ Pause](cmd:torrents pause {i})"
+        delete_btn = f"[🗑 Remove](cmd:torrents rm {i})"
 
         lines.append(
-            f"{i}. {state_icon} **{name}**\n"
+            f"**{i}. {name}**\n"
+            f"   Status: {status}\n"
             f"   [{bar}] {progress:.1f}% | {size_str}\n"
             f"   ↓{down} ↑{up} | {seeders}S/{peers}P\n"
             f"   {toggle_btn} | {delete_btn}"

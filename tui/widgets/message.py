@@ -224,12 +224,14 @@ class MessageWidget(Widget):
         current_entry = None
         entries = []
 
-        # Pattern: 1. ⬇️ **Torrent Name**
-        title_pattern = re.compile(r'^(\d+)\.\s*([^\s]+)\s*\*\*(.+?)\*\*')
-        # Pattern: [▶ Start](cmd:bt start 1) or [▶ Resume](cmd:bt resume 1) or [⏸ Pause](cmd:bt pause 1)
-        pause_resume_pattern = re.compile(r'\[(▶ (?:Start|Resume)|⏸ Pause)\]\(cmd:(bt (?:start|resume|pause) \d+)\)')
-        # Pattern: [🗑 Delete](cmd:bt rm 1)
-        delete_pattern = re.compile(r'\[🗑 Delete\]\(cmd:(bt rm \d+)\)')
+        # Pattern: **1. Torrent Name** (new format)
+        title_pattern = re.compile(r'^\*\*(\d+)\.\s*(.+?)\*\*')
+        # Pattern: Status: ⬇️ **DOWNLOADING** etc
+        status_pattern = re.compile(r'Status:\s*([^\s]+)\s*\*\*(\w+)\*\*')
+        # Pattern: [▶ Resume](cmd:torrents resume 1) or [⏸ Pause](cmd:torrents pause 1) (also bt alias)
+        pause_resume_pattern = re.compile(r'\[(▶ (?:Start|Resume)|⏸ Pause)\]\(cmd:(?:bt|torrents) ((?:start|resume|pause) \d+)\)')
+        # Pattern: [🗑 Remove](cmd:torrents rm 1) or [🗑 Delete](cmd:bt rm 1)
+        delete_pattern = re.compile(r'\[🗑 (?:Delete|Remove)\]\(cmd:(?:bt|torrents) (rm \d+)\)')
         # Progress line: [██████████] 100.0% | 1.5 GB
         progress_pattern = re.compile(r'\[([█░]+)\]\s*([\d.]+)%\s*\|\s*(.+)')
         # Stats line: ↓1.2 KB/s ↑0.5 KB/s | 5S/10P
@@ -241,12 +243,12 @@ class MessageWidget(Widget):
                 if current_entry:
                     entries.append(current_entry)
                 num = title_match.group(1)
-                icon = title_match.group(2)
-                name = title_match.group(3)
+                name = title_match.group(2)
                 current_entry = {
                     "num": num,
-                    "icon": icon,
+                    "icon": "❓",  # Will be updated from status line
                     "name": name,
+                    "status": "",
                     "progress_bar": "",
                     "progress_pct": "",
                     "size": "",
@@ -259,6 +261,12 @@ class MessageWidget(Widget):
                     "delete_cmd": None,
                 }
             elif current_entry:
+                # Check for status line (new format)
+                status_match = status_pattern.search(line)
+                if status_match:
+                    current_entry["icon"] = status_match.group(1)
+                    current_entry["status"] = status_match.group(2)
+
                 # Check for progress
                 progress_match = progress_pattern.search(line)
                 if progress_match:
@@ -278,12 +286,12 @@ class MessageWidget(Widget):
                 pr_match = pause_resume_pattern.search(line)
                 if pr_match:
                     current_entry["toggle_label"] = pr_match.group(1)
-                    current_entry["toggle_cmd"] = pr_match.group(2)
+                    current_entry["toggle_cmd"] = "torrents " + pr_match.group(2)  # Ensure full command
 
                 # Check for delete button
                 del_match = delete_pattern.search(line)
                 if del_match:
-                    current_entry["delete_cmd"] = del_match.group(1)
+                    current_entry["delete_cmd"] = "torrents " + del_match.group(1)  # Ensure full command
 
         if current_entry:
             entries.append(current_entry)
