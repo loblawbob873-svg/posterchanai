@@ -59,6 +59,10 @@ class ChatInput(Widget):
         """Posted when user wants to attach a file."""
         pass
 
+    class NewsPickerRequested(Message):
+        """Posted when user wants to select a news source."""
+        pass
+
     BINDINGS = [
         Binding("tab", "autocomplete", "Autocomplete", show=False, priority=True),
         Binding("up", "history_prev", "Previous", show=False),
@@ -156,8 +160,8 @@ class ChatInput(Widget):
             self.send_command("mail")
             self.hide_all_dropdowns()
         elif btn_id == "pim-news":
-            self.send_command("dailynews")
             self.hide_all_dropdowns()
+            self.post_message(self.NewsPickerRequested())
         elif btn_id == "pim-cal":
             self.send_command("cal")
             self.hide_all_dropdowns()

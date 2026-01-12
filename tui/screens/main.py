@@ -18,6 +18,7 @@ from tui.widgets.chat_view import ChatView
 from tui.widgets.input_area import ChatInput
 from tui.widgets.music_player import MusicPlayerWidget
 from tui.screens.file_picker import FilePickerScreen
+from tui.screens.news_picker import NewsPickerScreen
 
 
 class MainScreen(Screen):
@@ -433,6 +434,15 @@ class MainScreen(Screen):
                 self.notify(f"Attached: {file_path.split('/')[-1]}")
 
         self.app.push_screen(FilePickerScreen(title="Attach File"), handle_file_selected)
+
+    def on_chat_input_news_picker_requested(self, event):
+        """Handle news picker request from input area."""
+        def handle_news_selected(source_url: str | None):
+            if source_url:
+                # Send the news command with the selected source
+                self._send_message_worker(f"news {source_url}")
+
+        self.app.push_screen(NewsPickerScreen(), handle_news_selected)
 
     @work(exclusive=True)
     async def _delete_conversation_worker(self, conversation_id: int):
