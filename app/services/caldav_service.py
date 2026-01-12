@@ -708,9 +708,10 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
         # Build action links if event has UID
         action_links = ""
         if event.uid:
-            edit_cmd = f"cal get {event.uid}"
+            # Use edit-event: protocol for opening edit modal
+            edit_link = f"edit-event:{event.uid}"
             delete_cmd = f"cal delete {event.uid}"
-            action_links = f" [✏️](cmd:{edit_cmd}) [🗑️](cmd:{delete_cmd})"
+            action_links = f" [✏️]({edit_link}) [🗑️](cmd:{delete_cmd})"
 
         if cyberpunk:
             # Cyberpunk style event line with time in brackets

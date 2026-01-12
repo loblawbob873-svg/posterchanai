@@ -89,7 +89,10 @@ Type these in the chat input to access features:
 - `/cal today` - Today's schedule
 - `/cal week` - This week's events
 - `/cal month` - This month's calendar
-- `/cal add <event>` - Add calendar event
+- `/cal add <event>` - Add calendar event (supports recurring: "daily", "weekly Mon Wed Fri", "monthly")
+- `/cal edit <uid> <field> <value>` - Edit event (fields: title, time, location, description)
+- `/cal delete <uid>` - Delete calendar event
+- `/cal get <uid>` - Get event details
 - `/contacts` - Search contacts
 - `/contacts add` - Add new contact
 
@@ -117,6 +120,8 @@ Type these in the chat input to access features:
 - Use Tab to autocomplete commands starting with `/`
 - Press Escape to stop a long AI response
 - The music player appears when you play music
+- Use PIM > Add Event to quickly add calendar events with a form
+- Calendar events support recurring patterns like "weekly Mon Wed Fri"
 
 ## Server Connection
 

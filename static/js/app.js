@@ -722,6 +722,7 @@ function initCalendarModal() {
         const endTime = document.getElementById('eventEndTime').value;
         const location = document.getElementById('eventLocation').value.trim();
         const description = document.getElementById('eventDescription').value.trim();
+        const recurrence = document.getElementById('eventRecurrence').value.trim();
         const uid = document.getElementById('eventUid').value;
 
         if (!title || !date || !time) {
@@ -749,6 +750,9 @@ function initCalendarModal() {
             if (location) {
                 eventDesc += ` at ${location}`;
             }
+            if (recurrence) {
+                eventDesc += `, repeating ${recurrence}`;
+            }
             command = `cal add ${eventDesc}`;
         }
 
@@ -773,6 +777,7 @@ function initCalendarModal() {
         document.getElementById('eventEndTime').value = '';
         document.getElementById('eventLocation').value = '';
         document.getElementById('eventDescription').value = '';
+        document.getElementById('eventRecurrence').value = '';
         document.getElementById('eventUid').value = '';
         document.getElementById('calendarModalTitle').textContent = 'Add Event';
     }
@@ -787,6 +792,7 @@ function initCalendarModal() {
             document.getElementById('eventEndTime').value = eventData.endTime || '';
             document.getElementById('eventLocation').value = eventData.location || '';
             document.getElementById('eventDescription').value = eventData.description || '';
+            document.getElementById('eventRecurrence').value = eventData.recurrence || '';
             document.getElementById('eventUid').value = eventData.uid || '';
         } else {
             clearCalendarForm();

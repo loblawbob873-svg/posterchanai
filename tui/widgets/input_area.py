@@ -41,7 +41,7 @@ COMMANDS = [
     "mail folders", "mail folder", "mail attachment", "mail search", "mail read",
     "mail summary", "mail sum", "mail translate", "mail reply", "mail forward",
     "mail delete", "mail archive",
-    "cal", "cal today", "cal week", "cal month", "cal add",
+    "cal", "cal today", "cal week", "cal month", "cal add", "cal edit", "cal delete", "cal get",
     "contacts", "contacts search", "contacts add",
     "music", "music browse", "music search", "music play", "music mood",
     "music stop", "music next", "music prev",

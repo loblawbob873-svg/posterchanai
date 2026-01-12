@@ -1220,6 +1220,22 @@ class ChatHandler {
         });
     }
 
+    openEditEventModal(uid) {
+        // Fetch event data and open calendar modal for editing
+        if (!uid) {
+            console.error('openEditEventModal: No UID provided');
+            return;
+        }
+
+        // For now, open modal with just the UID - user fills in new values
+        // TODO: Fetch event data via API and pre-fill the form
+        if (window.openCalendarModal) {
+            window.openCalendarModal({ uid: uid });
+        } else {
+            console.error('openEditEventModal: Calendar modal not available');
+        }
+    }
+
     showNotification(message, type = 'info') {
         // Show a brief notification toast
         const existing = document.querySelector('.copy-toast');
@@ -2153,6 +2169,12 @@ class ChatHandler {
             links.push({ text, cmd, isCommand: true });
             return `\x00LINK${index}\x00`;
         });
+        // Match edit-event: links (calendar event edit buttons)
+        processed = processed.replace(/\[([^\]]+)\]\(edit-event:([^)]+)\)/g, (match, text, uid) => {
+            const index = links.length;
+            links.push({ text, uid, isEditEvent: true });
+            return `\x00LINK${index}\x00`;
+        });
         // Match copy: links (clipboard copy buttons)
         processed = processed.replace(/\[([^\]]+)\]\(copy:([^)]+)\)/g, (match, text, content) => {
             const index = links.length;
@@ -2181,6 +2203,11 @@ class ChatHandler {
                 // Command button - clicking executes the command
                 const escapedCmd = this.escapeHtml(link.cmd);
                 return `<button class="cmd-btn" data-cmd="${escapedCmd}" onclick="window.chatHandler.executeCommand('${escapedCmd.replace(/'/g, "\\'")}')">${this.escapeHtml(link.text)}</button>`;
+            }
+            if (link.isEditEvent) {
+                // Edit event button - opens calendar modal
+                const escapedUid = this.escapeHtml(link.uid);
+                return `<button class="cmd-btn" onclick="window.chatHandler.openEditEventModal('${escapedUid.replace(/'/g, "\\'")}')">${this.escapeHtml(link.text)}</button>`;
             }
             if (link.isCopy) {
                 // Copy button - copies content to clipboard
