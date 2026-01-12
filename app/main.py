@@ -183,11 +183,16 @@ async def startup():
     finally:
         db_proxy.close()
 
-    # Auto-start built-in torrent client if enabled
+    # Auto-start built-in torrent client if enabled (skip if using remote server)
     db3 = SessionLocal()
     try:
         bt_enabled = db3.query(Setting).filter(Setting.key == "bt_enabled").first()
-        if bt_enabled and bt_enabled.value.lower() == "true":
+        bt_server_url = db3.query(Setting).filter(Setting.key == "bt_server_url").first()
+
+        # Skip local torrent client if forwarding to remote server
+        if bt_server_url and bt_server_url.value:
+            logging.info(f"Torrent requests will be forwarded to: {bt_server_url.value}")
+        elif bt_enabled and bt_enabled.value.lower() == "true":
             bt_proxy_host = db3.query(Setting).filter(Setting.key == "bt_proxy_host").first()
             if bt_proxy_host and bt_proxy_host.value:
                 def get_bt_setting(key):
@@ -242,12 +247,14 @@ async def shutdown():
     from app.services.mcp_service import stop_mcp_server
     stop_mcp_server()
 
-    # Stop built-in torrent client if running
+    # Stop built-in torrent client if running (only if libtorrent is available)
     try:
         from app.services.libtorrent_service import LibtorrentService
         if LibtorrentService._instance is not None:
             LibtorrentService._instance.stop()
             logging.info("Built-in torrent client stopped")
+    except ImportError:
+        pass  # libtorrent not installed (using remote forwarding)
     except Exception as e:
         logging.error(f"Error stopping torrent client: {e}")
 
