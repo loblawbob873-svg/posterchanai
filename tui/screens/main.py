@@ -19,6 +19,7 @@ from tui.widgets.input_area import ChatInput
 from tui.widgets.music_player import MusicPlayerWidget
 from tui.screens.file_picker import FilePickerScreen
 from tui.screens.news_picker import NewsPickerScreen
+from tui.screens.language_picker import LanguagePickerScreen
 
 
 class MainScreen(Screen):
@@ -410,7 +411,31 @@ class MainScreen(Screen):
 
     def on_chat_input_message_submitted(self, event):
         """Handle message submission from input."""
-        self._send_message_worker(event.content, event.attachments)
+        content = event.content.strip()
+
+        # Check if this is a translate command without a language
+        if self._needs_language_picker(content):
+            self._show_language_picker(content)
+        else:
+            self._send_message_worker(event.content, event.attachments)
+
+    def _needs_language_picker(self, content: str) -> bool:
+        """Check if a translate command needs a language picker."""
+        parts = content.lower().split()
+        # mail translate <account> <id> [language]
+        # If only 4 parts (mail translate account id), need language
+        if len(parts) >= 2 and parts[0] == "mail" and parts[1] == "translate":
+            # Has account and id, but no language
+            return len(parts) == 4
+        return False
+
+    def _show_language_picker(self, pending_command: str):
+        """Show language picker for translate command."""
+        def handle_language_selected(full_command: str | None):
+            if full_command:
+                self._send_message_worker(full_command)
+
+        self.app.push_screen(LanguagePickerScreen(pending_command), handle_language_selected)
 
     def on_conversation_sidebar_delete_requested(self, event):
         """Handle delete request from sidebar."""
@@ -428,6 +453,9 @@ class MainScreen(Screen):
                 input_widget.value = command
                 input_widget.focus()
                 self.notify("Type your message and press Enter", timeout=3)
+            # Check if translate command needs language picker
+            elif self._needs_language_picker(command):
+                self._show_language_picker(command)
             else:
                 # Send the command as a message
                 self._send_message_worker(command)

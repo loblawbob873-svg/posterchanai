@@ -139,10 +139,12 @@ async def fetch_news_from_source(source_url: str, source_name: str, db: Session)
     # Use AI to summarize
     ai_result = await summarize_with_ai(links, db)
     if ai_result:
-        return f"**{source_name}:**\n\n{ai_result}"
+        # Add extra spacing between articles for better TUI readability
+        spaced_result = ai_result.replace("\n- ", "\n\n- ")
+        return f"**{source_name}:**\n\n{spaced_result}"
 
-    # Fallback: raw links
-    return f"**{source_name}:**\n\n" + "\n".join(links)
+    # Fallback: raw links with spacing
+    return f"**{source_name}:**\n\n" + "\n\n".join(links)
 
 
 def parse_news_sources(raw: str) -> list:

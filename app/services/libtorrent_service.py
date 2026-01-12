@@ -272,6 +272,17 @@ class LibtorrentService:
         if count > 0:
             logger.info(f"[BT] Restored {count} torrents from resume data")
             self._update_numbering()
+            # Auto-resume all torrents on startup
+            resumed = 0
+            for info_hash, handle in self.torrents.items():
+                try:
+                    if handle.is_valid():
+                        handle.resume()
+                        resumed += 1
+                except Exception as e:
+                    logger.error(f"[BT] Failed to resume {info_hash}: {e}")
+            if resumed > 0:
+                logger.info(f"[BT] Auto-resumed {resumed} torrents")
 
     def _check_proxy(self, host: str, port: int, timeout: int = 5) -> bool:
         """Verify proxy is reachable and responding."""
@@ -430,6 +441,9 @@ class LibtorrentService:
                 # Check paused state using handle.flags() (reliable in libtorrent v2)
                 is_paused = bool(handle.flags() & lt.torrent_flags.paused)
 
+                # Use "paused" state if paused, otherwise normal state
+                state = "paused" if is_paused else self._state_str(status.state)
+
                 result.append(TorrentInfo(
                     info_hash=info_hash,
                     name=status.name or "Unknown",
@@ -439,7 +453,7 @@ class LibtorrentService:
                     progress=status.progress * 100,
                     download_rate=status.download_rate,
                     upload_rate=status.upload_rate,
-                    state=self._state_str(status.state),
+                    state=state,
                     seeders=status.num_seeds,
                     peers=status.num_peers,
                     eta=eta,
@@ -552,7 +566,7 @@ def format_torrent_list(torrents: list[TorrentInfo]) -> str:
 
         # Action buttons
         if t.is_paused or t.state == "paused":
-            toggle_btn = f"[▶ Resume](cmd:bt resume {i})"
+            toggle_btn = f"[▶ Start](cmd:bt start {i})"
         else:
             toggle_btn = f"[⏸ Pause](cmd:bt pause {i})"
         delete_btn = f"[🗑 Delete](cmd:bt rm {i})"
@@ -609,7 +623,7 @@ def format_torrent_list_from_dicts(torrents: list[dict]) -> str:
 
         # Action buttons
         if is_paused or state == "paused":
-            toggle_btn = f"[▶ Resume](cmd:bt resume {i})"
+            toggle_btn = f"[▶ Start](cmd:bt start {i})"
         else:
             toggle_btn = f"[⏸ Pause](cmd:bt pause {i})"
         delete_btn = f"[🗑 Delete](cmd:bt rm {i})"

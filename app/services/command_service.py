@@ -82,7 +82,7 @@ def _format_bt_list_from_dicts(torrents: list[dict]) -> str:
 
         # Action buttons
         if is_paused or state == "paused":
-            toggle_btn = f"[▶ Resume](cmd:bt resume {i})"
+            toggle_btn = f"[▶ Start](cmd:bt start {i})"
         else:
             toggle_btn = f"[⏸ Pause](cmd:bt pause {i})"
         delete_btn = f"[🗑 Delete](cmd:bt rm {i})"
@@ -1007,17 +1007,23 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
         if not self.user:
             return {"type": "text", "content": "Please log in to use Miniflux news."}
 
+        parts = arg.strip().split()
+        subcommand = parts[0].lower() if parts else ""
+
+        # Detect if user is trying to get news from a specific source (redirect to dailynews)
+        # Common news source indicators
+        news_source_keywords = ["npr", "cnn", "fox", "drudge", "nypost", "newsweek", ".com", ".org"]
+        if subcommand and any(kw in subcommand for kw in news_source_keywords):
+            return await self._dailynews_command(arg)
+
         # Check if user has Miniflux enabled
         if not self.user.miniflux_enabled:
-            return {"type": "text", "content": "Miniflux is disabled for your account. Enable it in settings."}
+            return {"type": "text", "content": "Miniflux is disabled for your account. Enable it in settings.\n\nTip: Use `dailynews` to get news from web sources instead."}
 
         # Get Miniflux service
         miniflux = MinifluxService.from_settings(self.db, self.user)
         if not miniflux:
-            return {"type": "text", "content": "Miniflux is not configured. Ask your admin to set it up in the admin panel."}
-
-        parts = arg.strip().split()
-        subcommand = parts[0].lower() if parts else ""
+            return {"type": "text", "content": "Miniflux is not configured. Ask your admin to set it up in the admin panel.\n\nTip: Use `dailynews` to get news from web sources instead."}
 
         # Handle refresh - force fetch new articles
         if subcommand in ("refresh", "fetch", "update"):
@@ -1126,17 +1132,18 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             else:
                 sources = all_sources
 
-            # Fetch news from sources
-            results = []
-            for source in sources:
+            # Fetch news from sources concurrently
+            import asyncio
+
+            async def fetch_single_source(source):
                 try:
                     markdown = await fetch_news_from_source(source["url"], source["name"], self.db)
-                    # Add copy buttons to each article
-                    markdown = self._add_copy_buttons_to_news(markdown)
-                    results.append(markdown)
+                    return self._add_copy_buttons_to_news(markdown)
                 except Exception as e:
                     logger.error(f"Error fetching news from {source['name']}: {e}")
-                    results.append(f"**{source['name']}:** Error fetching headlines")
+                    return f"**{source['name']}:** Error fetching headlines"
+
+            results = await asyncio.gather(*[fetch_single_source(s) for s in sources])
 
             # Format response
             today = datetime.now().strftime("%B %d, %Y %H:%M")
@@ -1195,7 +1202,9 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
             hostname = socket.gethostname()
-            message_text = f"## System Log Report - {hostname}\n*{timestamp}*\n\n{summary}"
+            all_hosts = [hostname] + [h for h in remote_hosts if h]
+            hosts_str = ", ".join(all_hosts) if len(all_hosts) > 1 else hostname
+            message_text = f"## System Log Report - {hosts_str}\n*{timestamp}*\n\n{summary}"
 
             log_msg = Message(
                 conversation_id=logs_chat.id,

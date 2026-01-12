@@ -343,7 +343,9 @@ async def run_logs_for_admin():
         # Format the message
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
         hostname = socket.gethostname()
-        message_text = f"## System Log Report - {hostname}\n*{timestamp}*\n\n{summary}"
+        all_hosts = [hostname] + [h for h in remote_hosts if h]
+        hosts_str = ", ".join(all_hosts) if len(all_hosts) > 1 else hostname
+        message_text = f"## System Log Report - {hosts_str}\n*{timestamp}*\n\n{summary}"
 
         # Add message to chat
         log_msg = Message(

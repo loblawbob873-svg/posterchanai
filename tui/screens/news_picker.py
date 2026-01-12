@@ -28,7 +28,7 @@ class NewsPickerScreen(ModalScreen):
     #news-picker-container {
         width: 60;
         height: auto;
-        max-height: 24;
+        max-height: 30;
         background: $surface;
         border: thick $primary;
         padding: 1 2;

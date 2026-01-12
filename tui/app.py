@@ -2,11 +2,18 @@
 Main Textual Application for Posterchanai TUI.
 """
 
+import os
+import asyncio
+from pathlib import Path
 from textual.app import App
 from textual.binding import Binding
+from textual import work
 
 from tui.config import Config
 from tui.api.client import APIClient
+
+# Control file for global music shortcuts
+MUSIC_CONTROL_FILE = Path("/tmp/posterchanai-music-control")
 
 
 class ChatApp(App):
@@ -42,6 +49,9 @@ class ChatApp(App):
 
     async def on_mount(self):
         """Initialize app on mount."""
+        # Start music control file watcher for global shortcuts
+        self._start_music_control_watcher()
+
         # Try to restore session from saved token
         token = self.config.load_token()
         if token:
@@ -60,6 +70,47 @@ class ChatApp(App):
         # Show login screen
         from tui.screens.login import LoginScreen
         self.push_screen(LoginScreen())
+
+    @work(exclusive=True, group="music_control")
+    async def _start_music_control_watcher(self):
+        """Watch control file for global music shortcuts (Hyprland/Wayland)."""
+        # Clear any stale control file
+        if MUSIC_CONTROL_FILE.exists():
+            try:
+                MUSIC_CONTROL_FILE.unlink()
+            except:
+                pass
+
+        while True:
+            try:
+                if MUSIC_CONTROL_FILE.exists():
+                    command = MUSIC_CONTROL_FILE.read_text().strip().lower()
+                    MUSIC_CONTROL_FILE.unlink()
+
+                    if command:
+                        self._handle_music_command(command)
+            except Exception:
+                pass
+
+            await asyncio.sleep(0.2)  # Poll every 200ms
+
+    def _handle_music_command(self, command: str):
+        """Handle music control command from file."""
+        from tui.screens.main import MainScreen
+        screen = self.screen
+        if not isinstance(screen, MainScreen):
+            return
+
+        try:
+            music_player = screen.query_one("#music-player")
+            if command == "toggle":
+                music_player.toggle_playback()
+            elif command == "next":
+                music_player.next_track()
+            elif command == "prev":
+                music_player.prev_track()
+        except Exception:
+            pass
 
     async def action_new_chat(self):
         """Create new conversation."""
