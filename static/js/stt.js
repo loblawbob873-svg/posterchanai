@@ -115,7 +115,8 @@ const VOICE_COMMANDS = [
     { patterns: [/^(my\s+)?budget$/i], command: 'budget' },
     { patterns: [/^(my\s+)?bills?$/i], command: 'budget bills' },
     // "add bill rent 500" or "add bill chilies for $200"
-    { patterns: [/^add\s+bill\s+(.+?)\s+(?:for\s+)?\$?(\d+(?:\.\d+)?)$/i], command: 'budget add $1 $2' },
+    // Mishearings: "bill" -> "to", "two", "till", "built", "build"
+    { patterns: [/^add\s+(bill|to|two|till|built?)\s+(.+?)\s+(?:for\s+)?\$?(\d+(?:\.\d+)?)$/i], command: 'budget add $2 $3' },
     { patterns: [/^pay\s+(.+)$/i], command: 'budget pay $1' },
     { patterns: [/^(.+)\s+paid$/i], command: 'budget pay $1' },
 
