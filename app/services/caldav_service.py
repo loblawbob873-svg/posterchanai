@@ -313,6 +313,123 @@ def add_event_to_calendar(
         return False
 
 
+def get_event_by_uid(
+    url: str,
+    username: str,
+    password: str,
+    event_uid: str
+) -> Optional[CalendarEvent]:
+    """Get a single event by UID."""
+    try:
+        client = create_caldav_client(url, username, password)
+
+        try:
+            calendar = caldav.Calendar(client=client, url=url)
+            calendars = [calendar]
+        except Exception:
+            principal = client.principal()
+            calendars = principal.calendars()
+
+        for cal in calendars:
+            try:
+                # Try direct UID lookup
+                try:
+                    event = cal.event_by_uid(event_uid)
+                    if event:
+                        vevent = event.vobject_instance.vevent
+                        start_dt = vevent.dtstart.value
+                        if not isinstance(start_dt, datetime):
+                            start_dt = datetime.combine(start_dt, datetime.min.time())
+                        end_dt = None
+                        if hasattr(vevent, 'dtend'):
+                            end_dt = vevent.dtend.value
+                            if not isinstance(end_dt, datetime):
+                                end_dt = datetime.combine(end_dt, datetime.min.time())
+
+                        return CalendarEvent(
+                            uid=str(vevent.uid.value) if hasattr(vevent, 'uid') else "",
+                            summary=str(vevent.summary.value) if hasattr(vevent, 'summary') else "",
+                            description=str(vevent.description.value) if hasattr(vevent, 'description') else None,
+                            start=start_dt,
+                            end=end_dt,
+                            location=str(vevent.location.value) if hasattr(vevent, 'location') else None,
+                            calendar_name=""
+                        )
+                except Exception:
+                    pass
+            except Exception:
+                continue
+
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get event by UID: {e}")
+        return None
+
+
+def update_event_in_calendar(
+    url: str,
+    username: str,
+    password: str,
+    event_uid: str,
+    summary: Optional[str] = None,
+    description: Optional[str] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    location: Optional[str] = None
+) -> bool:
+    """Update an existing event in a CalDAV calendar."""
+    try:
+        client = create_caldav_client(url, username, password)
+
+        try:
+            calendar = caldav.Calendar(client=client, url=url)
+            calendars = [calendar]
+        except Exception:
+            principal = client.principal()
+            calendars = principal.calendars()
+
+        for cal in calendars:
+            try:
+                event = cal.event_by_uid(event_uid)
+                if event:
+                    vevent = event.vobject_instance.vevent
+
+                    # Update fields if provided
+                    if summary is not None:
+                        vevent.summary.value = summary
+                    if description is not None:
+                        if hasattr(vevent, 'description'):
+                            vevent.description.value = description
+                        else:
+                            vevent.add('description').value = description
+                    if start_time is not None:
+                        vevent.dtstart.value = start_time
+                    if end_time is not None:
+                        if hasattr(vevent, 'dtend'):
+                            vevent.dtend.value = end_time
+                        else:
+                            vevent.add('dtend').value = end_time
+                    if location is not None:
+                        if hasattr(vevent, 'location'):
+                            vevent.location.value = location
+                        else:
+                            vevent.add('location').value = location
+
+                    event.save()
+                    logger.info(f"Updated event with UID: {event_uid}")
+                    return True
+            except Exception as e:
+                logger.debug(f"Error updating in calendar: {e}")
+                continue
+
+        logger.warning(f"Event with UID {event_uid} not found for update")
+        return False
+
+    except Exception as e:
+        logger.error(f"Failed to update event: {e}")
+        return False
+
+
 def search_contacts(
     url: str,
     username: str,
@@ -557,8 +674,8 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
 
     if not events:
         if cyberpunk:
-            return "📅 No events scheduled. Use `cal add <event> <time>` to add one."
-        return "No events found."
+            return "📅 No events scheduled.\n\n[➕ Add Event](cmd:cal add )"
+        return "No events found. [Add Event](cmd:cal add )"
 
     lines = []
     current_date = None
@@ -588,18 +705,19 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
             end_str = event.end.strftime("%I:%M %p").lstrip('0')
             time_str = f"{time_str} - {end_str}"
 
-        # Build delete link if event has UID
-        delete_link = ""
+        # Build action links if event has UID
+        action_links = ""
         if event.uid:
+            edit_cmd = f"cal get {event.uid}"
             delete_cmd = f"cal delete {event.uid}"
-            delete_link = f" [🗑️](cmd:{delete_cmd})"
+            action_links = f" [✏️](cmd:{edit_cmd}) [🗑️](cmd:{delete_cmd})"
 
         if cyberpunk:
             # Cyberpunk style event line with time in brackets
             time_bracket = event.start.strftime("%H:%M")
-            line = f"  ⏰ `{time_bracket}` **{event.summary}**{delete_link}"
+            line = f"  ⏰ `{time_bracket}` **{event.summary}**{action_links}"
         else:
-            line = f"- {time_str}: {event.summary}{delete_link}"
+            line = f"- {time_str}: {event.summary}{action_links}"
 
         if event.location:
             # Create Google Maps link for mobile

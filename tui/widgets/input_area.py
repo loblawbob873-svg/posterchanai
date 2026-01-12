@@ -81,6 +81,12 @@ class ChatInput(Widget):
         """Posted when user wants to select a news source."""
         pass
 
+    class CalendarEventRequested(Message):
+        """Posted when user wants to add/edit a calendar event."""
+        def __init__(self, event_data: dict = None):
+            self.event_data = event_data  # None for new event, dict for edit
+            super().__init__()
+
     BINDINGS = [
         Binding("tab", "autocomplete", "Autocomplete", show=False, priority=True),
         Binding("up", "history_prev", "Previous", show=False),
@@ -144,6 +150,7 @@ class ChatInput(Widget):
                 Horizontal(
                     Button("Mail", id="pim-mail", classes="dropdown-item"),
                     Button("Cal", id="pim-cal", classes="dropdown-item"),
+                    Button("Add Event", id="pim-add-event", classes="dropdown-item"),
                     Button("Todo", id="pim-todo", classes="dropdown-item"),
                     id="pim-menu",
                     classes="dropdown-menu --hidden"
@@ -201,6 +208,9 @@ class ChatInput(Widget):
             self.hide_all_dropdowns()
         elif btn_id == "pim-todo":
             self.send_command("todo")
+            self.hide_all_dropdowns()
+        elif btn_id == "pim-add-event":
+            self.post_message(self.CalendarEventRequested())
             self.hide_all_dropdowns()
         # Torrent dropdown toggle
         elif btn_id == "quick-torrent-toggle":

@@ -134,6 +134,17 @@ class App {
                 });
             });
 
+            // Handle Add Event button
+            const addEventBtn = dropdown.querySelector('#addEventBtn');
+            if (addEventBtn) {
+                addEventBtn.addEventListener('click', () => {
+                    dropdown.classList.remove('open');
+                    if (window.openCalendarModal) {
+                        window.openCalendarModal();
+                    }
+                });
+            }
+
             // Handle mode items (search, images)
             dropdown.querySelectorAll('.dropdown-item.mode-btn').forEach(item => {
                 item.addEventListener('click', () => {
@@ -673,9 +684,125 @@ function initNewsModal() {
     }
 }
 
+// Initialize calendar modal
+function initCalendarModal() {
+    const calendarModal = document.getElementById('calendarModal');
+    const closeBtn = document.getElementById('closeCalendarModal');
+    const saveBtn = document.getElementById('saveEventBtn');
+    const cancelBtn = document.getElementById('cancelEventBtn');
+
+    if (!calendarModal) {
+        console.log('Calendar modal not found');
+        return;
+    }
+
+    // Close modal handlers
+    closeBtn?.addEventListener('click', () => {
+        calendarModal.style.display = 'none';
+        clearCalendarForm();
+    });
+
+    cancelBtn?.addEventListener('click', () => {
+        calendarModal.style.display = 'none';
+        clearCalendarForm();
+    });
+
+    calendarModal.addEventListener('click', (e) => {
+        if (e.target === calendarModal) {
+            calendarModal.style.display = 'none';
+            clearCalendarForm();
+        }
+    });
+
+    // Save event handler
+    saveBtn?.addEventListener('click', () => {
+        const title = document.getElementById('eventTitle').value.trim();
+        const date = document.getElementById('eventDate').value;
+        const time = document.getElementById('eventTime').value;
+        const endTime = document.getElementById('eventEndTime').value;
+        const location = document.getElementById('eventLocation').value.trim();
+        const description = document.getElementById('eventDescription').value.trim();
+        const uid = document.getElementById('eventUid').value;
+
+        if (!title || !date || !time) {
+            alert('Please fill in required fields: Title, Date, and Time');
+            return;
+        }
+
+        // Build the command
+        let command;
+        if (uid) {
+            // Editing existing event - send multiple edit commands
+            // For simplicity, just update the title and time
+            command = `cal edit ${uid} title ${title}`;
+        } else {
+            // Adding new event - build natural language description
+            let eventDesc = title;
+            const dateObj = new Date(date + 'T' + time);
+            const dateStr = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+            const timeStr = dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+            eventDesc += ` on ${dateStr} at ${timeStr}`;
+            if (endTime) {
+                const endTimeStr = new Date('1970-01-01T' + endTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                eventDesc += ` until ${endTimeStr}`;
+            }
+            if (location) {
+                eventDesc += ` at ${location}`;
+            }
+            command = `cal add ${eventDesc}`;
+        }
+
+        // Close modal
+        calendarModal.style.display = 'none';
+        clearCalendarForm();
+
+        // Send command
+        if (window.chatHandler && window.chatHandler.ws) {
+            window.chatHandler.addMessage('user', command);
+            window.chatHandler.ws.send(JSON.stringify({
+                type: 'message',
+                content: command
+            }));
+        }
+    });
+
+    function clearCalendarForm() {
+        document.getElementById('eventTitle').value = '';
+        document.getElementById('eventDate').value = '';
+        document.getElementById('eventTime').value = '';
+        document.getElementById('eventEndTime').value = '';
+        document.getElementById('eventLocation').value = '';
+        document.getElementById('eventDescription').value = '';
+        document.getElementById('eventUid').value = '';
+        document.getElementById('calendarModalTitle').textContent = 'Add Event';
+    }
+
+    // Expose function to open modal for adding
+    window.openCalendarModal = function(eventData = null) {
+        if (eventData) {
+            document.getElementById('calendarModalTitle').textContent = 'Edit Event';
+            document.getElementById('eventTitle').value = eventData.title || '';
+            document.getElementById('eventDate').value = eventData.date || '';
+            document.getElementById('eventTime').value = eventData.time || '';
+            document.getElementById('eventEndTime').value = eventData.endTime || '';
+            document.getElementById('eventLocation').value = eventData.location || '';
+            document.getElementById('eventDescription').value = eventData.description || '';
+            document.getElementById('eventUid').value = eventData.uid || '';
+        } else {
+            clearCalendarForm();
+            // Set default date to today
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('eventDate').value = today;
+        }
+        calendarModal.style.display = 'flex';
+        document.getElementById('eventTitle').focus();
+    };
+}
+
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new App();
     initTranslateModal();
     initNewsModal();
+    initCalendarModal();
 });

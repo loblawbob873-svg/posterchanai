@@ -20,6 +20,7 @@ from tui.widgets.music_player import MusicPlayerWidget
 from tui.screens.file_picker import FilePickerScreen
 from tui.screens.news_picker import NewsPickerScreen
 from tui.screens.language_picker import LanguagePickerScreen
+from tui.screens.calendar_event import CalendarEventScreen
 
 
 class MainScreen(Screen):
@@ -559,6 +560,14 @@ class MainScreen(Screen):
                     self._send_message_worker(f"dailynews {source_url}")
 
         self.app.push_screen(NewsPickerScreen(), handle_news_selected)
+
+    def on_chat_input_calendar_event_requested(self, event):
+        """Handle calendar event add/edit request from input area."""
+        def handle_event_saved(command: str | None):
+            if command:
+                self._send_message_worker(command)
+
+        self.app.push_screen(CalendarEventScreen(event.event_data), handle_event_saved)
 
     @work(exclusive=True)
     async def _delete_conversation_worker(self, conversation_id: int):

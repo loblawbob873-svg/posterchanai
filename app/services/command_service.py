@@ -20,6 +20,7 @@ from app.services.caldav_service import (
     get_all_user_events, get_user_calendars, get_user_contacts,
     format_events_for_display, format_contacts_for_display,
     add_event_to_calendar, add_user_contact, delete_event_from_calendar,
+    get_event_by_uid, update_event_in_calendar,
     get_all_user_todos, add_todo_to_calendar, delete_todo_from_calendar,
     format_todos_for_display
 )
@@ -1442,8 +1443,123 @@ Return ONLY valid JSON, no other text."""},
 
                 return {"type": "text", "content": f"❌ Event not found or could not be deleted."}
 
+            elif subcommand == "get":
+                # Get event details by UID
+                if not param:
+                    return {"type": "text", "content": "Usage: `cal get <event_uid>`"}
+
+                event_uid = param.strip()
+
+                for cal in calendars:
+                    event = get_event_by_uid(cal['url'], cal['username'], cal['password'], event_uid)
+                    if event:
+                        details = f"## Event Details\n\n"
+                        details += f"**Title:** {event.summary}\n"
+                        details += f"**Start:** {event.start.strftime('%Y-%m-%d %I:%M %p')}\n"
+                        if event.end:
+                            details += f"**End:** {event.end.strftime('%Y-%m-%d %I:%M %p')}\n"
+                        if event.location:
+                            details += f"**Location:** {event.location}\n"
+                        if event.description:
+                            details += f"**Description:** {event.description}\n"
+                        details += f"\n**UID:** `{event.uid}`"
+                        return {"type": "text", "content": details}
+
+                return {"type": "text", "content": f"❌ Event not found."}
+
+            elif subcommand == "edit":
+                # Edit event: cal edit <uid> <field> <value>
+                # Or with AI: cal edit <uid> <natural language changes>
+                edit_parts = param.split(maxsplit=2) if param else []
+                if len(edit_parts) < 2:
+                    return {"type": "text", "content": "Usage: `cal edit <uid> <changes>`\n\nExamples:\n- `cal edit abc123 title Meeting with Bob`\n- `cal edit abc123 time tomorrow at 3pm`\n- `cal edit abc123 location Conference Room A`\n- `cal edit abc123 move to next Monday at 2pm`"}
+
+                event_uid = edit_parts[0]
+                change_request = edit_parts[1] if len(edit_parts) > 1 else ""
+                if len(edit_parts) > 2:
+                    change_request += " " + edit_parts[2]
+
+                # Find the event first
+                event = None
+                for cal in calendars:
+                    event = get_event_by_uid(cal['url'], cal['username'], cal['password'], event_uid)
+                    if event:
+                        break
+
+                if not event:
+                    return {"type": "text", "content": f"❌ Event not found."}
+
+                # Parse field-based edits
+                change_lower = change_request.lower()
+                updated = False
+
+                if change_lower.startswith("title "):
+                    new_title = change_request[6:].strip()
+                    for cal in calendars:
+                        if update_event_in_calendar(cal['url'], cal['username'], cal['password'], event_uid, summary=new_title):
+                            return {"type": "text", "content": f"✅ Updated title to: **{new_title}**"}
+                    return {"type": "text", "content": "❌ Failed to update event."}
+
+                elif change_lower.startswith("location "):
+                    new_location = change_request[9:].strip()
+                    for cal in calendars:
+                        if update_event_in_calendar(cal['url'], cal['username'], cal['password'], event_uid, location=new_location):
+                            return {"type": "text", "content": f"✅ Updated location to: **{new_location}**"}
+                    return {"type": "text", "content": "❌ Failed to update event."}
+
+                elif change_lower.startswith("description ") or change_lower.startswith("desc "):
+                    prefix_len = 12 if change_lower.startswith("description ") else 5
+                    new_desc = change_request[prefix_len:].strip()
+                    for cal in calendars:
+                        if update_event_in_calendar(cal['url'], cal['username'], cal['password'], event_uid, description=new_desc):
+                            return {"type": "text", "content": f"✅ Updated description."}
+                    return {"type": "text", "content": "❌ Failed to update event."}
+
+                elif change_lower.startswith("time ") or change_lower.startswith("move ") or change_lower.startswith("reschedule "):
+                    # Use AI to parse the new time
+                    time_request = change_request.split(maxsplit=1)[1] if " " in change_request else change_request
+                    messages = [
+                        {"role": "system", "content": f"""Parse this time change request and return JSON with:
+- start_time: ISO format datetime
+- end_time: ISO format datetime (keep same duration as original unless specified)
+
+Current event:
+- Start: {event.start.isoformat()}
+- End: {event.end.isoformat() if event.end else 'not set'}
+
+Return ONLY valid JSON, no other text."""},
+                        {"role": "user", "content": f"Change time to: {time_request}"}
+                    ]
+
+                    try:
+                        import json as json_module
+                        parsed = await self.chat_service.chat(messages)
+                        parsed = parsed.strip()
+                        # Clean markdown
+                        if "```" in parsed:
+                            import re
+                            match = re.search(r'```(?:json)?\s*([\s\S]*?)```', parsed)
+                            if match:
+                                parsed = match.group(1).strip()
+
+                        time_data = json_module.loads(parsed)
+                        new_start = date_parser.parse(time_data.get("start_time")) if time_data.get("start_time") else None
+                        new_end = date_parser.parse(time_data.get("end_time")) if time_data.get("end_time") else None
+
+                        for cal in calendars:
+                            if update_event_in_calendar(cal['url'], cal['username'], cal['password'], event_uid, start_time=new_start, end_time=new_end):
+                                time_str = new_start.strftime("%A, %B %d at %I:%M %p") if new_start else "updated"
+                                return {"type": "text", "content": f"✅ Rescheduled to: **{time_str}**"}
+                        return {"type": "text", "content": "❌ Failed to update event."}
+                    except Exception as e:
+                        logger.error(f"Error parsing time change: {e}")
+                        return {"type": "text", "content": f"❌ Could not parse time. Try: `cal edit {event_uid} time tomorrow at 3pm`"}
+
+                else:
+                    return {"type": "text", "content": "Usage: `cal edit <uid> <field> <value>`\n\nFields:\n- `title <new title>`\n- `location <new location>`\n- `description <new description>`\n- `time <new time>` or `move to <new time>`"}
+
             else:
-                return {"type": "text", "content": "Usage:\n- `cal` or `cal today` - Today's events\n- `cal week` - This week's events\n- `cal add <event> <time>` - Add an event\n- `cal delete <uid>` - Delete an event"}
+                return {"type": "text", "content": "Usage:\n- `cal` or `cal today` - Today's events\n- `cal week` - This week's events\n- `cal add <event> <time>` - Add an event\n- `cal edit <uid> <changes>` - Edit an event\n- `cal delete <uid>` - Delete an event"}
 
         except Exception as e:
             logger.error(f"Schedule command error: {e}")
