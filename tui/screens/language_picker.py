@@ -5,6 +5,7 @@ from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from textual.widgets import Static, Button, Input
 from textual.containers import Vertical
+from textual.binding import Binding
 
 
 # Common languages for autocomplete suggestions
@@ -15,6 +16,24 @@ LANGUAGES = [
     "Swedish", "Norwegian", "Danish", "Finnish", "Czech", "Hungarian",
     "Romanian", "Ukrainian", "Indonesian", "Malay", "Tagalog", "Hebrew",
 ]
+
+
+class AutocompleteInput(Input):
+    """Input with tab autocomplete support."""
+
+    BINDINGS = [
+        Binding("tab", "autocomplete", "Autocomplete", show=False, priority=True),
+    ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.suggestions = []
+
+    def action_autocomplete(self) -> None:
+        """Autocomplete with first suggestion."""
+        if self.suggestions:
+            self.value = self.suggestions[0]
+            self.cursor_position = len(self.value)
 
 
 class LanguagePickerScreen(ModalScreen):
@@ -83,7 +102,7 @@ class LanguagePickerScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="language-picker-container"):
             yield Static("Translate to:", id="language-picker-title")
-            yield Input(placeholder="Type language (e.g. Spanish, Japanese)...", id="language-input")
+            yield AutocompleteInput(placeholder="Type language, Tab to complete...", id="language-input")
             yield Static("", id="language-suggestions")
             with Vertical(id="language-buttons"):
                 yield Button("OK", id="language-ok-btn", variant="primary")
@@ -97,16 +116,18 @@ class LanguagePickerScreen(ModalScreen):
         """Update suggestions as user types."""
         query = event.value.strip().lower()
         suggestions_widget = self.query_one("#language-suggestions", Static)
+        lang_input = self.query_one("#language-input", AutocompleteInput)
 
         if not query:
             suggestions_widget.update("")
-            self._current_matches = []
+            lang_input.suggestions = []
             return
 
         # Find matching languages
-        self._current_matches = [lang for lang in LANGUAGES if lang.lower().startswith(query)][:5]
-        if self._current_matches:
-            suggestions_widget.update("Tab to complete: " + ", ".join(self._current_matches))
+        matches = [lang for lang in LANGUAGES if lang.lower().startswith(query)][:5]
+        lang_input.suggestions = matches
+        if matches:
+            suggestions_widget.update("Tab: " + ", ".join(matches))
         else:
             suggestions_widget.update("")
 
@@ -118,14 +139,6 @@ class LanguagePickerScreen(ModalScreen):
         """Handle key press."""
         if event.key == "escape":
             self.dismiss(None)
-        elif event.key == "tab":
-            # Autocomplete with first match
-            if hasattr(self, '_current_matches') and self._current_matches:
-                lang_input = self.query_one("#language-input", Input)
-                lang_input.value = self._current_matches[0]
-                lang_input.cursor_position = len(lang_input.value)
-                event.prevent_default()
-                event.stop()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button press."""
