@@ -315,6 +315,12 @@ class MainScreen(Screen):
         chat_view.stop_streaming()
         chat_view.add_message("system", f"Error: {error}")
 
+        # If conversation not found, reload the conversation list
+        if "Conversation not found" in error:
+            self.notify("Conversation was deleted. Refreshing list...", severity="warning")
+            self.current_conversation_id = None
+            self.load_conversations()
+
     def handle_disconnect(self):
         """Handle WebSocket disconnect."""
         self.is_streaming = False

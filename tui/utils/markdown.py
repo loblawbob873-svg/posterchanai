@@ -14,11 +14,11 @@ CMD_LINK_PATTERN = re.compile(r'\[([^\]]+)\]\(cmd:([^)]+)\)')
 # Pattern for copy: links: [Label](copy:content)
 COPY_LINK_PATTERN = re.compile(r'\[([^\]]+)\]\(copy:([^)]+)\)')
 
-# Pattern for regular links: [Label](url)
-LINK_PATTERN = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
+# Pattern for regular links: [Label](url) - handle URLs with balanced parens
+LINK_PATTERN = re.compile(r'\[([^\]]+)\]\(((?:[^()]+|\([^)]*\))+)\)')
 
-# Pattern for bare URLs
-URL_PATTERN = re.compile(r'https?://[^\s<>\[\]()]+')
+# Pattern for bare URLs - allow parentheses in URLs
+URL_PATTERN = re.compile(r'https?://[^\s<>\[\]]+')
 
 # Pattern for code blocks
 CODE_BLOCK_PATTERN = re.compile(r'```(\w*)\n(.*?)```', re.DOTALL)
@@ -109,13 +109,26 @@ def parse_markdown(text: str) -> Text:
     def replace_link(match):
         label = match.group(1)
         url = match.group(2)
+        safe_label = label.replace('[', '\\[').replace(']', '\\]')
+
         if url.startswith(('http://', 'https://')):
             # Show both label and URL so users can Ctrl+Click the URL
-            safe_label = label.replace('[', '\\[').replace(']', '\\]')
             # If label is same as URL, just show URL once
             if label == url or label.startswith('http'):
                 return f"[cyan underline]{url}[/cyan underline]"
             # Otherwise show "label: url"
+            return f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
+        elif url.startswith('mailto:'):
+            # Email links - show as clickable
+            email = url[7:]  # Strip mailto:
+            if label == email or label == url:
+                return f"[cyan underline]{url}[/cyan underline]"
+            return f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
+        elif url.startswith('tel:'):
+            # Phone links - show as clickable
+            phone = url[4:]  # Strip tel:
+            if label == phone or label == url:
+                return f"[cyan underline]{url}[/cyan underline]"
             return f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
         elif url.startswith('/'):
             # Local API paths - just show the label
@@ -195,7 +208,8 @@ def extract_urls(text: str) -> List[str]:
     # Extract from markdown links [label](url)
     for match in LINK_PATTERN.finditer(text):
         url = match.group(2)
-        if url.startswith(('http://', 'https://')):
+        # Include http, https, mailto, and tel links
+        if url.startswith(('http://', 'https://', 'mailto:', 'tel:')):
             urls.add(url)
 
     # Extract bare URLs

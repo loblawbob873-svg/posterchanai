@@ -2091,32 +2091,32 @@ class ChatHandler {
 
         // Process markdown links BEFORE escaping (preserve URLs)
         const links = [];
-        // Match http/https links
-        processed = processed.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (match, text, url) => {
+        // Match http/https links - handle URLs with balanced parens like Wikipedia
+        processed = processed.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+(?:\([^)]*\)[^)\s]*)*)\)/g, (match, text, url) => {
             const index = links.length;
             links.push({ text, url, external: true });
             return `\x00LINK${index}\x00`;
         });
         // Match www. links
-        processed = processed.replace(/\[([^\]]+)\]\((www\.[^)]+)\)/g, (match, text, url) => {
+        processed = processed.replace(/\[([^\]]+)\]\((www\.[^)\s]+(?:\([^)]*\)[^)\s]*)*)\)/g, (match, text, url) => {
             const index = links.length;
             links.push({ text, url: 'https://' + url, external: true });
             return `\x00LINK${index}\x00`;
         });
         // Match tel: links (phone numbers)
-        processed = processed.replace(/\[([^\]]+)\]\((tel:[^)]+)\)/g, (match, text, url) => {
+        processed = processed.replace(/\[([^\]]+)\]\((tel:[^)\s]+)\)/g, (match, text, url) => {
             const index = links.length;
             links.push({ text, url, external: false });
             return `\x00LINK${index}\x00`;
         });
         // Match mailto: links (email addresses)
-        processed = processed.replace(/\[([^\]]+)\]\((mailto:[^)]+)\)/g, (match, text, url) => {
+        processed = processed.replace(/\[([^\]]+)\]\((mailto:[^)\s]+)\)/g, (match, text, url) => {
             const index = links.length;
             links.push({ text, url, external: false });
             return `\x00LINK${index}\x00`;
         });
         // Match relative URL links (starting with /) - for attachments, etc.
-        processed = processed.replace(/\[([^\]]+)\]\((\/[^)]+)\)/g, (match, text, url) => {
+        processed = processed.replace(/\[([^\]]+)\]\((\/[^)\s]+)\)/g, (match, text, url) => {
             const index = links.length;
             links.push({ text, url, external: true });  // Open in new tab
             return `\x00LINK${index}\x00`;
@@ -2163,7 +2163,15 @@ class ChatHandler {
             }
             const target = link.external ? ' target="_blank"' : '';
             const download = link.download ? ' download' : '';
-            const safeUrl = link.url.startsWith('/') ? link.url : encodeURI(link.url);
+            // Don't encode mailto: or tel: URLs, they use different escaping
+            let safeUrl = link.url;
+            if (link.url.startsWith('/')) {
+                safeUrl = link.url;
+            } else if (link.url.startsWith('mailto:') || link.url.startsWith('tel:')) {
+                safeUrl = link.url;  // Keep as-is
+            } else {
+                safeUrl = encodeURI(link.url);
+            }
             return `<a href="${safeUrl}"${target}${download}>${this.escapeHtml(link.text)}</a>`;
         });
 

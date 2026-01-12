@@ -28,6 +28,10 @@ class MessageFormatter {
      * Escape URL for safe use in href attributes
      */
     static escapeUrl(url) {
+        // Don't encode mailto: or tel: URLs
+        if (url.startsWith('mailto:') || url.startsWith('tel:')) {
+            return url;
+        }
         try {
             return encodeURI(url);
         } catch {

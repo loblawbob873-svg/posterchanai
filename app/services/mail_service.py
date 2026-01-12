@@ -179,16 +179,27 @@ def html_to_text(html: str) -> str:
     # Extract link URLs: <a href="url">text</a> -> [text](url) for clickable markdown
     # Handle nested tags by extracting inner text more carefully
     def replace_link(m):
-        url = m.group(1)
-        inner = m.group(2)
+        url = m.group(1) or m.group(2) or m.group(3)  # Try different quote styles
+        inner = m.group(4)
+        if not url:
+            return m.group(0)  # Return original if no URL found
         # Strip any remaining HTML tags from inner text
         inner_text = re.sub(r'<[^>]+>', '', inner).strip()
         # If no text, use URL as text
         if not inner_text:
             inner_text = url
+        # Clean up URL - decode HTML entities like &amp; -> &
+        url = url.strip()
+        url = html_module.unescape(url)
+        # Also decode inner text entities
+        inner_text = html_module.unescape(inner_text)
         return f'[{inner_text}]({url})'
-    text = re.sub(r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
-                  replace_link, text, flags=re.IGNORECASE | re.DOTALL)
+    # Match href with double quotes, single quotes, or no quotes
+    # Use [\s\S] instead of [^>] to handle newlines in tag attributes
+    text = re.sub(
+        r'<a(?:\s[\s\S]*?)href\s*=\s*(?:"([^"]+)"|\'([^\']+)\'|([^\s>]+))[\s\S]*?>([\s\S]*?)</a>',
+        replace_link, text, flags=re.IGNORECASE
+    )
 
     # Remove style and script content entirely
     text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.IGNORECASE | re.DOTALL)
