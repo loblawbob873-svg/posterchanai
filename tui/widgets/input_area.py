@@ -126,8 +126,8 @@ class ChatInput(Widget):
                     classes="dropdown-menu --hidden"
                 ),
                 Horizontal(
-                    Button("List", id="torrent-list", classes="dropdown-item"),
-                    Button("Torrent", id="torrent-main", classes="dropdown-item"),
+                    Button("Download Manager", id="torrent-list", classes="dropdown-item"),
+                    Button("Browse", id="torrent-main", classes="dropdown-item"),
                     id="torrent-menu",
                     classes="dropdown-menu --hidden"
                 ),
