@@ -45,8 +45,8 @@ def create_caldav_client(url: str, username: str, password: str) -> caldav.DAVCl
     session.mount('http://', adapter)
     session.mount('https://', adapter)
 
-    # Create caldav client - it will use this session internally
-    client = create_caldav_client(url, username, password)
+    # Create caldav client
+    client = caldav.DAVClient(url=url, username=username, password=password)
     # Patch the client's session to use our timeout-configured session
     if hasattr(client, 'session'):
         old_session = client.session
