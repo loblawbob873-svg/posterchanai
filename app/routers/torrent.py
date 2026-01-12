@@ -31,20 +31,25 @@ def get_torrent_user(
     - Normal user JWT auth (header or cookie)
     - Server API token (bt_server_token) for server-to-server requests
     """
-    # Check for server-to-server API token first
-    if credentials and credentials.credentials:
-        token = credentials.credentials
-        # Check if this is the server API token
-        server_token = db.query(Setting).filter(Setting.key == "bt_server_token").first()
-        if server_token and server_token.value and token == server_token.value:
-            # Valid server token - return None to indicate system access (no specific user)
-            # This allows server-to-server requests without requiring a user account
-            return None
-
-    # Fall back to normal user authentication
     try:
+        # Check for server-to-server API token first
+        if credentials and credentials.credentials:
+            token = credentials.credentials
+            # Check if this is the server API token
+            server_token = db.query(Setting).filter(Setting.key == "bt_server_token").first()
+            if server_token and server_token.value and token == server_token.value:
+                # Valid server token - return None to indicate system access (no specific user)
+                logger.info("[TORRENT] Authenticated via server API token")
+                return None
+            else:
+                logger.warning(f"[TORRENT] Bearer token provided but doesn't match server token (token set: {bool(server_token and server_token.value)})")
+
+        # Fall back to normal user authentication
         return get_current_user(request, credentials, db)
     except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[TORRENT] Auth error: {e}")
         raise HTTPException(
             status_code=401,
             detail="Not authenticated"
@@ -148,6 +153,12 @@ def get_bt_service(db: Session):
             listen_port=int(get_setting("bt_listen_port", "6881")),
         )
     except ImportError:
+        return None
+    except ConnectionError as e:
+        logger.error(f"[TORRENT] Proxy connection failed: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"[TORRENT] Failed to start service: {e}")
         return None
 
 
