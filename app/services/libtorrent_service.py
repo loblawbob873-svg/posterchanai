@@ -108,11 +108,24 @@ class LibtorrentService:
             'proxy_peer_connections': True,
             'proxy_tracker_connections': True,
             'proxy_hostnames': True,
-            'force_proxy': True,  # Force ALL traffic through proxy
+            'force_proxy': True,  # Force ALL traffic through proxy - NO DIRECT CONNECTIONS
             # Additional safety: disable features that might leak
             'anonymous_mode': True,  # Hide client identity
         })
-        logger.info(f"Configured HTTP proxy: {proxy_host}:{proxy_port} (REQUIRED)")
+
+        # Log startup configuration
+        logger.info(f"[BT] ========== TORRENT ENGINE STARTING ==========")
+        logger.info(f"[BT] Proxy: {proxy_host}:{proxy_port} (REQUIRED - ALL TRAFFIC)")
+        logger.info(f"[BT] force_proxy: True (no direct connections)")
+        logger.info(f"[BT] anonymous_mode: True (identity hidden)")
+        logger.info(f"[BT] proxy_peer_connections: True")
+        logger.info(f"[BT] proxy_tracker_connections: True")
+        logger.info(f"[BT] Download dir: {self.download_dir}")
+        logger.info(f"[BT] Listen port: {listen_port}")
+        logger.info(f"[BT] SCGI: {scgi_host}:{scgi_port}")
+        logger.info(f"[BT] DHT: enabled (will use proxy)")
+        logger.info(f"[BT] UDP trackers: enabled (will fallback to HTTP via proxy)")
+        logger.info(f"[BT] ==============================================")
 
         self.session.apply_settings(settings)
 
@@ -200,14 +213,72 @@ class LibtorrentService:
             raise ConnectionError(f"Proxy at {self.proxy_host}:{self.proxy_port} is not available. Torrenting blocked.")
 
     def _process_alerts(self):
-        """Process libtorrent alerts in background."""
+        """Process libtorrent alerts in background with detailed logging."""
         while self._running:
             alerts = self.session.pop_alerts()
             for alert in alerts:
+                alert_type = type(alert).__name__
+
+                # Torrent lifecycle events
                 if isinstance(alert, lt.torrent_finished_alert):
-                    logger.info(f"Torrent finished: {alert.torrent_name}")
+                    logger.info(f"[BT] FINISHED: {alert.torrent_name}")
                 elif isinstance(alert, lt.torrent_error_alert):
-                    logger.error(f"Torrent error: {alert.torrent_name} - {alert.error}")
+                    logger.error(f"[BT] ERROR: {alert.torrent_name} - {alert.error}")
+                elif isinstance(alert, lt.torrent_added_alert):
+                    logger.info(f"[BT] ADDED: {alert.torrent_name}")
+                elif isinstance(alert, lt.torrent_removed_alert):
+                    logger.info(f"[BT] REMOVED: {alert.info_hash}")
+                elif isinstance(alert, lt.torrent_paused_alert):
+                    logger.info(f"[BT] PAUSED: {alert.torrent_name}")
+                elif isinstance(alert, lt.torrent_resumed_alert):
+                    logger.info(f"[BT] RESUMED: {alert.torrent_name}")
+
+                # Metadata and state
+                elif isinstance(alert, lt.metadata_received_alert):
+                    logger.info(f"[BT] METADATA: {alert.torrent_name}")
+                elif isinstance(alert, lt.state_changed_alert):
+                    logger.debug(f"[BT] STATE: {alert.torrent_name} -> {alert.state}")
+
+                # Tracker events (important for debugging)
+                elif isinstance(alert, lt.tracker_reply_alert):
+                    logger.info(f"[BT] TRACKER OK: {alert.torrent_name} - {alert.url} ({alert.num_peers} peers)")
+                elif isinstance(alert, lt.tracker_error_alert):
+                    logger.warning(f"[BT] TRACKER FAIL: {alert.torrent_name} - {alert.url} - {alert.error_message}")
+                elif isinstance(alert, lt.tracker_warning_alert):
+                    logger.warning(f"[BT] TRACKER WARN: {alert.torrent_name} - {alert.warning_message}")
+
+                # DHT events
+                elif isinstance(alert, lt.dht_bootstrap_alert):
+                    logger.info(f"[BT] DHT: Bootstrap complete")
+                elif isinstance(alert, lt.dht_error_alert):
+                    logger.warning(f"[BT] DHT ERROR: {alert.error}")
+
+                # Peer events (debug level - verbose)
+                elif isinstance(alert, lt.peer_connect_alert):
+                    logger.debug(f"[BT] PEER CONNECT: {alert.torrent_name} - {alert.endpoint}")
+                elif isinstance(alert, lt.peer_disconnected_alert):
+                    logger.debug(f"[BT] PEER DISCONNECT: {alert.torrent_name} - {alert.endpoint}")
+                elif isinstance(alert, lt.peer_error_alert):
+                    logger.debug(f"[BT] PEER ERROR: {alert.torrent_name} - {alert.error}")
+
+                # Connection/proxy issues (important!)
+                elif isinstance(alert, lt.listen_failed_alert):
+                    logger.error(f"[BT] LISTEN FAILED: {alert.error}")
+                elif isinstance(alert, lt.portmap_error_alert):
+                    logger.warning(f"[BT] PORTMAP ERROR: {alert.error}")
+                elif isinstance(alert, lt.udp_error_alert):
+                    logger.debug(f"[BT] UDP ERROR (expected with proxy): {alert.error}")
+
+                # File events
+                elif isinstance(alert, lt.file_completed_alert):
+                    logger.info(f"[BT] FILE DONE: {alert.torrent_name} - file {alert.index}")
+                elif isinstance(alert, lt.storage_moved_alert):
+                    logger.info(f"[BT] MOVED: {alert.torrent_name} -> {alert.storage_path}")
+
+                # Log unknown important alerts at debug level
+                elif 'error' in alert_type.lower() or 'fail' in alert_type.lower():
+                    logger.warning(f"[BT] {alert_type}: {alert.message()}")
+
             time.sleep(0.5)
 
     def add_magnet(self, magnet: str) -> str:
