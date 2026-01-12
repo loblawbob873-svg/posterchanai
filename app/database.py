@@ -283,10 +283,12 @@ When asked to write or modify code or files:
             "proxy_socks_port": "9050",       # SOCKS5 target port
             # Built-in Tor client
             "tor_enabled": "false",           # Enable built-in Tor client
+            "tor_listen_host": "127.0.0.1",   # Tor SOCKS5 listen address (0.0.0.0 for all)
             "tor_socks_port": "9050",         # Tor SOCKS5 listen port
             "tor_control_port": "9051",       # Tor control port
             "tor_exit_nodes": "{us}",         # Exit node country codes (e.g., {us},{ca},{gb})
             "tor_data_dir": "/var/lib/posterchanai/tor",  # Tor data directory
+            "tor_hidden_services": "",        # Hidden service config (HiddenServiceDir, HiddenServicePort lines)
         }
 
         added_settings = []

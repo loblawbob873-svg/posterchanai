@@ -138,14 +138,18 @@ async def startup():
                 return s.value if s and s.value else default
 
             from app.services.tor_service import start_tor_service
+            listen_host = get_tor_setting("tor_listen_host", "127.0.0.1")
+            socks_port = get_tor_setting("tor_socks_port", "9050")
             tor_service = start_tor_service(
-                socks_port=int(get_tor_setting("tor_socks_port", "9050")),
+                listen_host=listen_host,
+                socks_port=int(socks_port),
                 control_port=int(get_tor_setting("tor_control_port", "9051")),
                 exit_nodes=get_tor_setting("tor_exit_nodes", "{us}"),
                 data_dir=get_tor_setting("tor_data_dir", "/var/lib/posterchanai/tor"),
+                hidden_services=get_tor_setting("tor_hidden_services", ""),
             )
             if tor_service:
-                logging.info(f"Built-in Tor started (SOCKS5 port {get_tor_setting('tor_socks_port', '9050')})")
+                logging.info(f"Built-in Tor started (SOCKS5 on {listen_host}:{socks_port})")
             else:
                 logging.error("Failed to start built-in Tor - check if 'tor' is installed")
     except Exception as e:

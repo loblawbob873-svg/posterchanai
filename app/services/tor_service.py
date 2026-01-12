@@ -25,15 +25,19 @@ class TorService:
 
     def __init__(
         self,
+        listen_host: str = "127.0.0.1",
         socks_port: int = 9050,
         control_port: int = 9051,
         exit_nodes: str = "{us}",
         data_dir: str = "/var/lib/posterchanai/tor",
+        hidden_services: str = "",
     ):
+        self.listen_host = listen_host
         self.socks_port = socks_port
         self.control_port = control_port
         self.exit_nodes = exit_nodes
         self.data_dir = Path(data_dir)
+        self.hidden_services = hidden_services
 
         self._process: Optional[subprocess.Popen] = None
         self._running = False
@@ -42,19 +46,23 @@ class TorService:
     @classmethod
     def get_instance(
         cls,
+        listen_host: str = "127.0.0.1",
         socks_port: int = 9050,
         control_port: int = 9051,
         exit_nodes: str = "{us}",
         data_dir: str = "/var/lib/posterchanai/tor",
+        hidden_services: str = "",
     ) -> 'TorService':
         """Get or create singleton instance."""
         with cls._lock:
             if cls._instance is None:
                 cls._instance = cls(
+                    listen_host=listen_host,
                     socks_port=socks_port,
                     control_port=control_port,
                     exit_nodes=exit_nodes,
                     data_dir=data_dir,
+                    hidden_services=hidden_services,
                 )
             return cls._instance
 
@@ -77,10 +85,31 @@ class TorService:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         torrc_path = self.data_dir / "torrc"
 
+        # Build SocksPolicy based on listen address
+        if self.listen_host in ("0.0.0.0", "::"):
+            # Listening on all interfaces - allow private networks
+            socks_policy = """# Allow connections from private networks
+SocksPolicy accept 127.0.0.0/8
+SocksPolicy accept 10.0.0.0/8
+SocksPolicy accept 172.16.0.0/12
+SocksPolicy accept 192.168.0.0/16
+SocksPolicy reject *"""
+        elif self.listen_host == "127.0.0.1":
+            # Localhost only
+            socks_policy = "SocksPolicy accept 127.0.0.0/8\nSocksPolicy reject *"
+        else:
+            # Specific IP - allow that subnet
+            socks_policy = f"""# Allow connections from local network
+SocksPolicy accept 127.0.0.0/8
+SocksPolicy accept {self.listen_host.rsplit('.', 1)[0]}.0/24
+SocksPolicy reject *"""
+
         config = f"""# Auto-generated torrc for posterchanai
-SocksPort {self.socks_port}
+SocksPort {self.listen_host}:{self.socks_port}
 ControlPort {self.control_port}
 DataDirectory {self.data_dir}
+
+{socks_policy}
 
 # Exit node restrictions
 ExitNodes {self.exit_nodes}
@@ -97,6 +126,16 @@ Log notice file {self.data_dir}/tor.log
 # Disable unnecessary features
 AvoidDiskWrites 1
 """
+
+        # Add hidden services if configured
+        if self.hidden_services and self.hidden_services.strip():
+            config += f"""
+# Hidden Services
+{self.hidden_services.strip()}
+"""
+            logger.info(f"[TOR] Hidden services configured")
+
+        logger.info(f"[TOR] Creating torrc: listen={self.listen_host}:{self.socks_port}, exits={self.exit_nodes}")
 
         torrc_path.write_text(config)
         logger.info(f"Created torrc at {torrc_path}")
@@ -245,17 +284,21 @@ AvoidDiskWrites 1
 
 
 def start_tor_service(
+    listen_host: str = "127.0.0.1",
     socks_port: int = 9050,
     control_port: int = 9051,
     exit_nodes: str = "{us}",
     data_dir: str = "/var/lib/posterchanai/tor",
+    hidden_services: str = "",
 ) -> Optional[TorService]:
     """Start Tor service and return instance."""
     service = TorService.get_instance(
+        listen_host=listen_host,
         socks_port=socks_port,
         control_port=control_port,
         exit_nodes=exit_nodes,
         data_dir=data_dir,
+        hidden_services=hidden_services,
     )
     if service.start():
         return service
