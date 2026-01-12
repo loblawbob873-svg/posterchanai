@@ -68,6 +68,20 @@ setup_python_env() {
     fi
 
     print_success "Base dependencies installed"
+
+    # Pre-download Whisper model for voice input
+    print_step "Downloading Whisper speech recognition model (~1.5GB)..."
+    pip show faster-whisper > /dev/null 2>&1 && {
+        python -c "
+from faster_whisper import WhisperModel
+import sys
+print('Downloading Whisper medium model...', file=sys.stderr)
+model = WhisperModel('medium', device='cpu', compute_type='int8')
+print('Whisper model ready', file=sys.stderr)
+" 2>&1 || print_warning "Whisper download failed (voice input may be slower on first use)"
+    }
+    print_success "Whisper model downloaded"
+
     deactivate
 }
 
