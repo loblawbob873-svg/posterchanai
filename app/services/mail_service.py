@@ -1267,7 +1267,9 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
     if msg.body_text and msg.body_text.strip():
         body_content = msg.body_text
         # Check if body_text actually contains HTML (some clients put HTML in plain part)
-        if '<html' in body_content.lower() or '<body' in body_content.lower() or '<div' in body_content.lower():
+        lower_body = body_content.lower()
+        html_indicators = ['<html', '<body', '<div', '<p>', '<table', '<span', '<!doctype', '<br', '<a href']
+        if any(indicator in lower_body for indicator in html_indicators):
             body_content = html_to_text(body_content)
     elif msg.body_html:
         # Convert HTML to text
