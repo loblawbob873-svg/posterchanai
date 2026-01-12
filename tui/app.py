@@ -148,8 +148,32 @@ class ChatApp(App):
             screen.show_help()
 
     def action_quit(self):
-        """Quit application."""
+        """Quit application - stop music first."""
+        self._cleanup_before_exit()
         self.exit()
+
+    def _cleanup_before_exit(self):
+        """Stop music and cleanup before exiting."""
+        from tui.screens.main import MainScreen
+        screen = self.screen
+        if isinstance(screen, MainScreen):
+            try:
+                music_player = screen.query_one("#music-player")
+                if music_player.player:
+                    music_player.player.stop()
+            except Exception:
+                pass
+
+        # Also clean up control file
+        if MUSIC_CONTROL_FILE.exists():
+            try:
+                MUSIC_CONTROL_FILE.unlink()
+            except:
+                pass
+
+    async def on_unmount(self):
+        """Cleanup when app is unmounted (e.g., terminal closed)."""
+        self._cleanup_before_exit()
 
     # Vim-style navigation actions
     def action_scroll_down(self):
