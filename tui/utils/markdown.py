@@ -105,15 +105,18 @@ def parse_markdown(text: str) -> Text:
     # Convert copy: links similarly - remove
     processed = COPY_LINK_PATTERN.sub('', processed)
 
-    # Convert regular links to clickable Rich links (OSC 8 hyperlinks)
+    # Convert regular links - show URL for Ctrl+Click in terminal
     def replace_link(match):
         label = match.group(1)
         url = match.group(2)
         if url.startswith(('http://', 'https://')):
-            # Use Rich's link markup for clickable terminal links
-            # Escape brackets in label to avoid Rich markup issues
+            # Show both label and URL so users can Ctrl+Click the URL
             safe_label = label.replace('[', '\\[').replace(']', '\\]')
-            return f"[link={url}][cyan underline]{safe_label}[/cyan underline][/link]"
+            # If label is same as URL, just show URL once
+            if label == url or label.startswith('http'):
+                return f"[cyan underline]{url}[/cyan underline]"
+            # Otherwise show "label: url"
+            return f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
         elif url.startswith('/'):
             # Local API paths - just show the label
             return label

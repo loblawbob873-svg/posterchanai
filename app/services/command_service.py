@@ -664,7 +664,13 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
     async def _torrents_command(self, arg: str) -> dict:
         """Browse torrents and manage downloads."""
         global _torrent_cache
-        from app.services.libtorrent_service import format_torrent_list, format_torrent_list_from_dicts
+
+        # Import formatting functions - may fail if libtorrent not installed
+        try:
+            from app.services.libtorrent_service import format_torrent_list, format_torrent_list_from_dicts
+        except ImportError:
+            format_torrent_list = None
+            format_torrent_list_from_dicts = None
 
         parts = arg.strip().split()
         subcommand = parts[0].lower() if parts else ""

@@ -74,8 +74,8 @@ class MessageFormatter {
 
         // Process markdown links BEFORE escaping (preserve URLs)
         const links = [];
-        // Match http/https links
-        processed = processed.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (match, text, url) => {
+        // Match http/https links - handle URLs with balanced parens or no parens
+        processed = processed.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+(?:\([^)]*\)[^)\s]*)*)\)/g, (match, text, url) => {
             const index = links.length;
             links.push({ text, url, external: true });
             return `\x00LINK${index}\x00`;
