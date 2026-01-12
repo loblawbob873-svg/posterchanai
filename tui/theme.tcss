@@ -1082,25 +1082,26 @@ Toast.-error {
 
 /* ═══════════ TORRENT LIST - INLINE BUTTONS ═══════════ */
 .torrent-row {
-    height: 1;
+    height: auto;
+    min-height: 2;
     width: 100%;
     padding: 0;
-    margin: 0;
+    margin: 0 0 1 0;
     layout: horizontal;
 }
 
 .torrent-text {
     width: 1fr;
-    height: 1;
+    height: auto;
     padding: 0 1;
     color: $text;
     content-align: left middle;
 }
 
 .torrent-btn {
-    width: 4;
-    min-width: 4;
-    height: 1;
+    width: 5;
+    min-width: 5;
+    height: 3;
     padding: 0;
     margin: 0;
     background: $magenta;
@@ -1114,7 +1115,8 @@ Toast.-error {
 }
 
 .torrent-btn:focus {
-    background: $green;
+    background: $cyan;
+    text-style: bold;
 }
 
 .torrent-btn-danger {
@@ -1122,6 +1124,10 @@ Toast.-error {
 }
 
 .torrent-btn-danger:hover {
+    background: #ff6666;
+}
+
+.torrent-btn-danger:focus {
     background: #ff6666;
 }
 

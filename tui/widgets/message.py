@@ -213,8 +213,8 @@ class MessageWidget(Widget):
 
         # Pattern: 1. ⬇️ **Torrent Name**
         title_pattern = re.compile(r'^(\d+)\.\s*([^\s]+)\s*\*\*(.+?)\*\*')
-        # Pattern: [▶ Resume](cmd:bt resume 1) or [⏸ Pause](cmd:bt pause 1)
-        pause_resume_pattern = re.compile(r'\[(▶ Resume|⏸ Pause)\]\(cmd:(bt (?:resume|pause) \d+)\)')
+        # Pattern: [▶ Start](cmd:bt start 1) or [▶ Resume](cmd:bt resume 1) or [⏸ Pause](cmd:bt pause 1)
+        pause_resume_pattern = re.compile(r'\[(▶ (?:Start|Resume)|⏸ Pause)\]\(cmd:(bt (?:start|resume|pause) \d+)\)')
         # Pattern: [🗑 Delete](cmd:bt rm 1)
         delete_pattern = re.compile(r'\[🗑 Delete\]\(cmd:(bt rm \d+)\)')
         # Progress line: [██████████] 100.0% | 1.5 GB
