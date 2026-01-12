@@ -108,7 +108,6 @@ class ChatInput(Widget):
             Horizontal(
                 Horizontal(
                     Button("Mail", id="pim-mail", classes="dropdown-item"),
-                    Button("News", id="pim-news", classes="dropdown-item"),
                     Button("Cal", id="pim-cal", classes="dropdown-item"),
                     Button("Todo", id="pim-todo", classes="dropdown-item"),
                     id="pim-menu",
@@ -125,6 +124,7 @@ class ChatInput(Widget):
             ),
             Horizontal(
                 Button("PIM ▾", id="quick-pim", classes="quick-btn dropdown-toggle"),
+                Button("News", id="quick-news", classes="quick-btn"),
                 Button("Music", id="quick-music", classes="quick-btn"),
                 Button("Torrent ▾", id="quick-torrent-toggle", classes="quick-btn dropdown-toggle"),
                 id="quick-actions"
@@ -159,8 +159,7 @@ class ChatInput(Widget):
         elif btn_id == "pim-mail":
             self.send_command("mail")
             self.hide_all_dropdowns()
-        elif btn_id == "pim-news":
-            self.hide_all_dropdowns()
+        elif btn_id == "quick-news":
             self.post_message(self.NewsPickerRequested())
         elif btn_id == "pim-cal":
             self.send_command("cal")

@@ -176,17 +176,23 @@ def html_to_text(html: str) -> str:
     text = re.sub(r'</tr>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<hr\s*/?>', '\n---\n', text, flags=re.IGNORECASE)
 
-    # Extract link URLs: <a href="url">text</a> -> text (url)
+    # Extract link URLs: <a href="url">text</a> -> [text](url) for clickable markdown
     text = re.sub(r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>([^<]*)</a>',
-                  r'\2 (\1)', text, flags=re.IGNORECASE)
+                  r'[\2](\1)', text, flags=re.IGNORECASE)
 
     # Remove style and script content entirely
     text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.IGNORECASE | re.DOTALL)
 
-    # Remove CSS class/id definitions that leak through (e.g. .className { ... })
-    text = re.sub(r'\.[a-zA-Z_][a-zA-Z0-9_-]*\s*\{[^}]*\}', '', text, flags=re.DOTALL)
-    text = re.sub(r'#[a-zA-Z_][a-zA-Z0-9_-]*\s*\{[^}]*\}', '', text, flags=re.DOTALL)
+    # Remove CSS rules that leak through (various patterns)
+    # Pattern: .className { ... } or #idName { ... }
+    text = re.sub(r'[.#][a-zA-Z_][a-zA-Z0-9_-]*\s*\{[^}]*\}', '', text, flags=re.DOTALL)
+    # Pattern: tagName.className { ... } or tagName#id { ... }
+    text = re.sub(r'[a-zA-Z_][a-zA-Z0-9_-]*[.#][a-zA-Z0-9_-]*\s*\{[^}]*\}', '', text, flags=re.DOTALL)
+    # Pattern: selector selector { ... } (e.g., "tr.Bordered td")
+    text = re.sub(r'[a-zA-Z_][a-zA-Z0-9_.-]*\s+[a-zA-Z_][a-zA-Z0-9_.-]*\s*\{[^}]*\}', '', text, flags=re.DOTALL)
+    # Pattern: table, tr, td { ... } (CSS block without class/id)
+    text = re.sub(r'\b(?:table|tr|td|th|div|span|p|a|img|body|html)\s*\{[^}]*\}', '', text, flags=re.IGNORECASE | re.DOTALL)
 
     # Remove all remaining HTML tags
     text = re.sub(r'<[^>]+>', '', text)

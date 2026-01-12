@@ -60,6 +60,13 @@ class NewsPickerScreen(ModalScreen):
         background: $secondary;
     }
 
+    #news-all-btn {
+        width: 100%;
+        background: $accent;
+        color: $text;
+        margin-bottom: 1;
+    }
+
     #news-cancel-btn {
         width: 100%;
         background: $surface;
@@ -81,6 +88,7 @@ class NewsPickerScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="news-picker-container"):
             yield Static("Select News Source", id="news-picker-title")
+            yield Button("All Sources (Daily News)", id="news-all-btn")
             with Grid(id="news-sources-grid"):
                 for url, name in self.sources:
                     btn = Button(name, classes="news-source-btn")
@@ -93,6 +101,9 @@ class NewsPickerScreen(ModalScreen):
         """Handle button press."""
         if event.button.id == "news-cancel-btn":
             self.dismiss(None)
+        elif event.button.id == "news-all-btn":
+            # All sources - use dailynews command
+            self.dismiss("dailynews")
         elif hasattr(event.button, 'source_url'):
             self.post_message(self.NewsSourceSelected(
                 event.button.source_url,

@@ -439,8 +439,12 @@ class MainScreen(Screen):
         """Handle news picker request from input area."""
         def handle_news_selected(source_url: str | None):
             if source_url:
-                # Send the news command with the selected source
-                self._send_message_worker(f"news {source_url}")
+                if source_url == "dailynews":
+                    # All sources - use dailynews command
+                    self._send_message_worker("dailynews")
+                else:
+                    # Specific source
+                    self._send_message_worker(f"news {source_url}")
 
         self.app.push_screen(NewsPickerScreen(), handle_news_selected)
 
