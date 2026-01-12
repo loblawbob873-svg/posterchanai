@@ -498,8 +498,11 @@ class MessageWidget(Widget):
         """Copy message content to clipboard."""
         import subprocess
         import os
+        from tui.utils.markdown import strip_markdown
 
-        content = self.content.encode('utf-8')
+        # Strip markdown formatting and cmd: links for clean copy
+        clean_content = strip_markdown(self.content)
+        content = clean_content.encode('utf-8')
 
         # Try wl-copy first (Wayland)
         if os.environ.get('WAYLAND_DISPLAY'):
@@ -535,7 +538,7 @@ class MessageWidget(Widget):
         # Try pyperclip as last resort
         try:
             import pyperclip
-            pyperclip.copy(self.content)
+            pyperclip.copy(clean_content)
             self.notify("Copied to clipboard", severity="information", timeout=2)
         except (ImportError, Exception):
             self.notify("Install wl-copy (Wayland) or xclip (X11)", severity="warning", timeout=3)

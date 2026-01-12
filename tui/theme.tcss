@@ -262,9 +262,10 @@ MessageWidget {
 }
 
 .message-header {
-    height: 1;
+    height: auto;
     margin-bottom: 0;
     width: 100%;
+    align: left middle;
 }
 
 .message-role {

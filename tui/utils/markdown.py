@@ -211,9 +211,17 @@ def extract_urls(text: str) -> List[str]:
         # Include http, https, mailto, and tel links
         if url.startswith(('http://', 'https://', 'mailto:', 'tel:')):
             urls.add(url)
+        elif url.startswith('www.'):
+            urls.add('https://' + url)
 
-    # Extract bare URLs
+    # Extract bare URLs (http/https)
     for match in URL_PATTERN.finditer(text):
         urls.add(match.group(0))
+
+    # Extract bare www. URLs
+    for match in re.finditer(r'\bwww\.[^\s<>\[\]]+', text):
+        url = match.group(0)
+        if not any(url in u for u in urls):  # Avoid duplicates
+            urls.add('https://' + url)
 
     return list(urls)
