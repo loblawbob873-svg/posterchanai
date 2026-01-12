@@ -564,7 +564,7 @@ class LibtorrentService:
         return False
 
     def remove(self, info_hash: str, delete_files: bool = False) -> bool:
-        """Remove a torrent."""
+        """Remove a torrent and its resume data."""
         handle = self.torrents.get(info_hash)
         if handle:
             if delete_files:
@@ -573,6 +573,16 @@ class LibtorrentService:
                 self.session.remove_torrent(handle)
             del self.torrents[info_hash]
             self._update_numbering()
+
+            # Delete resume file so torrent doesn't come back on restart
+            resume_file = self.resume_dir / f"{info_hash}.resume"
+            try:
+                if resume_file.exists():
+                    resume_file.unlink()
+                    logger.debug(f"[BT] Deleted resume file: {info_hash}")
+            except Exception as e:
+                logger.error(f"[BT] Failed to delete resume file: {e}")
+
             return True
         return False
 
