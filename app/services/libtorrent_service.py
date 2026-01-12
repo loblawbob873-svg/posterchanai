@@ -108,7 +108,7 @@ class LibtorrentService:
             'active_limit': 15,
         }
 
-        # REQUIRE proxy - no direct connections allowed
+        # REQUIRE proxy - all traffic through tinyproxy + tor
         if not proxy_host:
             raise ValueError("Proxy is REQUIRED for torrenting. Configure HTTP proxy in Admin Settings.")
 
@@ -123,24 +123,20 @@ class LibtorrentService:
             'proxy_type': lt.proxy_type_t.http,
             'proxy_hostname': proxy_host,
             'proxy_port': proxy_port,
-            # Proxy settings - match rtorrent behavior
+            # Proxy TCP peer connections for privacy
             'proxy_peer_connections': True,
-            'proxy_tracker_connections': True,
-            'proxy_hostnames': True,
-            # NOTE: force_proxy=True can break some connections through HTTP proxy
-            # HTTP proxies can't handle UDP, so DHT/UDP trackers need direct or SOCKS5
-            'force_proxy': False,  # Allow fallback if proxy fails
-            # anonymous_mode disables too many features, use False to match rtorrent
+            # Allow direct tracker connections (UDP trackers need direct)
+            'proxy_tracker_connections': False,
+            # Don't proxy hostname lookups (needed for UDP)
+            'proxy_hostnames': False,
+            # Allow direct connections for UDP (DHT, UDP trackers)
+            'force_proxy': False,
             'anonymous_mode': False,
         })
 
         # Log startup configuration
         logger.info(f"[BT] ========== TORRENT ENGINE STARTING ==========")
-        logger.info(f"[BT] Proxy: {proxy_host}:{proxy_port}")
-        logger.info(f"[BT] force_proxy: False (allow fallback)")
-        logger.info(f"[BT] anonymous_mode: False (full features)")
-        logger.info(f"[BT] proxy_peer_connections: True")
-        logger.info(f"[BT] proxy_tracker_connections: True")
+        logger.info(f"[BT] Proxy: {proxy_host}:{proxy_port} (HTTP via tinyproxy)")
         logger.info(f"[BT] Download dir: {self.download_dir}")
         logger.info(f"[BT] Listen port: {listen_port}")
         logger.info(f"[BT] DHT: enabled (dht.mode.set = auto)")
