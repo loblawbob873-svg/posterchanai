@@ -328,6 +328,12 @@ class ChatInput(Widget):
             if re.match(r'^mail\s+(forward|send)\s+\S+\s+\d+$', base_cmd, re.I):
                 effective_base_cmd = re.sub(r'\s+\d+$', '', base_cmd)
 
+            import logging
+            logger = logging.getLogger("tui")
+            logger.info(f"Autocomplete: base_cmd='{base_cmd}' effective='{effective_base_cmd}' partial='{partial}'")
+            logger.info(f"Subcommands keys: {list(self.subcommands.keys())}")
+            logger.info(f"Lookup result: {effective_base_cmd in self.subcommands}")
+
             if effective_base_cmd in self.subcommands:
                 # Filter subcommand hints by partial match
                 hints = self.subcommands[effective_base_cmd]

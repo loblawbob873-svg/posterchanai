@@ -92,27 +92,32 @@ class MainScreen(Screen):
     @work(exclusive=True)
     async def load_mail_accounts(self):
         """Load mail accounts and contact emails for autocomplete."""
+        import logging
+        logger = logging.getLogger("tui")
         try:
             # Load mail accounts
             settings = await self.app.api.get_user_settings()
             mail_accounts = settings.get("mail_accounts", [])
+            logger.info(f"Loaded {len(mail_accounts)} mail accounts")
             if mail_accounts:
                 chat_input = self.query_one("#chat-input", ChatInput)
                 chat_input.set_mail_accounts(mail_accounts)
+                logger.info(f"Mail accounts set: {chat_input.mail_accounts}")
 
                 # Load contact emails immediately after (in same worker)
                 try:
                     contacts = await self.app.api.get_contact_emails()
+                    logger.info(f"Loaded {len(contacts) if contacts else 0} contacts")
                     if contacts:
                         emails = [c.get("email", "") for c in contacts if c.get("email")]
+                        logger.info(f"Contact emails: {emails[:5]}...")
                         if emails:
                             chat_input.set_contact_emails(emails)
-                except Exception:
-                    # Silently fail - autocomplete just won't have contact emails
-                    pass
+                            logger.info(f"Subcommands keys: {[k for k in chat_input.subcommands.keys() if 'send' in k or 'forward' in k]}")
+                except Exception as e:
+                    logger.error(f"Failed to load contact emails: {e}")
         except Exception as e:
-            # Silently fail - autocomplete just won't have account hints
-            pass
+            logger.error(f"Failed to load mail accounts: {e}")
 
     @work(exclusive=True, group="sync")
     async def sync_conversations(self):
@@ -506,9 +511,15 @@ class MainScreen(Screen):
                 input_widget = chat_input.query_one("#message-input", Input)
                 input_widget.value = command
                 input_widget.focus()
-                # Trigger autocomplete to show suggestions
-                chat_input.update_autocomplete(command)
-                self.notify("Type recipient and press Tab for suggestions", timeout=3)
+                # Show context-specific notification
+                if "mail reply" in command:
+                    self.notify("Type your reply message", timeout=3)
+                elif "mail forward" in command or "mail send" in command:
+                    # Trigger autocomplete to show contact suggestions
+                    chat_input.update_autocomplete(command)
+                    self.notify("Type recipient and press Tab for suggestions", timeout=3)
+                else:
+                    self.notify("Complete the command", timeout=3)
             # Check if translate command needs language picker
             elif self._needs_language_picker(command):
                 self._show_language_picker(command)
@@ -577,7 +588,9 @@ class MainScreen(Screen):
                 chat_view = self.query_one("#chat-view", ChatView)
                 chat_view.load_messages([])
 
-            self.notify(f"Deleted: {conv_title}", severity="information")
+            # Escape brackets in title to prevent Rich parsing errors
+            safe_title = conv_title.replace("[", "\\[").replace("]", "\\]")
+            self.notify(f"Deleted: {safe_title}", severity="information")
 
         except Exception as e:
             self.notify(f"Failed to delete: {e}", severity="error")

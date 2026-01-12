@@ -96,8 +96,8 @@ class MessageWidget(Widget):
         lines = content.split("\n")
         current_entry = None
 
-        # Pattern: **1. [Title](url)** or **1. Title**
-        title_pattern = re.compile(r'\*\*(\d+)\.\s*(.+?)\*\*')
+        # Pattern: **1. [Title](url)** or **1. Title** or 1. [Title](url) (size)
+        title_pattern = re.compile(r'(?:\*\*)?(\d+)\.\s*(.+?)(?:\*\*)?$')
         # Pattern: [Download](cmd:torrents download category num)
         download_pattern = re.compile(r'\[Download\]\(cmd:(torrents download [^)]+)\)')
 
