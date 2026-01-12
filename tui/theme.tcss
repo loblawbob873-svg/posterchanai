@@ -204,7 +204,7 @@ FooterKey > .footer-key--key {
 /* ═══════════ MESSAGES - DATA PACKETS ═══════════ */
 MessageWidget {
     height: auto;
-    margin: 0 1 0 1;
+    margin: 0 1 1 1;
 }
 
 .message-inner {
