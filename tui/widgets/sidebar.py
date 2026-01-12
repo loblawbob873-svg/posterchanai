@@ -26,6 +26,8 @@ class ConversationItem(ListItem):
         # Truncate long titles
         if len(title) > 25:
             title = title[:22] + "..."
+        # Escape brackets to prevent Rich markup parsing errors
+        title = title.replace("[", "\\[").replace("]", "\\]")
         yield Static(title, classes="conversation-title")
 
 

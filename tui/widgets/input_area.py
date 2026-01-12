@@ -13,8 +13,23 @@ from textual.events import Key
 
 
 class AutocompleteInput(Input):
-    """Input with Tab disabled for focus navigation."""
-    pass
+    """Input with Tab and Space key events forwarded to parent for autocomplete."""
+
+    def _on_key(self, event: Key) -> None:
+        """Let Tab and Space bubble up to parent for autocomplete handling."""
+        if event.key == "tab":
+            # Don't handle tab - let parent widget handle autocomplete
+            event.prevent_default()
+            event.stop()
+            # Manually trigger parent's autocomplete action
+            parent = self.parent
+            while parent:
+                if hasattr(parent, 'action_autocomplete'):
+                    parent.action_autocomplete()
+                    return
+                parent = parent.parent
+        # Let other keys be handled normally
+        super()._on_key(event)
 
 
 # Available commands for autocomplete
