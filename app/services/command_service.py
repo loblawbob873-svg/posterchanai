@@ -116,7 +116,7 @@ class CommandService:
         "miniflux": "Fetch Miniflux articles now: miniflux",
         "cal": "Calendar: cal | cal today | cal week | cal add <event> <time>",
         "contacts": "Contacts: contacts all | contacts <query> | contacts add <name> <phone>",
-        "mail": "Email: mail | mail folders/folder/search/read/reply/delete/archive <acct> <id>",
+        "mail": "Email: mail | mail send <contact> [\"subject\"] <msg> | mail read/reply/delete/archive <acct> <id>",
         "todo": "Todo list (CalDAV): todo | todo add <task> | todo rm <#>",
         "music": "Music: music | music browse | music search <query> | music play <#> | music random | music skip | music mood <vibe>",
     }
@@ -1866,9 +1866,9 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"📎 Saved: `{temp_path}`\n\nOpen manually or install `xdg-utils`"}
 
             elif subcommand == "send":
-                # Explicit send: mail send [account] <recipient> <message>
+                # Explicit send: mail send [account] <recipient> ["subject"] <message>
                 if len(parts) < 3:
-                    return {"type": "text", "content": "Usage: `mail send [account] <recipient> <message>`\n\nExamples:\n- `mail send linda Hey!` - uses first account\n- `mail send work linda Hey!` - uses 'work' account"}
+                    return {"type": "text", "content": "Usage: `mail send [account] <recipient> [\"subject\"] <message>`\n\nExamples:\n- `mail send linda Hey!` - auto-generate subject\n- `mail send linda \"Meeting\" Can we meet tomorrow?` - with subject\n- `mail send work linda Hey!` - uses 'work' account"}
 
                 # Check if parts[1] is an account hint or recipient
                 from_account = None
@@ -1882,34 +1882,56 @@ Return ONLY valid JSON, no other text."""},
                         break
 
                 if recipient_idx == 2 and len(parts) < 4:
-                    return {"type": "text", "content": "Usage: `mail send <account> <recipient> <message>`\n\nExample: `mail send work linda@example.com Hey, how are you?`"}
+                    return {"type": "text", "content": "Usage: `mail send <account> <recipient> [\"subject\"] <message>`\n\nExample: `mail send work linda@example.com Hey, how are you?`"}
 
                 recipient = parts[recipient_idx]
 
-                # Re-split to get full message after recipient
+                # Re-split to get full text after recipient
                 full_parts = arg.strip().split(maxsplit=recipient_idx + 1)
-                message_body = full_parts[recipient_idx + 1] if len(full_parts) > recipient_idx + 1 else ""
+                rest = full_parts[recipient_idx + 1] if len(full_parts) > recipient_idx + 1 else ""
 
-                return await self._send_new_mail(accounts, recipient, message_body, attachments, from_account=from_account)
+                # Check for quoted subject
+                subject = None
+                message_body = rest
+                if rest.startswith('"'):
+                    # Find closing quote
+                    end_quote = rest.find('"', 1)
+                    if end_quote > 0:
+                        subject = rest[1:end_quote]
+                        message_body = rest[end_quote + 1:].strip()
+
+                return await self._send_new_mail(accounts, recipient, message_body, attachments, from_account=from_account, subject=subject)
 
             else:
-                # Check if this is a shorthand send: mail <recipient> <message>
+                # Check if this is a shorthand send: mail <recipient> ["subject"] <message>
                 # First word is not a known subcommand, treat as recipient
                 if len(parts) >= 2:
                     recipient = parts[0]
-                    # Get the full message after the recipient
+                    # Get the full text after the recipient
                     full_parts = arg.strip().split(maxsplit=1)
-                    message_body = full_parts[1] if len(full_parts) > 1 else ""
-                    return await self._send_new_mail(accounts, recipient, message_body, attachments)
+                    rest = full_parts[1] if len(full_parts) > 1 else ""
 
-                return {"type": "text", "content": "Usage:\n- `mail` - Recent messages\n- `mail folders` - Browse IMAP folders\n- `mail folder <account> <folder>` - View folder contents\n- `mail sum <account>` - AI summary of inbox\n- `mail search <account> <query>` - Search messages\n- `mail send [account] <contact> <message>` - Send email\n- `mail read <account> [folder:]<id>` - Read message\n- `mail reply <account> [folder:]<id> <message>` - Reply\n- `mail translate <account> [folder:]<id>` - Translate message\n- `mail archive <account> <id>` - Archive\n- `mail delete <account> [folder:]<id>` - Delete"}
+                    # Check for quoted subject
+                    subject = None
+                    message_body = rest
+                    if rest.startswith('"'):
+                        # Find closing quote
+                        end_quote = rest.find('"', 1)
+                        if end_quote > 0:
+                            subject = rest[1:end_quote]
+                            message_body = rest[end_quote + 1:].strip()
+
+                    return await self._send_new_mail(accounts, recipient, message_body, attachments, subject=subject)
+
+                return {"type": "text", "content": "Usage:\n- `mail` - Recent messages\n- `mail folders` - Browse IMAP folders\n- `mail folder <account> <folder>` - View folder contents\n- `mail sum <account>` - AI summary of inbox\n- `mail search <account> <query>` - Search messages\n- `mail send [account] <contact> [\"subject\"] <message>` - Send email\n- `mail read <account> [folder:]<id>` - Read message\n- `mail reply <account> [folder:]<id> <message>` - Reply\n- `mail translate <account> [folder:]<id>` - Translate message\n- `mail archive <account> <id>` - Archive\n- `mail delete <account> [folder:]<id>` - Delete"}
 
         except Exception as e:
             logger.error(f"Mail command error: {e}")
             return {"type": "text", "content": f"Error: {str(e)}"}
 
     async def _send_new_mail(self, accounts: list, recipient: str, message_body: str,
-                              attachments: Optional[list] = None, from_account=None) -> dict:
+                              attachments: Optional[list] = None, from_account=None,
+                              subject: Optional[str] = None) -> dict:
         """Send a new email, resolving contact name to email if needed."""
         import re
 
@@ -1943,12 +1965,16 @@ Return ONLY valid JSON, no other text."""},
         if from_account is None:
             from_account = accounts[0]
 
-        # Generate subject from first part of message (up to 50 chars or first sentence)
-        subject_text = message_body[:50].split('.')[0].split('!')[0].split('?')[0]
-        if len(subject_text) < len(message_body):
-            subject_text = subject_text.strip() + "..."
+        # Use provided subject or generate from first part of message
+        if subject:
+            subject_text = subject
         else:
-            subject_text = subject_text.strip()
+            # Auto-generate subject from first part of message (up to 50 chars or first sentence)
+            subject_text = message_body[:50].split('.')[0].split('!')[0].split('?')[0]
+            if len(subject_text) < len(message_body):
+                subject_text = subject_text.strip() + "..."
+            else:
+                subject_text = subject_text.strip()
 
         success = send_email(from_account, to_email, subject_text, message_body,
                              attachments=attachments)

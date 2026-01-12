@@ -419,6 +419,9 @@ class LibtorrentService:
                     remaining = status.total_wanted - status.total_wanted_done
                     eta = int(remaining / status.download_rate)
 
+                # Check paused state using handle.flags() (reliable in libtorrent v2)
+                is_paused = bool(handle.flags() & lt.torrent_flags.paused)
+
                 result.append(TorrentInfo(
                     info_hash=info_hash,
                     name=status.name or "Unknown",
@@ -434,7 +437,7 @@ class LibtorrentService:
                     eta=eta,
                     save_path=status.save_path,
                     is_finished=status.is_finished,
-                    is_paused=status.paused,
+                    is_paused=is_paused,
                 ))
             except Exception as e:
                 logger.error(f"Error getting status for {info_hash}: {e}")
