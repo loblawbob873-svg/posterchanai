@@ -81,8 +81,10 @@ class LibtorrentService:
         # Configure session settings for STRICT Tor-only operation:
         # ALL peer connections MUST go through HTTP proxy -> Tor
         # NO direct connections allowed (UDP disabled entirely)
+        # IPv4 ONLY - SOCKS4 doesn't support IPv6
         settings = {
             'alert_mask': lt.alert.category_t.all_categories,
+            # IPv4 only - no IPv6 (SOCKS4 doesn't support it, would leak)
             'listen_interfaces': f'0.0.0.0:{listen_port}',
             'download_rate_limit': 0,  # unlimited
             'upload_rate_limit': 0,
@@ -104,6 +106,8 @@ class LibtorrentService:
             'active_downloads': 4,
             'active_seeds': 2,
             'active_limit': 8,
+            # Disable IPv6 - SOCKS4/HTTP proxy doesn't support it
+            'enable_ip_notifier': False,
         }
 
         # REQUIRE proxy - no torrenting without Tor
