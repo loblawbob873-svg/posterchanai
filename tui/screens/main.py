@@ -114,8 +114,14 @@ class MainScreen(Screen):
                         if emails:
                             chat_input.set_contact_emails(emails)
                             logger.info(f"Subcommands keys: {[k for k in chat_input.subcommands.keys() if 'send' in k or 'forward' in k]}")
+                            self.notify(f"Loaded {len(emails)} contact emails for autocomplete", timeout=3)
+                        else:
+                            self.notify("No contact emails found", severity="warning", timeout=3)
+                    else:
+                        self.notify("Contacts API returned empty", severity="warning", timeout=3)
                 except Exception as e:
                     logger.error(f"Failed to load contact emails: {e}")
+                    self.notify(f"Contact load error: {e}", severity="error", timeout=5)
         except Exception as e:
             logger.error(f"Failed to load mail accounts: {e}")
 

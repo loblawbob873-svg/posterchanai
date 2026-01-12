@@ -12,8 +12,11 @@ from typing import Optional
 
 try:
     import keyring
+    # Test if a backend is actually available
+    keyring.get_keyring()
     KEYRING_AVAILABLE = True
-except ImportError:
+except Exception:
+    # Keyring not installed or no backend available
     KEYRING_AVAILABLE = False
 
 
@@ -69,9 +72,15 @@ class Config:
 
     def save_token(self, token: str):
         """Save auth token securely."""
+        saved = False
         if KEYRING_AVAILABLE:
-            keyring.set_password(TOKEN_SERVICE, self.username or "default", token)
-        else:
+            try:
+                keyring.set_password(TOKEN_SERVICE, self.username or "default", token)
+                saved = True
+            except Exception:
+                pass  # Fall through to file storage
+
+        if not saved:
             # Fallback to file (less secure)
             token_file = CONFIG_DIR / ".token"
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
