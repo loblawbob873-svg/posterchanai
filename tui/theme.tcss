@@ -256,34 +256,37 @@ MessageWidget {
 .message-header {
     height: 1;
     margin-bottom: 0;
+    width: 100%;
 }
 
 .message-role {
     text-style: bold;
-    width: 1fr;
+    width: auto;
 }
 
 .copy-btn {
-    width: 6;
-    min-width: 6;
-    max-width: 6;
+    width: 8;
+    min-width: 8;
     height: 1;
-    padding: 0;
+    padding: 0 1;
     margin: 0;
-    background: transparent;
+    margin-left: 1;
+    background: $surface;
     color: $text-muted;
-    border: none;
+    border: round $primary 30%;
     text-align: center;
 }
 
 .copy-btn:hover {
     color: $cyan;
     background: $surface-hover;
+    border: round $cyan 60%;
 }
 
 .copy-btn:focus {
     color: $cyan;
     background: $surface-hover;
+    border: round $cyan 60%;
 }
 
 .message-body {
