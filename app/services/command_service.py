@@ -779,16 +779,16 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             torrent = cached[num - 1]
             magnet = torrent.magnet
 
-            # Use flood command to add the torrent
             if not self.user:
-                return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\nLogin required to add to Flood."}
+                return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\nLogin required to download."}
 
-            # Execute flood add command
-            result = await self._flood_command(f"add {magnet}")
-            if "error" in result.get("content", "").lower():
-                return result
+            # Use built-in torrent client
+            bt_service, bt_error = self._get_bt_service()
+            if not bt_service:
+                return {"type": "text", "content": f"**Selected:** {torrent.title}\n\n**Magnet:** `{magnet[:100]}...`\n\n{bt_error}"}
 
-            return {"type": "text", "content": f"**Adding to Flood:** {torrent.title}\n\n{result['content']}"}
+            info_hash = bt_service.add_magnet(magnet)
+            return {"type": "text", "content": f"**Downloading:** {torrent.title}\n\nAdded: `{info_hash}`\n\nUse `torrents list` to check progress."}
 
         # Search query
         query = arg.strip()
