@@ -179,7 +179,7 @@ async def stream_audio(
                         auth=HTTPBasicAuth(config['username'], config['password']),
                         headers=headers,
                         stream=True,
-                        timeout=30
+                        timeout=(10, 300)  # 10s connect, 5min read - tolerant of slow connections
                     ) as r:
                         for chunk in r.iter_content(chunk_size=8192):
                             if chunk:
@@ -208,7 +208,7 @@ async def stream_audio(
                 full_url,
                 auth=HTTPBasicAuth(config['username'], config['password']),
                 stream=True,
-                timeout=30
+                timeout=(10, 300)  # 10s connect, 5min read - tolerant of slow connections
             ) as r:
                 r.raise_for_status()
                 for chunk in r.iter_content(chunk_size=8192):

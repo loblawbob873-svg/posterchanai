@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 import httpx
 import logging
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 from app.database import get_db
 from app.models import User, Setting
@@ -78,7 +78,8 @@ async def fetch_headlines_from_url(url: str) -> dict:
                 elif not href.startswith('http'):
                     continue
 
-                links.append(f"- [{text}]({href})")
+                # Add link with copy button for URL
+                links.append(f"- [{text}]({href}) [📋](copy:{quote(href, safe='')})")
                 if len(links) >= 12:
                     break
 
@@ -98,9 +99,10 @@ async def summarize_with_ai(links: list, db: Session) -> str:
         messages = [
             {"role": "system", "content": """Summarize each news headline in 1 sentence.
 IMPORTANT: You MUST preserve the exact markdown link format [title](url) for each item.
+IMPORTANT: You MUST preserve the copy button [📋](copy:...) that follows each link - do NOT modify it.
 Output as a bullet list starting with "- ".
-Example input: [Biden announces new policy](https://example.com/article)
-Example output: - [Biden unveils initiative affecting millions](https://example.com/article)
+Example input: - [Biden announces new policy](https://example.com/article) [📋](copy:https%3A%2F%2Fexample.com%2Farticle)
+Example output: - [Biden unveils initiative affecting millions](https://example.com/article) [📋](copy:https%3A%2F%2Fexample.com%2Farticle)
 No extra text or commentary."""},
             {"role": "user", "content": "\n".join(links)}
         ]

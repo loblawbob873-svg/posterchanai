@@ -438,13 +438,27 @@ class PluginService:
                 if not bills:
                     return "No unpaid bills! 🎉"
                 lines = ["## Unpaid Bills\n"]
-                total = 0
+                total = 0.0
                 for bill in bills:
                     name = bill.get('name', 'Unknown')
                     # Filter out income entries
                     if 'income' in name.lower():
                         continue
-                    amount = float(bill.get('amount', 0))
+                    # Filter out paid bills - check various possible field names
+                    if bill.get('paid') is True or bill.get('isPaid') is True:
+                        continue
+                    status = str(bill.get('status', '')).lower()
+                    if status in ('paid', 'complete', 'completed', 'done'):
+                        continue
+                    # Parse amount robustly - handle strings with $ or commas
+                    raw_amount = bill.get('amount', 0)
+                    try:
+                        if isinstance(raw_amount, str):
+                            # Remove currency symbols, commas, spaces
+                            raw_amount = raw_amount.replace('$', '').replace(',', '').replace(' ', '').strip()
+                        amount = float(raw_amount) if raw_amount else 0.0
+                    except (ValueError, TypeError):
+                        amount = 0.0
                     total += amount
                     lines.append(f"- **{name}**: ${amount:,.2f}")
                 lines.append(f"\n**Total:** ${total:,.2f}")

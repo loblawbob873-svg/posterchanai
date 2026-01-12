@@ -8,7 +8,10 @@ from app.services.search_service import SearchService
 from app.services.image_factory import generate_image_for_user
 from app.services.chat_service import ChatService
 from app.services.plugin_service import PluginService
-from app.services.youtube_service import is_youtube_url, extract_youtube_urls, summarize_youtube
+from app.services.youtube_service import (
+    is_youtube_url, extract_youtube_urls, summarize_youtube,
+    download_and_upload_to_webdav, format_download_result, check_ytdlp_available
+)
 from app.services.torrent_service import scrape_torrents, format_torrent_results, TorrentResult, scrape_all_categories, format_all_categories
 from app.services.nyaa_service import search_nyaa, format_nyaa_results, NyaaResult
 from app.services.miniflux_service import MinifluxService
@@ -53,7 +56,7 @@ class CommandService:
         "search": "Search the web and get AI-summarized results",
         "images": "Search for images",
         "geni": "Generate an AI image from your prompt",
-        "yt": "Summarize a YouTube video: yt <url>",
+        "yt": "YouTube: yt <url> (summarize) | yt dl <url> (download MP3 to WebDAV)",
         "torrents": "Torrents: torrents | torrents <category> | torrents dl <#> | torrents list | torrents add <url>",
         "nyaa": "Search nyaa.si: nyaa <query> | nyaa download <#>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
@@ -462,13 +465,50 @@ class CommandService:
         except Exception as e:
             return {"type": "text", "content": f"Firewall error: {str(e)}"}
 
-    async def _youtube_command(self, url: str) -> dict:
-        """Summarize a YouTube video transcript"""
-        if not url:
-            return {"type": "text", "content": "Please provide a YouTube URL. Example: `yt https://youtube.com/watch?v=...`"}
+    async def _youtube_command(self, arg: str) -> dict:
+        """Summarize or download a YouTube video"""
+        if not arg:
+            return {"type": "text", "content": """## YouTube Commands
 
-        # Extract URL if there's extra text
-        urls = extract_youtube_urls(url)
+**Summarize a video:**
+`yt <url>` - Get AI summary of video transcript
+
+**Download as MP3:**
+`yt dl <url>` - Download video as MP3 to your WebDAV Music folder
+
+Example: `yt dl https://youtube.com/watch?v=...`"""}
+
+        parts = arg.strip().split()
+        subcommand = parts[0].lower() if parts else ""
+
+        # Handle download subcommand
+        if subcommand in ("dl", "download"):
+            if len(parts) < 2:
+                return {"type": "text", "content": "Please provide a YouTube URL. Example: `yt dl https://youtube.com/watch?v=...`"}
+
+            # Check if yt-dlp is available
+            if not check_ytdlp_available():
+                return {"type": "text", "content": "❌ yt-dlp not installed. Install with: `pip install yt-dlp`"}
+
+            # Extract URL
+            url_text = " ".join(parts[1:])
+            urls = extract_youtube_urls(url_text)
+            if not urls:
+                return {"type": "text", "content": "Could not find a valid YouTube URL."}
+
+            target_url = urls[0]
+
+            # Download and upload to WebDAV
+            result = await download_and_upload_to_webdav(
+                url=target_url,
+                user_id=self.user.id,
+                db=self.db
+            )
+
+            return {"type": "text", "content": format_download_result(result)}
+
+        # Default: summarize video
+        urls = extract_youtube_urls(arg)
         if not urls:
             return {"type": "text", "content": "Could not find a valid YouTube URL."}
 

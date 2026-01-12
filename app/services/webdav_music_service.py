@@ -315,6 +315,86 @@ def get_stream_url(path: str) -> str:
     return f"/api/music/stream?path={quote(path, safe='')}"
 
 
+def upload_to_webdav(url: str, username: str, password: str,
+                     local_file_path: str, remote_filename: str,
+                     subfolder: str = "Downloads") -> Dict[str, Any]:
+    """
+    Upload a file to the WebDAV music folder.
+
+    Args:
+        url: Base WebDAV URL (e.g., https://cloud.example.com/remote.php/dav/files/user/Music)
+        username: WebDAV username
+        password: WebDAV password
+        local_file_path: Path to local file to upload
+        remote_filename: Filename to use on remote (e.g., "Artist - Title.mp3")
+        subfolder: Subfolder within music library (default: "Downloads")
+
+    Returns:
+        Dict with 'success', 'path', and optionally 'error'
+    """
+    import os
+    from urllib.parse import urlparse
+
+    try:
+        # Ensure subfolder exists (create if needed)
+        base_url = url.rstrip('/')
+        folder_url = f"{base_url}/{subfolder}"
+
+        # Try MKCOL to create folder (ignore if exists)
+        try:
+            mkcol_resp = requests.request(
+                'MKCOL', folder_url,
+                auth=HTTPBasicAuth(username, password),
+                timeout=30
+            )
+            # 201 = created, 405 = already exists (both are OK)
+            if mkcol_resp.status_code not in (201, 405, 301):
+                logger.warning(f"MKCOL response: {mkcol_resp.status_code}")
+        except Exception as e:
+            logger.warning(f"MKCOL failed (folder may exist): {e}")
+
+        # Build full remote path
+        safe_filename = "".join(c for c in remote_filename if c.isalnum() or c in ' -_.').strip()
+        if not safe_filename.endswith('.mp3'):
+            safe_filename += '.mp3'
+        remote_path = f"{folder_url}/{quote(safe_filename, safe='')}"
+
+        # Read local file
+        if not os.path.exists(local_file_path):
+            return {'success': False, 'error': f"Local file not found: {local_file_path}"}
+
+        with open(local_file_path, 'rb') as f:
+            file_data = f.read()
+
+        # Upload via PUT
+        headers = {
+            'Content-Type': 'audio/mpeg',
+            'Content-Length': str(len(file_data))
+        }
+
+        resp = requests.put(
+            remote_path,
+            auth=HTTPBasicAuth(username, password),
+            headers=headers,
+            data=file_data,
+            timeout=300  # 5 min timeout for large files
+        )
+
+        if resp.status_code in (200, 201, 204):
+            # Build the path relative to music folder
+            parsed = urlparse(url)
+            relative_path = f"{parsed.path.rstrip('/')}/{subfolder}/{safe_filename}"
+            logger.info(f"Successfully uploaded to WebDAV: {relative_path}")
+            return {'success': True, 'path': relative_path, 'filename': safe_filename}
+        else:
+            logger.error(f"WebDAV upload failed: {resp.status_code} - {resp.text[:200]}")
+            return {'success': False, 'error': f"Upload failed: HTTP {resp.status_code}"}
+
+    except Exception as e:
+        logger.error(f"WebDAV upload error: {e}")
+        return {'success': False, 'error': str(e)}
+
+
 def scan_all_tracks(url: str, username: str, password: str,
                     base_path: str = "/", max_tracks: int = 500) -> List[AudioTrack]:
     """Recursively scan all tracks in the music library."""

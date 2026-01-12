@@ -127,7 +127,7 @@ class MPVPlayer(AudioPlayer):
 
 
 class SubprocessPlayer(AudioPlayer):
-    """Fallback player using mpv subprocess."""
+    """Fallback player using mpv subprocess with robust buffering for poor connections."""
 
     def __init__(self):
         self._process: Optional[subprocess.Popen] = None
@@ -135,29 +135,81 @@ class SubprocessPlayer(AudioPlayer):
         self._position = 0.0
         self._duration = 0.0
         self._start_time = 0.0
+        self._current_url: Optional[str] = None
+        self._retry_count = 0
+        self._max_retries = 3
 
     def play(self, url: str):
-        """Play audio via subprocess."""
+        """Play audio via subprocess with buffering for unstable connections."""
         self.stop()
+        self._current_url = url
+        self._retry_count = 0
+        self._start_playback(url, seek_position=0.0)
 
+    def _start_playback(self, url: str, seek_position: float = 0.0):
+        """Internal method to start playback with optional seek position."""
         try:
+            # Configure mpv with aggressive caching for poor mobile connections:
+            # --cache=yes: Enable cache
+            # --cache-secs=120: Buffer up to 2 minutes of audio
+            # --demuxer-max-bytes=50M: Allow up to 50MB demuxer buffer
+            # --demuxer-readahead-secs=120: Read ahead up to 2 minutes
+            # --network-timeout=300: 5 minute network timeout
+            # --stream-buffer-size=2M: 2MB stream buffer
+            cmd = [
+                'mpv',
+                '--no-video',
+                '--really-quiet',
+                '--cache=yes',
+                '--cache-secs=120',
+                '--demuxer-max-bytes=50M',
+                '--demuxer-readahead-secs=120',
+                '--network-timeout=300',
+                '--stream-buffer-size=2M',
+            ]
+
+            # Add seek position if resuming
+            if seek_position > 0:
+                cmd.append(f'--start={seek_position}')
+
+            cmd.append(url)
+
             self._process = subprocess.Popen(
-                ['mpv', '--no-video', '--really-quiet', url],
+                cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
             self._playing = True
-            self._start_time = time.time()
+            self._start_time = time.time() - seek_position  # Adjust for resume position
             self._start_progress_monitor()
         except FileNotFoundError:
             raise RuntimeError("mpv not found. Please install mpv.")
 
     def _start_progress_monitor(self):
-        """Monitor playback progress."""
+        """Monitor playback progress with auto-retry on failure."""
         def monitor():
             while self._playing and self._process:
                 if self._process.poll() is not None:
-                    # Process ended
+                    # Process ended - check if it was premature (potential network issue)
+                    current_pos = time.time() - self._start_time
+
+                    # If we have duration info and ended before 90% complete, try to retry
+                    if (self._duration > 0 and
+                        current_pos < self._duration * 0.9 and
+                        self._retry_count < self._max_retries and
+                        self._current_url):
+                        # Likely a network interruption - retry from current position
+                        self._retry_count += 1
+                        self._playing = False
+
+                        # Wait a moment before retrying
+                        time.sleep(2)
+
+                        # Resume from where we left off
+                        self._start_playback(self._current_url, seek_position=current_pos)
+                        return  # New monitor thread started by _start_playback
+
+                    # Track actually ended or max retries reached
                     self._playing = False
                     if self.on_track_end:
                         self.on_track_end()
@@ -199,10 +251,18 @@ class SubprocessPlayer(AudioPlayer):
             self._process = None
         self._playing = False
         self._position = 0.0
+        self._current_url = None
+        self._retry_count = 0
 
     def seek(self, position: float):
-        """Seek - not supported in subprocess mode."""
-        pass
+        """Seek - restart playback from position (subprocess limitation)."""
+        if self._current_url and position >= 0:
+            self.stop()
+            self._start_playback(self._current_url, seek_position=position)
+
+    def set_duration(self, duration: float):
+        """Set track duration (needed for retry logic)."""
+        self._duration = duration
 
     def get_position(self) -> float:
         return self._position

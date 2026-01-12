@@ -200,6 +200,9 @@ class MusicPlayerWidget(Widget):
 
         # Start playback - subprocess player doesn't block
         try:
+            # Pass duration to player for retry logic (knows when track ended prematurely)
+            if hasattr(self.player, 'set_duration'):
+                self.player.set_duration(self.duration)
             self.player.play(url)
             self._run_visualizer()
         except Exception as e:
