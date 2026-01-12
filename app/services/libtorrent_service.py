@@ -86,20 +86,29 @@ class LibtorrentService:
             'active_limit': 15,
         }
 
-        # Configure HTTP proxy if provided (REQUIRED for this app)
-        if proxy_host:
-            settings.update({
-                'proxy_type': lt.proxy_type_t.http,
-                'proxy_hostname': proxy_host,
-                'proxy_port': proxy_port,
-                'proxy_peer_connections': True,
-                'proxy_tracker_connections': True,
-                'proxy_hostnames': True,
-                'force_proxy': True,  # Force ALL traffic through proxy
-            })
-            logger.info(f"Configured HTTP proxy: {proxy_host}:{proxy_port}")
-        else:
-            logger.warning("No proxy configured - torrenting disabled for safety")
+        # REQUIRE proxy - no direct connections allowed
+        if not proxy_host:
+            raise ValueError("Proxy is REQUIRED for torrenting. Configure HTTP proxy in Admin Settings.")
+
+        # Verify proxy is reachable before starting
+        if not self._check_proxy(proxy_host, proxy_port):
+            raise ConnectionError(f"Cannot connect to proxy at {proxy_host}:{proxy_port}. Torrenting disabled.")
+
+        self.proxy_host = proxy_host
+        self.proxy_port = proxy_port
+
+        settings.update({
+            'proxy_type': lt.proxy_type_t.http,
+            'proxy_hostname': proxy_host,
+            'proxy_port': proxy_port,
+            'proxy_peer_connections': True,
+            'proxy_tracker_connections': True,
+            'proxy_hostnames': True,
+            'force_proxy': True,  # Force ALL traffic through proxy
+            # Additional safety: disable features that might leak
+            'anonymous_mode': True,  # Hide client identity
+        })
+        logger.info(f"Configured HTTP proxy: {proxy_host}:{proxy_port} (REQUIRED)")
 
         self.session.apply_settings(settings)
 
@@ -169,6 +178,23 @@ class LibtorrentService:
 
         logger.info("LibtorrentService stopped")
 
+    def _check_proxy(self, host: str, port: int, timeout: int = 5) -> bool:
+        """Verify proxy is reachable and responding."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            return result == 0
+        except Exception as e:
+            logger.error(f"Proxy check failed: {e}")
+            return False
+
+    def _verify_proxy_or_fail(self):
+        """Verify proxy is still available, raise if not."""
+        if not self._check_proxy(self.proxy_host, self.proxy_port):
+            raise ConnectionError(f"Proxy at {self.proxy_host}:{self.proxy_port} is not available. Torrenting blocked.")
+
     def _process_alerts(self):
         """Process libtorrent alerts in background."""
         while self._running:
@@ -181,7 +207,10 @@ class LibtorrentService:
             time.sleep(0.5)
 
     def add_magnet(self, magnet: str) -> str:
-        """Add a magnet link. Returns info_hash."""
+        """Add a magnet link. Returns info_hash. Requires proxy."""
+        # Verify proxy is still available before adding
+        self._verify_proxy_or_fail()
+
         params = lt.parse_magnet_uri(magnet)
         params.save_path = str(self.download_dir)
 
@@ -195,7 +224,10 @@ class LibtorrentService:
         return info_hash
 
     def add_torrent_file(self, torrent_data: bytes) -> str:
-        """Add a .torrent file. Returns info_hash."""
+        """Add a .torrent file. Returns info_hash. Requires proxy."""
+        # Verify proxy is still available before adding
+        self._verify_proxy_or_fail()
+
         info = lt.torrent_info(lt.bdecode(torrent_data))
 
         params = lt.add_torrent_params()
