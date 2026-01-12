@@ -1361,14 +1361,17 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                     return {"type": "text", "content": "Usage: `cal add <event name> <time>`\n\nExample: `cal add Meeting with John tomorrow at 3pm`"}
 
                 # Use AI to parse the event
+                from datetime import date
+                today = date.today()
                 messages = [
-                    {"role": "system", "content": """Parse this event and return JSON with:
+                    {"role": "system", "content": f"""Parse this event and return JSON with:
 - summary: event name
 - description: any details mentioned
-- start_time: ISO format datetime (assume today's date if not specified)
+- start_time: ISO format datetime
 - end_time: ISO format datetime (default 1 hour after start)
 - location: place if mentioned
 
+IMPORTANT: Today is {today.strftime('%A, %B %d, %Y')}. Use the current year {today.year} for dates.
 Return ONLY valid JSON, no other text."""},
                     {"role": "user", "content": f"Parse this event: {param}"}
                 ]
@@ -1518,9 +1521,10 @@ Return ONLY valid JSON, no other text."""},
                 elif change_lower.startswith("time ") or change_lower.startswith("move ") or change_lower.startswith("reschedule "):
                     # Use AI to parse the new time
                     time_request = change_request.split(maxsplit=1)[1] if " " in change_request else change_request
-                    from datetime import timezone
+                    from datetime import timezone, date
                     import time as time_module
                     local_tz_name = time_module.tzname[0]
+                    today = date.today()
                     messages = [
                         {"role": "system", "content": f"""Parse this time change request and return JSON with:
 - start_time: ISO format datetime in local timezone ({local_tz_name})
@@ -1530,7 +1534,8 @@ Current event:
 - Start: {event.start.isoformat()}
 - End: {event.end.isoformat() if event.end else 'not set'}
 
-IMPORTANT: Return times in local timezone without timezone suffix (e.g., "2026-01-19T14:00:00" not "2026-01-19T14:00:00Z").
+IMPORTANT: Today is {today.strftime('%A, %B %d, %Y')}. Use year {today.year} for dates.
+Return times WITHOUT timezone suffix (e.g., "2026-01-19T14:00:00" not "2026-01-19T14:00:00Z").
 Return ONLY valid JSON, no other text."""},
                         {"role": "user", "content": f"Change time to: {time_request}"}
                     ]

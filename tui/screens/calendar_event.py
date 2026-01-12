@@ -229,9 +229,20 @@ class CalendarEventScreen(ModalScreen):
                     date_formatted = date_str
                 time_desc = f"{date_formatted}"
                 if time_str:
-                    time_desc += f" at {time_str}"
+                    # Convert HH:MM to 12-hour format with AM/PM
+                    try:
+                        t = datetime.strptime(time_str, "%H:%M")
+                        time_formatted = t.strftime("%I:%M %p").lstrip('0')
+                    except ValueError:
+                        time_formatted = time_str
+                    time_desc += f" at {time_formatted}"
                 if end_time_str:
-                    time_desc += f" until {end_time_str}"
+                    try:
+                        t = datetime.strptime(end_time_str, "%H:%M")
+                        end_formatted = t.strftime("%I:%M %p").lstrip('0')
+                    except ValueError:
+                        end_formatted = end_time_str
+                    time_desc += f" until {end_formatted}"
                 command = f"cal edit {uid} move to {time_desc}"
             elif location != self.event_data.get('location', ''):
                 command = f"cal edit {uid} location {location}"
