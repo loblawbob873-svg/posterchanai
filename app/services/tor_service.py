@@ -129,6 +129,17 @@ AvoidDiskWrites 1
 
         # Add hidden services if configured
         if self.hidden_services and self.hidden_services.strip():
+            # Auto-create hidden service directories
+            import re
+            for match in re.finditer(r'HiddenServiceDir\s+(\S+)', self.hidden_services):
+                hs_dir = Path(match.group(1))
+                try:
+                    hs_dir.mkdir(parents=True, exist_ok=True)
+                    os.chmod(hs_dir, 0o700)  # Tor requires 700 permissions
+                    logger.info(f"[TOR] Created hidden service dir: {hs_dir}")
+                except Exception as e:
+                    logger.error(f"[TOR] Failed to create hidden service dir {hs_dir}: {e}")
+
             config += f"""
 # Hidden Services
 {self.hidden_services.strip()}
