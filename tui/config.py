@@ -10,14 +10,26 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 
+KEYRING_AVAILABLE = False
 try:
     import keyring
-    # Test if a backend is actually available
-    keyring.get_keyring()
-    KEYRING_AVAILABLE = True
+    import io
+    import sys
+    # Suppress stderr during keyring check (it prints warnings)
+    old_stderr = sys.stderr
+    sys.stderr = io.StringIO()
+    try:
+        # Test if a backend is actually available
+        kr = keyring.get_keyring()
+        # Check if it's a usable backend (not null or fail backend)
+        backend_name = type(kr).__name__.lower()
+        if 'fail' not in backend_name and 'null' not in backend_name:
+            KEYRING_AVAILABLE = True
+    finally:
+        sys.stderr = old_stderr
 except Exception:
     # Keyring not installed or no backend available
-    KEYRING_AVAILABLE = False
+    pass
 
 
 # Config directory
