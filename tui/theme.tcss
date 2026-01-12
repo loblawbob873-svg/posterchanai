@@ -947,7 +947,7 @@ TabPane {
     height: 3;
     margin: 0;
     padding: 0 1;
-    background: $surface-dark;
+    background: $surface-darken-3;
     color: $magenta;
     border: solid $magenta 40%;
     text-style: bold;
