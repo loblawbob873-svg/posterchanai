@@ -460,6 +460,10 @@ class LibtorrentService:
                 # Use "paused" state if paused, otherwise normal state
                 state = "paused" if is_paused else self._state_str(status.state)
 
+                # Force 0 rates for paused torrents (status might show stale values)
+                dl_rate = 0 if is_paused else status.download_rate
+                ul_rate = 0 if is_paused else status.upload_rate
+
                 result.append(TorrentInfo(
                     info_hash=info_hash,
                     name=status.name or "Unknown",
@@ -467,8 +471,8 @@ class LibtorrentService:
                     downloaded=status.total_wanted_done,
                     uploaded=status.total_upload,
                     progress=status.progress * 100,
-                    download_rate=status.download_rate,
-                    upload_rate=status.upload_rate,
+                    download_rate=dl_rate,
+                    upload_rate=ul_rate,
                     state=state,
                     seeders=status.num_seeds,
                     peers=status.num_peers,
