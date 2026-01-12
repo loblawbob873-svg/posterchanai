@@ -77,11 +77,14 @@ const VOICE_COMMANDS = [
     { patterns: [/^(generate|create|draw)\s+(image|picture)?\s*(of\s+)?(.+)$/i], command: 'geni $4' },
 
     // ==================== TORRENTS ====================
-    { patterns: [/^(my\s+)?torrents?$/i], command: 'torrents' },
+    // Common mishearings: "torrents" -> "torrance", "toronto", "weather for torrance"
+    { patterns: [/^(show\s+me\s+)?(the\s+)?(my\s+)?(torrents?|torrance|toronto)$/i], command: 'torrents' },
+    { patterns: [/^(show\s+me\s+)?(the\s+)?(my\s+)?(torrents?|torrance|toronto)\s+(for\s+)?today$/i], command: 'torrents' },
+    { patterns: [/^(show\s+me\s+)?(the\s+)?weather\s+for\s+torrance$/i], command: 'torrents' },
     { patterns: [/^downloads?$/i], command: 'torrents list' },
-    { patterns: [/^movies?$/i], command: 'torrents movies' },
-    { patterns: [/^tv(\s+shows?)?$/i], command: 'torrents tv' },
-    { patterns: [/^anime$/i], command: 'torrents anime' },
+    { patterns: [/^(show\s+me\s+)?(the\s+)?movies?$/i], command: 'torrents movies' },
+    { patterns: [/^(show\s+me\s+)?(the\s+)?tv(\s+shows?)?$/i], command: 'torrents tv' },
+    { patterns: [/^(show\s+me\s+)?(the\s+)?anime$/i], command: 'torrents anime' },
     // Download: "download movie 3", "download tv 5", "download anime 2"
     { patterns: [/^download\s+(movie|film)\s+(\d+)$/i], command: 'torrents download movies $2' },
     { patterns: [/^download\s+(tv|show)\s+(\d+)$/i], command: 'torrents download tv $2' },
@@ -377,8 +380,24 @@ class STTController {
             return;
         }
 
+        // Check permission status first (if API available)
+        if (navigator.permissions) {
+            try {
+                const result = await navigator.permissions.query({ name: 'microphone' });
+                console.log('Microphone permission status:', result.state);
+                if (result.state === 'denied') {
+                    this.showError('Microphone denied in browser settings. Check site permissions.');
+                    return;
+                }
+            } catch (e) {
+                console.log('Permission query not supported:', e);
+            }
+        }
+
         try {
+            console.log('Requesting microphone access...');
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            console.log('Microphone access granted');
             this.audioChunks = [];
 
             // Find a supported MIME type

@@ -899,6 +899,72 @@ Type these commands in the chat (or use the mode buttons):
 | `news` | Get unread news from Miniflux |
 | `logs` | System logs analysis (admin only) |
 
+## Voice Input
+
+Click the microphone button to speak commands naturally. Voice input works in Chrome/Edge (Web Speech API) and falls back to local Whisper transcription in Brave/Firefox.
+
+### Voice Command Examples
+
+**Email:**
+- "check my mail" / "inbox" / "messages"
+- "read 2" - Read email #2
+- "delete 3" - Delete email #3
+- "archive 1" - Archive email #1
+- "reply thanks for the update" - Reply to last read email
+- "delete this" / "archive this" - Act on last read email
+- "summarize this" - AI summary of last read email
+- "translate this to spanish" - Translate last read email
+
+**Calendar & Tasks:**
+- "calendar" / "my schedule"
+- "this week"
+- "add event dinner tomorrow at 7pm"
+- "my todos" / "todo list"
+- "add todo buy groceries"
+- "remind me to call mom"
+
+**Music:**
+- "play music" - Shuffle play
+- "play 3" - Play track #3
+- "next" / "skip"
+- "previous" / "back"
+- "stop" / "pause"
+- "play something relaxing"
+
+**Torrents:**
+- "torrents" / "my torrents"
+- "movies" / "tv" / "anime"
+- "download movie 3"
+- "download tv 5"
+- "pause 1" / "resume 1"
+
+**Search & Images:**
+- "search best pizza recipe"
+- "google python tutorials"
+- "images of mountains"
+- "generate image of a sunset"
+
+**Budget:**
+- "budget" / "my bills"
+- "add bill rent 500"
+- "add bill groceries for $200"
+
+**Other:**
+- "news"
+- "contacts" / "who is john"
+- "translate to french" - Translate last AI response
+- "help"
+
+### Whisper Fallback (for Brave/Firefox)
+
+Browsers that block Google's Web Speech API (like Brave) automatically use local Whisper transcription. Install on server:
+
+```bash
+pip install faster-whisper
+```
+
+First use downloads the model (~150MB). Requires HTTPS for microphone access.
+
 ### Contacts Command
 
 The contacts command provides CardDAV address book functionality:
