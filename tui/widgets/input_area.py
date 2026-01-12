@@ -297,10 +297,17 @@ class ChatInput(Widget):
             base_cmd = " ".join(words[:-1])  # All but last word
             partial = words[-1]  # Last word (partial)
 
-            if base_cmd in self.subcommands:
+            # Special case: mail forward/send <account> <id> -> suggest recipient emails
+            # Strip numeric ID to get mail forward/send <account>
+            import re
+            effective_base_cmd = base_cmd
+            if re.match(r'^mail\s+(forward|send)\s+\S+\s+\d+$', base_cmd, re.I):
+                effective_base_cmd = re.sub(r'\s+\d+$', '', base_cmd)
+
+            if effective_base_cmd in self.subcommands:
                 # Filter subcommand hints by partial match
-                hints = self.subcommands[base_cmd]
-                sub_matches = [f"{base_cmd} {h}" for h in hints if h.startswith(partial)]
+                hints = self.subcommands[effective_base_cmd]
+                sub_matches = [f"{base_cmd} {h}" for h in hints if h.lower().startswith(partial.lower())]
                 matches.extend(sub_matches[:5])
 
         # Also match against static commands

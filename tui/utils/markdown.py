@@ -198,6 +198,41 @@ def parse_markdown(text: str) -> Text:
     processed = re.sub(r'^## (.+)$', r'[bold cyan]\1[/bold cyan]', processed, flags=re.MULTILINE)
     processed = re.sub(r'^# (.+)$', r'[bold white]\1[/bold white]', processed, flags=re.MULTILINE)
 
+    # Escape any remaining square brackets that aren't part of Rich tags
+    # Rich tags look like [tagname] or [/tagname] or [tagname attribute]
+    # We need to escape [ that aren't followed by valid Rich syntax
+    def escape_non_rich_brackets(text: str) -> str:
+        """Escape square brackets that aren't valid Rich markup."""
+        # Valid Rich tags we've created
+        valid_tags = ['bold', 'italic', 'cyan', 'underline', 'magenta', 'white', '/bold', '/italic', '/cyan', '/underline', '/bold magenta', '/bold cyan', '/bold white', 'cyan underline', '/cyan underline']
+
+        result = []
+        i = 0
+        while i < len(text):
+            if text[i] == '[':
+                # Find the closing bracket
+                j = text.find(']', i)
+                if j == -1:
+                    # No closing bracket - escape this one
+                    result.append('\\[')
+                    i += 1
+                else:
+                    tag_content = text[i+1:j]
+                    # Check if this is a valid Rich tag we created
+                    if tag_content in valid_tags or tag_content.startswith('bold') or tag_content.startswith('/'):
+                        result.append(text[i:j+1])
+                        i = j + 1
+                    else:
+                        # Not a valid tag - escape the bracket
+                        result.append('\\[')
+                        i += 1
+            else:
+                result.append(text[i])
+                i += 1
+        return ''.join(result)
+
+    processed = escape_non_rich_brackets(processed)
+
     return Text.from_markup(processed)
 
 

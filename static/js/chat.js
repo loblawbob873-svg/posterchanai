@@ -1288,6 +1288,10 @@ class ChatHandler {
             // Place cursor at end
             this.messageInput.setSelectionRange(decodedCmd.length, decodedCmd.length);
         } else {
+            // Clear any mode (search, images, etc.) so command runs as-is
+            if (window.app) {
+                window.app.setMode('');
+            }
             // Execute immediately
             this.messageInput.value = decodedCmd;
             this.sendMessage();
@@ -2420,12 +2424,18 @@ class ChatHandler {
                     this.subcommands['mail send'] = accountHints;
 
                     // Add folder hints after account for folder/read/summary/translate
+                    // Also set up placeholders for send/forward recipient hints (populated by loadContactEmailsForAutocomplete)
                     for (const account of accountHints) {
                         this.subcommands[`mail folder ${account}`] = folderHints.map(f => f.replace(':', ''));
                         this.subcommands[`mail read ${account}`] = folderHints;
                         this.subcommands[`mail summary ${account}`] = folderHints;
+                        this.subcommands[`mail send ${account}`] = [];  // Will be populated with contact emails
+                        this.subcommands[`mail forward ${account}`] = [];  // Will be populated with contact emails
                     }
                     this.subcommands['mail translate'] = accountHints; // language first, then account
+
+                    // Store account hints for contact email loading
+                    this.mailAccountHints = accountHints;
                     console.log('Mail subcommands set:', Object.keys(this.subcommands).filter(k => k.startsWith('mail')));
                 } else {
                     console.debug('No mail accounts configured');
@@ -2452,10 +2462,13 @@ class ChatHandler {
                     this.contactEmails = emailHints;
 
                     // Add contact emails to mail send and mail forward subcommands
-                    // These get appended after account hint
-                    for (const account of Object.keys(this.subcommands).filter(k => k.startsWith('mail send ') || k.startsWith('mail forward '))) {
-                        this.subcommands[account] = [...(this.subcommands[account] || []), ...emailHints];
+                    // Use stored account hints from loadMailAccountsForAutocomplete
+                    const accountHints = this.mailAccountHints || [];
+                    for (const account of accountHints) {
+                        this.subcommands[`mail send ${account}`] = emailHints;
+                        this.subcommands[`mail forward ${account}`] = emailHints;
                     }
+                    console.log('Contact emails added to mail subcommands for accounts:', accountHints);
                 }
             }
         } catch (e) {
@@ -2518,9 +2531,15 @@ class ChatHandler {
             const lastPart = parts[parts.length - 1];
 
             // Try multi-level first (e.g., "torrents download" -> ["movies", "tv", ...])
-            console.log('Autocomplete lookup:', { cmdPrefix, lastPart, hasSubs: !!this.subcommands[cmdPrefix], subs: this.subcommands[cmdPrefix] });
-            if (this.subcommands[cmdPrefix] && this.subcommands[cmdPrefix].length > 0) {
-                const subs = this.subcommands[cmdPrefix];
+            // Special case: mail forward/send <account> <id> -> suggest recipient emails
+            let effectiveCmdPrefix = cmdPrefix;
+            if (/^mail\s+(forward|send)\s+\S+\s+\d+$/i.test(cmdPrefix)) {
+                // Strip the ID to get mail forward/send <account>
+                effectiveCmdPrefix = cmdPrefix.replace(/\s+\d+$/, '');
+            }
+            console.log('Autocomplete lookup:', { cmdPrefix, effectiveCmdPrefix, lastPart, hasSubs: !!this.subcommands[effectiveCmdPrefix], subs: this.subcommands[effectiveCmdPrefix] });
+            if (this.subcommands[effectiveCmdPrefix] && this.subcommands[effectiveCmdPrefix].length > 0) {
+                const subs = this.subcommands[effectiveCmdPrefix];
                 // Case-insensitive matching for folder hints etc.
                 const matches = subs.filter(s => s.toLowerCase().startsWith(lastPart.toLowerCase()));
 

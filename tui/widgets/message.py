@@ -70,7 +70,7 @@ class MessageWidget(Widget):
 
     def _is_torrent_list(self, content: str) -> bool:
         """Check if content is a torrent list with download commands."""
-        return "torrents download" in content and content.count("[Download]") >= 2
+        return "torrents download" in content and content.count("[Download]") >= 1
 
     def _is_bt_list(self, content: str) -> bool:
         """Check if content is a bt list with action buttons."""
