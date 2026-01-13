@@ -420,30 +420,40 @@ class ChatInput(Widget):
         self.autocomplete_suggestions = []
 
     def action_autocomplete(self):
-        """Complete the current command."""
-        if self.autocomplete_suggestions:
-            input_widget = self.query_one("#message-input", Input)
-            if len(self.autocomplete_suggestions) == 1:
-                # Single match - complete it
-                input_widget.value = self.autocomplete_suggestions[0] + " "
-                input_widget.cursor_position = len(input_widget.value)
-                self.hide_autocomplete()
+        """Complete the current command, or switch focus if nothing to complete."""
+        input_widget = self.query_one("#message-input", Input)
+        current_text = input_widget.value.strip()
+
+        # If no text or no suggestions, switch focus instead of autocomplete
+        if not current_text or not self.autocomplete_suggestions:
+            # Delegate to screen's panel focus switching
+            screen = self.app.screen
+            if hasattr(screen, 'action_focus_next_panel'):
+                screen.action_focus_next_panel()
             else:
-                # Multiple matches - find common prefix and complete that
-                suggestions = self.autocomplete_suggestions
-                if suggestions:
-                    common = suggestions[0]
-                    for s in suggestions[1:]:
-                        while not s.lower().startswith(common.lower()):
-                            common = common[:-1]
-                            if not common:
-                                break
-                    # If common prefix is longer than current input, complete to it
-                    current = input_widget.value.strip()
-                    if len(common) > len(current):
-                        input_widget.value = common
-                        input_widget.cursor_position = len(input_widget.value)
-                    # Keep showing suggestions (don't hide)
+                self.app.action_focus_next()
+            return
+
+        if len(self.autocomplete_suggestions) == 1:
+            # Single match - complete it
+            input_widget.value = self.autocomplete_suggestions[0] + " "
+            input_widget.cursor_position = len(input_widget.value)
+            self.hide_autocomplete()
+        else:
+            # Multiple matches - find common prefix and complete that
+            suggestions = self.autocomplete_suggestions
+            if suggestions:
+                common = suggestions[0]
+                for s in suggestions[1:]:
+                    while not s.lower().startswith(common.lower()):
+                        common = common[:-1]
+                        if not common:
+                            break
+                # If common prefix is longer than current input, complete to it
+                if len(common) > len(current_text):
+                    input_widget.value = common
+                    input_widget.cursor_position = len(input_widget.value)
+                # Keep showing suggestions (don't hide)
 
     def action_history_prev(self):
         """Navigate to previous history item."""
