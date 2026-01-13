@@ -191,10 +191,11 @@ class IntentService:
 
         # Build the intent detection prompt
         today = datetime.now()
+        tomorrow = today + timedelta(days=1)
         detection_prompt = f"""You are a smart assistant that extracts actionable data from messages and emails.
 
-CURRENT DATE: {today.strftime('%A, %B %d, %Y')} (use this to resolve relative dates like "Wednesday", "tomorrow", "next week")
-CURRENT YEAR: {today.year}
+CURRENT DATE/TIME: {today.strftime('%A, %B %d, %Y at %I:%M %p')} (LOCAL TIME)
+TOMORROW: {tomorrow.strftime('%A, %B %d, %Y')}
 
 USER REQUEST:
 {user_message}
@@ -204,7 +205,7 @@ USER REQUEST:
 TASK: Determine what action the user wants and extract ALL relevant data.
 
 AVAILABLE ACTIONS AND REQUIRED FIELDS:
-- calendar_add: summary (event title), start_time (ISO format), optional: end_time, location, description
+- calendar_add: summary (event title), start_time (ISO format LOCAL time), optional: end_time, location, description
 - calendar_view: optional: period (today/week/month)
 - contact_add: name, optional: phone, email, organization
 - contact_search: query
@@ -219,19 +220,23 @@ AVAILABLE ACTIONS AND REQUIRED FIELDS:
 - translate: language
 - none: regular chat, no action needed
 
+CRITICAL TIME RULES:
+1. Output times in LOCAL time exactly as the user specifies - DO NOT convert to UTC
+2. "6PM" = "18:00:00", "6pm" = "18:00:00", "6 PM" = "18:00:00"
+3. "3pm" = "15:00:00", "9am" = "09:00:00", "12pm" = "12:00:00", "12am" = "00:00:00"
+4. "tomorrow at 6PM" = "{tomorrow.strftime('%Y-%m-%d')}T18:00:00"
+5. DO NOT add timezone suffix (no Z, no +00:00)
+6. "night" typically means evening (6PM-9PM range)
+
 EXTRACTION RULES:
 1. For EMAILS about events/meetings, extract: event name, date, time, location from the email body
-2. Convert relative dates: "Wednesday" → find next Wednesday from {today.strftime('%Y-%m-%d')}, "tomorrow" → {(today + timedelta(days=1)).strftime('%Y-%m-%d')}
-3. Times like "12:40 PM" → "12:40:00", "3pm" → "15:00:00"
-4. Combine date + time into ISO format: "2026-01-14T12:40:00"
-5. For event titles, use the main subject/purpose, not the email subject line
-6. Look for keywords: "meeting", "session", "appointment", "assessment", "call", "event"
+2. Convert relative dates: "tomorrow" = {tomorrow.strftime('%Y-%m-%d')}, "today" = {today.strftime('%Y-%m-%d')}
+3. For event titles, use the main subject/purpose, not the email subject line
 
 EXAMPLES:
-- Email says "meeting on Wednesday, January 14 at 12:40 PM" → start_time: "2026-01-14T12:40:00"
-- Email about "STAR Reading assessment session" → summary: "STAR Reading Assessment"
+- "tomorrow at 6PM" → start_time: "{tomorrow.strftime('%Y-%m-%d')}T18:00:00"
+- "meeting Friday at 2pm" → start_time: "2026-01-17T14:00:00" (next Friday)
 - "remind me to call mom" → action: todo_add, task: "Call mom"
-- "add dentist Friday 2pm" → action: calendar_add, summary: "Dentist", start_time: next Friday at 14:00
 
 RESPOND WITH ONLY THIS JSON:
 {{
@@ -459,6 +464,8 @@ RESPOND WITH ONLY THIS JSON:
         end_str = data.get("end_time", "")
         rrule = data.get("rrule")
 
+        logger.info(f"Calendar add - extracted data: summary={summary}, start={start_str}, end={end_str}, location={location}")
+
         if not start_str:
             return {"type": "text", "content": "Could not determine event time."}
 
@@ -466,9 +473,12 @@ RESPOND WITH ONLY THIS JSON:
             # Parse the ISO datetime string
             # The LLM outputs local time, so parse as naive and treat as local
             start_time = date_parser.parse(start_str)
+            logger.info(f"Calendar add - parsed start_time: {start_time} (tzinfo={start_time.tzinfo})")
+
             if start_time.tzinfo is not None:
                 # If timezone included, convert to local naive
                 start_time = start_time.astimezone().replace(tzinfo=None)
+                logger.info(f"Calendar add - converted to naive local: {start_time}")
 
             # Default end time to 1 hour after start
             if end_str:
@@ -480,6 +490,7 @@ RESPOND WITH ONLY THIS JSON:
 
             # Add to first calendar
             cal = calendars[0]
+            logger.info(f"Calendar add - calling add_event_to_calendar with start_time={start_time}")
             success = add_event_to_calendar(
                 cal['url'], cal['username'], cal['password'],
                 summary, description, start_time, end_time, location, rrule
@@ -487,6 +498,7 @@ RESPOND WITH ONLY THIS JSON:
 
             if success:
                 time_str = start_time.strftime("%A, %B %d at %I:%M %p")
+                logger.info(f"Calendar add - success! Displaying time_str={time_str}")
                 location_str = f"\n📍 {location}" if location else ""
                 recurrence_str = f"\n🔁 {rrule}" if rrule else ""
                 return {
