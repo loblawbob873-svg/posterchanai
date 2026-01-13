@@ -235,10 +235,18 @@ class CalendarEventScreen(ModalScreen):
             # Collect ALL changes - send multiple commands joined by |||
             commands = []
 
-            if title != self.event_data.get('title', ''):
+            # Get original values with defensive stripping
+            orig_title = (self.event_data.get('title') or '').strip()
+            orig_date = (self.event_data.get('date') or '').strip()
+            orig_time = (self.event_data.get('time') or '').strip()
+            orig_location = (self.event_data.get('location') or '').strip()
+            orig_description = (self.event_data.get('description') or '').strip()
+            orig_recurrence = (self.event_data.get('recurrence') or '').strip()
+
+            if title != orig_title:
                 commands.append(f"cal edit {uid} title {title}")
 
-            if time_str != self.event_data.get('time', '') or date_str != self.event_data.get('date', ''):
+            if time_str != orig_time or date_str != orig_date:
                 # Time or date changed - use move command with natural language
                 try:
                     parsed_date = datetime.strptime(date_str, "%Y-%m-%d")
@@ -263,13 +271,13 @@ class CalendarEventScreen(ModalScreen):
                     time_desc += f" until {end_formatted}"
                 commands.append(f"cal edit {uid} move to {time_desc}")
 
-            if location != self.event_data.get('location', ''):
+            if location != orig_location:
                 commands.append(f"cal edit {uid} location {location}")
 
-            if description != self.event_data.get('description', ''):
+            if description != orig_description:
                 commands.append(f"cal edit {uid} description {description}")
 
-            if recurrence != self.event_data.get('recurrence', ''):
+            if recurrence != orig_recurrence:
                 # Recurrence changed
                 if recurrence:
                     commands.append(f"cal edit {uid} repeat {recurrence}")

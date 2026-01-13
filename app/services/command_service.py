@@ -1553,9 +1553,9 @@ Return ONLY valid JSON, no other text."""},
 
                     day_map = {
                         'mon': 'MO', 'monday': 'MO',
-                        'tue': 'TU', 'tuesday': 'TU',
+                        'tue': 'TU', 'tues': 'TU', 'tuesday': 'TU',
                         'wed': 'WE', 'wednesday': 'WE',
-                        'thu': 'TH', 'thursday': 'TH',
+                        'thu': 'TH', 'thur': 'TH', 'thurs': 'TH', 'thursday': 'TH',
                         'fri': 'FR', 'friday': 'FR',
                         'sat': 'SA', 'saturday': 'SA',
                         'sun': 'SU', 'sunday': 'SU'
