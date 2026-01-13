@@ -539,6 +539,11 @@ Input.-invalid {
     display: none;
 }
 
+#music-player.--minimized {
+    height: 3;
+    max-height: 3;
+}
+
 #player-container {
     height: auto;
     padding: 1;

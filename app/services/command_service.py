@@ -1378,9 +1378,13 @@ For recurrence patterns:
 - "daily" -> "FREQ=DAILY"
 - "weekly" -> "FREQ=WEEKLY"
 - "weekly Mon Wed Fri" -> "FREQ=WEEKLY;BYDAY=MO,WE,FR"
-- "weekly Mon Fri" -> "FREQ=WEEKLY;BYDAY=MO,FR"
+- "weekly Tues" or "weekly Tuesday" -> "FREQ=WEEKLY;BYDAY=TU"
+- "weekly Thurs" or "weekly Thursday" -> "FREQ=WEEKLY;BYDAY=TH"
 - "monthly" -> "FREQ=MONTHLY"
 - "every weekday" -> "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+
+Day codes: MO=Monday, TU=Tuesday, WE=Wednesday, TH=Thursday, FR=Friday, SA=Saturday, SU=Sunday
+Common abbreviations: Mon, Tue/Tues, Wed, Thu/Thur/Thurs, Fri, Sat, Sun
 
 IMPORTANT: Today is {today.strftime('%A, %B %d, %Y')}. Use the current year {today.year} for dates.
 Times are in local timezone ({local_tz}). Do NOT add Z suffix to times.
