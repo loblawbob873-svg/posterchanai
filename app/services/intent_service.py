@@ -112,6 +112,12 @@ AVAILABLE_ACTIONS = {
         "optional_fields": ["topic"],
         "command": "news",
     },
+    "download_song": {
+        "description": "Download a YouTube Video to MP3",
+        "required_fields": ["url"],
+        "optional_fields": [],
+        "command": "ytdl",
+    },
     "youtube_summarize": {
         "description": "Summarize a YouTube video",
         "required_fields": ["url"],
@@ -225,6 +231,7 @@ AVAILABLE ACTIONS AND REQUIRED FIELDS:
 - search_web: query
 - generate_image: prompt (image description)
 - youtube_summarize: url
+- download_song: url
 - translate: language
 - budget_bills: show upcoming bills (no fields needed)
 - pay_bill: pay bill (bill_name)
@@ -427,6 +434,9 @@ RESPOND WITH ONLY THIS JSON:
 
         elif action == "youtube_summarize":
             return f"yt {data.get('url', '')}"
+
+        elif action == "download_song":
+            return f"ytdl {data.get('url', '')}"
 
         elif action == "translate":
             lang = data.get("language", "")
