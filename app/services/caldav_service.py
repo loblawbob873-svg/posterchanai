@@ -508,6 +508,11 @@ def update_event_in_calendar(
                         start_utc = start_aware.astimezone(dateutil_tz.tzutc())
                         logger.info(f"Setting start_time: local={start_time} -> UTC={start_utc} (was {vevent.dtstart.value})")
                         vevent.dtstart.value = start_utc
+                        # Clear TZID parameter so vobject uses Z suffix for UTC
+                        if 'TZID' in vevent.dtstart.params:
+                            del vevent.dtstart.params['TZID']
+                        if 'X-VOBJ-ORIGINAL-TZID' in vevent.dtstart.params:
+                            del vevent.dtstart.params['X-VOBJ-ORIGINAL-TZID']
                     if end_time is not None:
                         # Convert to UTC for consistent storage
                         from dateutil import tz as dateutil_tz
@@ -516,6 +521,11 @@ def update_event_in_calendar(
                         if hasattr(vevent, 'dtend'):
                             logger.info(f"Setting end_time: local={end_time} -> UTC={end_utc} (was {vevent.dtend.value})")
                             vevent.dtend.value = end_utc
+                            # Clear TZID parameter so vobject uses Z suffix for UTC
+                            if 'TZID' in vevent.dtend.params:
+                                del vevent.dtend.params['TZID']
+                            if 'X-VOBJ-ORIGINAL-TZID' in vevent.dtend.params:
+                                del vevent.dtend.params['X-VOBJ-ORIGINAL-TZID']
                         else:
                             logger.info(f"Adding end_time: local={end_time} -> UTC={end_utc}")
                             vevent.add('dtend').value = end_utc
