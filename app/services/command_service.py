@@ -149,6 +149,16 @@ class CommandService:
         "youtube": "yt",  # YouTube summarize alias
     }
 
+    # Natural language phrases that map directly to commands with arguments
+    # Format: "phrase" -> ("command", "argument")
+    PHRASE_COMMANDS = {
+        "show my bills": ("budget", "bills"),
+        "my bills": ("budget", "bills"),
+        "show bills": ("budget", "bills"),
+        "what bills": ("budget", "bills"),
+        "upcoming bills": ("budget", "bills"),
+    }
+
     def __init__(self, db: Session, user: Optional["User"] = None):
         self.db = db
         self.user = user
@@ -159,7 +169,12 @@ class CommandService:
         """Parse message for commands, return (command, argument)"""
         lower = message.lower().strip()
 
-        # Check canonical commands first
+        # Check natural language phrases first (exact match)
+        if lower in self.PHRASE_COMMANDS:
+            cmd, arg = self.PHRASE_COMMANDS[lower]
+            return cmd, arg
+
+        # Check canonical commands
         for cmd in self.COMMANDS:
             if lower.startswith(f"{cmd} "):
                 return cmd, message[len(cmd)+1:].strip()

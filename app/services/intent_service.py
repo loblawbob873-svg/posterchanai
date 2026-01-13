@@ -432,6 +432,13 @@ RESPOND WITH ONLY THIS JSON:
             lang = data.get("language", "")
             return f"translate {lang}"
 
+        elif action == "budget_bills":
+            return "budget bills"
+
+        # Fallback: use the command directly from AVAILABLE_ACTIONS if it exists
+        if action in AVAILABLE_ACTIONS and AVAILABLE_ACTIONS[action].get("command"):
+            return AVAILABLE_ACTIONS[action]["command"]
+
         return None
 
     async def _execute_calendar_add(self, data: dict) -> Optional[dict]:
