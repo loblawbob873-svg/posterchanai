@@ -486,6 +486,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 "type": "response",
                                 "data": youtube_result
                             }, conn_id, conversation_id)
+                            await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
                             continue
 
                     if command:
@@ -644,6 +645,8 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             "type": "response",
                             "data": result
                         }, conn_id, conversation_id)
+                        # Signal end of response so TUI stops waiting
+                        await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
                     else:
                         # Check if intent detection is enabled
                         intent_enabled = db.query(Setting).filter(Setting.key == "intent_detection_enabled").first()
@@ -690,6 +693,8 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                             "type": "response",
                                             "data": action_result
                                         }, conn_id, conversation_id)
+                                        # Signal end of response so TUI stops waiting
+                                        await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
                                         continue  # Skip regular chat since action was taken
                             except Exception as intent_err:
                                 logger.debug(f"Intent detection skipped: {intent_err}")
