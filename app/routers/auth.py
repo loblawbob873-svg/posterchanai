@@ -894,6 +894,47 @@ async def test_custom_image_connection(
 
 # ============== Calendar Event API ==============
 
+def rrule_to_human(rrule: str) -> str:
+    """Convert RRULE string to human-readable format."""
+    if not rrule:
+        return ""
+
+    # Parse RRULE components
+    parts = {}
+    for part in rrule.split(';'):
+        if '=' in part:
+            key, value = part.split('=', 1)
+            parts[key.upper()] = value
+
+    freq = parts.get('FREQ', '')
+    interval = parts.get('INTERVAL', '1')
+    byday = parts.get('BYDAY', '')
+
+    # Day code to name mapping
+    day_names = {
+        'MO': 'Mon', 'TU': 'Tue', 'WE': 'Wed', 'TH': 'Thu',
+        'FR': 'Fri', 'SA': 'Sat', 'SU': 'Sun'
+    }
+
+    result = ""
+    if freq == 'DAILY':
+        result = "daily" if interval == '1' else f"every {interval} days"
+    elif freq == 'WEEKLY':
+        if byday:
+            days = [day_names.get(d.strip(), d) for d in byday.split(',')]
+            result = f"weekly {' '.join(days)}"
+        else:
+            result = "weekly" if interval == '1' else f"every {interval} weeks"
+    elif freq == 'MONTHLY':
+        result = "monthly" if interval == '1' else f"every {interval} months"
+    elif freq == 'YEARLY':
+        result = "yearly" if interval == '1' else f"every {interval} years"
+    else:
+        result = rrule  # Fallback to raw if unknown
+
+    return result
+
+
 @router.get("/calendar/event/{uid}")
 async def get_calendar_event(
     uid: str,
@@ -931,7 +972,7 @@ async def get_calendar_event(
                 "endTime": event.end.strftime('%H:%M') if event.end else "",
                 "location": event.location or "",
                 "description": event.description or "",
-                "recurrence": event.rrule or ""
+                "recurrence": rrule_to_human(event.rrule) if event.rrule else ""
             }
 
     raise HTTPException(status_code=404, detail="Event not found")
