@@ -34,15 +34,22 @@ class CalendarEventScreen(ModalScreen):
     .form-row {
         width: 100%;
         height: auto;
+        margin: 0;
+        padding: 0;
     }
 
     .form-label {
         width: 100%;
         color: $text-muted;
+        margin: 0;
+        padding: 0;
+        height: 1;
     }
 
     .form-input {
         width: 100%;
+        margin: 0;
+        height: 3;
     }
 
     #time-row {
@@ -248,6 +255,12 @@ class CalendarEventScreen(ModalScreen):
                 command = f"cal edit {uid} location {location}"
             elif description != self.event_data.get('description', ''):
                 command = f"cal edit {uid} description {description}"
+            elif recurrence != self.event_data.get('recurrence', ''):
+                # Recurrence changed
+                if recurrence:
+                    command = f"cal edit {uid} repeat {recurrence}"
+                else:
+                    command = f"cal edit {uid} repeat none"
 
             if not command:
                 # No changes made

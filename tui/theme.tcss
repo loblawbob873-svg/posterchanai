@@ -1234,6 +1234,43 @@ Toast.-error {
     background: #ff6666;
 }
 
+/* ═══════════ TODO LIST - INLINE BUTTONS ═══════════ */
+.todo-row {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0;
+    layout: horizontal;
+    align: left middle;
+}
+
+.todo-text {
+    width: 1fr;
+    padding: 0 1;
+    color: $text;
+    content-align: left middle;
+}
+
+.todo-btn {
+    width: 3;
+    min-width: 3;
+    height: 1;
+    padding: 0;
+    margin: 0;
+    background: $green;
+    color: $background;
+    border: none;
+    text-style: bold;
+}
+
+.todo-btn:hover {
+    background: $cyan;
+}
+
+.todo-btn:focus {
+    background: $orange;
+}
+
 /* ═══════════ ATTACH BUTTON - FILE UPLOAD ═══════════ */
 .attach-btn {
     width: 5;

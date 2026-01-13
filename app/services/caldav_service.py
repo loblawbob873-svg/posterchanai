@@ -464,7 +464,8 @@ def update_event_in_calendar(
     description: Optional[str] = None,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
-    location: Optional[str] = None
+    location: Optional[str] = None,
+    rrule: Optional[str] = None
 ) -> bool:
     """Update an existing event in a CalDAV calendar."""
     try:
@@ -526,6 +527,36 @@ def update_event_in_calendar(
                             vevent.location.value = location
                         else:
                             vevent.add('location').value = location
+
+                    if rrule is not None:
+                        # Update or add RRULE
+                        if rrule == "":
+                            # Empty string means remove recurrence
+                            if hasattr(vevent, 'rrule'):
+                                vevent.remove(vevent.rrule)
+                                logger.info(f"Removed RRULE from event {event_uid}")
+                        else:
+                            # Parse and set RRULE
+                            try:
+                                rrule_dict = {}
+                                for part in rrule.split(';'):
+                                    if '=' in part:
+                                        key, value = part.split('=', 1)
+                                        if key.upper() == 'BYDAY':
+                                            rrule_dict[key.lower()] = value.split(',')
+                                        elif value.isdigit():
+                                            rrule_dict[key.lower()] = int(value)
+                                        else:
+                                            rrule_dict[key.lower()] = value
+
+                                if hasattr(vevent, 'rrule'):
+                                    vevent.remove(vevent.rrule)
+                                # Add new rrule using vobject's native method
+                                vevent.add('rrule')
+                                vevent.rrule.value = rrule
+                                logger.info(f"Updated RRULE to: {rrule}")
+                            except Exception as e:
+                                logger.warning(f"Failed to parse RRULE '{rrule}': {e}")
 
                     # Force save by modifying the event data
                     logger.info(f"Saving event {event_uid}...")

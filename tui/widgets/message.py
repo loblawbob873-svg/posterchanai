@@ -118,6 +118,14 @@ class MessageWidget(Widget):
             logger.info(f"_is_cal_list MISS - content preview: {content[:300]}")
         return result
 
+    def _is_todo_list(self, content: str) -> bool:
+        """Check if content is a todo list with Done buttons."""
+        # Todo list format: **1.** 🟢 Task name (due Jan 15) [Done](cmd:todo rm 1)
+        has_todo_buttons = "cmd:todo rm" in content
+        has_priority_icons = ("🟢" in content or "🟡" in content or "🔴" in content)
+        has_numbered_items = bool(re.search(r'\*\*\d+\.\*\*', content))
+        return has_todo_buttons and (has_priority_icons or has_numbered_items)
+
     def _parse_torrent_entries(self, content: str) -> list[dict]:
         """Parse torrent list content into entries with inline buttons."""
         entries = []
@@ -185,6 +193,9 @@ class MessageWidget(Widget):
                 return
             elif self._is_cal_list(content):
                 self._render_cal_list(content, content_container)
+                return
+            elif self._is_todo_list(content):
+                self._render_todo_list(content, content_container)
                 return
         except Exception as e:
             import logging
@@ -654,6 +665,55 @@ class MessageWidget(Widget):
                     del_btn.command = entry['delete_cmd']
                     row.mount(del_btn)
 
+    def _render_todo_list(self, content: str, container: Vertical):
+        """Render todo list with inline Done buttons."""
+        import logging
+        logger = logging.getLogger("tui")
+
+        lines = content.split("\n")
+        entries = []
+
+        # Pattern: **1.** 🟢 Task name (due Jan 15) [Done](cmd:todo rm 1)
+        todo_pattern = re.compile(r'^\*\*(\d+)\.\*\*\s*(🟢|🟡|🔴)\s*(.+?)(?:\s*\(due ([^)]+)\))?\s*\[Done\]\(cmd:(todo rm \d+)\)')
+
+        for line in lines:
+            match = todo_pattern.search(line)
+            if match:
+                entries.append({
+                    "num": match.group(1),
+                    "priority": match.group(2),
+                    "task": match.group(3).strip(),
+                    "due": match.group(4),
+                    "command": match.group(5),
+                })
+
+        logger.info(f"Parsed {len(entries)} todo entries")
+
+        # Render header
+        container.mount(Static("[bold cyan]📋 Todo List[/bold cyan]", classes="message-body"))
+
+        if not entries:
+            container.mount(Static("No todos found. Add one with `todo add <task>`", classes="message-body"))
+            return
+
+        # Render entries
+        for entry in entries:
+            row = Horizontal(classes="todo-row")
+
+            # Build info text
+            due_str = f" (due {entry['due']})" if entry.get('due') else ""
+            info = f"{entry['num']}. {entry['priority']} {escape_rich_brackets(entry['task'])}{due_str}"
+
+            row_text = Static(info, classes="todo-text")
+            container.mount(row)
+            row.mount(row_text)
+
+            # Add Done button
+            if entry.get('command'):
+                done_btn = Button("✓", classes="todo-btn")
+                done_btn.command = entry['command']
+                row.mount(done_btn)
+
     def _render_buttons(self):
         """Render cmd: link buttons for essential actions.
 
@@ -707,7 +767,7 @@ class MessageWidget(Widget):
         else:
             # Check for command in both attribute and name
             command = getattr(button, 'command', None) or button.name
-            if command and command.startswith(('bt ', 'mail ', 'torrents ', 'music ', 'news ', 'cal ')):
+            if command and command.startswith(('bt ', 'mail ', 'torrents ', 'music ', 'news ', 'cal ', 'todo ')):
                 logger.info(f"Posting command: {command}")
                 self.post_message(self.CommandClicked(command))
                 event.stop()

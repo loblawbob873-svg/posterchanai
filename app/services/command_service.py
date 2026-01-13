@@ -1537,6 +1537,71 @@ Return ONLY valid JSON, no other text."""},
                             return {"type": "text", "content": f"✅ Updated description."}
                     return {"type": "text", "content": "❌ Failed to update event."}
 
+                elif change_lower.startswith("repeat ") or change_lower.startswith("recurrence ") or change_lower.startswith("rrule "):
+                    # Handle recurrence updates: repeat daily, repeat weekly Mon Wed Fri, repeat monthly, repeat none
+                    if change_lower.startswith("repeat "):
+                        recurrence_input = change_request[7:].strip()
+                    elif change_lower.startswith("recurrence "):
+                        recurrence_input = change_request[11:].strip()
+                    else:
+                        recurrence_input = change_request[6:].strip()
+
+                    # Parse natural language to RRULE
+                    rrule = ""
+                    recurrence_lower = recurrence_input.lower()
+
+                    if recurrence_lower in ["none", "never", "no", "off", "clear", ""]:
+                        rrule = ""  # Empty string clears recurrence
+                    elif recurrence_lower == "daily":
+                        rrule = "FREQ=DAILY"
+                    elif recurrence_lower == "weekly":
+                        rrule = "FREQ=WEEKLY"
+                    elif recurrence_lower == "monthly":
+                        rrule = "FREQ=MONTHLY"
+                    elif recurrence_lower == "yearly":
+                        rrule = "FREQ=YEARLY"
+                    elif recurrence_lower.startswith("weekly "):
+                        # Parse days: weekly Mon Wed Fri
+                        days_part = recurrence_lower[7:].strip()
+                        day_map = {
+                            'mon': 'MO', 'monday': 'MO',
+                            'tue': 'TU', 'tuesday': 'TU',
+                            'wed': 'WE', 'wednesday': 'WE',
+                            'thu': 'TH', 'thursday': 'TH',
+                            'fri': 'FR', 'friday': 'FR',
+                            'sat': 'SA', 'saturday': 'SA',
+                            'sun': 'SU', 'sunday': 'SU'
+                        }
+                        days = []
+                        for word in days_part.replace(',', ' ').split():
+                            word_clean = word.strip().lower()
+                            if word_clean in day_map:
+                                days.append(day_map[word_clean])
+                        if days:
+                            rrule = f"FREQ=WEEKLY;BYDAY={','.join(days)}"
+                        else:
+                            rrule = "FREQ=WEEKLY"
+                    elif recurrence_lower.startswith("every "):
+                        # Handle "every 2 weeks", "every 3 days", etc.
+                        parts = recurrence_lower[6:].strip().split()
+                        if len(parts) >= 2:
+                            try:
+                                interval = int(parts[0])
+                                freq_word = parts[1].rstrip('s')  # Remove trailing s (days -> day)
+                                freq_map = {'day': 'DAILY', 'week': 'WEEKLY', 'month': 'MONTHLY', 'year': 'YEARLY'}
+                                if freq_word in freq_map:
+                                    rrule = f"FREQ={freq_map[freq_word]};INTERVAL={interval}"
+                            except ValueError:
+                                pass
+
+                    for cal in calendars:
+                        if update_event_in_calendar(cal['url'], cal['username'], cal['password'], event_uid, rrule=rrule):
+                            if rrule:
+                                return {"type": "text", "content": f"✅ Updated recurrence to: **{recurrence_input}**"}
+                            else:
+                                return {"type": "text", "content": f"✅ Removed recurrence from event."}
+                    return {"type": "text", "content": "❌ Failed to update event."}
+
                 elif change_lower.startswith("time ") or change_lower.startswith("move ") or change_lower.startswith("reschedule "):
                     # Use AI to parse the new time
                     time_request = change_request.split(maxsplit=1)[1] if " " in change_request else change_request
@@ -1694,7 +1759,7 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": "❌ Failed to update event. Check logs for details."}
 
                 else:
-                    return {"type": "text", "content": "Usage: `cal edit <uid> <field> <value>`\n\nFields:\n- `title <new title>`\n- `location <new location>`\n- `description <new description>`\n- `time <new time>` or `move to <new time>`"}
+                    return {"type": "text", "content": "Usage: `cal edit <uid> <field> <value>`\n\nFields:\n- `title <new title>`\n- `location <new location>`\n- `description <new description>`\n- `time <new time>` or `move to <new time>`\n- `repeat <daily|weekly|monthly|none>` - Set recurrence"}
 
             else:
                 return {"type": "text", "content": "Usage:\n- `cal` or `cal today` - Today's events\n- `cal week` - This week's events\n- `cal add <event> <time>` - Add an event\n- `cal edit <uid> <changes>` - Edit an event\n- `cal delete <uid>` - Delete an event"}
