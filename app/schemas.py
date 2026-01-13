@@ -209,7 +209,7 @@ class SettingsResponse(BaseModel):
     mcp_port: str = "8808"
     mcp_warmup: str = "true"
     # Intelligent Intent Detection settings
-    intent_detection_enabled: str = "false"  # Enable AI-powered intent detection for natural language actions (disabled by default - can slow down chat)
+    intent_detection_enabled: str = "true"  # Enable AI-powered intent detection for natural language actions (only triggers on action keywords)
     intent_confidence_threshold: str = "0.7"  # Minimum confidence to execute detected actions (0.0-1.0)
     # Miniflux news plugin settings
     miniflux_enabled: str = "false"

@@ -191,37 +191,63 @@ class IntentService:
 
         # Build the intent detection prompt
         today = datetime.now()
-        detection_prompt = f"""Analyze this user message and determine if they want to perform a specific action.
+        detection_prompt = f"""You are a smart assistant that extracts actionable data from messages and emails.
 
-AVAILABLE ACTIONS:
-{ACTION_DESCRIPTIONS}
-
-CURRENT DATE/TIME: {today.strftime('%A, %B %d, %Y at %I:%M %p')}
+CURRENT DATE: {today.strftime('%A, %B %d, %Y')} (use this to resolve relative dates like "Wednesday", "tomorrow", "next week")
 CURRENT YEAR: {today.year}
 
-USER MESSAGE:
+USER REQUEST:
 {user_message}
 
-{f"ADDITIONAL CONTEXT (e.g., pasted content):{chr(10)}{context}" if context else ""}
+{f"CONTENT TO ANALYZE:{chr(10)}{context}" if context else ""}
 
-INSTRUCTIONS:
-1. Determine if the user wants to perform one of the available actions
-2. If yes, extract ALL relevant data from the message and context
-3. For dates/times, use ISO format (YYYY-MM-DDTHH:MM:SS)
-4. If no specific action is needed, return action: "none"
+TASK: Determine what action the user wants and extract ALL relevant data.
 
-RESPOND WITH JSON ONLY:
+AVAILABLE ACTIONS AND REQUIRED FIELDS:
+- calendar_add: summary (event title), start_time (ISO format), optional: end_time, location, description
+- calendar_view: optional: period (today/week/month)
+- contact_add: name, optional: phone, email, organization
+- contact_search: query
+- todo_add: task (the task description)
+- todo_list: (no fields needed)
+- email_send: recipient (email address), message
+- email_check: optional: unread_only (true/false)
+- music_play: optional: mood, query, number
+- search_web: query
+- generate_image: prompt (image description)
+- youtube_summarize: url
+- translate: language
+- none: regular chat, no action needed
+
+EXTRACTION RULES:
+1. For EMAILS about events/meetings, extract: event name, date, time, location from the email body
+2. Convert relative dates: "Wednesday" → find next Wednesday from {today.strftime('%Y-%m-%d')}, "tomorrow" → {(today + timedelta(days=1)).strftime('%Y-%m-%d')}
+3. Times like "12:40 PM" → "12:40:00", "3pm" → "15:00:00"
+4. Combine date + time into ISO format: "2026-01-14T12:40:00"
+5. For event titles, use the main subject/purpose, not the email subject line
+6. Look for keywords: "meeting", "session", "appointment", "assessment", "call", "event"
+
+EXAMPLES:
+- Email says "meeting on Wednesday, January 14 at 12:40 PM" → start_time: "2026-01-14T12:40:00"
+- Email about "STAR Reading assessment session" → summary: "STAR Reading Assessment"
+- "remind me to call mom" → action: todo_add, task: "Call mom"
+- "add dentist Friday 2pm" → action: calendar_add, summary: "Dentist", start_time: next Friday at 14:00
+
+RESPOND WITH ONLY THIS JSON:
 {{
     "action": "<action_name>",
     "confidence": <0.0-1.0>,
     "extracted_data": {{
-        // All fields relevant to the action
+        "summary": "Event title here",
+        "start_time": "YYYY-MM-DDTHH:MM:SS",
+        "location": "optional location",
+        "description": "optional details"
     }},
-    "reasoning": "<brief explanation>"
+    "reasoning": "brief explanation of what was extracted"
 }}"""
 
         messages = [
-            {"role": "system", "content": "You are an intent detection system. Analyze messages and extract structured action data. Return ONLY valid JSON."},
+            {"role": "system", "content": "You are a data extraction assistant. Your job is to parse emails, messages, and text to extract structured information like event dates, contact details, and task descriptions. Always return valid JSON. Be thorough - scan the entire content for relevant data like dates, times, names, and locations."},
             {"role": "user", "content": detection_prompt}
         ]
 
@@ -473,14 +499,17 @@ RESPOND WITH JSON ONLY:
             # Calendar
             "add to calendar", "add event", "schedule", "create event",
             "add to my calendar", "put on calendar", "calendar event",
+            "make calendar", "make event", "new event", "add this to calendar",
+            "add this to my calendar", "calendar from this", "event from this",
             # Contacts
             "save contact", "add contact", "save number", "save phone",
+            "new contact", "create contact",
             # Todo
             "remind me", "add todo", "add task", "add to list", "don't forget",
-            "remember to", "need to", "have to",
+            "remember to", "todo from", "task from",
             # Email
             "send email", "send mail", "email to", "mail to", "check email",
-            "check mail", "my emails", "my mail",
+            "check mail", "my emails", "my mail", "compose email",
             # Music
             "play music", "play song", "play something", "play some",
             # Search
