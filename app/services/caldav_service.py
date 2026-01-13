@@ -173,8 +173,11 @@ def to_local_aware(dt) -> datetime:
         # It's a date, convert to datetime at midnight
         dt = datetime.combine(dt, datetime.min.time())
     if dt.tzinfo is None:
-        # Naive datetime - assume it's local time, make it aware
-        return dt.astimezone()
+        # Naive datetime - treat as local time by explicitly assigning local timezone
+        # Using replace() preserves the time value (6PM stays 6PM)
+        # Unlike astimezone() which can cause conversion issues
+        local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+        return dt.replace(tzinfo=local_tz)
     # Already timezone-aware - convert to local timezone
     return dt.astimezone()
 

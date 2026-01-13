@@ -422,6 +422,84 @@ RESPOND WITH ONLY THIS JSON:
 
         return None
 
+    async def _execute_calendar_add(self, data: dict) -> Optional[dict]:
+        """
+        Execute calendar add directly with extracted data.
+        This avoids double LLM parsing and timezone issues.
+        """
+        from dateutil import parser as date_parser
+        from app.services.caldav_service import add_event_to_calendar
+        from app.models import UserSetting
+
+        if not self.user:
+            return {"type": "text", "content": "Please log in to add calendar events."}
+
+        # Get user's calendar settings
+        cal_settings = self.db.query(UserSetting).filter(
+            UserSetting.user_id == self.user.id,
+            UserSetting.key == "caldav_calendars"
+        ).first()
+
+        if not cal_settings or not cal_settings.value:
+            return {"type": "text", "content": "No calendar configured. Go to Settings > Calendar to add one."}
+
+        try:
+            import json
+            calendars = json.loads(cal_settings.value)
+            if not calendars:
+                return {"type": "text", "content": "No calendar configured. Go to Settings > Calendar to add one."}
+        except Exception:
+            return {"type": "text", "content": "Invalid calendar configuration."}
+
+        # Extract event data
+        summary = data.get("summary", "Event")
+        description = data.get("description", "")
+        location = data.get("location")
+        start_str = data.get("start_time", "")
+        end_str = data.get("end_time", "")
+        rrule = data.get("rrule")
+
+        if not start_str:
+            return {"type": "text", "content": "Could not determine event time."}
+
+        try:
+            # Parse the ISO datetime string
+            # The LLM outputs local time, so parse as naive and treat as local
+            start_time = date_parser.parse(start_str)
+            if start_time.tzinfo is not None:
+                # If timezone included, convert to local naive
+                start_time = start_time.astimezone().replace(tzinfo=None)
+
+            # Default end time to 1 hour after start
+            if end_str:
+                end_time = date_parser.parse(end_str)
+                if end_time.tzinfo is not None:
+                    end_time = end_time.astimezone().replace(tzinfo=None)
+            else:
+                end_time = start_time + timedelta(hours=1)
+
+            # Add to first calendar
+            cal = calendars[0]
+            success = add_event_to_calendar(
+                cal['url'], cal['username'], cal['password'],
+                summary, description, start_time, end_time, location, rrule
+            )
+
+            if success:
+                time_str = start_time.strftime("%A, %B %d at %I:%M %p")
+                location_str = f"\n📍 {location}" if location else ""
+                recurrence_str = f"\n🔁 {rrule}" if rrule else ""
+                return {
+                    "type": "text",
+                    "content": f"✅ Event added: **{summary}**\n\n📅 {time_str}{location_str}{recurrence_str}"
+                }
+            else:
+                return {"type": "text", "content": "❌ Failed to add event to calendar."}
+
+        except Exception as e:
+            logger.error(f"Calendar add error: {e}")
+            return {"type": "text", "content": f"Error adding event: {str(e)}"}
+
     async def execute_intent(self, intent_result: dict) -> Optional[dict]:
         """
         Execute the detected intent directly without building a command string.
@@ -440,6 +518,13 @@ RESPOND WITH ONLY THIS JSON:
                 "missing_fields": intent_result["missing_fields"],
                 "content": self._build_clarification_message(intent_result)
             }
+
+        action = intent_result.get("action")
+        data = intent_result.get("data", {})
+
+        # Handle calendar_add directly to avoid double LLM parsing and timezone issues
+        if action == "calendar_add":
+            return await self._execute_calendar_add(data)
 
         command_str = self.build_command_string(intent_result)
         if not command_str:
