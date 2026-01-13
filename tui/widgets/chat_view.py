@@ -7,6 +7,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 from textual.containers import ScrollableContainer
+from textual.binding import Binding
 
 from tui.api.models import Message
 from tui.widgets.message import MessageWidget
@@ -14,6 +15,19 @@ from tui.widgets.message import MessageWidget
 
 class ChatView(Widget):
     """Main chat message view."""
+
+    can_focus = True
+
+    BINDINGS = [
+        Binding("up", "scroll_up", "Scroll Up", show=False),
+        Binding("down", "scroll_down", "Scroll Down", show=False),
+        Binding("k", "scroll_up", "Scroll Up", show=False),
+        Binding("j", "scroll_down", "Scroll Down", show=False),
+        Binding("pageup", "page_up", "Page Up", show=False),
+        Binding("pagedown", "page_down", "Page Down", show=False),
+        Binding("home", "scroll_home", "Home", show=False),
+        Binding("end", "scroll_end", "End", show=False),
+    ]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -106,5 +120,36 @@ class ChatView(Widget):
 
     def scroll_to_bottom(self):
         """Scroll to the bottom of messages."""
+        container = self.query_one("#messages-container", ScrollableContainer)
+        container.scroll_end(animate=False)
+
+    # Keyboard scroll actions
+    def action_scroll_up(self):
+        """Scroll up one line."""
+        container = self.query_one("#messages-container", ScrollableContainer)
+        container.scroll_up(animate=False)
+
+    def action_scroll_down(self):
+        """Scroll down one line."""
+        container = self.query_one("#messages-container", ScrollableContainer)
+        container.scroll_down(animate=False)
+
+    def action_page_up(self):
+        """Scroll up one page."""
+        container = self.query_one("#messages-container", ScrollableContainer)
+        container.scroll_page_up(animate=False)
+
+    def action_page_down(self):
+        """Scroll down one page."""
+        container = self.query_one("#messages-container", ScrollableContainer)
+        container.scroll_page_down(animate=False)
+
+    def action_scroll_home(self):
+        """Scroll to top."""
+        container = self.query_one("#messages-container", ScrollableContainer)
+        container.scroll_home(animate=False)
+
+    def action_scroll_end(self):
+        """Scroll to bottom."""
         container = self.query_one("#messages-container", ScrollableContainer)
         container.scroll_end(animate=False)

@@ -28,12 +28,29 @@ class MainScreen(Screen):
 
     BINDINGS = [
         Binding("escape", "stop_generation", "Stop", show=False),
+        # Focus switching
+        Binding("tab", "focus_next_panel", "Next Panel", show=False),
+        Binding("shift+tab", "focus_prev_panel", "Prev Panel", show=False),
         # Vim-style sidebar navigation
+        Binding("j", "next_conversation", "Next", show=False),
+        Binding("k", "prev_conversation", "Prev", show=False),
         Binding("n", "next_conversation", "Next", show=False),
         Binding("N", "prev_conversation", "Prev", show=False),
         Binding("h", "hide_sidebar", "Hide Sidebar", show=False),
         Binding("l", "show_sidebar", "Show Sidebar", show=False),
         Binding("o", "open_urls", "Open URL", show=False),
+        # Arrow keys for conversations (when sidebar focused)
+        Binding("down", "next_conversation", "Next", show=False, priority=True),
+        Binding("up", "prev_conversation", "Prev", show=False, priority=True),
+        # Quick actions
+        Binding("ctrl+n", "new_chat", "New Chat", show=False),
+        Binding("/", "focus_input", "Search/Input", show=False),
+        Binding("i", "focus_input", "Input", show=False),
+        # Scroll messages
+        Binding("ctrl+u", "scroll_up", "Scroll Up", show=False),
+        Binding("ctrl+d", "scroll_down", "Scroll Down", show=False),
+        Binding("g", "scroll_top", "Top", show=False),
+        Binding("G", "scroll_bottom", "Bottom", show=False),
         # Music controls
         Binding("alt+p", "music_play_pause", "Play/Pause", show=False),
         Binding("alt+f", "music_next", "Next Track", show=False),
@@ -784,6 +801,97 @@ class MainScreen(Screen):
         """Toggle music player minimize (Alt+M)."""
         music_player = self.query_one("#music-player", MusicPlayerWidget)
         music_player.toggle_minimize()
+
+    # Focus and navigation actions
+    def action_focus_next_panel(self):
+        """Cycle focus between sidebar, chat, and input (Tab)."""
+        # Get focusable widgets
+        try:
+            sidebar = self.query_one("#conversation-list")
+            input_area = self.query_one("#input-area")
+            chat_container = self.query_one("#messages-container")
+
+            focused = self.app.focused
+            if focused is None or focused.is_descendant(input_area):
+                # From input -> sidebar
+                sidebar.focus()
+            elif focused.is_descendant(sidebar) or focused == sidebar:
+                # From sidebar -> chat
+                chat_container.focus()
+            else:
+                # From chat -> input
+                input_area.query_one("TextArea").focus()
+        except Exception:
+            self.app.action_focus_next()
+
+    def action_focus_prev_panel(self):
+        """Cycle focus backwards (Shift+Tab)."""
+        try:
+            sidebar = self.query_one("#conversation-list")
+            input_area = self.query_one("#input-area")
+            chat_container = self.query_one("#messages-container")
+
+            focused = self.app.focused
+            if focused is None or focused.is_descendant(sidebar) or focused == sidebar:
+                # From sidebar -> input
+                input_area.query_one("TextArea").focus()
+            elif focused.is_descendant(chat_container) or focused == chat_container:
+                # From chat -> sidebar
+                sidebar.focus()
+            else:
+                # From input -> chat
+                chat_container.focus()
+        except Exception:
+            self.app.action_focus_previous()
+
+    def action_new_chat(self):
+        """Create new chat (Ctrl+N)."""
+        self.create_new_chat()
+        self.notify("New chat", severity="information")
+
+    def action_focus_input(self):
+        """Focus the input area (/ or i)."""
+        try:
+            input_area = self.query_one("#input-area")
+            input_area.query_one("TextArea").focus()
+        except Exception:
+            pass
+
+    def action_scroll_up(self):
+        """Scroll messages up (Ctrl+U)."""
+        try:
+            container = self.query_one("#messages-container")
+            container.scroll_up(animate=False)
+            container.scroll_up(animate=False)
+            container.scroll_up(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_down(self):
+        """Scroll messages down (Ctrl+D)."""
+        try:
+            container = self.query_one("#messages-container")
+            container.scroll_down(animate=False)
+            container.scroll_down(animate=False)
+            container.scroll_down(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_top(self):
+        """Scroll to top of messages (g)."""
+        try:
+            container = self.query_one("#messages-container")
+            container.scroll_home(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_bottom(self):
+        """Scroll to bottom of messages (G)."""
+        try:
+            container = self.query_one("#messages-container")
+            container.scroll_end(animate=False)
+        except Exception:
+            pass
 
     def _open_generated_image(self, image_data: str):
         """Open generated image in browser."""

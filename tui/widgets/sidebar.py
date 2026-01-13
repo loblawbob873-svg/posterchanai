@@ -38,6 +38,9 @@ class ConversationSidebar(Widget):
         Binding("d", "delete_selected", "Delete", show=False),
         Binding("x", "delete_selected", "Delete", show=False),
         Binding("delete", "delete_selected", "Delete", show=False),
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+        Binding("enter", "select_cursor", "Select", show=False),
     ]
 
     class ConversationSelected(Message):
@@ -108,3 +111,27 @@ class ConversationSidebar(Widget):
         """Request deletion of selected conversation."""
         if self.selected_id is not None:
             self.post_message(self.DeleteRequested(self.selected_id))
+
+    def action_cursor_down(self):
+        """Move cursor down in list (j)."""
+        try:
+            list_view = self.query_one("#conversation-list", ListView)
+            list_view.action_cursor_down()
+        except Exception:
+            pass
+
+    def action_cursor_up(self):
+        """Move cursor up in list (k)."""
+        try:
+            list_view = self.query_one("#conversation-list", ListView)
+            list_view.action_cursor_up()
+        except Exception:
+            pass
+
+    def action_select_cursor(self):
+        """Select item at cursor (Enter)."""
+        try:
+            list_view = self.query_one("#conversation-list", ListView)
+            list_view.action_select_cursor()
+        except Exception:
+            pass
