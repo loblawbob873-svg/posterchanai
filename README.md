@@ -14,6 +14,21 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 - Stop button to halt AI response generation mid-stream
 - Persistent chat history with file storage
 
+### Intelligent Actions
+- **AI-powered intent detection** - Automatically detects when you want to perform an action
+- **Natural language commands** - Just describe what you want, no memorizing syntax
+- **Data extraction** - AI parses dates, times, names, emails from pasted content
+- **Supported actions:**
+  - Calendar: Add events from natural language or pasted email invites
+  - Contacts: Save contact info from business cards or text
+  - Todo: Create tasks from reminders or meeting notes
+  - Email: Send, check, and reply to emails
+  - Music: Play by mood, search, or specific requests
+  - Search: Web search and news lookup
+  - Image generation: Create images from descriptions
+  - YouTube: Summarize videos from URLs
+- **Configurable confidence threshold** - Adjust sensitivity in Admin settings
+
 ### Vision & Documents
 - Vision support (upload images and ask questions about them)
 - **OCR text extraction** from images (via Tesseract)
@@ -888,7 +903,7 @@ Type these commands in the chat (or use the mode buttons):
 | `img2img <prompt>` | Transform an uploaded image with your prompt |
 | `regen` | Regenerate the last image with a new seed |
 | `yt <url>` | Summarize a YouTube video transcript |
-| `torrents` | Browse torrents + Flood manager (list, add, start, stop, delete) |
+| `torrents` | Built-in torrent client: browse, download, pause, resume, delete |
 | `budget` | Budget manager (summary, bills, add, pay) |
 | `firewall` | Firewall status and log search |
 | `cal` | Calendar: today's events, week view, add events (aliases: sched, schedule) |
@@ -1091,6 +1106,99 @@ Then reload your compositor config (`hyprctl reload` for Hyprland).
 | Super+P | Play/Pause toggle |
 | Super+F | Next track (Forward) |
 | Super+R | Previous track (Rewind) |
+
+### Intelligent Actions
+
+The intelligent action system automatically detects user intent from natural language and executes the appropriate command. No need to memorize exact syntax - just describe what you want.
+
+**How it works:**
+1. AI analyzes your message to detect if you want to perform an action
+2. Extracts relevant data (dates, names, contacts, etc.) from your message and any pasted content
+3. Executes the action automatically if confidence is high enough
+4. Falls back to regular chat if no action is detected
+
+**Example Usage:**
+
+| What You Say | What Happens |
+|--------------|--------------|
+| "Add dentist appointment Friday at 2pm" | Creates calendar event |
+| "Schedule team standup every weekday at 9am" | Creates recurring event |
+| *[Paste email invite]* "Add this to my calendar" | Parses email, creates event with all details |
+| "Save John's number: 555-123-4567" | Creates contact |
+| *[Paste business card image]* "Save this contact" | OCR extracts info, creates contact |
+| "Remind me to buy groceries" | Adds todo item |
+| "I need to call the bank tomorrow" | Adds todo item |
+| "Check my emails" | Shows inbox |
+| "Email john@example.com saying I'll be late" | Sends email |
+| "Play something relaxing" | Plays mood-based playlist |
+| "Search for the latest AI news" | Web search with summary |
+| "Create a picture of a sunset over mountains" | Generates image |
+| "Summarize this video: [YouTube URL]" | Transcribes and summarizes |
+| "Translate that to Spanish" | Translates last response |
+
+**Configuration (Admin > AI Settings > Intelligent Actions):**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `intent_detection_enabled` | true | Enable/disable intent detection |
+| `intent_confidence_threshold` | 0.7 | Minimum confidence (0.0-1.0) to execute actions |
+
+**Tips:**
+- Higher confidence threshold = fewer false positives, more explicit commands needed
+- Lower threshold = more actions detected, but may misinterpret some messages
+- Paste email content, meeting notes, or business cards for automatic data extraction
+- Works with OCR - upload images of documents and ask to extract/save the data
+
+### Torrents Command
+
+Built-in BitTorrent client with proxy support for anonymous downloading. Browse torrent sites, download, and manage torrents directly from chat.
+
+| Subcommand | Description |
+|------------|-------------|
+| `torrents` | Browse all torrent categories |
+| `torrents movies` | Browse movie torrents |
+| `torrents tv` | Browse TV show torrents |
+| `torrents anime` | Browse anime torrents |
+| `torrents games` | Browse game torrents |
+| `torrents list` | Show active/completed downloads |
+| `torrents download <#>` | Download torrent from browse results |
+| `torrents pause <#>` | Pause a download |
+| `torrents resume <#>` | Resume a paused download |
+| `torrents rm <#>` | Remove a torrent (keeps files) |
+| `torrents info <#>` | Show detailed torrent info |
+| `nyaa <query>` | Search nyaa.si for anime |
+| `nyaa download <#>` | Download from nyaa search results |
+
+**Examples:**
+- `torrents` - Browse all categories
+- `torrents movies` - Browse latest movies
+- `torrents download 3` - Download torrent #3 from results
+- `torrents list` - Show all downloads with progress
+- `torrents pause 1` - Pause download #1
+- `nyaa one piece` - Search for One Piece on nyaa.si
+- `nyaa download 2` - Download result #2
+
+**Features:**
+- **Proxy support** - All traffic routed through HTTP proxy (configurable for Tor)
+- **Progress tracking** - Real-time download/upload speeds and progress bars
+- **Seeding** - Continues seeding after download completes
+- **Category browsing** - Movies, TV, Anime, Games, and more
+- **Nyaa integration** - Direct anime torrent search
+
+**Setup:**
+
+1. Install libtorrent with Python bindings (see Requirements section)
+2. Enable in Admin > Services > BitTorrent Client
+3. Configure download path and optional proxy
+
+**Admin Settings (Admin > Services > BitTorrent):**
+
+| Setting | Description |
+|---------|-------------|
+| `bt_enabled` | Enable/disable torrent client |
+| `bt_download_path` | Where to save downloaded files |
+| `bt_proxy_url` | HTTP proxy URL (e.g., `http://127.0.0.1:8118` for Privoxy/Tor) |
+| `torrent_site_url` | TorrentGalaxy or compatible site URL |
 
 ### Todo Command
 
