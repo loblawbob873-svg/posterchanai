@@ -433,7 +433,8 @@ RESPOND WITH ONLY THIS JSON:
             return f"translate {lang}"
 
         elif action == "pay_bill":
-            return "budget pay {bill_name}"
+            bill_name = data.get("bill_name", "")
+            return f"budget pay {bill_name}"
 
         elif action == "budget_bills":
             return "budget bills"

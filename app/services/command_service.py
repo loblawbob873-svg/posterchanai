@@ -174,6 +174,11 @@ class CommandService:
             cmd, arg = self.PHRASE_COMMANDS[lower]
             return cmd, arg
 
+        # Check for "pay bill <name>" pattern
+        if lower.startswith("pay bill "):
+            bill_name = message[9:].strip()  # Extract bill name preserving case
+            return "budget", f"pay {bill_name}"
+
         # Check canonical commands
         for cmd in self.COMMANDS:
             if lower.startswith(f"{cmd} "):
