@@ -113,7 +113,19 @@ class ConversationSidebar(Widget):
             self.post_message(self.ConversationSelected(item.conversation.id))
 
     def action_delete_selected(self):
-        """Request deletion of selected conversation."""
+        """Request deletion of conversation at cursor (or selected)."""
+        # First try to get the conversation at the cursor position
+        try:
+            list_view = self.query_one("#conversation-list", ListView)
+            if list_view.highlighted_child is not None:
+                item = list_view.highlighted_child
+                if isinstance(item, ConversationItem):
+                    self.post_message(self.DeleteRequested(item.conversation.id))
+                    return
+        except Exception:
+            pass
+
+        # Fall back to selected_id if no cursor highlight
         if self.selected_id is not None:
             self.post_message(self.DeleteRequested(self.selected_id))
 
