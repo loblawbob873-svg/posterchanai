@@ -352,11 +352,17 @@ class MainScreen(Screen):
 
         # Debug logging
         import logging
-        logging.getLogger("tui").info(f"Response type={msg_type}, content_len={len(content)}")
+        logging.getLogger("tui").info(f"Response type={msg_type}, content_len={len(content)}, keys={list(data.keys())}")
 
         # Build final content based on type
         final_content = content
-        if msg_type == "generated_image":
+        if msg_type == "plugin_result":
+            # Plugin results have 'result' field, not 'content'
+            plugin = data.get("plugin", "")
+            action = data.get("action", "")
+            result = data.get("result", "")
+            final_content = result if result else f"Plugin {plugin}/{action} returned no result"
+        elif msg_type == "generated_image":
             image_data = data.get("image", "")
             prompt = data.get("prompt", "")
             if image_data:

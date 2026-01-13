@@ -91,14 +91,14 @@ class PluginService:
 
     def parse_tool_calls(self, response: str) -> List[Dict[str, Any]]:
         """Parse tool calls from AI response"""
-        # Capture everything between > and </tool>, then extract JSON
-        pattern = r'<tool\s+name=["\']([^"\']+)["\']\s+action=["\']([^"\']+)["\']>\s*(.*?)\s*</tool>'
-        matches = re.findall(pattern, response, re.DOTALL | re.IGNORECASE)
-
         tool_calls = []
-        for match in matches:
+
+        # Pattern 1: Full tags with content - <tool name="x" action="y">content</tool>
+        pattern_full = r'<tool\s+name=["\']([^"\']+)["\']\s+action=["\']([^"\']+)["\']>\s*(.*?)\s*</tool>'
+        matches_full = re.findall(pattern_full, response, re.DOTALL | re.IGNORECASE)
+
+        for match in matches_full:
             plugin_name, action_name, content = match
-            # Extract JSON from content (find first { to last })
             content = content.strip()
             if content.startswith('{'):
                 # Find matching closing brace
@@ -119,20 +119,56 @@ class PluginService:
                 params = json.loads(params_str)
             except json.JSONDecodeError:
                 params = {}
-
             tool_calls.append({
                 'plugin': plugin_name,
                 'action': action_name,
                 'params': params
             })
 
+        # Pattern 2: Self-closing tags - <tool name="x" action="y"/> or <tool name="x" action="y" />
+        pattern_self = r'<tool\s+name=["\']([^"\']+)["\']\s+action=["\']([^"\']+)["\']\s*/>'
+        matches_self = re.findall(pattern_self, response, re.IGNORECASE)
+
+        for match in matches_self:
+            plugin_name, action_name = match
+            tool_calls.append({
+                'plugin': plugin_name,
+                'action': action_name,
+                'params': {}
+            })
+
         return tool_calls
+
+    def _parse_tool_content(self, content: str) -> dict:
+        """Parse JSON content from tool tag"""
+        content = content.strip()
+        if not content or content == '{}':
+            return {}
+        if content.startswith('{'):
+            brace_count = 0
+            end_idx = 0
+            for i, c in enumerate(content):
+                if c == '{':
+                    brace_count += 1
+                elif c == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end_idx = i + 1
+                        break
+            params_str = content[:end_idx] if end_idx > 0 else content
+            try:
+                return json.loads(params_str)
+            except json.JSONDecodeError:
+                return {}
+        return {}
 
     def strip_tool_calls(self, response: str) -> str:
         """Remove tool calls from response text"""
         # Match tool tags with any content (handles nested JSON)
         pattern = r'<tool\s+name=["\'][^"\']+["\']\s+action=["\'][^"\']+["\']>.*?</tool>'
         result = re.sub(pattern, '', response, flags=re.IGNORECASE | re.DOTALL)
+        # Match self-closing tool tags - <tool name="x" action="y"/>
+        result = re.sub(r'<tool\s+name=["\'][^"\']+["\']\s+action=["\'][^"\']+["\']\s*/>', '', result, flags=re.IGNORECASE)
         # Also remove any malformed tool tags
         result = re.sub(r'<tool[^>]*>.*?</tool>', '', result, flags=re.IGNORECASE | re.DOTALL)
         # Clean up leftover fragments that might appear after malformed output

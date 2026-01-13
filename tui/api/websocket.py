@@ -229,6 +229,12 @@ class ChatWebSocket:
                 if self.on_error:
                     self.on_error(data.get("message", "Unknown error"))
 
+            case "plugin_result":
+                # Plugin results come separately from streaming
+                logger.info(f"Plugin result: plugin={data.get('plugin')}, action={data.get('action')}")
+                if self.on_response:
+                    self.on_response(data)
+
             case "music_play":
                 if self.on_music_play:
                     self.on_music_play(data)

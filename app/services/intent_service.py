@@ -224,6 +224,7 @@ AVAILABLE ACTIONS AND REQUIRED FIELDS:
 - generate_image: prompt (image description)
 - youtube_summarize: url
 - translate: language
+- budget_bills: show upcoming bills (no fields needed)
 - none: regular chat, no action needed
 
 CRITICAL TIME RULES:
@@ -625,6 +626,8 @@ RESPOND WITH ONLY THIS JSON:
             "translate to", "translate this", "say that in",
             # News
             "check news", "what's the news", "news about",
+            # Budget/Bills
+            "show my bills", "my bills", "upcoming bills", "budget", "what bills",
         }
 
         for keyword in action_keywords:
