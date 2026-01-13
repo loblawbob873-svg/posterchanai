@@ -49,6 +49,7 @@ The system automatically detects when you want to perform an action and executes
 - "Play some relaxing music"
 - "Search for the latest AI news"
 - "Generate an image of a sunset over mountains"
+- "Show my bills" (shows upcoming bills)
 
 The system will parse your request, extract relevant data, and take action automatically.
 
@@ -75,6 +76,8 @@ YOUTUBE: yt <url> (summarize), ytdl <url> (download)
 TORRENTS: torrents, torrents list, torrents download/pause/resume/rm <num>
 
 TRANSLATE: translate <language>
+
+BUDGET: budget, budget bills, budget add <name> <amount>, budget pay <name>
 
 SYSTEM: firewall, logs, help
 

@@ -128,6 +128,12 @@ AVAILABLE_ACTIONS = {
         "optional_fields": ["text"],
         "command": "translate"
     },
+    "budget_bills": {
+        "description": "Show upcoming bills and budget information",
+        "required_fields": [],
+        "optional_fields": [],
+        "command": "budget bills"
+    },
     "none": {
         "description": "No specific action needed - regular chat",
         "required_fields": [],
