@@ -25,15 +25,23 @@ class CalendarEventScreen(ModalScreen):
         overflow-y: auto;
     }
 
+    #calendar-event-container > Vertical {
+        height: auto;
+        margin: 0;
+        padding: 0;
+    }
+
     #calendar-event-title {
         text-align: center;
         text-style: bold;
         color: $text;
+        height: 1;
+        margin-bottom: 1;
     }
 
     .form-row {
         width: 100%;
-        height: auto;
+        height: 4;
         margin: 0;
         padding: 0;
     }
@@ -54,6 +62,9 @@ class CalendarEventScreen(ModalScreen):
 
     #time-row {
         layout: horizontal;
+        height: 3;
+        margin: 0;
+        padding: 0;
     }
 
     #time-row > .form-input {
@@ -62,7 +73,7 @@ class CalendarEventScreen(ModalScreen):
 
     #event-buttons {
         width: 100%;
-        height: auto;
+        height: 3;
         layout: horizontal;
         margin-top: 1;
     }

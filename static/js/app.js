@@ -766,6 +766,13 @@ function initCalendarModal() {
                 command = `cal edit ${uid} location ${location}`;
             } else if (description !== origDescription && description) {
                 command = `cal edit ${uid} description ${description}`;
+            } else if (recurrence !== (calendarModal.dataset.origRecurrence || '')) {
+                // Recurrence changed
+                if (recurrence) {
+                    command = `cal edit ${uid} repeat ${recurrence}`;
+                } else {
+                    command = `cal edit ${uid} repeat none`;
+                }
             } else {
                 // No changes detected
                 calendarModal.style.display = 'none';
@@ -838,6 +845,7 @@ function initCalendarModal() {
             calendarModal.dataset.origTime = eventData.time || '';
             calendarModal.dataset.origLocation = eventData.location || '';
             calendarModal.dataset.origDescription = eventData.description || '';
+            calendarModal.dataset.origRecurrence = eventData.recurrence || '';
         } else {
             clearCalendarForm();
             // Set default date to today
@@ -848,6 +856,7 @@ function initCalendarModal() {
             calendarModal.dataset.origTime = '';
             calendarModal.dataset.origLocation = '';
             calendarModal.dataset.origDescription = '';
+            calendarModal.dataset.origRecurrence = '';
         }
         calendarModal.style.display = 'flex';
         document.getElementById('eventTitle').focus();

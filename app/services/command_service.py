@@ -1548,32 +1548,34 @@ Return ONLY valid JSON, no other text."""},
 
                     # Parse natural language to RRULE
                     rrule = ""
-                    recurrence_lower = recurrence_input.lower()
+                    # Normalize: replace commas with spaces, collapse multiple spaces
+                    recurrence_normalized = ' '.join(recurrence_input.lower().replace(',', ' ').split())
 
-                    if recurrence_lower in ["none", "never", "no", "off", "clear", ""]:
+                    day_map = {
+                        'mon': 'MO', 'monday': 'MO',
+                        'tue': 'TU', 'tuesday': 'TU',
+                        'wed': 'WE', 'wednesday': 'WE',
+                        'thu': 'TH', 'thursday': 'TH',
+                        'fri': 'FR', 'friday': 'FR',
+                        'sat': 'SA', 'saturday': 'SA',
+                        'sun': 'SU', 'sunday': 'SU'
+                    }
+
+                    if recurrence_normalized in ["none", "never", "no", "off", "clear", ""]:
                         rrule = ""  # Empty string clears recurrence
-                    elif recurrence_lower == "daily":
+                    elif recurrence_normalized == "daily":
                         rrule = "FREQ=DAILY"
-                    elif recurrence_lower == "weekly":
+                    elif recurrence_normalized == "weekly":
                         rrule = "FREQ=WEEKLY"
-                    elif recurrence_lower == "monthly":
+                    elif recurrence_normalized == "monthly":
                         rrule = "FREQ=MONTHLY"
-                    elif recurrence_lower == "yearly":
+                    elif recurrence_normalized == "yearly":
                         rrule = "FREQ=YEARLY"
-                    elif recurrence_lower.startswith("weekly "):
-                        # Parse days: weekly Mon Wed Fri
-                        days_part = recurrence_lower[7:].strip()
-                        day_map = {
-                            'mon': 'MO', 'monday': 'MO',
-                            'tue': 'TU', 'tuesday': 'TU',
-                            'wed': 'WE', 'wednesday': 'WE',
-                            'thu': 'TH', 'thursday': 'TH',
-                            'fri': 'FR', 'friday': 'FR',
-                            'sat': 'SA', 'saturday': 'SA',
-                            'sun': 'SU', 'sunday': 'SU'
-                        }
+                    elif recurrence_normalized.startswith("weekly "):
+                        # Parse days: weekly Mon Wed Fri OR weekly, Mon, Wed, Fri
+                        days_part = recurrence_normalized[7:].strip()
                         days = []
-                        for word in days_part.replace(',', ' ').split():
+                        for word in days_part.split():
                             word_clean = word.strip().lower()
                             if word_clean in day_map:
                                 days.append(day_map[word_clean])
@@ -1581,9 +1583,9 @@ Return ONLY valid JSON, no other text."""},
                             rrule = f"FREQ=WEEKLY;BYDAY={','.join(days)}"
                         else:
                             rrule = "FREQ=WEEKLY"
-                    elif recurrence_lower.startswith("every "):
+                    elif recurrence_normalized.startswith("every "):
                         # Handle "every 2 weeks", "every 3 days", etc.
-                        parts = recurrence_lower[6:].strip().split()
+                        parts = recurrence_normalized[6:].strip().split()
                         if len(parts) >= 2:
                             try:
                                 interval = int(parts[0])
@@ -1593,6 +1595,14 @@ Return ONLY valid JSON, no other text."""},
                                     rrule = f"FREQ={freq_map[freq_word]};INTERVAL={interval}"
                             except ValueError:
                                 pass
+                    else:
+                        # Fallback: check if input contains day names -> assume weekly
+                        days = []
+                        for word in recurrence_normalized.split():
+                            if word in day_map:
+                                days.append(day_map[word])
+                        if days:
+                            rrule = f"FREQ=WEEKLY;BYDAY={','.join(days)}"
 
                     for cal in calendars:
                         if update_event_in_calendar(cal['url'], cal['username'], cal['password'], event_uid, rrule=rrule):
