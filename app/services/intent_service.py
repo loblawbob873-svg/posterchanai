@@ -15,8 +15,9 @@ import asyncio
 import json
 import logging
 import re
-from typing import Optional, TYPE_CHECKING
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Optional
+
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
@@ -30,123 +31,123 @@ AVAILABLE_ACTIONS = {
         "description": "Add an event to the calendar",
         "required_fields": ["summary", "start_time"],
         "optional_fields": ["end_time", "location", "description", "rrule"],
-        "command": "cal add"
+        "command": "cal add",
     },
     "calendar_view": {
         "description": "View calendar events",
         "required_fields": [],
         "optional_fields": ["period"],  # today, week, month
-        "command": "cal"
+        "command": "cal",
     },
     "contact_add": {
         "description": "Add a new contact",
         "required_fields": ["name"],
         "optional_fields": ["phone", "email", "organization"],
-        "command": "contacts add"
+        "command": "contacts add",
     },
     "contact_search": {
         "description": "Search for a contact",
         "required_fields": ["query"],
         "optional_fields": [],
-        "command": "contacts"
+        "command": "contacts",
     },
     "todo_add": {
         "description": "Add a task to the todo list",
         "required_fields": ["task"],
         "optional_fields": ["due_date", "priority"],
-        "command": "todo add"
+        "command": "todo add",
     },
-    "todo_list": {
-        "description": "List todo items",
-        "required_fields": [],
-        "optional_fields": [],
-        "command": "todo"
-    },
+    "todo_list": {"description": "List todo items", "required_fields": [], "optional_fields": [], "command": "todo"},
     "todo_remove": {
         "description": "Remove/complete a todo item",
         "required_fields": ["item_number"],
         "optional_fields": [],
-        "command": "todo rm"
+        "command": "todo rm",
     },
     "email_send": {
         "description": "Send an email",
         "required_fields": ["recipient", "message"],
         "optional_fields": ["subject"],
-        "command": "mail send"
+        "command": "mail send",
     },
     "email_check": {
         "description": "Check/list emails",
         "required_fields": [],
         "optional_fields": ["folder", "unread_only"],
-        "command": "mail"
+        "command": "mail",
     },
     "email_reply": {
         "description": "Reply to an email",
         "required_fields": ["account", "message_id", "reply_text"],
         "optional_fields": [],
-        "command": "mail reply"
+        "command": "mail reply",
     },
     "music_play": {
         "description": "Play music based on criteria",
         "required_fields": [],
         "optional_fields": ["query", "mood", "number"],
-        "command": "music"
+        "command": "music",
     },
     "music_search": {
         "description": "Search for music",
         "required_fields": ["query"],
         "optional_fields": [],
-        "command": "music search"
+        "command": "music search",
     },
     "search_web": {
         "description": "Search the web for information",
         "required_fields": ["query"],
         "optional_fields": [],
-        "command": "search"
+        "command": "search",
     },
     "generate_image": {
         "description": "Generate an AI image",
         "required_fields": ["prompt"],
         "optional_fields": [],
-        "command": "geni"
+        "command": "geni",
     },
     "news_check": {
         "description": "Check news updates",
         "required_fields": [],
         "optional_fields": ["topic"],
-        "command": "news"
+        "command": "news",
     },
     "youtube_summarize": {
         "description": "Summarize a YouTube video",
         "required_fields": ["url"],
         "optional_fields": [],
-        "command": "yt"
+        "command": "yt",
     },
     "translate": {
         "description": "Translate text to another language",
         "required_fields": ["language"],
         "optional_fields": ["text"],
-        "command": "translate"
+        "command": "translate",
+    },
+    "pay_bill": {
+        "description": "Pay Bill",
+        "required_fields": ["bill_name"],
+        "optional_fields": [],
+        "command": "budget pay",
     },
     "budget_bills": {
         "description": "Show upcoming bills and budget information",
         "required_fields": [],
         "optional_fields": [],
-        "command": "budget bills"
+        "command": "budget bills",
     },
     "none": {
         "description": "No specific action needed - regular chat",
         "required_fields": [],
         "optional_fields": [],
-        "command": None
-    }
+        "command": None,
+    },
 }
 
 # Build action descriptions for the prompt
-ACTION_DESCRIPTIONS = "\n".join([
-    f"- {action}: {details['description']}"
-    for action, details in AVAILABLE_ACTIONS.items()
-])
+ACTION_DESCRIPTIONS = "\n".join(
+    [f"- {action}: {details['description']}" for action, details in AVAILABLE_ACTIONS.items()]
+)
 
 
 class IntentService:
@@ -157,8 +158,9 @@ class IntentService:
     def __init__(self, db: Session, user: Optional["User"] = None):
         self.db = db
         self.user = user
-        from app.services.chat_service import ChatService
         from app.models import Setting
+        from app.services.chat_service import ChatService
+
         self.chat_service = ChatService(db, user=user)
 
         # Load confidence threshold from settings
@@ -200,8 +202,8 @@ class IntentService:
         tomorrow = today + timedelta(days=1)
         detection_prompt = f"""You are a smart assistant that extracts actionable data from messages and emails.
 
-CURRENT DATE/TIME: {today.strftime('%A, %B %d, %Y at %I:%M %p')} (LOCAL TIME)
-TOMORROW: {tomorrow.strftime('%A, %B %d, %Y')}
+CURRENT DATE/TIME: {today.strftime("%A, %B %d, %Y at %I:%M %p")} (LOCAL TIME)
+TOMORROW: {tomorrow.strftime("%A, %B %d, %Y")}
 
 USER REQUEST:
 {user_message}
@@ -225,23 +227,24 @@ AVAILABLE ACTIONS AND REQUIRED FIELDS:
 - youtube_summarize: url
 - translate: language
 - budget_bills: show upcoming bills (no fields needed)
+- pay_bill: pay bill (bill_name)
 - none: regular chat, no action needed
 
 CRITICAL TIME RULES:
 1. Output times in LOCAL time exactly as the user specifies - DO NOT convert to UTC
 2. "6PM" = "18:00:00", "6pm" = "18:00:00", "6 PM" = "18:00:00"
 3. "3pm" = "15:00:00", "9am" = "09:00:00", "12pm" = "12:00:00", "12am" = "00:00:00"
-4. "tomorrow at 6PM" = "{tomorrow.strftime('%Y-%m-%d')}T18:00:00"
+4. "tomorrow at 6PM" = "{tomorrow.strftime("%Y-%m-%d")}T18:00:00"
 5. DO NOT add timezone suffix (no Z, no +00:00)
 6. "night" typically means evening (6PM-9PM range)
 
 EXTRACTION RULES:
 1. For EMAILS about events/meetings, extract: event name, date, time, location from the email body
-2. Convert relative dates: "tomorrow" = {tomorrow.strftime('%Y-%m-%d')}, "today" = {today.strftime('%Y-%m-%d')}
+2. Convert relative dates: "tomorrow" = {tomorrow.strftime("%Y-%m-%d")}, "today" = {today.strftime("%Y-%m-%d")}
 3. For event titles, use the main subject/purpose, not the email subject line
 
 EXAMPLES:
-- "tomorrow at 6PM" → start_time: "{tomorrow.strftime('%Y-%m-%d')}T18:00:00"
+- "tomorrow at 6PM" → start_time: "{tomorrow.strftime("%Y-%m-%d")}T18:00:00"
 - "meeting Friday at 2pm" → start_time: "2026-01-17T14:00:00" (next Friday)
 - "remind me to call mom" → action: todo_add, task: "Call mom"
 
@@ -259,17 +262,17 @@ RESPOND WITH ONLY THIS JSON:
 }}"""
 
         messages = [
-            {"role": "system", "content": "You are a data extraction assistant. Your job is to parse emails, messages, and text to extract structured information like event dates, contact details, and task descriptions. Always return valid JSON. Be thorough - scan the entire content for relevant data like dates, times, names, and locations."},
-            {"role": "user", "content": detection_prompt}
+            {
+                "role": "system",
+                "content": "You are a data extraction assistant. Your job is to parse emails, messages, and text to extract structured information like event dates, contact details, and task descriptions. Always return valid JSON. Be thorough - scan the entire content for relevant data like dates, times, names, and locations.",
+            },
+            {"role": "user", "content": detection_prompt},
         ]
 
         try:
             # Use timeout to prevent hanging on slow LLM responses
             INTENT_TIMEOUT = 30  # seconds
-            response = await asyncio.wait_for(
-                self.chat_service.chat(messages),
-                timeout=INTENT_TIMEOUT
-            )
+            response = await asyncio.wait_for(self.chat_service.chat(messages), timeout=INTENT_TIMEOUT)
             result = self._parse_json_response(response)
 
             if not result:
@@ -291,10 +294,7 @@ RESPOND WITH ONLY THIS JSON:
             action_def = AVAILABLE_ACTIONS[action]
             extracted_data = result.get("extracted_data", {})
 
-            missing_fields = [
-                field for field in action_def["required_fields"]
-                if not extracted_data.get(field)
-            ]
+            missing_fields = [field for field in action_def["required_fields"] if not extracted_data.get(field)]
 
             if missing_fields:
                 logger.debug(f"Missing required fields for {action}: {missing_fields}")
@@ -305,7 +305,7 @@ RESPOND WITH ONLY THIS JSON:
                     "data": extracted_data,
                     "missing_fields": missing_fields,
                     "command": action_def["command"],
-                    "reasoning": result.get("reasoning", "")
+                    "reasoning": result.get("reasoning", ""),
                 }
 
             return {
@@ -314,7 +314,7 @@ RESPOND WITH ONLY THIS JSON:
                 "data": extracted_data,
                 "missing_fields": [],
                 "command": action_def["command"],
-                "reasoning": result.get("reasoning", "")
+                "reasoning": result.get("reasoning", ""),
             }
 
         except asyncio.TimeoutError:
@@ -432,6 +432,9 @@ RESPOND WITH ONLY THIS JSON:
             lang = data.get("language", "")
             return f"translate {lang}"
 
+        elif action == "pay_bill":
+            return "budget pay {bill_name}"
+
         elif action == "budget_bills":
             return "budget bills"
 
@@ -447,23 +450,26 @@ RESPOND WITH ONLY THIS JSON:
         This avoids double LLM parsing and timezone issues.
         """
         from dateutil import parser as date_parser
-        from app.services.caldav_service import add_event_to_calendar
+
         from app.models import UserSetting
+        from app.services.caldav_service import add_event_to_calendar
 
         if not self.user:
             return {"type": "text", "content": "Please log in to add calendar events."}
 
         # Get user's calendar settings
-        cal_settings = self.db.query(UserSetting).filter(
-            UserSetting.user_id == self.user.id,
-            UserSetting.key == "caldav_calendars"
-        ).first()
+        cal_settings = (
+            self.db.query(UserSetting)
+            .filter(UserSetting.user_id == self.user.id, UserSetting.key == "caldav_calendars")
+            .first()
+        )
 
         if not cal_settings or not cal_settings.value:
             return {"type": "text", "content": "No calendar configured. Go to Settings > Calendar to add one."}
 
         try:
             import json
+
             calendars = json.loads(cal_settings.value)
             if not calendars:
                 return {"type": "text", "content": "No calendar configured. Go to Settings > Calendar to add one."}
@@ -478,7 +484,9 @@ RESPOND WITH ONLY THIS JSON:
         end_str = data.get("end_time", "")
         rrule = data.get("rrule")
 
-        logger.info(f"Calendar add - extracted data: summary={summary}, start={start_str}, end={end_str}, location={location}")
+        logger.info(
+            f"Calendar add - extracted data: summary={summary}, start={start_str}, end={end_str}, location={location}"
+        )
 
         if not start_str:
             return {"type": "text", "content": "Could not determine event time."}
@@ -506,8 +514,15 @@ RESPOND WITH ONLY THIS JSON:
             cal = calendars[0]
             logger.info(f"Calendar add - calling add_event_to_calendar with start_time={start_time}")
             success = add_event_to_calendar(
-                cal['url'], cal['username'], cal['password'],
-                summary, description, start_time, end_time, location, rrule
+                cal["url"],
+                cal["username"],
+                cal["password"],
+                summary,
+                description,
+                start_time,
+                end_time,
+                location,
+                rrule,
             )
 
             if success:
@@ -517,7 +532,7 @@ RESPOND WITH ONLY THIS JSON:
                 recurrence_str = f"\n🔁 {rrule}" if rrule else ""
                 return {
                     "type": "text",
-                    "content": f"✅ Event added: **{summary}**\n\n📅 {time_str}{location_str}{recurrence_str}"
+                    "content": f"✅ Event added: **{summary}**\n\n📅 {time_str}{location_str}{recurrence_str}",
                 }
             else:
                 return {"type": "text", "content": "❌ Failed to add event to calendar."}
@@ -542,7 +557,7 @@ RESPOND WITH ONLY THIS JSON:
                 "type": "clarification_needed",
                 "action": intent_result["action"],
                 "missing_fields": intent_result["missing_fields"],
-                "content": self._build_clarification_message(intent_result)
+                "content": self._build_clarification_message(intent_result),
             }
 
         action = intent_result.get("action")
@@ -577,12 +592,12 @@ RESPOND WITH ONLY THIS JSON:
         response = response.strip()
 
         # Handle markdown code blocks
-        code_block_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', response)
+        code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", response)
         if code_block_match:
             response = code_block_match.group(1).strip()
         else:
             # Try to extract JSON object directly
-            json_match = re.search(r'\{[\s\S]*\}', response)
+            json_match = re.search(r"\{[\s\S]*\}", response)
             if json_match:
                 response = json_match.group(0)
 
@@ -595,9 +610,20 @@ RESPOND WITH ONLY THIS JSON:
     def _is_simple_greeting(self, message: str) -> bool:
         """Check if message is just a simple greeting (no action needed)."""
         greetings = {
-            "hi", "hello", "hey", "yo", "sup", "what's up", "whats up",
-            "good morning", "good afternoon", "good evening", "good night",
-            "how are you", "how's it going", "hows it going"
+            "hi",
+            "hello",
+            "hey",
+            "yo",
+            "sup",
+            "what's up",
+            "whats up",
+            "good morning",
+            "good afternoon",
+            "good evening",
+            "good night",
+            "how are you",
+            "how's it going",
+            "hows it going",
         }
         return message.lower().strip() in greetings
 
@@ -608,33 +634,81 @@ RESPOND WITH ONLY THIS JSON:
         # Action keywords that suggest user wants to DO something
         action_keywords = {
             # Calendar
-            "add to calendar", "add event", "schedule", "create event",
-            "add to my calendar", "put on calendar", "calendar event",
-            "make calendar", "make event", "new event", "add this to calendar",
-            "add this to my calendar", "calendar from this", "event from this",
+            "add to calendar",
+            "add event",
+            "schedule",
+            "create event",
+            "add to my calendar",
+            "put on calendar",
+            "calendar event",
+            "make calendar",
+            "make event",
+            "new event",
+            "add this to calendar",
+            "add this to my calendar",
+            "calendar from this",
+            "event from this",
             # Contacts
-            "save contact", "add contact", "save number", "save phone",
-            "new contact", "create contact",
+            "save contact",
+            "add contact",
+            "save number",
+            "save phone",
+            "new contact",
+            "create contact",
             # Todo
-            "remind me", "add todo", "add task", "add to list", "don't forget",
-            "remember to", "todo from", "task from",
+            "remind me",
+            "add todo",
+            "add task",
+            "add to list",
+            "don't forget",
+            "remember to",
+            "todo from",
+            "task from",
             # Email
-            "send email", "send mail", "email to", "mail to", "check email",
-            "check mail", "my emails", "my mail", "compose email",
+            "send email",
+            "send mail",
+            "email to",
+            "mail to",
+            "check email",
+            "check mail",
+            "my emails",
+            "my mail",
+            "compose email",
             # Music
-            "play music", "play song", "play something", "play some",
+            "play music",
+            "play song",
+            "play something",
+            "play some",
             # Search
-            "search for", "look up", "google", "find info",
+            "search for",
+            "look up",
+            "google",
+            "find info",
             # Image
-            "generate image", "create image", "make image", "draw", "generate picture",
+            "generate image",
+            "create image",
+            "make image",
+            "draw",
+            "generate picture",
             # YouTube
-            "summarize video", "summarize this video", "youtube",
+            "summarize video",
+            "summarize this video",
+            "youtube",
             # Translation
-            "translate to", "translate this", "say that in",
+            "translate to",
+            "translate this",
+            "say that in",
             # News
-            "check news", "what's the news", "news about",
+            "check news",
+            "what's the news",
+            "news about",
             # Budget/Bills
-            "show my bills", "my bills", "upcoming bills", "budget", "what bills",
+            "show my bills",
+            "my bills",
+            "upcoming bills",
+            "budget",
+            "what bills",
+            "pay bill",
         }
 
         for keyword in action_keywords:
@@ -643,13 +717,14 @@ RESPOND WITH ONLY THIS JSON:
 
         # Also check for patterns like "add X to calendar" or "email X saying"
         import re
+
         action_patterns = [
-            r'\badd\b.*\b(calendar|todo|contact|task|list)\b',
-            r'\b(create|make|schedule)\b.*\b(event|meeting|appointment)\b',
-            r'\b(send|email|mail)\b.*\b(to|saying)\b',
-            r'\bplay\b.*\b(music|song|track)\b',
-            r'\bsearch\b',
-            r'\bgenerate?\b.*\b(image|picture|art)\b',
+            r"\badd\b.*\b(calendar|todo|contact|task|list)\b",
+            r"\b(create|make|schedule)\b.*\b(event|meeting|appointment)\b",
+            r"\b(send|email|mail)\b.*\b(to|saying)\b",
+            r"\bplay\b.*\b(music|song|track)\b",
+            r"\bsearch\b",
+            r"\bgenerate?\b.*\b(image|picture|art)\b",
         ]
 
         for pattern in action_patterns:
@@ -671,12 +746,7 @@ RESPOND WITH ONLY THIS JSON:
             return f"I understood you want to {action_desc.lower()}, but I'm missing some information: {missing_str}. Could you provide these details?"
 
 
-async def detect_and_execute(
-    db: Session,
-    user: "User",
-    message: str,
-    context: str = ""
-) -> Optional[dict]:
+async def detect_and_execute(db: Session, user: "User", message: str, context: str = "") -> Optional[dict]:
     """
     Convenience function to detect intent and execute in one call.
 
