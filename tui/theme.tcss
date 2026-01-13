@@ -1308,7 +1308,7 @@ Toast.-error {
     height: 1;
     padding: 0 1;
     margin: 0 1 0 0;
-    background: $purple;
+    background: $neon-purple;
     color: $background;
     border: none;
     text-style: bold;
