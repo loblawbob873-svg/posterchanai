@@ -128,7 +128,7 @@ AVAILABLE_ACTIONS = {
         "description": "Pay Bill",
         "required_fields": ["bill_name"],
         "optional_fields": [],
-        "command": "budget pay",
+        "command": "pay bill",
     },
     "budget_bills": {
         "description": "Show upcoming bills and budget information",
