@@ -160,7 +160,7 @@ def to_naive_local(dt) -> datetime:
     if dt.tzinfo is not None:
         # Convert to local time and strip timezone
         local_dt = dt.astimezone().replace(tzinfo=None)
-        logger.debug(f"to_naive_local: {dt} -> {local_dt}")
+        logger.info(f"to_naive_local: {dt} (tzinfo={dt.tzinfo}) -> {local_dt}")
         return local_dt
     # Naive datetime - check if it looks like UTC (from iCalendar)
     # Many CalDAV servers return UTC times without explicit tzinfo
@@ -218,17 +218,17 @@ def get_events_for_date_range(
 
                         # Get start time (convert to naive local)
                         start = vevent.dtstart.value
-                        logger.info(f"Fetched event start: {start} (type={type(start).__name__}, tzinfo={getattr(start, 'tzinfo', 'N/A')})")
+                        logger.info(f"EVENT FETCH: raw start={start}, type={type(start).__name__}, tzinfo={getattr(start, 'tzinfo', 'N/A')}")
 
                         # Handle naive datetimes - assume they're UTC if from CalDAV
                         if isinstance(start, datetime) and start.tzinfo is None:
                             # Naive datetime from CalDAV is typically UTC
                             from datetime import timezone as tz
                             start = start.replace(tzinfo=tz.utc)
-                            logger.info(f"Assumed UTC: {start}")
+                            logger.info(f"EVENT FETCH: assumed UTC -> {start}")
 
                         start_dt = to_naive_local(start)
-                        logger.info(f"Converted to local: {start_dt}")
+                        logger.info(f"EVENT FETCH: to_naive_local -> {start_dt} (hour={start_dt.hour})")
 
                         # Get end time (convert to naive local)
                         end_dt = None
