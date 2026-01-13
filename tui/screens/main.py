@@ -570,7 +570,10 @@ class MainScreen(Screen):
                     }
                     def handle_event_saved(command: str | None):
                         if command:
-                            self._send_message_worker(command)
+                            # Support multiple commands separated by |||
+                            for cmd in command.split("|||"):
+                                if cmd.strip():
+                                    self._send_message_worker(cmd.strip())
                     self.app.push_screen(CalendarEventScreen(event_data=screen_data), handle_event_saved)
                 else:
                     self.notify(f"Could not fetch event: {response.status_code}", severity="error")

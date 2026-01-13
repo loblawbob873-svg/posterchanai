@@ -2706,3 +2706,11 @@ class ChatHandler {
 
 // Initialize chat handler
 window.chatHandler = new ChatHandler();
+
+// Expose sendMessage globally for other scripts
+window.sendMessage = function(text) {
+    if (window.chatHandler && window.chatHandler.messageInput) {
+        window.chatHandler.messageInput.value = text;
+        window.chatHandler.sendMessage();
+    }
+};

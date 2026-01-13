@@ -747,11 +747,16 @@ function initCalendarModal() {
             const origTime = calendarModal.dataset.origTime || '';
             const origLocation = calendarModal.dataset.origLocation || '';
             const origDescription = calendarModal.dataset.origDescription || '';
+            const origRecurrence = calendarModal.dataset.origRecurrence || '';
 
-            // Determine which change to make (priority order)
+            // Collect ALL changes
+            const commands = [];
+
             if (title !== origTitle) {
-                command = `cal edit ${uid} title ${title}`;
-            } else if (date !== origDate || time !== origTime) {
+                commands.push(`cal edit ${uid} title ${title}`);
+            }
+
+            if (date !== origDate || time !== origTime) {
                 // Time/date changed - use move command
                 const dateObj = new Date(date + 'T' + time);
                 const dateStr = dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -761,23 +766,44 @@ function initCalendarModal() {
                     const endTimeStr = new Date('1970-01-01T' + endTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
                     moveDesc += ` until ${endTimeStr}`;
                 }
-                command = `cal edit ${uid} move to ${moveDesc}`;
-            } else if (location !== origLocation && location) {
-                command = `cal edit ${uid} location ${location}`;
-            } else if (description !== origDescription && description) {
-                command = `cal edit ${uid} description ${description}`;
-            } else if (recurrence !== (calendarModal.dataset.origRecurrence || '')) {
+                commands.push(`cal edit ${uid} move to ${moveDesc}`);
+            }
+
+            if (location !== origLocation) {
+                commands.push(`cal edit ${uid} location ${location || ''}`);
+            }
+
+            if (description !== origDescription) {
+                commands.push(`cal edit ${uid} description ${description || ''}`);
+            }
+
+            if (recurrence !== origRecurrence) {
                 // Recurrence changed
                 if (recurrence) {
-                    command = `cal edit ${uid} repeat ${recurrence}`;
+                    commands.push(`cal edit ${uid} repeat ${recurrence}`);
                 } else {
-                    command = `cal edit ${uid} repeat none`;
+                    commands.push(`cal edit ${uid} repeat none`);
                 }
-            } else {
+            }
+
+            if (commands.length === 0) {
                 // No changes detected
                 calendarModal.style.display = 'none';
                 clearCalendarForm();
                 return;
+            }
+
+            // Send all commands with delay between them
+            command = commands[0];
+            // Send remaining commands with delays
+            for (let i = 1; i < commands.length; i++) {
+                ((cmd, delay) => {
+                    setTimeout(() => {
+                        if (window.sendMessage) {
+                            window.sendMessage(cmd);
+                        }
+                    }, delay);
+                })(commands[i], i * 1500);  // 1.5 second delay between commands
             }
         } else {
             // Adding new event - build natural language description

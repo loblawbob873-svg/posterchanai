@@ -229,16 +229,16 @@ class CalendarEventScreen(ModalScreen):
             self.query_one("#event-date-input", Input).focus()
             return
 
-        # Build command
+        # Build command(s)
         if self.is_edit:
             uid = self.event_data.get('uid')
-            # Generate the first valid change command
-            # Backend handles: title X, location X, description X, time/move X
-            command = None
+            # Collect ALL changes - send multiple commands joined by |||
+            commands = []
 
             if title != self.event_data.get('title', ''):
-                command = f"cal edit {uid} title {title}"
-            elif time_str != self.event_data.get('time', '') or date_str != self.event_data.get('date', ''):
+                commands.append(f"cal edit {uid} title {title}")
+
+            if time_str != self.event_data.get('time', '') or date_str != self.event_data.get('date', ''):
                 # Time or date changed - use move command with natural language
                 try:
                     parsed_date = datetime.strptime(date_str, "%Y-%m-%d")
@@ -261,22 +261,28 @@ class CalendarEventScreen(ModalScreen):
                     except ValueError:
                         end_formatted = end_time_str
                     time_desc += f" until {end_formatted}"
-                command = f"cal edit {uid} move to {time_desc}"
-            elif location != self.event_data.get('location', ''):
-                command = f"cal edit {uid} location {location}"
-            elif description != self.event_data.get('description', ''):
-                command = f"cal edit {uid} description {description}"
-            elif recurrence != self.event_data.get('recurrence', ''):
+                commands.append(f"cal edit {uid} move to {time_desc}")
+
+            if location != self.event_data.get('location', ''):
+                commands.append(f"cal edit {uid} location {location}")
+
+            if description != self.event_data.get('description', ''):
+                commands.append(f"cal edit {uid} description {description}")
+
+            if recurrence != self.event_data.get('recurrence', ''):
                 # Recurrence changed
                 if recurrence:
-                    command = f"cal edit {uid} repeat {recurrence}"
+                    commands.append(f"cal edit {uid} repeat {recurrence}")
                 else:
-                    command = f"cal edit {uid} repeat none"
+                    commands.append(f"cal edit {uid} repeat none")
 
-            if not command:
+            if not commands:
                 # No changes made
                 self.dismiss(None)
                 return
+
+            # Join multiple commands with ||| separator
+            command = "|||".join(commands)
         else:
             # Build natural language add command
             event_desc = title
