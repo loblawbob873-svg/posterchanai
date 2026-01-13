@@ -1563,23 +1563,40 @@ Return ONLY valid JSON, no other text."""},
                             if clean_time.lower().startswith(prefix):
                                 clean_time = clean_time[len(prefix):]
 
-                        # Try parsing the time request directly (works for explicit dates like "January 13, 2026 at 9:00 AM")
-                        parsed_time = date_parser.parse(clean_time, fuzzy=True)
+                        # Split out end time BEFORE parsing start time
+                        # Otherwise fuzzy parser gets confused by multiple times
+                        start_part = clean_time
+                        end_part = None
+                        for separator in [' until ', ' to ', ' - ']:
+                            if separator in clean_time.lower():
+                                parts = clean_time.lower().split(separator, 1)
+                                # Find the actual position in original case
+                                sep_pos = clean_time.lower().find(separator)
+                                start_part = clean_time[:sep_pos].strip()
+                                end_part = clean_time[sep_pos + len(separator):].strip()
+                                break
+
+                        logger.info(f"Parsing start: '{start_part}', end: '{end_part}'")
+
+                        # Try parsing the start time
+                        parsed_time = date_parser.parse(start_part, fuzzy=True)
                         if parsed_time:
-                            logger.info(f"dateutil parsed time: {parsed_time}")
+                            logger.info(f"dateutil parsed start time: {parsed_time}")
                             new_start = parsed_time
-                            # Check if end time is specified with "until" or "to"
-                            if " until " in time_request.lower():
-                                end_part = time_request.lower().split(" until ")[-1]
+
+                            # Parse end time if specified
+                            if end_part:
                                 try:
                                     parsed_end = date_parser.parse(end_part, fuzzy=True, default=new_start)
                                     if parsed_end:
+                                        logger.info(f"dateutil parsed end time: {parsed_end}")
                                         # If end time is before start, assume next day
                                         if parsed_end <= new_start:
                                             parsed_end = parsed_end + timedelta(days=1)
                                         new_end = parsed_end
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.debug(f"Failed to parse end time '{end_part}': {e}")
+
                             if not new_end:
                                 new_end = new_start + original_duration
                     except Exception as e:
