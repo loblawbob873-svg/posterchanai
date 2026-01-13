@@ -6,6 +6,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Static, Button
 from textual.containers import Vertical, Horizontal, Grid
 from textual.message import Message
+from textual.binding import Binding
 
 
 # Default news sources (matches webui)
@@ -19,6 +20,14 @@ DEFAULT_NEWS_SOURCES = [
 
 class NewsPickerScreen(ModalScreen):
     """Modal screen for selecting a news source."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("j", "focus_next", "Next", show=False),
+        Binding("k", "focus_prev", "Previous", show=False),
+        Binding("down", "focus_next", "Next", show=False),
+        Binding("up", "focus_prev", "Previous", show=False),
+    ]
 
     CSS = """
     NewsPickerScreen {
@@ -111,7 +120,21 @@ class NewsPickerScreen(ModalScreen):
             ))
             self.dismiss(event.button.source_url)
 
-    def on_key(self, event) -> None:
-        """Handle key press."""
-        if event.key == "escape":
-            self.dismiss(None)
+    def on_mount(self) -> None:
+        """Focus first button on mount."""
+        try:
+            self.query_one("#news-all-btn", Button).focus()
+        except Exception:
+            pass
+
+    def action_cancel(self) -> None:
+        """Cancel and close."""
+        self.dismiss(None)
+
+    def action_focus_next(self) -> None:
+        """Focus next button (j/down)."""
+        self.screen.focus_next()
+
+    def action_focus_prev(self) -> None:
+        """Focus previous button (k/up)."""
+        self.screen.focus_previous()

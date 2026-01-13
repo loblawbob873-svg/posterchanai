@@ -68,6 +68,16 @@ Works from anywhere, even while typing in input:
 | `Alt+R` | Previous track |
 | `Alt+M` | Minimize player |
 
+### Modal Screens (News Picker, File Picker)
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Next item |
+| `k` / `↑` | Previous item |
+| `h` | Collapse folder (file picker) |
+| `l` | Expand folder or select (file picker) |
+| `Enter` | Select |
+| `Escape` | Close/Cancel |
+
 ## Commands
 
 Type these in the chat input to access features:
@@ -144,6 +154,11 @@ class HelpScreen(Screen):
     BINDINGS = [
         Binding("escape", "close", "Close"),
         Binding("q", "close", "Close"),
+        # Vim-style scrolling
+        Binding("j", "scroll_down", "Scroll Down", show=False),
+        Binding("k", "scroll_up", "Scroll Up", show=False),
+        Binding("g", "scroll_top", "Top", show=False),
+        Binding("G", "scroll_bottom", "Bottom", show=False),
     ]
 
     def compose(self) -> ComposeResult:
@@ -160,3 +175,35 @@ class HelpScreen(Screen):
     def action_close(self):
         """Close help screen."""
         self.app.pop_screen()
+
+    def action_scroll_down(self):
+        """Scroll down (j)."""
+        try:
+            scroll = self.query_one("#help-scroll", ScrollableContainer)
+            scroll.scroll_down()
+        except Exception:
+            pass
+
+    def action_scroll_up(self):
+        """Scroll up (k)."""
+        try:
+            scroll = self.query_one("#help-scroll", ScrollableContainer)
+            scroll.scroll_up()
+        except Exception:
+            pass
+
+    def action_scroll_top(self):
+        """Scroll to top (g)."""
+        try:
+            scroll = self.query_one("#help-scroll", ScrollableContainer)
+            scroll.scroll_home()
+        except Exception:
+            pass
+
+    def action_scroll_bottom(self):
+        """Scroll to bottom (G)."""
+        try:
+            scroll = self.query_one("#help-scroll", ScrollableContainer)
+            scroll.scroll_end()
+        except Exception:
+            pass

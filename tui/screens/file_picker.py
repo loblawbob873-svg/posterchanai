@@ -28,6 +28,11 @@ class FilePickerScreen(ModalScreen[Optional[str]]):
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
         Binding("enter", "select", "Select"),
+        # Vim-style navigation
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+        Binding("h", "cursor_left", "Left", show=False),
+        Binding("l", "cursor_right", "Right/Select", show=False),
     ]
 
     def __init__(
@@ -84,3 +89,43 @@ class FilePickerScreen(ModalScreen[Optional[str]]):
     def action_cancel(self):
         """Cancel and close."""
         self.dismiss(None)
+
+    def action_cursor_down(self):
+        """Move cursor down in tree (j)."""
+        try:
+            tree = self.query_one("#file-tree", FilteredDirectoryTree)
+            tree.action_cursor_down()
+        except Exception:
+            pass
+
+    def action_cursor_up(self):
+        """Move cursor up in tree (k)."""
+        try:
+            tree = self.query_one("#file-tree", FilteredDirectoryTree)
+            tree.action_cursor_up()
+        except Exception:
+            pass
+
+    def action_cursor_left(self):
+        """Collapse directory (h)."""
+        try:
+            tree = self.query_one("#file-tree", FilteredDirectoryTree)
+            # Collapse current node or move to parent
+            if tree.cursor_node and tree.cursor_node.is_expanded:
+                tree.cursor_node.collapse()
+            else:
+                tree.action_cursor_up()
+        except Exception:
+            pass
+
+    def action_cursor_right(self):
+        """Expand directory or select file (l)."""
+        try:
+            tree = self.query_one("#file-tree", FilteredDirectoryTree)
+            if tree.cursor_node:
+                if tree.cursor_node.allow_expand and not tree.cursor_node.is_expanded:
+                    tree.cursor_node.expand()
+                else:
+                    tree.action_select_cursor()
+        except Exception:
+            pass
