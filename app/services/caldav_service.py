@@ -160,7 +160,6 @@ def to_naive_local(dt) -> datetime:
     if dt.tzinfo is not None:
         # Convert to local time and strip timezone
         local_dt = dt.astimezone().replace(tzinfo=None)
-        logger.info(f"to_naive_local: {dt} (tzinfo={dt.tzinfo}) -> {local_dt}")
         return local_dt
     # Naive datetime - check if it looks like UTC (from iCalendar)
     # Many CalDAV servers return UTC times without explicit tzinfo
@@ -218,17 +217,14 @@ def get_events_for_date_range(
 
                         # Get start time (convert to naive local)
                         start = vevent.dtstart.value
-                        logger.info(f"EVENT FETCH: raw start={start}, type={type(start).__name__}, tzinfo={getattr(start, 'tzinfo', 'N/A')}")
 
                         # Handle naive datetimes - assume they're UTC if from CalDAV
                         if isinstance(start, datetime) and start.tzinfo is None:
                             # Naive datetime from CalDAV is typically UTC
                             from datetime import timezone as tz
                             start = start.replace(tzinfo=tz.utc)
-                            logger.info(f"EVENT FETCH: assumed UTC -> {start}")
 
                         start_dt = to_naive_local(start)
-                        logger.info(f"EVENT FETCH: to_naive_local -> {start_dt} (hour={start_dt.hour})")
 
                         # Get end time (convert to naive local)
                         end_dt = None
@@ -239,7 +235,6 @@ def get_events_for_date_range(
                                 end_val = end_val.replace(tzinfo=tz.utc)
                             end_dt = to_naive_local(end_val)
 
-                        logger.info(f"EVENT STORE: start_dt={start_dt}, hour={start_dt.hour}, end_dt={end_dt}")
                         events.append(CalendarEvent(
                             uid=str(vevent.uid.value) if hasattr(vevent, 'uid') else "",
                             summary=str(vevent.summary.value) if hasattr(vevent, 'summary') else "No Title",
@@ -845,7 +840,6 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
         if cyberpunk:
             # Cyberpunk style event line with time in brackets
             time_bracket = event.start.strftime("%H:%M")
-            logger.info(f"DISPLAY: event={event.summary}, start={event.start}, hour={event.start.hour}, time_bracket={time_bracket}")
             line = f"  ⏰ `{time_bracket}` **{event.summary}**{action_links}"
         else:
             line = f"- {time_str}: {event.summary}{action_links}"
