@@ -74,6 +74,14 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 - GPU VRAM monitoring with automatic model reload when memory threshold exceeded
 - PWA support (installable on mobile/desktop)
 
+### Terminal UI (TUI)
+- **Full-featured terminal client** - Access all features from the command line
+- **Vim-style navigation** - h/l for panels, j/k for scrolling
+- **Cyberpunk theme** - Styled with cyan/magenta color scheme
+- **All commands supported** - Mail, calendar, contacts, music, torrents, and more
+- **Real-time streaming** - See AI responses as they generate
+- **Music player** - Built-in audio player with visualizer
+
 ### RAG (Retrieval-Augmented Generation)
 - **Codebase indexing** - Index your project for code-aware AI responses
 - **ChromaDB vector store** - Persistent, file-based vector database
@@ -913,6 +921,106 @@ Type these commands in the chat (or use the mode buttons):
 | `todo` | CalDAV task management: list, add, remove tasks |
 | `news` | Get unread news from Miniflux |
 | `logs` | System logs analysis (admin only) |
+
+## Terminal UI (TUI)
+
+A full-featured terminal client built with [Textual](https://textual.textualize.io/). Access all Posterchanai features from the command line with vim-style navigation.
+
+### Installation
+
+```bash
+cd tui
+pip install -r requirements.txt
+```
+
+**Dependencies:**
+- Python 3.10+
+- textual >= 0.47.0
+- httpx, websockets
+- python-mpv (for music playback)
+- keyring (for credential storage)
+
+### Running the TUI
+
+```bash
+# From the tui directory
+python -m tui
+
+# Or with arguments
+python -m tui --server https://your-server.com --user yourusername
+```
+
+On first run, you'll be prompted for:
+- Server URL (e.g., `https://posterchanai.example.com`)
+- Username and password
+
+Credentials are securely stored in your system keyring.
+
+### Keyboard Navigation
+
+**Panel Switching (Vim h/l)**
+| Key | Action |
+|-----|--------|
+| `h` | Focus left panel (← Sidebar ← Chat ← Input) |
+| `l` | Focus right panel (Sidebar → Chat → Input →) |
+| `Tab` | Same as `l` |
+| `Shift+Tab` | Same as `h` |
+
+**Within Panels (Vim j/k)**
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Move down / scroll down |
+| `k` / `↑` | Move up / scroll up |
+| `Enter` | Select item |
+| `g` | Scroll to top |
+| `G` | Scroll to bottom |
+
+**Sidebar**
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Navigate conversations |
+| `Enter` | Select conversation |
+| `d` / `x` | Delete conversation |
+| `[` / `]` | Hide / Show sidebar |
+
+**Quick Actions**
+| Key | Action |
+|-----|--------|
+| `i` | Focus input (insert mode) |
+| `/` | Focus input (command mode) |
+| `o` | Open URLs from messages in browser |
+| `Ctrl+N` | New conversation |
+| `Ctrl+B` | Toggle sidebar |
+| `Ctrl+S` | Settings |
+| `Ctrl+H` | Help |
+| `Ctrl+Q` | Quit |
+| `Escape` | Stop AI generation |
+
+**Music Controls**
+| Key | Action |
+|-----|--------|
+| `Alt+P` | Play/Pause |
+| `Alt+F` | Next track |
+| `Alt+R` | Previous track |
+| `Alt+M` | Minimize player |
+
+### Features
+
+- **Real-time streaming** - AI responses stream in real-time via WebSocket
+- **Command autocomplete** - Press Tab to autocomplete commands
+- **Command history** - Use ↑/↓ in input to recall previous commands
+- **File attachments** - Attach files to messages
+- **Music player** - Built-in audio player with visualizer (requires mpv)
+- **All commands** - Full access to mail, calendar, contacts, music, torrents, etc.
+
+### Screenshots
+
+The TUI features a cyberpunk color scheme with:
+- Cyan/magenta accent colors
+- Conversation sidebar on the left
+- Chat view in the center
+- Input area at the bottom
+- Music player overlay when playing
 
 ## Voice Input
 
