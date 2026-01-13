@@ -499,15 +499,21 @@ def update_event_in_calendar(
                         else:
                             vevent.add('description').value = description
                     if start_time is not None:
-                        logger.info(f"Setting start_time to {start_time} (was {vevent.dtstart.value})")
-                        vevent.dtstart.value = start_time
+                        # Convert to UTC for consistent storage (like add_event does)
+                        start_aware = to_local_aware(start_time)
+                        start_utc = start_aware.astimezone(timezone.utc)
+                        logger.info(f"Setting start_time: local={start_time} -> UTC={start_utc} (was {vevent.dtstart.value})")
+                        vevent.dtstart.value = start_utc
                     if end_time is not None:
+                        # Convert to UTC for consistent storage
+                        end_aware = to_local_aware(end_time)
+                        end_utc = end_aware.astimezone(timezone.utc)
                         if hasattr(vevent, 'dtend'):
-                            logger.info(f"Setting end_time to {end_time} (was {vevent.dtend.value})")
-                            vevent.dtend.value = end_time
+                            logger.info(f"Setting end_time: local={end_time} -> UTC={end_utc} (was {vevent.dtend.value})")
+                            vevent.dtend.value = end_utc
                         else:
-                            logger.info(f"Adding end_time {end_time}")
-                            vevent.add('dtend').value = end_time
+                            logger.info(f"Adding end_time: local={end_time} -> UTC={end_utc}")
+                            vevent.add('dtend').value = end_utc
                     if location is not None:
                         if hasattr(vevent, 'location'):
                             vevent.location.value = location
@@ -520,14 +526,14 @@ def update_event_in_calendar(
                     logger.info(f"Successfully updated event with UID: {event_uid}")
                     return True
             except Exception as e:
-                logger.debug(f"Error updating in calendar: {e}")
+                logger.error(f"Error updating event {event_uid} in calendar: {e}", exc_info=True)
                 continue
 
         logger.warning(f"Event with UID {event_uid} not found for update")
         return False
 
     except Exception as e:
-        logger.error(f"Failed to update event: {e}")
+        logger.error(f"Failed to update event: {e}", exc_info=True)
         return False
 
 

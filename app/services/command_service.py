@@ -1664,13 +1664,17 @@ Return ONLY valid JSON, no other text."""},
                             new_end = new_end.astimezone()
 
                     logger.info(f"Updating event {event_uid} to start={new_start}, end={new_end}")
+                    logger.info(f"Available calendars: {[c.get('name', c.get('url')) for c in calendars]}")
 
                     for cal in calendars:
+                        logger.info(f"Trying to update in calendar: {cal.get('name', cal.get('url'))}")
                         if update_event_in_calendar(cal['url'], cal['username'], cal['password'], event_uid, start_time=new_start, end_time=new_end):
                             time_str = new_start.strftime("%A, %B %d, %Y at %I:%M %p") if new_start else "updated"
                             end_str = new_end.strftime("%I:%M %p") if new_end else ""
                             return {"type": "text", "content": f"✅ Rescheduled to: **{time_str}**" + (f" - {end_str}" if end_str else "")}
-                    return {"type": "text", "content": "❌ Failed to update event."}
+                        else:
+                            logger.warning(f"Failed to update event in calendar: {cal.get('name', cal.get('url'))}")
+                    return {"type": "text", "content": "❌ Failed to update event. Check logs for details."}
 
                 else:
                     return {"type": "text", "content": "Usage: `cal edit <uid> <field> <value>`\n\nFields:\n- `title <new title>`\n- `location <new location>`\n- `description <new description>`\n- `time <new time>` or `move to <new time>`"}
