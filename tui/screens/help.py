@@ -14,48 +14,44 @@ HELP_TEXT = """
 
 ## Keyboard Navigation
 
-### Window Focus
+### Panel Switching (Vim-style)
 | Key | Action |
 |-----|--------|
-| `Tab` | Cycle focus: Input → Sidebar → Chat → Input |
-| `Shift+Tab` | Cycle focus backwards |
+| `h` | Focus left panel (← Sidebar ← Chat ← Input) |
+| `l` | Focus right panel (Sidebar → Chat → Input →) |
+| `Tab` | Same as `l` (next panel) |
+| `Shift+Tab` | Same as `h` (previous panel) |
 
-### Vim Navigation (within focused window)
+### Within Panels (j/k navigation)
 | Key | Action |
 |-----|--------|
-| `j` | Move down / scroll down |
-| `k` | Move up / scroll up |
-| `l` | Select / Enter (in sidebar) |
-| `h` | (reserved for future use) |
-| `g` | Scroll to top (in chat) |
-| `G` | Scroll to bottom (in chat) |
+| `j` / `↓` | Move down / scroll down |
+| `k` / `↑` | Move up / scroll up |
+| `Enter` | Select item |
+| `g` | Scroll to top (chat view) |
+| `G` | Scroll to bottom (chat view) |
 
-### Sidebar (when focused)
+### Sidebar
 | Key | Action |
 |-----|--------|
-| `j` / `↓` | Next conversation |
-| `k` / `↑` | Previous conversation |
-| `l` / `Enter` | Select conversation |
+| `j` / `k` | Navigate conversations |
+| `Enter` | Select conversation |
 | `d` / `x` | Delete selected |
-| `[` | Hide sidebar |
-| `]` | Show sidebar |
+| `[` / `]` | Hide / Show sidebar |
 
-### Chat View (when focused)
+### Chat View
 | Key | Action |
 |-----|--------|
-| `j` / `↓` | Scroll down |
-| `k` / `↑` | Scroll up |
-| `g` | Scroll to top |
-| `G` | Scroll to bottom |
-| `Ctrl+D` | Page down |
-| `Ctrl+U` | Page up |
+| `j` / `k` | Scroll messages |
+| `g` / `G` | Top / Bottom |
+| `Ctrl+U/D` | Page up / down |
 | `o` | Open URLs in browser |
 
-### Input (when focused)
+### Input
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Command history |
-| `Tab` | Autocomplete command |
+| `Tab` | Autocomplete (or switch panel if empty) |
 | `Escape` | Stop AI generation |
 
 ### Quick Actions

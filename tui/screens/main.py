@@ -28,10 +28,13 @@ class MainScreen(Screen):
 
     BINDINGS = [
         Binding("escape", "stop_generation", "Stop", show=False),
-        # Tab cycles focus between panels
+        # Vim h/l to switch panels (Sidebar <-> Chat <-> Input)
+        Binding("h", "focus_prev_panel", "Left Panel", show=False),
+        Binding("l", "focus_next_panel", "Right Panel", show=False),
+        # Tab also works for panel switching
         Binding("tab", "focus_next_panel", "Next Panel", show=False),
         Binding("shift+tab", "focus_prev_panel", "Prev Panel", show=False),
-        # Sidebar toggle (use [ and ] instead of h/l)
+        # Sidebar toggle
         Binding("[", "hide_sidebar", "Hide Sidebar", show=False),
         Binding("]", "show_sidebar", "Show Sidebar", show=False),
         # Open URLs

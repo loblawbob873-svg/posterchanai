@@ -38,10 +38,9 @@ class ConversationSidebar(Widget):
         Binding("d", "delete_selected", "Delete", show=False),
         Binding("x", "delete_selected", "Delete", show=False),
         Binding("delete", "delete_selected", "Delete", show=False),
-        # Vim-style navigation: j=down, k=up, l=select/enter, h=back/collapse
+        # Vim-style navigation: j=down, k=up, Enter=select
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
-        Binding("l", "select_cursor", "Select", show=False),
         Binding("enter", "select_cursor", "Select", show=False),
         # Arrow keys as alternative
         Binding("down", "cursor_down", "Down", show=False),
