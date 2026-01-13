@@ -14,15 +14,26 @@ HELP_TEXT = """
 
 ## Keyboard Navigation
 
-### Panel Switching (Vim-style)
+### Global Navigation (Alt + Vim keys)
+Works from anywhere, even while typing in input:
+
 | Key | Action |
 |-----|--------|
-| `h` | Focus left panel (← Sidebar ← Chat ← Input) |
-| `l` | Focus right panel (Sidebar → Chat → Input →) |
-| `Tab` | Same as `l` (next panel) |
-| `Shift+Tab` | Same as `h` (previous panel) |
+| `Alt+H` | Focus left panel (← Sidebar ← Chat ← Input) |
+| `Alt+L` | Focus right panel (Sidebar → Chat → Input →) |
+| `Alt+J` | Scroll down |
+| `Alt+K` | Scroll up |
+| `Alt+[` | Hide sidebar |
+| `Alt+]` | Show sidebar |
+| `Alt+O` | Open URLs in browser |
 
-### Within Panels (j/k navigation)
+### Panel Switching
+| Key | Action |
+|-----|--------|
+| `Tab` | Next panel (Sidebar → Chat → Input) |
+| `Shift+Tab` | Previous panel |
+
+### Within Panels (when focused, not typing)
 | Key | Action |
 |-----|--------|
 | `j` / `↓` | Move down / scroll down |
@@ -30,22 +41,7 @@ HELP_TEXT = """
 | `Enter` | Select item |
 | `g` | Scroll to top (chat view) |
 | `G` | Scroll to bottom (chat view) |
-
-### Sidebar
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Navigate conversations |
-| `Enter` | Select conversation |
-| `d` / `x` | Delete selected |
-| `[` / `]` | Hide / Show sidebar |
-
-### Chat View
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Scroll messages |
-| `g` / `G` | Top / Bottom |
-| `Ctrl+U/D` | Page up / down |
-| `o` | Open URLs in browser |
+| `d` / `x` | Delete conversation (sidebar) |
 
 ### Input
 | Key | Action |
@@ -57,13 +53,12 @@ HELP_TEXT = """
 ### Quick Actions
 | Key | Action |
 |-----|--------|
-| `i` | Focus input (insert mode) |
-| `/` | Focus input (command mode) |
 | `Ctrl+N` | New conversation |
 | `Ctrl+B` | Toggle sidebar |
 | `Ctrl+S` | Settings |
 | `Ctrl+H` | Help |
 | `Ctrl+Q` | Quit |
+| `Ctrl+U/D` | Page up / down |
 
 ### Music Controls
 | Key | Action |

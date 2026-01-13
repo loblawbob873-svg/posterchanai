@@ -28,22 +28,22 @@ class MainScreen(Screen):
 
     BINDINGS = [
         Binding("escape", "stop_generation", "Stop", show=False),
-        # Vim h/l to switch panels (Sidebar <-> Chat <-> Input)
-        Binding("h", "focus_prev_panel", "Left Panel", show=False),
-        Binding("l", "focus_next_panel", "Right Panel", show=False),
+        # Alt + vim keys for global navigation (works even in input)
+        Binding("alt+h", "focus_prev_panel", "Left Panel", show=False),
+        Binding("alt+l", "focus_next_panel", "Right Panel", show=False),
+        Binding("alt+j", "scroll_down", "Scroll Down", show=False),
+        Binding("alt+k", "scroll_up", "Scroll Up", show=False),
         # Tab also works for panel switching
         Binding("tab", "focus_next_panel", "Next Panel", show=False),
         Binding("shift+tab", "focus_prev_panel", "Prev Panel", show=False),
         # Sidebar toggle
-        Binding("[", "hide_sidebar", "Hide Sidebar", show=False),
-        Binding("]", "show_sidebar", "Show Sidebar", show=False),
+        Binding("alt+[", "hide_sidebar", "Hide Sidebar", show=False),
+        Binding("alt+]", "show_sidebar", "Show Sidebar", show=False),
         # Open URLs
-        Binding("o", "open_urls", "Open URL", show=False),
+        Binding("alt+o", "open_urls", "Open URL", show=False),
         # Quick actions
         Binding("ctrl+n", "new_chat", "New Chat", show=False),
-        Binding("/", "focus_input", "Search/Input", show=False),
-        Binding("i", "focus_input", "Input", show=False),
-        # Scroll messages (Ctrl+ works globally)
+        # Scroll messages
         Binding("ctrl+u", "scroll_up", "Scroll Up", show=False),
         Binding("ctrl+d", "scroll_down", "Scroll Down", show=False),
         # Music controls
