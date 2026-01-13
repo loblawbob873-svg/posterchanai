@@ -240,7 +240,12 @@ class MusicPlayerWidget(Widget):
 
     def toggle_minimize(self):
         """Toggle between minimized and full view."""
+        import logging
+        logger = logging.getLogger("tui")
+
         self.is_minimized = not self.is_minimized
+        logger.info(f"Music player minimize toggled: is_minimized={self.is_minimized}")
+
         try:
             mini_view = self.query_one("#player-minimized", Horizontal)
             full_view = self.query_one("#player-container", Vertical)
@@ -248,11 +253,13 @@ class MusicPlayerWidget(Widget):
             if self.is_minimized:
                 mini_view.remove_class("--hidden")
                 full_view.add_class("--hidden")
+                logger.info("Switched to minimized view")
             else:
                 mini_view.add_class("--hidden")
                 full_view.remove_class("--hidden")
-        except Exception:
-            pass
+                logger.info("Switched to full view")
+        except Exception as e:
+            logger.error(f"toggle_minimize error: {e}")
 
     @work(exclusive=True, group="visualizer")
     async def _run_visualizer(self):

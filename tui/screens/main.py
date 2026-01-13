@@ -799,8 +799,14 @@ class MainScreen(Screen):
 
     def action_music_minimize(self):
         """Toggle music player minimize (Alt+M)."""
-        music_player = self.query_one("#music-player", MusicPlayerWidget)
-        music_player.toggle_minimize()
+        try:
+            music_player = self.query_one("#music-player", MusicPlayerWidget)
+            if not music_player.has_class("--hidden"):
+                music_player.toggle_minimize()
+            else:
+                self.notify("No music playing", severity="warning")
+        except Exception:
+            self.notify("Music player not available", severity="warning")
 
     # Focus and navigation actions
     def action_focus_next_panel(self):
