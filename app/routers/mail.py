@@ -33,14 +33,14 @@ async def get_contact_emails(
     emails = []
     seen = set()
     for contact in contacts:
-        # Contact has single email field, not emails list
-        email = contact.email
-        if email and email not in seen:
-            seen.add(email)
-            emails.append({
-                "email": email,
-                "name": contact.name or email.split("@")[0]
-            })
+        # Contact may have multiple emails
+        for email in contact.emails:
+            if email and email not in seen:
+                seen.add(email)
+                emails.append({
+                    "email": email,
+                    "name": contact.name or email.split("@")[0]
+                })
 
     # Sort by name
     emails.sort(key=lambda x: x["name"].lower())

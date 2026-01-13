@@ -151,6 +151,7 @@ class ChatInput(Widget):
                     Button("Mail", id="pim-mail", classes="dropdown-item"),
                     Button("Cal", id="pim-cal", classes="dropdown-item"),
                     Button("Add Event", id="pim-add-event", classes="dropdown-item"),
+                    Button("Contacts", id="pim-contacts", classes="dropdown-item"),
                     Button("Todo", id="pim-todo", classes="dropdown-item"),
                     id="pim-menu",
                     classes="dropdown-menu --hidden"
@@ -208,6 +209,9 @@ class ChatInput(Widget):
             self.hide_all_dropdowns()
         elif btn_id == "pim-todo":
             self.send_command("todo")
+            self.hide_all_dropdowns()
+        elif btn_id == "pim-contacts":
+            self.send_command("contacts all")
             self.hide_all_dropdowns()
         elif btn_id == "pim-add-event":
             self.post_message(self.CalendarEventRequested())

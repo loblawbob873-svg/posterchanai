@@ -73,10 +73,15 @@ class Contact:
     """Represents a contact."""
     uid: str
     name: str
-    email: Optional[str]
+    emails: List[str]  # Multiple email addresses
     phone: Optional[str]
     organization: Optional[str]
     note: Optional[str]
+
+    @property
+    def email(self) -> Optional[str]:
+        """Backwards compatibility - return first email."""
+        return self.emails[0] if self.emails else None
 
 
 def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]:
@@ -595,14 +600,17 @@ def search_contacts(
                 elif hasattr(vcard, 'n'):
                     name = str(vcard.n.value)
 
-                email = None
-                # Try to get email from vcard - may be list or single value
+                emails = []
+                # Collect all email addresses from vcard
                 if hasattr(vcard, 'email_list'):
                     for em in vcard.email_list:
-                        email = str(em.value)
-                        break  # Get first email
+                        email_val = str(em.value).strip()
+                        if email_val and email_val not in emails:
+                            emails.append(email_val)
                 elif hasattr(vcard, 'email'):
-                    email = str(vcard.email.value)
+                    email_val = str(vcard.email.value).strip()
+                    if email_val:
+                        emails.append(email_val)
 
                 phone = None
                 if hasattr(vcard, 'tel'):
@@ -617,24 +625,28 @@ def search_contacts(
                     note = str(vcard.note.value)
 
                 # If no email found, try to extract from note field
-                if not email and note:
+                if not emails and note:
                     # Try "EMail (preferred) : email@example.com" format first
-                    email_label_match = re.search(r'EMail[^:]*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', note, re.IGNORECASE)
-                    if email_label_match:
-                        email = email_label_match.group(1)
+                    email_label_matches = re.findall(r'EMail[^:]*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', note, re.IGNORECASE)
+                    if email_label_matches:
+                        for em in email_label_matches:
+                            if em not in emails:
+                                emails.append(em)
                     else:
                         # Fall back to any email pattern in note
-                        email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', note)
-                        if email_match:
-                            email = email_match.group(0)
+                        email_matches = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', note)
+                        for em in email_matches:
+                            if em not in emails:
+                                emails.append(em)
 
                 # Check if query matches (empty query matches all)
-                searchable = f"{name} {email or ''} {phone or ''} {org or ''} {note or ''}".lower()
+                emails_str = ' '.join(emails)
+                searchable = f"{name} {emails_str} {phone or ''} {org or ''} {note or ''}".lower()
                 if not query_lower or query_lower in searchable:
                     contacts.append(Contact(
                         uid=str(vcard.uid.value) if hasattr(vcard, 'uid') else "",
                         name=name,
-                        email=email,
+                        emails=emails,
                         phone=phone,
                         organization=org,
                         note=note
@@ -850,8 +862,14 @@ def format_contacts_for_display(contacts: List[Contact]) -> str:
     lines = []
     for contact in contacts:
         lines.append(f"\n**{contact.name}**")
-        if contact.email:
-            lines.append(f"  Email: [{contact.email}](mailto:{contact.email})")
+        if contact.emails:
+            if len(contact.emails) == 1:
+                lines.append(f"  Email: [{contact.emails[0]}](mailto:{contact.emails[0]})")
+            else:
+                # Multiple emails - show each on its own line
+                for i, email in enumerate(contact.emails):
+                    label = "Email" if i == 0 else "     "
+                    lines.append(f"  {label}: [{email}](mailto:{email})")
         if contact.phone:
             lines.append(f"  Phone: {format_phone_link(contact.phone)}")
         if contact.organization:

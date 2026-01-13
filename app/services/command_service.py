@@ -1542,65 +1542,135 @@ Return ONLY valid JSON, no other text."""},
                     time_request = change_request.split(maxsplit=1)[1] if " " in change_request else change_request
                     from datetime import timezone, date
                     import time as time_module
+                    import json as json_module
+                    import re
                     local_tz_name = time_module.tzname[0]
                     today = date.today()
-                    messages = [
-                        {"role": "system", "content": f"""Parse this time change request and return JSON with:
+
+                    # Calculate original event duration
+                    original_duration = timedelta(hours=1)  # Default 1 hour
+                    if event.start and event.end:
+                        original_duration = event.end - event.start
+
+                    new_start = None
+                    new_end = None
+
+                    # Try dateutil.parser first for explicit date/time expressions
+                    try:
+                        # Clean up time request - remove common prefixes
+                        clean_time = time_request
+                        for prefix in ['to ', 'at ']:
+                            if clean_time.lower().startswith(prefix):
+                                clean_time = clean_time[len(prefix):]
+
+                        # Try parsing the time request directly (works for explicit dates like "January 13, 2026 at 9:00 AM")
+                        parsed_time = date_parser.parse(clean_time, fuzzy=True)
+                        if parsed_time:
+                            logger.info(f"dateutil parsed time: {parsed_time}")
+                            new_start = parsed_time
+                            # Check if end time is specified with "until" or "to"
+                            if " until " in time_request.lower():
+                                end_part = time_request.lower().split(" until ")[-1]
+                                try:
+                                    parsed_end = date_parser.parse(end_part, fuzzy=True, default=new_start)
+                                    if parsed_end:
+                                        # If end time is before start, assume next day
+                                        if parsed_end <= new_start:
+                                            parsed_end = parsed_end + timedelta(days=1)
+                                        new_end = parsed_end
+                                except Exception:
+                                    pass
+                            if not new_end:
+                                new_end = new_start + original_duration
+                    except Exception as e:
+                        logger.debug(f"dateutil parser failed: {e}, trying AI")
+
+                    # If dateparser didn't work, try AI
+                    if not new_start:
+                        messages = [
+                            {"role": "system", "content": f"""Parse this time change request and return JSON with:
 - start_time: ISO format datetime in local timezone ({local_tz_name})
 - end_time: ISO format datetime in local timezone (keep same duration as original unless specified)
 
 Current event:
 - Start: {event.start.isoformat()}
 - End: {event.end.isoformat() if event.end else 'not set'}
+- Duration: {original_duration}
 
 IMPORTANT: Today is {today.strftime('%A, %B %d, %Y')}. Use year {today.year} for dates.
 Return times WITHOUT timezone suffix (e.g., "2026-01-19T14:00:00" not "2026-01-19T14:00:00Z").
 Return ONLY valid JSON, no other text."""},
-                        {"role": "user", "content": f"Change time to: {time_request}"}
-                    ]
+                            {"role": "user", "content": f"Change time to: {time_request}"}
+                        ]
 
-                    try:
-                        import json as json_module
-                        parsed = await self.chat_service.chat(messages)
-                        logger.info(f"AI time parse response: {parsed[:500] if parsed else 'empty'}")
-                        parsed = parsed.strip()
-                        # Clean markdown
-                        if "```" in parsed:
-                            import re
-                            match = re.search(r'```(?:json)?\s*([\s\S]*?)```', parsed)
-                            if match:
-                                parsed = match.group(1).strip()
+                        try:
+                            parsed = await self.chat_service.chat(messages)
+                            logger.info(f"AI time parse response: {parsed[:500] if parsed else 'empty'}")
 
-                        logger.info(f"Cleaned JSON to parse: {parsed}")
-                        time_data = json_module.loads(parsed)
-                        new_start = date_parser.parse(time_data.get("start_time")) if time_data.get("start_time") else None
-                        new_end = date_parser.parse(time_data.get("end_time")) if time_data.get("end_time") else None
+                            # Check for error response
+                            if not parsed or parsed.startswith("Error:"):
+                                logger.error(f"AI returned error or empty: {parsed}")
+                                return {"type": "text", "content": f"❌ Could not parse time. Try a simpler format like: `cal edit {event_uid} time tomorrow at 3pm`"}
 
-                        # Ensure datetimes are in local timezone
-                        # If naive, assume local time. If aware (e.g., UTC), convert to local.
-                        if new_start:
-                            if new_start.tzinfo is None:
-                                # Naive - assume it's local time, make it aware
-                                new_start = new_start.astimezone()
+                            parsed = parsed.strip()
+                            # Clean markdown code blocks
+                            if "```" in parsed:
+                                match = re.search(r'```(?:json)?\s*([\s\S]*?)```', parsed)
+                                if match:
+                                    parsed = match.group(1).strip()
                             else:
-                                # Already aware - convert to local timezone
-                                new_start = new_start.astimezone()
-                        if new_end:
-                            if new_end.tzinfo is None:
-                                new_end = new_end.astimezone()
-                            else:
-                                new_end = new_end.astimezone()
+                                # Try to extract JSON object directly
+                                json_match = re.search(r'\{[\s\S]*\}', parsed)
+                                if json_match:
+                                    parsed = json_match.group(0)
 
-                        logger.info(f"Updating event {event_uid} to start={new_start}, end={new_end}")
+                            logger.info(f"Cleaned JSON to parse: {parsed}")
+                            time_data = json_module.loads(parsed)
 
-                        for cal in calendars:
-                            if update_event_in_calendar(cal['url'], cal['username'], cal['password'], event_uid, start_time=new_start, end_time=new_end):
-                                time_str = new_start.strftime("%A, %B %d, %Y at %I:%M %p") if new_start else "updated"
-                                return {"type": "text", "content": f"✅ Rescheduled to: **{time_str}**"}
-                        return {"type": "text", "content": "❌ Failed to update event."}
-                    except Exception as e:
-                        logger.error(f"Error parsing time change: {e}", exc_info=True)
-                        return {"type": "text", "content": f"❌ Could not parse time: {str(e)[:100]}. Try: `cal edit {event_uid} time tomorrow at 3pm`"}
+                            start_str = time_data.get("start_time", "")
+                            end_str = time_data.get("end_time", "")
+
+                            # Strip Z suffix if AI added it
+                            if start_str and start_str.endswith('Z'):
+                                start_str = start_str[:-1]
+                            if end_str and end_str.endswith('Z'):
+                                end_str = end_str[:-1]
+
+                            new_start = date_parser.parse(start_str) if start_str else None
+                            new_end = date_parser.parse(end_str) if end_str else None
+                        except json.JSONDecodeError as e:
+                            logger.error(f"JSON parse error: {e}, response was: {parsed[:200] if parsed else 'empty'}")
+                            return {"type": "text", "content": f"❌ Could not parse time. Try: `cal edit {event_uid} time tomorrow at 3pm`"}
+                        except Exception as e:
+                            logger.error(f"Error in AI time parsing: {e}", exc_info=True)
+                            return {"type": "text", "content": f"❌ Could not parse time: {str(e)[:100]}. Try: `cal edit {event_uid} time tomorrow at 3pm`"}
+
+                    if not new_start:
+                        return {"type": "text", "content": f"❌ Could not parse time. Try: `cal edit {event_uid} time tomorrow at 3pm`"}
+
+                    # Ensure datetimes are in local timezone
+                    # If naive, assume local time. If aware (e.g., UTC), convert to local.
+                    if new_start:
+                        if new_start.tzinfo is None:
+                            # Naive - assume it's local time, make it aware
+                            new_start = new_start.astimezone()
+                        else:
+                            # Already aware - convert to local timezone
+                            new_start = new_start.astimezone()
+                    if new_end:
+                        if new_end.tzinfo is None:
+                            new_end = new_end.astimezone()
+                        else:
+                            new_end = new_end.astimezone()
+
+                    logger.info(f"Updating event {event_uid} to start={new_start}, end={new_end}")
+
+                    for cal in calendars:
+                        if update_event_in_calendar(cal['url'], cal['username'], cal['password'], event_uid, start_time=new_start, end_time=new_end):
+                            time_str = new_start.strftime("%A, %B %d, %Y at %I:%M %p") if new_start else "updated"
+                            end_str = new_end.strftime("%I:%M %p") if new_end else ""
+                            return {"type": "text", "content": f"✅ Rescheduled to: **{time_str}**" + (f" - {end_str}" if end_str else "")}
+                    return {"type": "text", "content": "❌ Failed to update event."}
 
                 else:
                     return {"type": "text", "content": "Usage: `cal edit <uid> <field> <value>`\n\nFields:\n- `title <new title>`\n- `location <new location>`\n- `description <new description>`\n- `time <new time>` or `move to <new time>`"}
