@@ -31,26 +31,21 @@ class MainScreen(Screen):
         # Focus switching
         Binding("tab", "focus_next_panel", "Next Panel", show=False),
         Binding("shift+tab", "focus_prev_panel", "Prev Panel", show=False),
-        # Vim-style sidebar navigation
-        Binding("j", "next_conversation", "Next", show=False),
-        Binding("k", "prev_conversation", "Prev", show=False),
-        Binding("n", "next_conversation", "Next", show=False),
-        Binding("N", "prev_conversation", "Prev", show=False),
+        # Vim-style navigation (only when not in input)
+        Binding("n", "vim_next", "Next", show=False),
+        Binding("N", "vim_prev", "Prev", show=False),
         Binding("h", "hide_sidebar", "Hide Sidebar", show=False),
         Binding("l", "show_sidebar", "Show Sidebar", show=False),
         Binding("o", "open_urls", "Open URL", show=False),
-        # Arrow keys for conversations (when sidebar focused)
-        Binding("down", "next_conversation", "Next", show=False, priority=True),
-        Binding("up", "prev_conversation", "Prev", show=False, priority=True),
         # Quick actions
         Binding("ctrl+n", "new_chat", "New Chat", show=False),
         Binding("/", "focus_input", "Search/Input", show=False),
         Binding("i", "focus_input", "Input", show=False),
-        # Scroll messages
+        # Scroll messages (Ctrl+ works globally)
         Binding("ctrl+u", "scroll_up", "Scroll Up", show=False),
         Binding("ctrl+d", "scroll_down", "Scroll Down", show=False),
-        Binding("g", "scroll_top", "Top", show=False),
-        Binding("G", "scroll_bottom", "Bottom", show=False),
+        Binding("g", "vim_scroll_top", "Top", show=False),
+        Binding("G", "vim_scroll_bottom", "Bottom", show=False),
         # Music controls
         Binding("alt+p", "music_play_pause", "Play/Pause", show=False),
         Binding("alt+f", "music_next", "Next Track", show=False),
@@ -728,6 +723,53 @@ class MainScreen(Screen):
 
         prev_idx = (current_idx - 1) % len(self.conversations)
         self._select_conversation_worker(self.conversations[prev_idx].id)
+
+    def _is_input_focused(self) -> bool:
+        """Check if input area has focus."""
+        try:
+            input_area = self.query_one("#input-area")
+            focused = self.app.focused
+            return focused is not None and (focused.is_descendant(input_area) or focused == input_area)
+        except Exception:
+            return False
+
+    def _is_sidebar_focused(self) -> bool:
+        """Check if sidebar has focus."""
+        try:
+            sidebar = self.query_one("#sidebar")
+            focused = self.app.focused
+            return focused is not None and (focused.is_descendant(sidebar) or focused == sidebar)
+        except Exception:
+            return False
+
+    def _is_chat_focused(self) -> bool:
+        """Check if chat view has focus."""
+        try:
+            chat_view = self.query_one("#chat-view")
+            focused = self.app.focused
+            return focused is not None and (focused.is_descendant(chat_view) or focused == chat_view)
+        except Exception:
+            return False
+
+    def action_vim_next(self):
+        """Vim n - next conversation (only when not in input)."""
+        if not self._is_input_focused():
+            self.action_next_conversation()
+
+    def action_vim_prev(self):
+        """Vim N - previous conversation (only when not in input)."""
+        if not self._is_input_focused():
+            self.action_prev_conversation()
+
+    def action_vim_scroll_top(self):
+        """Vim g - scroll to top (only when not in input)."""
+        if not self._is_input_focused():
+            self.action_scroll_top()
+
+    def action_vim_scroll_bottom(self):
+        """Vim G - scroll to bottom (only when not in input)."""
+        if not self._is_input_focused():
+            self.action_scroll_bottom()
 
     def action_hide_sidebar(self):
         """Hide sidebar (vim h)."""
