@@ -284,14 +284,21 @@ def extract_code_blocks(text: str) -> List[Tuple[str, str]]:
 def extract_urls(text: str) -> List[str]:
     """
     Extract all URLs from text (both markdown links and bare URLs).
+    Handles URLs that may be broken across lines.
 
     Returns:
         List of unique URLs
     """
     urls = set()
 
+    # Rejoin URLs that may have been split across lines
+    # Replace hyphen-newline with just hyphen, newline with empty for URLs
+    # This handles cases where URLs are wrapped to fit display width
+    text_normalized = re.sub(r'-\n', '-', text)  # Rejoin hyphenated URLs
+    text_normalized = re.sub(r'(https?://[^\s]*)\n([^\s]+)', r'\1\2', text_normalized)  # Rejoin broken URLs
+
     # Extract from markdown links [label](url) with proper paren balancing
-    for label, url, start, end in extract_markdown_links(text):
+    for label, url, start, end in extract_markdown_links(text_normalized):
         # Include http, https, mailto, and tel links
         if url.startswith(('http://', 'https://', 'mailto:', 'tel:')):
             urls.add(url)
@@ -299,7 +306,7 @@ def extract_urls(text: str) -> List[str]:
             urls.add('https://' + url)
 
     # Extract bare URLs (http/https) - clean up trailing punctuation
-    for match in URL_PATTERN.finditer(text):
+    for match in URL_PATTERN.finditer(text_normalized):
         url = match.group(0)
         # Remove trailing punctuation that's likely not part of URL
         url = url.rstrip('.,;:!?\'"')
@@ -310,7 +317,7 @@ def extract_urls(text: str) -> List[str]:
             urls.add(url)
 
     # Extract bare www. URLs
-    for match in re.finditer(r'\bwww\.[^\s<>\[\]"\']+', text):
+    for match in re.finditer(r'\bwww\.[^\s<>\[\]"\']+', text_normalized):
         url = match.group(0).rstrip('.,;:!?\'"')
         if not any(url in u for u in urls):  # Avoid duplicates
             urls.add('https://' + url)

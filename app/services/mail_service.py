@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 import base64
 import re
 import json
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from sqlalchemy.orm import Session
 from app.models import UserSetting
@@ -436,7 +438,24 @@ def validate_mail_server(hostname: str, port: int) -> bool:
 
 
 # Connection timeout in seconds
-MAIL_CONNECTION_TIMEOUT = 30
+MAIL_CONNECTION_TIMEOUT = 15  # Reduced from 30 to prevent long hangs
+MAIL_OPERATION_TIMEOUT = 10  # Timeout for individual IMAP operations
+
+# Thread pool for running blocking IMAP operations with timeout
+_mail_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="mail_worker")
+
+
+def run_with_timeout(func, timeout=MAIL_OPERATION_TIMEOUT, *args, **kwargs):
+    """Run a blocking function with timeout using thread pool."""
+    try:
+        future = _mail_executor.submit(func, *args, **kwargs)
+        return future.result(timeout=timeout)
+    except FuturesTimeoutError:
+        logger.warning(f"Operation {func.__name__} timed out after {timeout}s")
+        return None
+    except Exception as e:
+        logger.error(f"Operation {func.__name__} failed: {e}")
+        return None
 
 
 def connect_imap(account: MailAccount) -> Optional[imaplib.IMAP4_SSL]:
@@ -567,13 +586,24 @@ def fetch_all_accounts(
     limit_per_account: int = 10,
     unread_only: bool = False
 ) -> List[EmailMessage]:
-    """Fetch messages from all user's accounts."""
+    """Fetch messages from all user's accounts with timeout protection."""
     accounts = get_user_mail_accounts(user_id, db)
     all_messages = []
 
     for account in accounts:
-        messages = fetch_messages(account, limit=limit_per_account, unread_only=unread_only)
-        all_messages.extend(messages)
+        try:
+            # Run with timeout to prevent one slow account from blocking everything
+            def fetch_account():
+                return fetch_messages(account, limit=limit_per_account, unread_only=unread_only)
+
+            messages = run_with_timeout(fetch_account, timeout=MAIL_OPERATION_TIMEOUT)
+            if messages:
+                all_messages.extend(messages)
+            else:
+                logger.warning(f"Skipping {account.email} - fetch timed out or failed")
+        except Exception as e:
+            logger.error(f"Error fetching from {account.email}: {e}")
+            # Continue to next account instead of failing completely
 
     # Sort by date (newest first)
     all_messages.sort(key=lambda m: m.date, reverse=True)
@@ -595,10 +625,16 @@ def list_folders(
                 return []
 
             try:
-                status, folder_data = imap.list()
-                if status != "OK":
-                    logger.error(f"Failed to list folders: {status}")
+                # Wrap imap.list() with timeout protection
+                def list_imap_folders():
+                    return imap.list()
+
+                result = run_with_timeout(list_imap_folders, timeout=5)
+                if not result or result[0] != "OK":
+                    logger.error(f"Failed to list folders or timed out")
                     return []
+
+                status, folder_data = result
 
                 folders = []
                 for folder_line in folder_data:
@@ -982,10 +1018,14 @@ def archive_message(
                 # Use INBOX.Archive as the standard archive folder
                 archive_folder = "INBOX.Archive"
 
-                # Check if it exists, create if not
-                status, folders = imap.list()
+                # Check if it exists, create if not (with timeout)
+                def list_folders_sync():
+                    return imap.list()
+
+                result = run_with_timeout(list_folders_sync, timeout=5)
                 folder_exists = False
-                if status == "OK":
+                if result and result[0] == "OK":
+                    status, folders = result
                     for folder_line in folders:
                         decoded = folder_line.decode() if isinstance(folder_line, bytes) else folder_line
                         if "INBOX.Archive" in decoded or '"INBOX.Archive"' in decoded:
