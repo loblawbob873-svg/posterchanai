@@ -22,6 +22,7 @@ from app.services.document_service import extract_pdf_text, extract_document_tex
 from app.services.email_service import EmailService
 from app.services.search_service import SearchService
 from app.services.plugin_service import PluginService
+from app.services.intent_service import IntentService
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -387,6 +388,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
         storage_service = StorageService(db)
         search_service = SearchService(db)
         plugin_service = PluginService(db)
+        intent_service = IntentService(db, user=user)
 
         try:
             while True:
@@ -643,6 +645,56 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             "data": result
                         }, conn_id, conversation_id)
                     else:
+                        # Check if intent detection is enabled
+                        intent_enabled = db.query(Setting).filter(Setting.key == "intent_detection_enabled").first()
+                        intent_enabled = (intent_enabled.value if intent_enabled else "true").lower() == "true"
+
+                        if intent_enabled:
+                            # Try AI-powered intent detection first
+                            # Build context from file content/OCR for intent analysis
+                            intent_context = ""
+                            if file_content:
+                                intent_context = file_content
+                            elif image_data:
+                                # Extract OCR for intent detection
+                                ocr_for_intent = extract_image_text(image_data)
+                                if ocr_for_intent:
+                                    intent_context = ocr_for_intent
+
+                            try:
+                                intent_result = await intent_service.detect_intent(content, intent_context)
+                                if intent_result and intent_result.get("action") != "none":
+                                    logger.info(f"Intent detected: {intent_result['action']} (confidence: {intent_result.get('confidence', 0):.2f})")
+
+                                    # Execute the detected intent
+                                    action_result = await intent_service.execute_intent(intent_result)
+
+                                    if action_result:
+                                        # Check if stopped during execution
+                                        if manager.should_stop(user.id, conn_id):
+                                            logger.debug("Intent action stopped during execution")
+                                            manager.set_stop(user.id, False)
+                                            continue
+
+                                        # Save assistant response
+                                        assistant_msg = Message(
+                                            conversation_id=conversation_id,
+                                            role="assistant",
+                                            content=action_result.get("content", "")
+                                        )
+                                        db.add(assistant_msg)
+                                        db.commit()
+
+                                        # Send response
+                                        await manager.send_json(user.id, {
+                                            "type": "response",
+                                            "data": action_result
+                                        }, conn_id, conversation_id)
+                                        continue  # Skip regular chat since action was taken
+                            except Exception as intent_err:
+                                logger.debug(f"Intent detection skipped: {intent_err}")
+                                # Fall through to regular chat on any error
+
                         # Regular chat - stream response
                         # Build message history (exclude the just-added user message)
                         # Replace date placeholder in system prompt

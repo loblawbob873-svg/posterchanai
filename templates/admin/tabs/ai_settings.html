@@ -70,6 +70,26 @@
         </div>
     </fieldset>
 
+    <fieldset>
+        <legend>Intelligent Actions</legend>
+        <p class="fieldset-desc">AI-powered intent detection for natural language actions. Automatically detects when users want to add calendar events, send emails, create todos, etc. from natural language.</p>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="intent_detection_enabled">Enable Intent Detection</label>
+                <select id="intent_detection_enabled" name="intent_detection_enabled">
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                </select>
+                <small>When enabled, the AI will automatically detect and execute actions from natural language</small>
+            </div>
+            <div class="form-group">
+                <label for="intent_confidence_threshold">Confidence Threshold</label>
+                <input type="number" id="intent_confidence_threshold" name="intent_confidence_threshold" value="0.7" min="0" max="1" step="0.05">
+                <small>Minimum confidence (0.0-1.0) required to execute detected actions. Higher = fewer false positives</small>
+            </div>
+        </div>
+    </fieldset>
+
     <fieldset id="ollama-settings">
         <legend>Ollama Connection</legend>
         <div class="form-group">

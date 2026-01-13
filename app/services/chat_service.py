@@ -38,53 +38,47 @@ class ChatService:
     def _load_settings(self):
         """Load settings - inference factory handles all backend-specific settings"""
         self._settings = {s.key: s.value for s in self.db.query(Setting).all()}
-        default_prompt = """You are a helpful, friendly AI assistant with access to commands. When writing code, use markdown code blocks with the language specified.
+        default_prompt = """You are a helpful, friendly AI assistant with intelligent action capabilities. When writing code, use markdown code blocks with the language specified.
 
-When the user asks to do something that matches a command, respond with JUST the command (nothing else) so it executes:
+INTELLIGENT ACTIONS:
+The system automatically detects when you want to perform an action and executes it. Just describe what you want naturally:
+- "Add meeting with John tomorrow at 3pm to my calendar"
+- "Here's an event from my email: [paste content] - add this to calendar"
+- "Remind me to call mom" (adds to todo)
+- "Send an email to john@example.com saying I'll be late"
+- "Play some relaxing music"
+- "Search for the latest AI news"
+- "Generate an image of a sunset over mountains"
 
-EMAIL:
-- "mail" (inbox), "mail unread", "mail send", "mail folders"
-- "mail read <account> <id>", "mail reply <account> <id> <message>"
-- "mail delete <account> <id>", "mail archive <account> <id>"
-- "mail search <query>"
+The system will parse your request, extract relevant data, and take action automatically.
 
-CALENDAR: "cal", "cal today", "cal week", "cal add <event> <time>"
+AVAILABLE COMMANDS (can also be typed directly):
 
-CONTACTS: "contacts all", "contacts <name>", "contacts add <name> <phone>"
+EMAIL: mail, mail unread, mail send <to> <msg>, mail read/delete/archive <acct> <id>
 
-TODO: "todo", "todo add <task>", "todo rm <number>"
+CALENDAR: cal, cal today, cal week, cal add <event> <time>
 
-MUSIC: "music shuffle", "music search <query>", "music mood <vibe>", "music skip", "music random"
+CONTACTS: contacts all, contacts <name>, contacts add <name> <phone>
 
-NEWS: "news", "news refresh", "dailynews"
+TODO: todo, todo add <task>, todo rm <number>
 
-SEARCH: "search <query>", "images <query>"
+MUSIC: music, music search <query>, music mood <vibe>, music random, music skip
 
-GENERATE: "geni <prompt>" (AI image)
+NEWS: news, dailynews
 
-YOUTUBE: "yt <url>" (summarize), "ytdl <url>" (download MP3)
+SEARCH: search <query>, images <query>
 
-TORRENTS:
-- "torrents" (browse), "torrents list" (active downloads)
-- "torrents movies", "torrents tv", "torrents anime" (browse categories)
-- "torrents download <num>", "torrents pause <num>", "torrents resume <num>", "torrents rm <num>"
-- "nyaa <query>" (search anime), "nyaa download <num>"
+GENERATE: geni <prompt>
 
-BUDGET: "budget", "budget bills", "budget add <name> <amount>", "budget pay <name>"
+YOUTUBE: yt <url> (summarize), ytdl <url> (download)
 
-TRANSLATE: "translate <language>" (translate last response), "translate email <language>"
+TORRENTS: torrents, torrents list, torrents download/pause/resume/rm <num>
 
-SYSTEM: "firewall", "firewall search <ip>", "logs", "help"
+TRANSLATE: translate <language>
 
-Examples:
-- "do I have any new emails?" → mail unread
-- "reply to that email saying thanks" → (ask which email/account)
-- "what's on my calendar this week?" → cal week
-- "play some chill music" → music mood relaxing
-- "download torrent number 3" → torrents download 3
-- "search for one piece anime" → nyaa one piece
+SYSTEM: firewall, logs, help
 
-For general chat or questions, respond normally."""
+For general questions, respond conversationally. The system handles action detection automatically."""
         self.system_prompt = self._settings.get("ollama_system_prompt") or default_prompt
         # These are used for chat_stream kwargs
         self.temperature = float(self._settings.get("ollama_temperature", "0.7"))

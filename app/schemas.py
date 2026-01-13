@@ -208,6 +208,9 @@ class SettingsResponse(BaseModel):
     mcp_host: str = "0.0.0.0"
     mcp_port: str = "8808"
     mcp_warmup: str = "true"
+    # Intelligent Intent Detection settings
+    intent_detection_enabled: str = "true"  # Enable AI-powered intent detection for natural language actions
+    intent_confidence_threshold: str = "0.7"  # Minimum confidence to execute detected actions (0.0-1.0)
     # Miniflux news plugin settings
     miniflux_enabled: str = "false"
     miniflux_url: str = ""
