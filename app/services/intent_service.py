@@ -11,6 +11,7 @@ The service will:
 3. Execute the action
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -173,6 +174,16 @@ class IntentService:
         if self._is_simple_greeting(user_message):
             return None
 
+        # Skip intent detection for very short messages (likely just chat)
+        if len(user_message.strip()) < 10:
+            return None
+
+        # Limit context size to prevent slow processing
+        MAX_CONTEXT_CHARS = 4000
+        if context and len(context) > MAX_CONTEXT_CHARS:
+            # Truncate context but keep beginning (usually has key info like dates)
+            context = context[:MAX_CONTEXT_CHARS] + "\n...[truncated]..."
+
         # Build the intent detection prompt
         today = datetime.now()
         detection_prompt = f"""Analyze this user message and determine if they want to perform a specific action.
@@ -210,7 +221,12 @@ RESPOND WITH JSON ONLY:
         ]
 
         try:
-            response = await self.chat_service.chat(messages)
+            # Use timeout to prevent hanging on slow LLM responses
+            INTENT_TIMEOUT = 30  # seconds
+            response = await asyncio.wait_for(
+                self.chat_service.chat(messages),
+                timeout=INTENT_TIMEOUT
+            )
             result = self._parse_json_response(response)
 
             if not result:
@@ -258,6 +274,9 @@ RESPOND WITH JSON ONLY:
                 "reasoning": result.get("reasoning", "")
             }
 
+        except asyncio.TimeoutError:
+            logger.warning(f"Intent detection timed out after {INTENT_TIMEOUT}s")
+            return None
         except Exception as e:
             logger.error(f"Intent detection failed: {e}")
             return None
