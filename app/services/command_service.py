@@ -1239,7 +1239,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             async def fetch_single_source(source):
                 try:
                     # Add timeout per source to prevent hanging
-                    async with asyncio.timeout(20):  # 20 second timeout per source
+                    async with asyncio.timeout(60):  # 60 second timeout per source (fetch + AI summary)
                         markdown = await fetch_news_from_source(source["url"], source["name"], self.db)
                         return self._add_copy_buttons_to_news(markdown)
                 except asyncio.TimeoutError:

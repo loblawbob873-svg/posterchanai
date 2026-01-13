@@ -31,7 +31,7 @@ async def fetch_headlines_from_url(url: str) -> dict:
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
 
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         try:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
