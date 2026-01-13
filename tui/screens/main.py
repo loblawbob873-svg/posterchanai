@@ -334,7 +334,6 @@ class MainScreen(Screen):
         """Handle non-streaming response."""
         self.is_streaming = False
         chat_view = self.query_one("#chat-view", ChatView)
-        chat_view.stop_streaming()
 
         msg_type = data.get("type", "text")
         content = data.get("content", "")
@@ -343,37 +342,30 @@ class MainScreen(Screen):
         import logging
         logging.getLogger("tui").info(f"Response type={msg_type}, content_len={len(content)}")
 
-        # Defer the expensive message rendering to not block the event loop
-        def add_msg():
-            if msg_type == "text":
-                chat_view.add_message("assistant", content)
-            elif msg_type == "search":
-                chat_view.add_message("assistant", content)
-            elif msg_type == "images":
-                chat_view.add_message("assistant", content)
-            elif msg_type == "generated_image":
-                # Get image URL if available
-                image_data = data.get("image", "")
-                prompt = data.get("prompt", "")
-                if image_data:
-                    chat_view.add_message("assistant", f"{content}\n\n**Image generated!**\nPrompt: {prompt}")
-                    self.notify("Image generated! Opening in browser...", severity="information")
-                    # Open image in browser
-                    self._open_generated_image(image_data)
-                else:
-                    chat_view.add_message("assistant", f"{content}\n\n[Image generation completed]")
+        # Build final content based on type
+        final_content = content
+        if msg_type == "generated_image":
+            image_data = data.get("image", "")
+            prompt = data.get("prompt", "")
+            if image_data:
+                final_content = f"{content}\n\n**Image generated!**\nPrompt: {prompt}"
+                self.notify("Image generated! Opening in browser...", severity="information")
+                self._open_generated_image(image_data)
             else:
-                chat_view.add_message("assistant", content)
+                final_content = f"{content}\n\n[Image generation completed]"
 
-        # Use call_later to yield control back to event loop before heavy rendering
-        self.call_later(add_msg)
+        # Update the existing streaming message instead of adding a new one
+        def finish():
+            chat_view.finish_streaming(final_content)
+
+        self.call_later(finish)
 
     def handle_error(self, error: str):
         """Handle WebSocket error."""
         self.is_streaming = False
         chat_view = self.query_one("#chat-view", ChatView)
-        chat_view.stop_streaming()
-        chat_view.add_message("system", f"Error: {error}")
+        # Update streaming message with error instead of adding new message
+        chat_view.finish_streaming(f"❌ Error: {error}")
 
         # If conversation not found, reload the conversation list
         if "Conversation not found" in error:
@@ -401,12 +393,13 @@ class MainScreen(Screen):
         # Stop streaming state first
         self.is_streaming = False
         chat_view = self.query_one("#chat-view", ChatView)
-        chat_view.stop_streaming()
 
-        # Display the track list content if present
+        # Display the track list content by updating streaming message
         content = data.get("content", "")
         if content:
-            self.call_later(lambda: chat_view.add_message("assistant", content))
+            self.call_later(lambda: chat_view.finish_streaming(content))
+        else:
+            chat_view.stop_streaming()
 
         # Show music player and load playlist
         self.music_visible = True
