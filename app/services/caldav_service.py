@@ -16,6 +16,7 @@ import vobject
 import requests
 from icalendar import Calendar, Event
 from sqlalchemy.orm import Session
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from app.database import SessionLocal
 from app.models import User, UserSetting
@@ -23,7 +24,24 @@ from app.models import User, UserSetting
 logger = logging.getLogger(__name__)
 
 # Timeout for CalDAV operations (in seconds)
-CALDAV_TIMEOUT = 30
+CALDAV_TIMEOUT = 15  # Reduced from 30 to prevent long hangs
+CALDAV_OPERATION_TIMEOUT = 10  # Timeout for individual operations
+
+# Thread pool for running blocking CalDAV operations with timeout
+_caldav_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="caldav_worker")
+
+
+def run_with_timeout(func, timeout=CALDAV_OPERATION_TIMEOUT, *args, **kwargs):
+    """Run a blocking function with timeout using thread pool."""
+    try:
+        future = _caldav_executor.submit(func, *args, **kwargs)
+        return future.result(timeout=timeout)
+    except FuturesTimeoutError:
+        logger.warning(f"CalDAV operation {func.__name__} timed out after {timeout}s")
+        return None
+    except Exception as e:
+        logger.error(f"CalDAV operation {func.__name__} failed: {e}")
+        return None
 
 
 class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
@@ -263,7 +281,7 @@ def get_all_user_events(
     end_date: datetime,
     db: Session = None
 ) -> List[CalendarEvent]:
-    """Get events from all user's calendars for a date range."""
+    """Get events from all user's calendars for a date range with timeout protection."""
     calendars = get_user_calendars(user_id, db)
     all_events = []
 
@@ -274,8 +292,19 @@ def get_all_user_events(
         name = cal_config.get('name', 'Calendar')
 
         if url and username:
-            events = get_events_for_date_range(url, username, password, start_date, end_date, name)
-            all_events.extend(events)
+            try:
+                # Run with timeout to prevent one slow calendar from blocking everything
+                def fetch_calendar():
+                    return get_events_for_date_range(url, username, password, start_date, end_date, name)
+
+                events = run_with_timeout(fetch_calendar, timeout=CALDAV_OPERATION_TIMEOUT)
+                if events:
+                    all_events.extend(events)
+                else:
+                    logger.warning(f"Skipping calendar {name} - fetch timed out or failed")
+            except Exception as e:
+                logger.error(f"Error fetching from calendar {name}: {e}")
+                # Continue to next calendar instead of failing completely
 
     # Sort by start time
     all_events.sort(key=lambda e: e.start)
@@ -710,7 +739,7 @@ def search_contacts(
 
 
 def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Contact]:
-    """Search contacts using user's CardDAV configuration."""
+    """Search contacts using user's CardDAV configuration with timeout protection."""
     config = get_user_contacts_config(user_id, db)
     if not config:
         return []
@@ -722,7 +751,16 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
     if not url or not username:
         return []
 
-    return search_contacts(url, username, password, query)
+    try:
+        # Run with timeout to prevent hanging on slow CardDAV servers
+        def fetch_contacts():
+            return search_contacts(url, username, password, query)
+
+        contacts = run_with_timeout(fetch_contacts, timeout=CALDAV_OPERATION_TIMEOUT)
+        return contacts if contacts else []
+    except Exception as e:
+        logger.error(f"Error fetching contacts: {e}")
+        return []
 
 
 def add_contact(
@@ -1005,7 +1043,7 @@ def get_todos_from_calendar(
 
 
 def get_all_user_todos(user_id: int, db: Session = None) -> List[TodoItem]:
-    """Get todos from all user's calendars."""
+    """Get todos from all user's calendars with timeout protection."""
     calendars = get_user_calendars(user_id, db)
     all_todos = []
 
@@ -1016,8 +1054,19 @@ def get_all_user_todos(user_id: int, db: Session = None) -> List[TodoItem]:
         name = cal_config.get('name', 'Calendar')
 
         if url and username:
-            todos = get_todos_from_calendar(url, username, password, name)
-            all_todos.extend(todos)
+            try:
+                # Run with timeout to prevent one slow calendar from blocking everything
+                def fetch_todos():
+                    return get_todos_from_calendar(url, username, password, name)
+
+                todos = run_with_timeout(fetch_todos, timeout=CALDAV_OPERATION_TIMEOUT)
+                if todos:
+                    all_todos.extend(todos)
+                else:
+                    logger.warning(f"Skipping todos from calendar {name} - fetch timed out or failed")
+            except Exception as e:
+                logger.error(f"Error fetching todos from calendar {name}: {e}")
+                # Continue to next calendar instead of failing completely
 
     # Sort by priority (lower number = higher priority), then by due date
     all_todos.sort(key=lambda t: (t.priority or 99, t.due or datetime.max))

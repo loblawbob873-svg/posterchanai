@@ -1126,8 +1126,8 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             pass  # Same as default, just fetch
 
         try:
-            # Fetch unread entries
-            entries = await miniflux.get_unread_entries(limit=20)
+            # Fetch unread entries - limit to 10 for faster response
+            entries = await miniflux.get_unread_entries(limit=10)
 
             if not entries:
                 return {"type": "text", "content": "No unread articles in Miniflux."}
@@ -1136,7 +1136,8 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             summaries = []
             entry_ids = []
 
-            for entry in entries:
+            # Limit to 5 summaries to prevent hanging on too many articles
+            for entry in entries[:5]:
                 entry_id = entry.get("id")
                 title = entry.get("title", "Untitled")
                 url = entry.get("url", "")
@@ -1179,6 +1180,10 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             timestamp = datetime.now().strftime("%B %d, %Y %H:%M")
             result = f"## News Update - {timestamp}\n\n" + "\n\n---\n\n".join(summaries)
             result += f"\n\n---\n*Marked {len(entry_ids)} articles as read*"
+
+            # Note if there are more articles available
+            if len(entries) > 5:
+                result += f"\n\n_({len(entries) - 5} more articles available - run `news` again to see more)_"
 
             return {"type": "text", "content": result}
 
@@ -1228,18 +1233,25 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             else:
                 sources = all_sources
 
-            # Fetch news from sources concurrently
+            # Fetch news from sources concurrently with timeout
             import asyncio
 
             async def fetch_single_source(source):
                 try:
-                    markdown = await fetch_news_from_source(source["url"], source["name"], self.db)
-                    return self._add_copy_buttons_to_news(markdown)
+                    # Add timeout per source to prevent hanging
+                    async with asyncio.timeout(20):  # 20 second timeout per source
+                        markdown = await fetch_news_from_source(source["url"], source["name"], self.db)
+                        return self._add_copy_buttons_to_news(markdown)
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout fetching news from {source['name']}")
+                    return f"**{source['name']}:** Timeout fetching headlines"
                 except Exception as e:
                     logger.error(f"Error fetching news from {source['name']}: {e}")
                     return f"**{source['name']}:** Error fetching headlines"
 
-            results = await asyncio.gather(*[fetch_single_source(s) for s in sources])
+            results = await asyncio.gather(*[fetch_single_source(s) for s in sources], return_exceptions=True)
+            # Filter out any exception results
+            results = [r if not isinstance(r, Exception) else f"Error: {str(r)}" for r in results]
 
             # Format response
             today = datetime.now().strftime("%B %d, %Y %H:%M")
