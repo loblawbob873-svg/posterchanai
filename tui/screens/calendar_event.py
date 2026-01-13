@@ -163,7 +163,7 @@ class CalendarEventScreen(ModalScreen):
                 yield Static("Repeat", classes="form-label")
                 yield Input(
                     value=self.event_data.get('recurrence', ''),
-                    placeholder="daily, weekly Mon Wed Fri, monthly",
+                    placeholder="daily | weekly | weekly Mon Wed | monthly",
                     id="event-recurrence-input",
                     classes="form-input"
                 )
