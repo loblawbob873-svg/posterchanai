@@ -12,59 +12,70 @@ from textual.binding import Binding
 HELP_TEXT = """
 # Posterchanai TUI Help
 
-## Keyboard Shortcuts
+## Keyboard Navigation
 
+### Window Focus
 | Key | Action |
 |-----|--------|
-| `Ctrl+N` | New conversation |
-| `Ctrl+B` | Toggle sidebar |
-| `Ctrl+M` | Toggle music player |
-| `Ctrl+S` | Settings |
-| `Ctrl+H` | Help |
-| `Ctrl+Q` | Quit |
-| `Tab` | Autocomplete command |
-| `Escape` | Stop AI generation |
-| `Up/Down` | Command history |
+| `Tab` | Cycle focus: Input → Sidebar → Chat → Input |
+| `Shift+Tab` | Cycle focus backwards |
 
-## Vim Keybindings
-
-### Navigation
+### Vim Navigation (within focused window)
 | Key | Action |
 |-----|--------|
-| `j` | Scroll down |
-| `k` | Scroll up |
+| `j` | Move down / scroll down |
+| `k` | Move up / scroll up |
+| `l` | Select / Enter (in sidebar) |
+| `h` | (reserved for future use) |
+| `g` | Scroll to top (in chat) |
+| `G` | Scroll to bottom (in chat) |
+
+### Sidebar (when focused)
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Next conversation |
+| `k` / `↑` | Previous conversation |
+| `l` / `Enter` | Select conversation |
+| `d` / `x` | Delete selected |
+| `[` | Hide sidebar |
+| `]` | Show sidebar |
+
+### Chat View (when focused)
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Scroll down |
+| `k` / `↑` | Scroll up |
 | `g` | Scroll to top |
 | `G` | Scroll to bottom |
 | `Ctrl+D` | Page down |
 | `Ctrl+U` | Page up |
+| `o` | Open URLs in browser |
 
-### Sidebar
+### Input (when focused)
 | Key | Action |
 |-----|--------|
-| `n` | Next conversation |
-| `N` | Previous conversation |
-| `h` | Hide sidebar |
-| `l` | Show sidebar |
-| `d` / `x` | Delete selected conversation |
+| `↑` / `↓` | Command history |
+| `Tab` | Autocomplete command |
+| `Escape` | Stop AI generation |
 
-### Input
+### Quick Actions
 | Key | Action |
 |-----|--------|
 | `i` | Focus input (insert mode) |
-| `/` | Focus input with `/` prefix (command mode) |
-| `Esc` | Exit input / stop generation |
-
-### Links
-| Key | Action |
-|-----|--------|
-| `o` | Open URLs from recent messages in browser |
+| `/` | Focus input (command mode) |
+| `Ctrl+N` | New conversation |
+| `Ctrl+B` | Toggle sidebar |
+| `Ctrl+S` | Settings |
+| `Ctrl+H` | Help |
+| `Ctrl+Q` | Quit |
 
 ### Music Controls
 | Key | Action |
 |-----|--------|
 | `Alt+P` | Play/Pause |
-| `Alt+F` | Skip forward (next track) |
-| `Alt+R` | Skip back (previous track) |
+| `Alt+F` | Next track |
+| `Alt+R` | Previous track |
+| `Alt+M` | Minimize player |
 
 ## Commands
 

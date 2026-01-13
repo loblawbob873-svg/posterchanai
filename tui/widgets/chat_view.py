@@ -19,10 +19,14 @@ class ChatView(Widget):
     can_focus = True
 
     BINDINGS = [
+        # Vim-style: j=down, k=up, h/l for future link navigation
+        Binding("j", "scroll_down", "Scroll Down", show=False),
+        Binding("k", "scroll_up", "Scroll Up", show=False),
+        Binding("g", "scroll_home", "Top", show=False),
+        Binding("G", "scroll_end", "Bottom", show=False),
+        # Arrow keys as alternative
         Binding("up", "scroll_up", "Scroll Up", show=False),
         Binding("down", "scroll_down", "Scroll Down", show=False),
-        Binding("k", "scroll_up", "Scroll Up", show=False),
-        Binding("j", "scroll_down", "Scroll Down", show=False),
         Binding("pageup", "page_up", "Page Up", show=False),
         Binding("pagedown", "page_down", "Page Down", show=False),
         Binding("home", "scroll_home", "Home", show=False),
