@@ -1276,6 +1276,80 @@ Toast.-error {
     background: $orange;
 }
 
+/* ═══════════ MUSIC LIST - INLINE BUTTONS ═══════════ */
+.music-header-row {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    layout: horizontal;
+    align: left middle;
+}
+
+.music-row {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0;
+    layout: horizontal;
+    align: left middle;
+}
+
+.music-text {
+    width: 1fr;
+    padding: 0 1;
+    color: $text;
+    content-align: left middle;
+}
+
+.music-btn {
+    width: auto;
+    min-width: 10;
+    height: 1;
+    padding: 0 1;
+    margin: 0 1 0 0;
+    background: $purple;
+    color: $background;
+    border: none;
+    text-style: bold;
+}
+
+.music-btn:hover {
+    background: $cyan;
+}
+
+.music-btn-play {
+    width: 3;
+    min-width: 3;
+    height: 1;
+    padding: 0;
+    margin: 0 1 0 0;
+    background: $green;
+    color: $background;
+    border: none;
+    text-style: bold;
+}
+
+.music-btn-play:hover {
+    background: $cyan;
+}
+
+.music-btn-queue {
+    width: 4;
+    min-width: 4;
+    height: 1;
+    padding: 0;
+    margin: 0;
+    background: $orange;
+    color: $background;
+    border: none;
+    text-style: bold;
+}
+
+.music-btn-queue:hover {
+    background: $cyan;
+}
+
 /* ═══════════ ATTACH BUTTON - FILE UPLOAD ═══════════ */
 .attach-btn {
     width: 5;

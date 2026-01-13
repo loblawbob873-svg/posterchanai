@@ -126,6 +126,13 @@ class MessageWidget(Widget):
         has_numbered_items = bool(re.search(r'\*\*\d+\.\*\*', content))
         return has_todo_buttons and (has_priority_icons or has_numbered_items)
 
+    def _is_music_list(self, content: str) -> bool:
+        """Check if content is a music track list with play buttons."""
+        # Music list format: **1.** [▶](cmd:music play 1) [+Q](cmd:music queue add 1) Track - *Artist*
+        has_music_buttons = "cmd:music play" in content or "cmd:music queue" in content
+        has_numbered_items = bool(re.search(r'\*\*\d+\.\*\*', content))
+        return has_music_buttons and has_numbered_items
+
     def _parse_torrent_entries(self, content: str) -> list[dict]:
         """Parse torrent list content into entries with inline buttons."""
         entries = []
@@ -196,6 +203,9 @@ class MessageWidget(Widget):
                 return
             elif self._is_todo_list(content):
                 self._render_todo_list(content, content_container)
+                return
+            elif self._is_music_list(content):
+                self._render_music_list(content, content_container)
                 return
         except Exception as e:
             import logging
@@ -713,6 +723,100 @@ class MessageWidget(Widget):
                 done_btn = Button("✓", classes="todo-btn")
                 done_btn.command = entry['command']
                 row.mount(done_btn)
+
+    def _render_music_list(self, content: str, container: Vertical):
+        """Render music track list with inline play/queue buttons."""
+        import logging
+        logger = logging.getLogger("tui")
+
+        lines = content.split("\n")
+        header_lines = []
+        entries = []
+
+        # Pattern for track line: **1.** [▶](cmd:music play 1) [+Q](cmd:music queue add 1) Track Title - *Artist*
+        track_pattern = re.compile(r'^\*\*(\d+)\.\*\*\s*\[▶\]\(cmd:(music play \d+)\)\s*\[\+Q\]\(cmd:(music queue add \d+)\)\s*(.+?)(?:\s*-\s*\*(.+?)\*)?$')
+        # Pattern for header buttons: [🔀 Shuffle All](cmd:music shuffle) [📥 Queue All](cmd:music queueall)
+        shuffle_pattern = re.compile(r'\[🔀 Shuffle All\]\(cmd:(music shuffle)\)')
+        queue_all_pattern = re.compile(r'\[📥 Queue All\]\(cmd:(music queueall)\)')
+
+        shuffle_cmd = None
+        queue_all_cmd = None
+
+        for line in lines:
+            # Check for header with title
+            if line.startswith("## ◈"):
+                header_lines.append(line)
+                continue
+
+            # Check for shuffle/queue all buttons
+            shuffle_match = shuffle_pattern.search(line)
+            if shuffle_match:
+                shuffle_cmd = shuffle_match.group(1)
+            queue_all_match = queue_all_pattern.search(line)
+            if queue_all_match:
+                queue_all_cmd = queue_all_match.group(1)
+
+            # If line has shuffle or queue all, it's a header line
+            if shuffle_match or queue_all_match:
+                continue
+
+            # Check for track entry
+            track_match = track_pattern.match(line.strip())
+            if track_match:
+                entries.append({
+                    "num": track_match.group(1),
+                    "play_cmd": track_match.group(2),
+                    "queue_cmd": track_match.group(3),
+                    "title": track_match.group(4).strip(),
+                    "artist": track_match.group(5) if track_match.group(5) else "",
+                })
+
+        logger.info(f"Parsed {len(entries)} music entries, shuffle={shuffle_cmd}, queue_all={queue_all_cmd}")
+
+        # Render header
+        header_text = header_lines[0] if header_lines else "## ◈ MUSIC ◈"
+        # Strip markdown for display
+        header_clean = header_text.replace("## ◈ ", "").replace(" ◈", "").strip()
+        container.mount(Static(f"[bold cyan]🎵 {header_clean}[/bold cyan]", classes="message-body"))
+
+        # Render header buttons (shuffle all, queue all)
+        if shuffle_cmd or queue_all_cmd:
+            header_row = Horizontal(classes="music-header-row")
+            container.mount(header_row)
+            if shuffle_cmd:
+                shuffle_btn = Button("🔀 Shuffle", classes="music-btn")
+                shuffle_btn.command = shuffle_cmd
+                header_row.mount(shuffle_btn)
+            if queue_all_cmd:
+                queue_all_btn = Button("📥 Queue All", classes="music-btn")
+                queue_all_btn.command = queue_all_cmd
+                header_row.mount(queue_all_btn)
+
+        if not entries:
+            container.mount(Static("No tracks found.", classes="message-body"))
+            return
+
+        # Render track entries
+        for entry in entries:
+            row = Horizontal(classes="music-row")
+
+            # Build track info
+            artist_str = f" - {entry['artist']}" if entry.get('artist') else ""
+            info = f"{entry['num']}. {escape_rich_brackets(entry['title'])}{artist_str}"
+
+            row_text = Static(info, classes="music-text")
+            container.mount(row)
+            row.mount(row_text)
+
+            # Add Play button
+            play_btn = Button("▶", classes="music-btn-play")
+            play_btn.command = entry['play_cmd']
+            row.mount(play_btn)
+
+            # Add Queue button
+            queue_btn = Button("+Q", classes="music-btn-queue")
+            queue_btn.command = entry['queue_cmd']
+            row.mount(queue_btn)
 
     def _render_buttons(self):
         """Render cmd: link buttons for essential actions.
