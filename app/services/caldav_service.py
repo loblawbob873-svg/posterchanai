@@ -161,10 +161,7 @@ def to_naive_local(dt) -> datetime:
         # Convert to local time and strip timezone
         local_dt = dt.astimezone().replace(tzinfo=None)
         return local_dt
-    # Naive datetime - check if it looks like UTC (from iCalendar)
-    # Many CalDAV servers return UTC times without explicit tzinfo
-    # If the datetime string ended with 'Z', it's UTC
-    logger.warning(f"to_naive_local: naive datetime {dt} - assuming local time")
+    # Naive datetime - assume local time
     return dt
 
 
