@@ -2716,13 +2716,9 @@ Return ONLY valid JSON, no other text."""},
             if not subcommand:
                 import random as rand_module
 
-                # Check for cached tracks first (much faster)
-                cached = _music_cache.get(self.user.id, {})
-                all_tracks = cached.get('tracks', [])
-
-                # If no cache, do a quick shallow scan
-                if not all_tracks:
-                    all_tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=1000)
+                # Always do a fresh scan for shuffle to avoid using search results
+                # This ensures shuffle plays from the full library, not just last search
+                all_tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=1000)
 
                 if not all_tracks:
                     return {"type": "text", "content": "No tracks found. Try `music browse` to explore your library first."}
@@ -2918,15 +2914,8 @@ Return ONLY valid JSON, no other text."""},
 
             # Random/shuffle play
             elif subcommand == "random":
-                # Get all tracks from current browse location or search for all
-                cache = _music_cache.get(self.user.id, {})
-                tracks = cache.get('tracks', [])
-
-                if not tracks:
-                    # No cached tracks, scan library for tracks
-                    tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=1000)
-                    if tracks:
-                        _music_cache[self.user.id] = {'tracks': tracks, 'folders': [], 'current_path': '/'}
+                # Always scan fresh to avoid playing from search results
+                tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=1000)
 
                 if not tracks:
                     return {"type": "text", "content": "No tracks available for random play. Try `music browse` first."}
@@ -2950,13 +2939,8 @@ Return ONLY valid JSON, no other text."""},
             elif subcommand == "shuffle":
                 import random as rand_module
 
-                # Check for cached tracks first (from search/browse)
-                cached = _music_cache.get(self.user.id, {})
-                all_tracks = cached.get('tracks', [])
-
-                # If no cached tracks, fetch all from library
-                if not all_tracks:
-                    all_tracks = search_tracks(config['url'], config['username'], config['password'], "", max_results=500)
+                # Always scan fresh to avoid shuffling just search results
+                all_tracks = scan_all_tracks(config['url'], config['username'], config['password'], "/", max_tracks=1000)
 
                 if not all_tracks:
                     return {"type": "text", "content": "No tracks found. Browse or search music first."}
@@ -2968,8 +2952,8 @@ Return ONLY valid JSON, no other text."""},
                 # Update cache with shuffled tracks
                 _music_cache[self.user.id] = {
                     'tracks': all_tracks,
-                    'folders': cached.get('folders', []),
-                    'current_path': cached.get('current_path', '/')
+                    'folders': [],
+                    'current_path': '/'
                 }
 
                 # Build playlist data
