@@ -178,6 +178,11 @@ class IntentService:
         if len(user_message.strip()) < 10:
             return None
 
+        # Only run intent detection if message contains action keywords
+        # This prevents slow LLM calls on regular chat messages
+        if not self._has_action_keywords(user_message):
+            return None
+
         # Limit context size to prevent slow processing
         MAX_CONTEXT_CHARS = 4000
         if context and len(context) > MAX_CONTEXT_CHARS:
@@ -458,6 +463,58 @@ RESPOND WITH JSON ONLY:
             "how are you", "how's it going", "hows it going"
         }
         return message.lower().strip() in greetings
+
+    def _has_action_keywords(self, message: str) -> bool:
+        """Check if message contains keywords that suggest an action request."""
+        message_lower = message.lower()
+
+        # Action keywords that suggest user wants to DO something
+        action_keywords = {
+            # Calendar
+            "add to calendar", "add event", "schedule", "create event",
+            "add to my calendar", "put on calendar", "calendar event",
+            # Contacts
+            "save contact", "add contact", "save number", "save phone",
+            # Todo
+            "remind me", "add todo", "add task", "add to list", "don't forget",
+            "remember to", "need to", "have to",
+            # Email
+            "send email", "send mail", "email to", "mail to", "check email",
+            "check mail", "my emails", "my mail",
+            # Music
+            "play music", "play song", "play something", "play some",
+            # Search
+            "search for", "look up", "google", "find info",
+            # Image
+            "generate image", "create image", "make image", "draw", "generate picture",
+            # YouTube
+            "summarize video", "summarize this video", "youtube",
+            # Translation
+            "translate to", "translate this", "say that in",
+            # News
+            "check news", "what's the news", "news about",
+        }
+
+        for keyword in action_keywords:
+            if keyword in message_lower:
+                return True
+
+        # Also check for patterns like "add X to calendar" or "email X saying"
+        import re
+        action_patterns = [
+            r'\badd\b.*\b(calendar|todo|contact|task|list)\b',
+            r'\b(create|make|schedule)\b.*\b(event|meeting|appointment)\b',
+            r'\b(send|email|mail)\b.*\b(to|saying)\b',
+            r'\bplay\b.*\b(music|song|track)\b',
+            r'\bsearch\b',
+            r'\bgenerate?\b.*\b(image|picture|art)\b',
+        ]
+
+        for pattern in action_patterns:
+            if re.search(pattern, message_lower):
+                return True
+
+        return False
 
     def _build_clarification_message(self, intent_result: dict) -> str:
         """Build a message asking for missing information."""
