@@ -239,6 +239,7 @@ def get_events_for_date_range(
                                 end_val = end_val.replace(tzinfo=tz.utc)
                             end_dt = to_naive_local(end_val)
 
+                        logger.info(f"EVENT STORE: start_dt={start_dt}, hour={start_dt.hour}, end_dt={end_dt}")
                         events.append(CalendarEvent(
                             uid=str(vevent.uid.value) if hasattr(vevent, 'uid') else "",
                             summary=str(vevent.summary.value) if hasattr(vevent, 'summary') else "No Title",
@@ -834,6 +835,7 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
         if cyberpunk:
             # Cyberpunk style event line with time in brackets
             time_bracket = event.start.strftime("%H:%M")
+            logger.info(f"DISPLAY: event={event.summary}, start={event.start}, hour={event.start.hour}, time_bracket={time_bracket}")
             line = f"  ⏰ `{time_bracket}` **{event.summary}**{action_links}"
         else:
             line = f"- {time_str}: {event.summary}{action_links}"
