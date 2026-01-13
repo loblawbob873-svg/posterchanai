@@ -179,6 +179,17 @@ class CommandService:
             bill_name = message[9:].strip()  # Extract bill name preserving case
             return "budget", f"pay {bill_name}"
 
+        # Check for "download song/video <url>" patterns
+        if lower.startswith("download song "):
+            url = message[14:].strip()
+            return "ytdl", url
+        if lower.startswith("download video "):
+            url = message[15:].strip()
+            return "ytdl", url
+        if lower.startswith("download ") and ("youtube" in lower or "youtu.be" in lower):
+            url = message[9:].strip()
+            return "ytdl", url
+
         # Check canonical commands
         for cmd in self.COMMANDS:
             if lower.startswith(f"{cmd} "):
@@ -1328,6 +1339,12 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
     async def check_youtube_url(self, message: str) -> Optional[dict]:
         """Check if message contains a YouTube URL and summarize it"""
         if not is_youtube_url(message):
+            return None
+
+        # Don't auto-summarize if user wants to download
+        lower = message.lower()
+        download_keywords = ["download", "ytdl", "mp3", "save", "get song", "get video", "download song"]
+        if any(kw in lower for kw in download_keywords):
             return None
 
         urls = extract_youtube_urls(message)
