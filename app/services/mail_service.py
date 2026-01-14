@@ -1440,9 +1440,12 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
     archive_cmd = f"mail archive {account_short} {msg_id}"
     delete_cmd = f"mail delete {account_short} {msg_id}"
     translate_cmd = f"mail translate {account_short} {msg_id}"
+    extract_event_cmd = f"mail extract-event {account_short} {msg_id}"
+    extract_bill_cmd = f"mail extract-bill {account_short} {msg_id}"
 
-    # Split buttons into two rows to prevent cutoff on narrow terminals
+    # Split buttons into three rows to prevent cutoff on narrow terminals
     lines.append(f"[Reply](cmd:{reply_cmd}) | [Forward](cmd:{forward_cmd}) | [Summary](cmd:{summary_cmd})")
     lines.append(f"[Archive](cmd:{archive_cmd}) | [Translate](cmd:{translate_cmd}) | [Delete](cmd:{delete_cmd})")
+    lines.append(f"[+ Calendar](cmd:{extract_event_cmd}) | [+ Bill](cmd:{extract_bill_cmd})")
 
     return "\n".join(lines)

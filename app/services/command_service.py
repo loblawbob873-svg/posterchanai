@@ -2229,6 +2229,235 @@ Return ONLY valid JSON, no other text."""},
                 translation = await self.chat_service.chat(messages)
                 return {"type": "text", "content": f"## {msg.subject} ({language})\n\n{translation}"}
 
+            elif subcommand == "extract-event":
+                # Extract calendar event from email and add to calendar
+                if len(parts) < 2:
+                    return {"type": "text", "content": "Usage: `mail extract-event <account> <id>`\n\nExample: `mail extract-event work 123`"}
+
+                account_hint = parts[1]
+                uid_part = parts[2] if len(parts) > 2 else parts[1]
+
+                # Parse folder:uid format
+                folder = None
+                if ':' in uid_part:
+                    folder, uid = uid_part.rsplit(':', 1)
+                else:
+                    uid = uid_part
+
+                # Sanitize UID
+                uid_match = re.search(r'^(\d+)', uid)
+                if not uid_match:
+                    return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
+                uid = uid_match.group(1)
+
+                # Find matching account or use first account
+                account_email = None
+                if len(parts) > 2:
+                    for acc in accounts:
+                        if account_hint.lower() in acc.email.lower():
+                            account_email = acc.email
+                            break
+                    if not account_email:
+                        return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                else:
+                    account_email = accounts[0].email
+
+                msg = get_message_by_id(self.user.id, self.db, account_email, uid, folder=folder)
+                if not msg:
+                    return {"type": "text", "content": f"Message {uid} not found."}
+
+                # Use AI to extract event details
+                from datetime import datetime, date
+                import time as time_module
+                today = date.today()
+                local_tz = time_module.tzname[0]
+
+                email_content = f"From: {msg.sender}\nSubject: {msg.subject}\nDate: {msg.date}\n\n{msg.body_text}"
+
+                messages = [
+                    {"role": "system", "content": f"""Extract calendar event information from this email and return JSON with:
+- summary: event name/title
+- description: event details (do NOT include recurrence info here)
+- start_time: ISO format datetime WITHOUT timezone suffix (e.g., "2026-01-13T09:00:00")
+- end_time: ISO format datetime WITHOUT timezone suffix (default 1 hour after start)
+- location: place if mentioned
+- rrule: iCalendar RRULE string if event repeats, null if not repeating
+
+For recurrence patterns:
+- "daily" -> "FREQ=DAILY"
+- "weekly" -> "FREQ=WEEKLY"
+- "monthly" -> "FREQ=MONTHLY"
+- "every weekday" -> "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+
+IMPORTANT: Today is {today.strftime('%A, %B %d, %Y')}. Use the current year {today.year} for dates.
+Times are in local timezone ({local_tz}). Do NOT add Z suffix to times.
+Return ONLY valid JSON, no other text."""},
+                    {"role": "user", "content": f"Extract event from this email:\n\n{email_content}"}
+                ]
+
+                try:
+                    import json
+                    parsed = await self.chat_service.chat(messages)
+
+                    # Clean up markdown code blocks if present
+                    parsed = parsed.strip()
+                    code_block_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', parsed)
+                    if code_block_match:
+                        parsed = code_block_match.group(1).strip()
+                    else:
+                        json_match = re.search(r'\{[\s\S]*\}', parsed)
+                        if json_match:
+                            parsed = json_match.group(0)
+
+                    event_data = json.loads(parsed)
+
+                    # Now add to calendar using existing calendar add logic
+                    summary = event_data.get("summary", msg.subject)
+                    description = event_data.get("description", "")
+                    start_str = event_data.get("start_time", "")
+                    end_str = event_data.get("end_time", "")
+                    location = event_data.get("location")
+                    rrule = event_data.get("rrule")
+
+                    # Strip Z suffix if present
+                    if start_str and start_str.endswith('Z'):
+                        start_str = start_str[:-1]
+                    if end_str and end_str.endswith('Z'):
+                        end_str = end_str[:-1]
+
+                    from dateutil import parser as date_parser
+                    from datetime import timedelta
+
+                    # Parse start time
+                    start_time = date_parser.parse(start_str) if start_str else datetime.now() + timedelta(hours=1)
+                    logger.info(f"Calendar add (email) - parsed start_time: {start_time} (tzinfo={start_time.tzinfo})")
+
+                    # If timezone included, convert to local naive
+                    if start_time.tzinfo is not None:
+                        start_time = start_time.astimezone().replace(tzinfo=None)
+                        logger.info(f"Calendar add (email) - converted to naive local: {start_time}")
+
+                    # Parse end time
+                    if end_str:
+                        end_time = date_parser.parse(end_str)
+                        if end_time.tzinfo is not None:
+                            end_time = end_time.astimezone().replace(tzinfo=None)
+                    else:
+                        end_time = start_time + timedelta(hours=1)
+
+                    # Add to first calendar
+                    calendars = get_user_calendars(self.user.id, self.db)
+                    if not calendars:
+                        return {"type": "text", "content": "No calendars configured. Add calendars in User Settings."}
+
+                    cal = calendars[0]
+                    success = add_event_to_calendar(
+                        cal['url'], cal['username'], cal['password'],
+                        summary, description, start_time, end_time, location, rrule
+                    )
+
+                    if success:
+                        time_str = start_time.strftime("%A, %B %d at %I:%M %p")
+                        recurrence_msg = f"\n🔁 {rrule}" if rrule else ""
+                        return {"type": "text", "content": f"✅ Event added from email: **{summary}**\n\n📅 {time_str}{recurrence_msg}"}
+                    else:
+                        return {"type": "text", "content": "❌ Failed to add event to calendar."}
+
+                except json.JSONDecodeError:
+                    return {"type": "text", "content": "Could not extract event details from email. The email may not contain event information."}
+                except Exception as e:
+                    logger.error(f"Error extracting event: {e}")
+                    return {"type": "text", "content": f"Error extracting event: {str(e)}"}
+
+            elif subcommand == "extract-bill":
+                # Extract bill information from email and add to budget
+                if len(parts) < 2:
+                    return {"type": "text", "content": "Usage: `mail extract-bill <account> <id>`\n\nExample: `mail extract-bill work 123`"}
+
+                account_hint = parts[1]
+                uid_part = parts[2] if len(parts) > 2 else parts[1]
+
+                # Parse folder:uid format
+                folder = None
+                if ':' in uid_part:
+                    folder, uid = uid_part.rsplit(':', 1)
+                else:
+                    uid = uid_part
+
+                # Sanitize UID
+                uid_match = re.search(r'^(\d+)', uid)
+                if not uid_match:
+                    return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
+                uid = uid_match.group(1)
+
+                # Find matching account or use first account
+                account_email = None
+                if len(parts) > 2:
+                    for acc in accounts:
+                        if account_hint.lower() in acc.email.lower():
+                            account_email = acc.email
+                            break
+                    if not account_email:
+                        return {"type": "text", "content": f"Account '{account_hint}' not found."}
+                else:
+                    account_email = accounts[0].email
+
+                msg = get_message_by_id(self.user.id, self.db, account_email, uid, folder=folder)
+                if not msg:
+                    return {"type": "text", "content": f"Message {uid} not found."}
+
+                # Use AI to extract bill details
+                email_content = f"From: {msg.sender}\nSubject: {msg.subject}\nDate: {msg.date}\n\n{msg.body_text}"
+
+                messages = [
+                    {"role": "system", "content": """Extract bill/invoice information from this email and return JSON with:
+- name: bill name or company name (e.g., "Electric Company", "Netflix", "Water Bill")
+- amount: total amount due as a number (e.g., 45.99)
+- due_date: due date if mentioned (YYYY-MM-DD format), null if not mentioned
+
+Return ONLY valid JSON, no other text. If this is not a bill or invoice, return {"error": "not_a_bill"}."""},
+                    {"role": "user", "content": f"Extract bill from this email:\n\n{email_content}"}
+                ]
+
+                try:
+                    import json
+                    parsed = await self.chat_service.chat(messages)
+
+                    # Clean up markdown code blocks if present
+                    parsed = parsed.strip()
+                    code_block_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', parsed)
+                    if code_block_match:
+                        parsed = code_block_match.group(1).strip()
+                    else:
+                        json_match = re.search(r'\{[\s\S]*\}', parsed)
+                        if json_match:
+                            parsed = json_match.group(0)
+
+                    bill_data = json.loads(parsed)
+
+                    if bill_data.get("error") == "not_a_bill":
+                        return {"type": "text", "content": "This email does not appear to contain bill or invoice information."}
+
+                    name = bill_data.get("name", "Unknown Bill")
+                    amount = bill_data.get("amount", 0)
+                    due_date = bill_data.get("due_date")
+
+                    # Add to budget system using plugin
+                    plugin_service = PluginService(self.db)
+                    result = await plugin_service.execute_tool_call("budget", "add", {"name": name, "amount": str(amount)}, self.user.id)
+
+                    if "error" in result:
+                        return {"type": "text", "content": f"Error adding bill: {result.get('error', 'Unknown error')}"}
+
+                    due_str = f"\n📅 Due: {due_date}" if due_date else ""
+                    return {"type": "text", "content": f"✅ Bill added from email: **{name}**\n\n💵 Amount: ${amount:.2f}{due_str}"}
+
+                except json.JSONDecodeError:
+                    return {"type": "text", "content": "Could not extract bill details from email. The email may not contain billing information."}
+                except Exception as e:
+                    logger.error(f"Error extracting bill: {e}")
+                    return {"type": "text", "content": f"Error extracting bill: {str(e)}"}
+
             elif subcommand == "reply":
                 if len(parts) < 4:
                     return {"type": "text", "content": "Usage: `mail reply <account> [folder:]<id> <message>`\n\nExample: `mail reply verita84 123 Thanks for the info!` or `mail reply verita84 INBOX.Archive:456 Thanks!`"}
