@@ -1167,8 +1167,9 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             summaries = []
             entry_ids = []
 
-            # Limit to 5 summaries to prevent hanging on too many articles
-            for entry in entries[:5]:
+            # Limit to 3 summaries to prevent hanging
+            import asyncio
+            for entry in entries[:3]:
                 entry_id = entry.get("id")
                 title = entry.get("title", "Untitled")
                 url = entry.get("url", "")
@@ -1182,19 +1183,24 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 text_content = re.sub(r'\s+', ' ', text_content).strip()
 
                 # Truncate for summarization
-                if len(text_content) > 6000:
-                    text_content = text_content[:6000] + "..."
+                if len(text_content) > 3000:
+                    text_content = text_content[:3000] + "..."
 
-                # Generate AI summary
+                # Generate AI summary with timeout
                 messages = [
                     {"role": "system", "content": "You are a news summarizer. Provide a concise 2-3 sentence summary of this article. Focus on the key facts."},
                     {"role": "user", "content": f"Title: {title}\n\nContent:\n{text_content}"}
                 ]
 
                 try:
-                    summary = await self.chat_service.chat(messages)
+                    # Add 20 second timeout per summary
+                    summary = await asyncio.wait_for(self.chat_service.chat(messages), timeout=20)
+                except asyncio.TimeoutError:
+                    summary = "(Summary timed out)"
+                    logger.warning(f"News summary timed out for: {title}")
                 except Exception as e:
                     summary = f"(Error summarizing: {str(e)[:50]})"
+                    logger.error(f"News summary error for {title}: {e}")
 
                 # Add copy button for TUI (cmd: link works in TUI)
                 summaries.append(f"**{title}**\n*{feed_title}*\n{url} [Copy URL](cmd:tui-copy {url})\n\n{summary}")
@@ -1209,8 +1215,8 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             result += f"\n\n---\n*Marked {len(entry_ids)} articles as read*"
 
             # Note if there are more articles available
-            if len(entries) > 5:
-                result += f"\n\n_({len(entries) - 5} more articles available - run `news` again to see more)_"
+            if len(entries) > 3:
+                result += f"\n\n_({len(entries) - 3} more articles available - run `news` again to see more)_"
 
             return {"type": "text", "content": result}
 
