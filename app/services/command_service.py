@@ -526,7 +526,11 @@ class CommandService:
             elif subcommand in ("pay", "paid") and len(parts) >= 2:
                 # Extract bill name - join all parts after "pay" in case bill name has spaces
                 name = " ".join(parts[1:])
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"Paying bill with name: '{name}'")
                 result = await plugin_service.execute_tool_call("budget", "pay", {"name": name}, self.user.id)
+                logger.info(f"Pay result: {result}")
                 # If there's an error, return it immediately instead of formatting
                 if "error" in result:
                     return {"type": "text", "content": f"❌ {result['error']}"}

@@ -7,7 +7,7 @@ import re
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static, Button
-from textual.containers import Vertical, Horizontal
+from textual.containers import Vertical, Horizontal, VerticalScroll
 from textual.message import Message as TextualMessage
 from rich.text import Text
 
@@ -55,7 +55,7 @@ class MessageWidget(Widget):
                 Button("Copy", id="copy-btn", classes="copy-btn"),
                 classes="message-header"
             ),
-            Vertical(id="message-content-container"),
+            VerticalScroll(id="message-content-container"),
             Horizontal(id="message-buttons"),
             classes="message-inner"
         )
@@ -194,7 +194,7 @@ class MessageWidget(Widget):
     def update_content(self, content: str):
         """Update message content."""
         self.content = content
-        content_container = self.query_one("#message-content-container", Vertical)
+        content_container = self.query_one("#message-content-container", VerticalScroll)
         content_container.remove_children()
 
         # For streaming, show raw text for speed
@@ -577,8 +577,8 @@ class MessageWidget(Widget):
                 del_btn.command = entry['delete_cmd']
                 row.mount(del_btn)
 
-    def _render_mail_detail(self, content: str, container: Vertical):
-        """Render detailed email view with inline action buttons."""
+    def _render_mail_detail(self, content: str, container: VerticalScroll):
+        """Render detailed email view with inline action buttons (scrollable container)."""
         import logging
         logger = logging.getLogger("tui")
 
@@ -659,7 +659,7 @@ class MessageWidget(Widget):
             rendered = parse_markdown(body_content)
             container.mount(Static(rendered, classes="message-body"))
 
-            # Render action buttons vertically (always visible on any terminal width)
+            # Render action buttons vertically (container is scrollable, so no space constraints)
             logger.info("_render_mail_detail: Rendering buttons")
             if any(commands.values()):
                 # Create a vertical container for buttons
@@ -682,12 +682,12 @@ class MessageWidget(Widget):
                     button_container.mount(btn)
 
                 if commands['calendar']:
-                    btn = Button("📅 Calendar", classes="mail-action-btn mail-action-special")
+                    btn = Button("📅 Add to Calendar", classes="mail-action-btn mail-action-special")
                     btn.command = commands['calendar']
                     button_container.mount(btn)
 
                 if commands['bill']:
-                    btn = Button("💵 Bill", classes="mail-action-btn mail-action-special")
+                    btn = Button("💵 Add Bill", classes="mail-action-btn mail-action-special")
                     btn.command = commands['bill']
                     button_container.mount(btn)
 
