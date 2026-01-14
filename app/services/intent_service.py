@@ -81,6 +81,8 @@ CALENDAR:
 "Add meeting tomorrow at 3pm" -> cal add meeting tomorrow at 3pm
 "Team standup every Monday at 9am" -> cal add team standup every Monday at 9am
 "Show my calendar" -> cal
+"agenda for next month" -> cal nextmonth
+"agenda for the month" -> cal month
 
 CONTACTS:
 "Add John Doe 555-1234 john@example.com" -> contacts add John Doe 555-1234 john@example.com
@@ -219,16 +221,30 @@ RESPOND WITH THE COMMAND ONLY!"""
             # This overrides LLM decision if text-creation keywords are detected
             if command.lower().startswith("geni"):
                 text_creation_keywords = [
-                    "post", "article", "tweet", "caption", "message",
-                    "blog", "content", "email", "draft", "write",
-                    "facebook", "twitter", "instagram", "linkedin", "social media"
+                    "post",
+                    "article",
+                    "tweet",
+                    "caption",
+                    "message",
+                    "blog",
+                    "content",
+                    "email",
+                    "draft",
+                    "write",
+                    "facebook",
+                    "twitter",
+                    "instagram",
+                    "linkedin",
+                    "social media",
                 ]
                 user_lower = user_message.lower()
 
                 # Check if user message contains text creation keywords
                 for keyword in text_creation_keywords:
                     if keyword in user_lower:
-                        logger.warning(f"Blocked geni command due to text creation keyword '{keyword}' in: {user_message}")
+                        logger.warning(
+                            f"Blocked geni command due to text creation keyword '{keyword}' in: {user_message}"
+                        )
                         return None  # Return None to use chat instead
 
             logger.info(f"Intent detected command: {command}")
@@ -294,7 +310,6 @@ RESPOND WITH THE COMMAND ONLY!"""
             "hows it going",
         }
         return message.lower().strip() in greetings
-
 
 
 async def detect_and_execute(db: Session, user: "User", message: str, context: str = "") -> Optional[dict]:
