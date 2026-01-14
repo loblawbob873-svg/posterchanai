@@ -936,6 +936,165 @@ def delete_contact(url: str, username: str, password: str, contact_uid: str) -> 
         return False
 
 
+def edit_contact(url: str, username: str, password: str, contact_uid: str, updates: dict) -> bool:
+    """Edit a contact (vCard) in CardDAV addressbook by UID.
+
+    Args:
+        url: CardDAV addressbook URL
+        username: Username for authentication
+        password: Password for authentication
+        contact_uid: UID of the contact to edit
+        updates: Dictionary with fields to update: {'name': 'New Name', 'phone': '555-1234', 'email': 'test@example.com', ...}
+
+    Returns:
+        True if successful, False otherwise
+    """
+    import requests
+    from requests.auth import HTTPBasicAuth
+    import re
+
+    try:
+        # Use PROPFIND to list all vCard files
+        headers = {
+            'Content-Type': 'application/xml',
+            'Depth': '1'
+        }
+        propfind_body = '''<?xml version="1.0" encoding="utf-8" ?>
+        <D:propfind xmlns:D="DAV:">
+          <D:prop>
+            <D:getcontenttype/>
+            <D:getetag/>
+          </D:prop>
+        </D:propfind>'''
+
+        resp = requests.request('PROPFIND', url, auth=HTTPBasicAuth(username, password),
+                               headers=headers, data=propfind_body, timeout=30)
+
+        if resp.status_code != 207:
+            logger.error(f"CardDAV PROPFIND failed: {resp.status_code}")
+            return False
+
+        # Parse response to find .vcf files
+        vcf_urls = re.findall(r'<href>([^<]+\.vcf)</href>', resp.text)
+
+        # Build base URL
+        base_url = url.rstrip('/')
+        url_parts = url.split('/')
+        scheme_host = '/'.join(url_parts[:3])
+
+        for vcf_path in vcf_urls:
+            try:
+                # Build full URL
+                if vcf_path.startswith('http'):
+                    vcf_url = vcf_path
+                elif vcf_path.startswith('/'):
+                    vcf_url = scheme_host + vcf_path
+                else:
+                    vcf_url = base_url + '/' + vcf_path
+
+                vcf_resp = requests.get(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10)
+                if vcf_resp.status_code != 200:
+                    continue
+
+                vcard_data = vcf_resp.text
+                vcard = vobject.readOne(vcard_data)
+
+                # Check if UID matches
+                vcard_uid = str(vcard.uid.value) if hasattr(vcard, 'uid') else None
+                if vcard_uid == contact_uid:
+                    # Update the vCard fields
+                    if 'name' in updates and updates['name']:
+                        vcard.fn.value = updates['name']
+                        # Update N (structured name) if it exists
+                        if hasattr(vcard, 'n'):
+                            parts = updates['name'].split(' ', 1)
+                            vcard.n.value = vobject.vcard.Name(family=parts[-1], given=parts[0] if len(parts) > 1 else '')
+                        else:
+                            parts = updates['name'].split(' ', 1)
+                            vcard.add('n')
+                            vcard.n.value = vobject.vcard.Name(family=parts[-1], given=parts[0] if len(parts) > 1 else '')
+
+                    if 'phone' in updates and updates['phone']:
+                        # Remove existing phone and add new one
+                        if hasattr(vcard, 'tel'):
+                            del vcard.tel
+                        vcard.add('tel')
+                        vcard.tel.value = updates['phone']
+                        vcard.tel.type_param = 'CELL'
+
+                    if 'email' in updates and updates['email']:
+                        # Remove existing email and add new one
+                        if hasattr(vcard, 'email'):
+                            del vcard.email
+                        vcard.add('email')
+                        vcard.email.value = updates['email']
+                        vcard.email.type_param = 'INTERNET'
+
+                    if 'organization' in updates:
+                        if updates['organization']:
+                            if not hasattr(vcard, 'org'):
+                                vcard.add('org')
+                            vcard.org.value = [updates['organization']]
+                        elif hasattr(vcard, 'org'):
+                            del vcard.org
+
+                    if 'note' in updates:
+                        if updates['note']:
+                            if not hasattr(vcard, 'note'):
+                                vcard.add('note')
+                            vcard.note.value = updates['note']
+                        elif hasattr(vcard, 'note'):
+                            del vcard.note
+
+                    # Update REV timestamp
+                    from datetime import datetime, timezone
+                    if hasattr(vcard, 'rev'):
+                        vcard.rev.value = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+                    else:
+                        vcard.add('rev')
+                        vcard.rev.value = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+
+                    # Serialize and PUT back
+                    updated_vcard_data = vcard.serialize()
+                    put_headers = {
+                        'Content-Type': 'text/vcard; charset=utf-8'
+                    }
+                    put_resp = requests.put(vcf_url, auth=HTTPBasicAuth(username, password),
+                                          headers=put_headers, data=updated_vcard_data, timeout=10)
+
+                    if put_resp.status_code in (200, 201, 204):
+                        logger.info(f"Updated contact with UID: {contact_uid}")
+                        return True
+                    else:
+                        logger.error(f"Failed to update contact: HTTP {put_resp.status_code}")
+                        return False
+
+            except Exception as e:
+                logger.debug(f"Error processing vCard: {e}")
+                continue
+
+        logger.warning(f"Contact not found with UID: {contact_uid}")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to edit contact: {e}")
+        return False
+
+
+def edit_user_contact(user_id: int, db: Session, contact_uid: str, updates: dict) -> bool:
+    """Edit a contact using user's CardDAV configuration."""
+    config = get_user_contacts_config(user_id, db)
+    if not config:
+        return False
+
+    url = config.get('url', '')
+    username = config.get('username', '')
+    password = config.get('password', '')
+
+    if url and username:
+        return edit_contact(url, username, password, contact_uid, updates)
+    return False
+
+
 def delete_user_contact(user_id: int, db: Session, contact_uid: str) -> bool:
     """Delete a contact using user's CardDAV configuration."""
     config = get_user_contacts_config(user_id, db)
