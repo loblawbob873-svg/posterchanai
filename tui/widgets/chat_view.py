@@ -1,13 +1,14 @@
 """
 Chat view widget for displaying messages.
 """
+
 from __future__ import annotations
 
 from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import ScrollableContainer
 from textual.widget import Widget
 from textual.widgets import Static
-from textual.containers import ScrollableContainer
-from textual.binding import Binding
 
 from tui.api.models import Message
 from tui.widgets.message import MessageWidget
@@ -31,6 +32,7 @@ class ChatView(Widget):
         Binding("pagedown", "page_down", "Page Down", show=False),
         Binding("home", "scroll_home", "Home", show=False),
         Binding("end", "scroll_end", "End", show=False),
+        Binding("o", "open_urls", "Open URL", show=True),
     ]
 
     def __init__(self, **kwargs):
@@ -50,11 +52,7 @@ class ChatView(Widget):
 
         # Add messages
         for msg in messages:
-            widget = MessageWidget(
-                role=msg.role,
-                content=msg.content,
-                message_id=msg.id
-            )
+            widget = MessageWidget(role=msg.role, content=msg.content, message_id=msg.id)
             container.mount(widget)
 
         # Scroll to bottom
@@ -64,11 +62,7 @@ class ChatView(Widget):
         """Add a new message to the view."""
         container = self.query_one("#messages-container", ScrollableContainer)
 
-        widget = MessageWidget(
-            role=role,
-            content=content,
-            message_id=message_id
-        )
+        widget = MessageWidget(role=role, content=content, message_id=message_id)
         container.mount(widget)
         self.scroll_to_bottom()
 
@@ -77,11 +71,7 @@ class ChatView(Widget):
         container = self.query_one("#messages-container", ScrollableContainer)
 
         # Create streaming message widget with thinking indicator
-        self.streaming_message = MessageWidget(
-            role="assistant",
-            content="Thinking...",
-            is_streaming=True
-        )
+        self.streaming_message = MessageWidget(role="assistant", content="Thinking...", is_streaming=True)
         container.mount(self.streaming_message)
 
         # Show typing indicator bar at bottom

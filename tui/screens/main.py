@@ -1,26 +1,27 @@
 """
 Main chat screen with sidebar, messages, and input.
 """
+
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.screen import Screen
-from textual.widgets import Static, Input, Button, Footer
-from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
-from textual.binding import Binding
-from textual.reactive import reactive
 from textual import work
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Container, Horizontal, ScrollableContainer, Vertical
+from textual.reactive import reactive
+from textual.screen import Screen
+from textual.widgets import Button, Footer, Input, Static
 
-from tui.api.models import User, Conversation
+from tui.api.models import Conversation, User
 from tui.api.websocket import ChatWebSocket
-from tui.widgets.sidebar import ConversationSidebar
+from tui.screens.calendar_event import CalendarEventScreen
+from tui.screens.file_picker import FilePickerScreen
+from tui.screens.language_picker import LanguagePickerScreen
+from tui.screens.news_picker import NewsPickerScreen
 from tui.widgets.chat_view import ChatView
 from tui.widgets.input_area import ChatInput
 from tui.widgets.music_player import MusicPlayerWidget
-from tui.screens.file_picker import FilePickerScreen
-from tui.screens.news_picker import NewsPickerScreen
-from tui.screens.language_picker import LanguagePickerScreen
-from tui.screens.calendar_event import CalendarEventScreen
+from tui.widgets.sidebar import ConversationSidebar
 
 
 class MainScreen(Screen):
@@ -41,6 +42,7 @@ class MainScreen(Screen):
         Binding("alt+]", "show_sidebar", "Show Sidebar", show=False),
         # Open URLs
         Binding("alt+o", "open_urls", "Open URL", show=False),
+        Binding("o", "open_urls", "Open URL", show=False),  # Add this alias
         # Quick actions
         Binding("ctrl+n", "new_chat", "New Chat", show=False),
         # Scroll messages
@@ -70,15 +72,12 @@ class MainScreen(Screen):
         yield Horizontal(
             ConversationSidebar(id="sidebar"),
             Vertical(
-                Container(
-                    Static(f"Select or create a conversation", id="chat-title"),
-                    id="chat-header"
-                ),
+                Container(Static(f"Select or create a conversation", id="chat-title"), id="chat-header"),
                 ChatView(id="chat-view"),
                 ChatInput(id="chat-input"),
-                id="chat-container"
+                id="chat-container",
             ),
-            id="main-container"
+            id="main-container",
         )
         yield MusicPlayerWidget(id="music-player")
         yield Footer()
@@ -106,6 +105,7 @@ class MainScreen(Screen):
     async def load_mail_accounts(self):
         """Load mail accounts and contact emails for autocomplete."""
         import logging
+
         logger = logging.getLogger("tui")
         try:
             # Load mail accounts
@@ -126,7 +126,9 @@ class MainScreen(Screen):
                         logger.info(f"Contact emails: {emails[:5]}...")
                         if emails:
                             chat_input.set_contact_emails(emails)
-                            logger.info(f"Subcommands keys: {[k for k in chat_input.subcommands.keys() if 'send' in k or 'forward' in k]}")
+                            logger.info(
+                                f"Subcommands keys: {[k for k in chat_input.subcommands.keys() if 'send' in k or 'forward' in k]}"
+                            )
                             self.notify(f"Loaded {len(emails)} contact emails for autocomplete", timeout=3)
                         else:
                             self.notify("No contact emails found", severity="warning", timeout=3)
@@ -155,10 +157,7 @@ class MainScreen(Screen):
 
                 # If current conversation was deleted, clear the view
                 if self.current_conversation_id:
-                    current_exists = any(
-                        c.id == self.current_conversation_id
-                        for c in new_conversations
-                    )
+                    current_exists = any(c.id == self.current_conversation_id for c in new_conversations)
                     if not current_exists:
                         self.current_conversation_id = None
                         if self.chat_ws:
@@ -215,10 +214,7 @@ class MainScreen(Screen):
 
     async def connect_websocket(self, conversation_id: int):
         """Connect to chat WebSocket."""
-        self.chat_ws = ChatWebSocket(
-            ws_url=self.app.config.ws_url,
-            token=self.app.api.token
-        )
+        self.chat_ws = ChatWebSocket(ws_url=self.app.config.ws_url, token=self.app.api.token)
 
         # Set up callbacks
         self.chat_ws.on_stream_chunk = self.handle_stream_chunk
@@ -278,7 +274,11 @@ class MainScreen(Screen):
                         pdf_data = base64.b64encode(data).decode("utf-8")
                     elif filename.lower().endswith((".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx")):
                         document_data = base64.b64encode(data).decode("utf-8")
-                    elif mime_type and mime_type.startswith("text/") or filename.lower().endswith((".txt", ".md", ".py", ".js", ".json", ".xml", ".csv")):
+                    elif (
+                        mime_type
+                        and mime_type.startswith("text/")
+                        or filename.lower().endswith((".txt", ".md", ".py", ".js", ".json", ".xml", ".csv"))
+                    ):
                         file_content = data.decode("utf-8", errors="replace")
                     else:
                         # Try as text, fallback to base64
@@ -292,7 +292,11 @@ class MainScreen(Screen):
         # Build display message
         display_msg = content
         if attachment_names:
-            display_msg = f"{content}\n\n📎 Attached: {', '.join(attachment_names)}" if content else f"📎 {', '.join(attachment_names)}"
+            display_msg = (
+                f"{content}\n\n📎 Attached: {', '.join(attachment_names)}"
+                if content
+                else f"📎 {', '.join(attachment_names)}"
+            )
 
         # Add user message to view
         chat_view = self.query_one("#chat-view", ChatView)
@@ -352,6 +356,7 @@ class MainScreen(Screen):
 
         # Debug logging
         import logging
+
         logging.getLogger("tui").info(f"Response type={msg_type}, content_len={len(content)}, keys={list(data.keys())}")
 
         # Build final content based on type
@@ -471,11 +476,13 @@ class MainScreen(Screen):
     def show_settings(self):
         """Show settings screen."""
         from tui.screens.settings import SettingsScreen
+
         self.app.push_screen(SettingsScreen())
 
     def show_help(self):
         """Show help screen."""
         from tui.screens.help import HelpScreen
+
         self.app.push_screen(HelpScreen())
 
     def on_conversation_sidebar_conversation_selected(self, event):
@@ -508,6 +515,7 @@ class MainScreen(Screen):
 
     def _show_language_picker(self, pending_command: str):
         """Show language picker for translate command."""
+
         def handle_language_selected(full_command: str | None):
             if full_command:
                 self._send_message_worker(full_command)
@@ -521,17 +529,18 @@ class MainScreen(Screen):
     def on_message_widget_command_clicked(self, event):
         """Handle command button clicks from messages."""
         import re
+
         command = event.command
         if command:
             # Check if this is a cal get command (edit button)
-            cal_get_match = re.match(r'^cal\s+get\s+(\S+)', command, re.IGNORECASE)
+            cal_get_match = re.match(r"^cal\s+get\s+(\S+)", command, re.IGNORECASE)
             if cal_get_match:
                 uid = cal_get_match.group(1)
                 self._open_calendar_edit(uid)
                 return
 
             # Commands ending with space need user input (e.g., mail reply)
-            if command.endswith(' '):
+            if command.endswith(" "):
                 # Populate input field for user to complete
                 chat_input = self.query_one("#chat-input", ChatInput)
                 input_widget = chat_input.query_one("#message-input", Input)
@@ -557,6 +566,7 @@ class MainScreen(Screen):
     async def _open_calendar_edit(self, uid: str):
         """Open calendar edit screen by fetching event data from API."""
         import httpx
+
         from tui.screens.calendar_event import CalendarEventScreen
 
         try:
@@ -564,27 +574,29 @@ class MainScreen(Screen):
                 response = await client.get(
                     f"{self.app.config.server_url}/api/auth/calendar/event/{uid}",
                     headers={"Authorization": f"Bearer {self.app.api.token}"},
-                    timeout=10.0
+                    timeout=10.0,
                 )
                 if response.status_code == 200:
                     event_data = response.json()
                     # Map API response to screen format
                     screen_data = {
-                        'uid': event_data.get('uid'),
-                        'title': event_data.get('title', ''),
-                        'date': event_data.get('date', ''),
-                        'time': event_data.get('time', ''),
-                        'end_time': event_data.get('endTime', ''),
-                        'location': event_data.get('location', ''),
-                        'description': event_data.get('description', ''),
-                        'recurrence': event_data.get('recurrence', '')
+                        "uid": event_data.get("uid"),
+                        "title": event_data.get("title", ""),
+                        "date": event_data.get("date", ""),
+                        "time": event_data.get("time", ""),
+                        "end_time": event_data.get("endTime", ""),
+                        "location": event_data.get("location", ""),
+                        "description": event_data.get("description", ""),
+                        "recurrence": event_data.get("recurrence", ""),
                     }
+
                     def handle_event_saved(command: str | None):
                         if command:
                             # Support multiple commands separated by |||
                             for cmd in command.split("|||"):
                                 if cmd.strip():
                                     self._send_message_worker(cmd.strip())
+
                     self.app.push_screen(CalendarEventScreen(event_data=screen_data), handle_event_saved)
                 else:
                     self.notify(f"Could not fetch event: {response.status_code}", severity="error")
@@ -597,6 +609,7 @@ class MainScreen(Screen):
 
     def on_chat_input_attach_file_requested(self, event):
         """Handle attach file request from input area."""
+
         def handle_file_selected(file_path: str | None):
             if file_path:
                 chat_input = self.query_one("#chat-input", ChatInput)
@@ -607,6 +620,7 @@ class MainScreen(Screen):
 
     def on_chat_input_news_picker_requested(self, event):
         """Handle news picker request from input area."""
+
         def handle_news_selected(source_url: str | None):
             if source_url:
                 if source_url == "dailynews":
@@ -620,6 +634,7 @@ class MainScreen(Screen):
 
     def on_chat_input_calendar_event_requested(self, event):
         """Handle calendar event add/edit request from input area."""
+
         def handle_event_saved(command: str | None):
             if command:
                 self._send_message_worker(command)
@@ -630,6 +645,7 @@ class MainScreen(Screen):
     async def _delete_conversation_worker(self, conversation_id: int):
         """Worker to delete conversation with confirmation."""
         import logging
+
         logger = logging.getLogger("tui")
 
         # Find conversation title for confirmation
@@ -683,6 +699,7 @@ class MainScreen(Screen):
 
         except Exception as e:
             import traceback
+
             logger.error(f"Delete error: {e}\n{traceback.format_exc()}")
             self.notify(f"Failed to delete: {str(e)[:40]}", severity="error")
 
@@ -770,6 +787,7 @@ class MainScreen(Screen):
     def action_open_urls(self):
         """Open URLs from recent messages in browser."""
         import webbrowser
+
         from tui.utils.markdown import extract_urls
 
         # Get chat view and find URLs in recent messages
@@ -780,7 +798,7 @@ class MainScreen(Screen):
             all_urls = []
             # Get last few messages
             for widget in list(container.children)[-5:]:
-                if hasattr(widget, 'content'):
+                if hasattr(widget, "content"):
                     urls = extract_urls(widget.content)
                     all_urls.extend(urls)
 
@@ -930,9 +948,9 @@ class MainScreen(Screen):
     def _open_generated_image(self, image_data: str):
         """Open generated image in browser."""
         import base64
+        import os
         import tempfile
         import webbrowser
-        import os
 
         try:
             # Decode base64 image
@@ -940,9 +958,9 @@ class MainScreen(Screen):
 
             # Determine format from header
             ext = "png"
-            if image_bytes[:3] == b'\xff\xd8\xff':
+            if image_bytes[:3] == b"\xff\xd8\xff":
                 ext = "jpg"
-            elif image_bytes[:4] == b'GIF8':
+            elif image_bytes[:4] == b"GIF8":
                 ext = "gif"
 
             # Save to temp file
@@ -955,4 +973,5 @@ class MainScreen(Screen):
 
         except Exception as e:
             import logging
+
             logging.getLogger("tui").error(f"Failed to open image: {e}")
