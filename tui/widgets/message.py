@@ -996,8 +996,8 @@ class MessageWidget(Widget):
 
             logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")
 
-            # Filter to essential action buttons
-            essential_prefixes = ("mail ", "cal ", "todo ", "news ", "miniflux ", "nyaa ", "music ")
+            # Filter to essential action buttons (including tui-copy for news URLs)
+            essential_prefixes = ("mail ", "cal ", "todo ", "news ", "miniflux ", "nyaa ", "music ", "tui-copy ")
             actionable = [
                 (label, cmd) for label, cmd, _, _ in self._cmd_links
                 if any(cmd.startswith(p) for p in essential_prefixes)
@@ -1035,7 +1035,14 @@ class MessageWidget(Widget):
         else:
             # Check for command in both attribute and name
             command = getattr(button, 'command', None) or button.name
-            if command and command.startswith(('bt ', 'mail ', 'torrents ', 'music ', 'news ', 'cal ', 'todo ')):
+
+            # Handle special tui-copy command
+            if command and command.startswith('tui-copy '):
+                url = command[9:]  # Remove 'tui-copy ' prefix
+                logger.info(f"Copying URL to clipboard: {url}")
+                self._copy_to_clipboard(url)
+                event.stop()
+            elif command and command.startswith(('bt ', 'mail ', 'torrents ', 'music ', 'news ', 'cal ', 'todo ')):
                 logger.info(f"Posting command: {command}")
                 self.post_message(self.CommandClicked(command))
                 event.stop()

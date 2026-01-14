@@ -737,7 +737,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
         parts = arg.strip().split()
         subcommand = parts[0].lower() if parts else ""
-        categories = ("movies", "tv", "music", "anime")
+        categories = ("movies", "tv", "music", "anime", "search")
 
         # Get built-in service (None if disabled or not configured)
         bt_service, bt_error = self._get_bt_service()
@@ -951,7 +951,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
             category = parts[1].lower()
             if category not in categories:
-                return {"type": "text", "content": f"Unknown category: `{category}`\n\nAvailable: movies, tv, music, anime"}
+                return {"type": "text", "content": f"Unknown category: `{category}`\n\nAvailable: movies, tv, music, anime, search"}
 
             try:
                 num = int(parts[2])
@@ -1195,7 +1195,8 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 except Exception as e:
                     summary = f"(Error summarizing: {str(e)[:50]})"
 
-                summaries.append(f"**{title}**\n*{feed_title}*\n{url}\n\n{summary}")
+                # Add copy button for TUI (cmd: link works in TUI)
+                summaries.append(f"**{title}**\n*{feed_title}*\n{url} [Copy URL](cmd:tui-copy {url})\n\n{summary}")
                 entry_ids.append(entry_id)
 
             # Mark all as read
