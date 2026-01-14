@@ -125,7 +125,7 @@ BUDGET:
 
 TORRENT:
 "Show torrents" -> torrents
-"Search anime torrents" -> torrents anime
+"Search for Ubuntu torrents" -> torrents search Ubuntu
 "Pause torrent 3" -> torrents pause 3
 
 FIREWALL & LOGS:

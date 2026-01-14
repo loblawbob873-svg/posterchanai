@@ -131,7 +131,7 @@ class CommandService:
         "logs": "System logs analysis (admin only): logs",
         "miniflux": "Fetch Miniflux articles now: miniflux",
         "cal": "Calendar: cal | cal today | cal week | cal add <event> <time>",
-        "contacts": "Contacts: contacts all | contacts <query> | contacts add <name> <phone>",
+        "contacts": "Contacts: contacts all | contacts <query> | contacts add <name> <phone> | contacts delete <uid> | contacts edit <uid>",
         "mail": "Email: mail | mail send <contact> <msg> | mail read/delete/archive <id> | mail reply/forward <acct> <id> <msg>",
         "todo": "Todo list (CalDAV): todo | todo add <task> | todo rm <#>",
         "music": "Music: music | music browse | music search <query> | music play <#> | music random | music skip | music mood <vibe>",
@@ -2554,7 +2554,8 @@ Return ONLY valid JSON, no other text. If this is not a bill or invoice, return 
                 if not account_email:
                     return {"type": "text", "content": f"Account '{account_hint}' not found."}
 
-                success = reply_to_message(self.user.id, self.db, account_email, uid, reply_body, folder=folder)
+                import asyncio
+                success = await asyncio.to_thread(reply_to_message, self.user.id, self.db, account_email, uid, reply_body, folder=folder)
                 if success:
                     return {"type": "text", "content": "Reply sent successfully."}
                 else:
@@ -2591,7 +2592,8 @@ Return ONLY valid JSON, no other text. If this is not a bill or invoice, return 
                 if not account_email:
                     return {"type": "text", "content": f"Account '{account_hint}' not found."}
 
-                success = forward_message(self.user.id, self.db, account_email, uid, recipient, forward_body, folder=folder)
+                import asyncio
+                success = await asyncio.to_thread(forward_message, self.user.id, self.db, account_email, uid, recipient, forward_body, folder=folder)
                 if success:
                     return {"type": "text", "content": f"Email forwarded to {recipient} successfully."}
                 else:
@@ -2641,7 +2643,8 @@ Return ONLY valid JSON, no other text. If this is not a bill or invoice, return 
                     # Default to first account
                     account_email = accounts[0].email
 
-                success = delete_message(self.user.id, self.db, account_email, uid, folder)
+                import asyncio
+                success = await asyncio.to_thread(delete_message, self.user.id, self.db, account_email, uid, folder)
                 if success:
                     return {"type": "text", "content": f"Message {uid} deleted from {folder}."}
                 else:
@@ -2663,7 +2666,8 @@ Return ONLY valid JSON, no other text. If this is not a bill or invoice, return 
                 if not account_email:
                     return {"type": "text", "content": f"Account '{account_hint}' not found."}
 
-                count = delete_all_messages(self.user.id, self.db, account_email)
+                import asyncio
+                count = await asyncio.to_thread(delete_all_messages, self.user.id, self.db, account_email)
                 if count >= 0:
                     return {"type": "text", "content": f"🗑️ Deleted {count} messages from {account_email}"}
                 else:
@@ -2713,7 +2717,8 @@ Return ONLY valid JSON, no other text. If this is not a bill or invoice, return 
                     # Default to first account
                     account_email = accounts[0].email
 
-                success = archive_message(self.user.id, self.db, account_email, uid, folder=folder)
+                import asyncio
+                success = await asyncio.to_thread(archive_message, self.user.id, self.db, account_email, uid, folder=folder)
                 if success:
                     return {"type": "text", "content": f"📦 Message {uid} archived."}
                 else:
