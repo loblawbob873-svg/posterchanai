@@ -1036,11 +1036,12 @@ class MessageWidget(Widget):
                     row = Horizontal(classes="news-url-row")
                     container.mount(row)
 
-                    # Title as text (truncate if too long)
+                    # Title as text (truncate if too long) - don't use link markup, just plain text
                     title = article['title']
-                    if len(title) > 70:
-                        title = title[:67] + "..."
-                    title_text = Static(f"[link={article['url']}]{escape_rich_brackets(title)}[/link]", classes="news-url")
+                    if len(title) > 80:
+                        title = title[:77] + "..."
+                    # Plain text, no link markup to avoid Rich markup errors
+                    title_text = Static(escape_rich_brackets(title), classes="news-url")
                     row.mount(title_text)
 
                     # Copy button

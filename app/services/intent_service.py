@@ -73,6 +73,8 @@ USER MESSAGE:
 
 {f"CONTEXT TO ANALYZE:{chr(10)}{context}" if context else ""}
 
+CRITICAL RULE: If user asks to "create", "write", "generate", or "make" TEXT CONTENT (social media posts, articles, blog posts, captions, tweets, messages, emails), you MUST respond "none" to use chat. Image generation ONLY happens when user specifically asks for a VISUAL IMAGE/PICTURE/PHOTO.
+
 TRAINING - Learn these command formats by example:
 
 CALENDAR:
@@ -168,11 +170,14 @@ IMPORTANT RULES:
 2. For recurring events, preserve recurrence patterns naturally (e.g., "every Monday", "daily", "every weekday", "every Monday Wednesday Friday")
 3. Extract the key information from emails/context for event titles and details
 4. CRITICAL: "geni" is ONLY for VISUAL images/pictures/photos. If user wants TEXT (social media post, article, caption, message), respond "none" to use chat
-5. Social media posts, blog posts, articles, captions = TEXT CONTENT = respond "none"
-6. Images, pictures, photos, artwork, drawings = VISUAL CONTENT = use "geni" command
-7. DO NOT include any explanation - respond with ONLY the command or "none"
-8. DO NOT add quotes, markdown, or extra text
-9. For calendar events, pass the time description naturally - the system will parse it correctly and handle timezones
+5. Social media posts, blog posts, articles, captions, tweets, LinkedIn posts = TEXT CONTENT = ALWAYS respond "none"
+6. Images, pictures, photos, artwork, drawings, illustrations = VISUAL CONTENT = use "geni" command
+7. When in doubt about create/generate/make, ask yourself: "Is this TEXT or a PICTURE?" - TEXT = none, PICTURE = geni
+8. DO NOT include any explanation - respond with ONLY the command or "none"
+9. DO NOT add quotes, markdown, or extra text
+10. For calendar events, pass the time description naturally - the system will parse it correctly and handle timezones
+
+DOUBLE CHECK: If the request contains words like "post", "article", "tweet", "caption", "message" it is TEXT = respond "none"
 
 RESPOND WITH THE COMMAND ONLY!"""
 
