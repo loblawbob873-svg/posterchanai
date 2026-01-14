@@ -253,8 +253,8 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
 
             soup = BeautifulSoup(response.text, "lxml")
 
-            # Find all torrent rows
-            torrent_rows = soup.find_all("div", class_="tgxtablerow")
+            # Find all torrent rows (may have multiple classes like "tgxtablerow txlight")
+            torrent_rows = soup.find_all("div", class_=lambda c: c and "tgxtablerow" in c.split())
             logger.info(f"Found {len(torrent_rows)} torrent rows")
 
             for row in torrent_rows[:limit]:

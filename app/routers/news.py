@@ -418,15 +418,25 @@ async def summarize_article(
                 text = body.get_text(separator="\n", strip=True) if body else ""
 
         # Clean up and limit text
-        lines = [line.strip() for line in text.split("\n") if line.strip() and len(line.strip()) > 20]
-        text = "\n".join(lines[:100])  # Max 100 lines
+        lines = [line.strip() for line in text.split("\n") if line.strip() and len(line.strip()) > 10]
+        text = "\n".join(lines[:150])  # Max 150 lines
 
         logger.info(f"Extracted text length: {len(text)} chars, {len(lines)} lines")
 
-        if len(text) < 100:
+        if len(text) < 50:
             logger.warning(f"Article extraction failed - only {len(text)} chars extracted from {url}")
-            # Return first 500 chars of raw HTML for debugging
-            return {"summary": f"Could not extract article content. HTML length: {len(html)}. Site may use JavaScript rendering."}
+            # Try more aggressive extraction - just get all text
+            body = soup.find("body")
+            if body:
+                raw_text = body.get_text(separator=" ", strip=True)
+                # Remove excessive whitespace
+                import re
+                raw_text = re.sub(r'\s+', ' ', raw_text).strip()
+                if len(raw_text) > 200:
+                    text = raw_text[:8000]
+                    logger.info(f"Fallback extraction got {len(text)} chars")
+                else:
+                    return {"summary": f"Could not extract article content. HTML length: {len(html)}. Site may use JavaScript rendering."}
 
         # Get AI service - use inference factory (same as news headlines)
         prepare_vram_for_llm(db)
