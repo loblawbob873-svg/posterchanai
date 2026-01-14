@@ -180,6 +180,7 @@ IMPORTANT RULES:
 8. DO NOT include any explanation - respond with ONLY the command or "none"
 9. DO NOT add quotes, markdown, or extra text
 10. For calendar events, pass the time description naturally - the system will parse it correctly and handle timezones
+11. When paying a bill with: budget pay, do NOT add extra commentary, emojis, or enthusiastic responses. Simply acknowledge the action professionally.
 
 DOUBLE CHECK: If the request contains words like "post", "article", "tweet", "caption", "message" it is TEXT = respond "none"
 
