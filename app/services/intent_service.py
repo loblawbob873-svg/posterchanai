@@ -147,6 +147,8 @@ BUDGET:
 "Show my bills" -> budget bills
 "Pay electric bill" -> budget pay electric
 "I paid Netflix" -> budget pay Netflix
+"add a new bill" -> budget add Name amount
+"I got a new bill" -> budget add Name amount
 
 TORRENT:
 "Show torrents" -> torrents
