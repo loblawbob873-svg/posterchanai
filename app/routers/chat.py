@@ -719,29 +719,29 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             for msg in conversation.messages[-21:-1]:
                                 messages.append({"role": msg.role, "content": msg.content})
 
-                        # Detect and fetch URLs in user message
-                        url_context = ""
-                        urls = SearchService.extract_urls(content)
-                        if urls:
-                            logger.info(f"Detected URLs in message: {urls}")
-                            fetched = await search_service.fetch_urls(urls, max_urls=3)
-                            for result in fetched:
-                                if result.get("content") and not result.get("error"):
-                                    logger.info(f"Fetched {len(result['content'])} chars from {result['url']}")
-                                    url_context += f"\n\n---\nContent from {result['url']}:\nTitle: {result['title']}\n\n{result['content']}\n---"
-                                elif result.get("error"):
-                                    logger.warning(f"Failed to fetch {result['url']}: {result['error']}")
-                                    url_context += f"\n\n[Failed to fetch {result['url']}: {result['error']}]"
+                            # Detect and fetch URLs in user message
+                            url_context = ""
+                            urls = SearchService.extract_urls(content)
+                            if urls:
+                                logger.info(f"Detected URLs in message: {urls}")
+                                fetched = await search_service.fetch_urls(urls, max_urls=3)
+                                for result in fetched:
+                                    if result.get("content") and not result.get("error"):
+                                        logger.info(f"Fetched {len(result['content'])} chars from {result['url']}")
+                                        url_context += f"\n\n---\nContent from {result['url']}:\nTitle: {result['title']}\n\n{result['content']}\n---"
+                                    elif result.get("error"):
+                                        logger.warning(f"Failed to fetch {result['url']}: {result['error']}")
+                                        url_context += f"\n\n[Failed to fetch {result['url']}: {result['error']}]"
 
-                        # Add current message with file/image content if provided
-                        if image_data:
-                            # Use OCR to extract text from image
-                            ocr_text = extract_image_text(image_data)
-                            if ocr_text:
-                                user_request = content if content else "Please provide a detailed, objective summary and analysis of this document."
-                                messages.append({
-                                    "role": "user",
-                                    "content": f"""The user uploaded an image containing the following text (extracted via OCR):
+                            # Add current message with file/image content if provided
+                            if image_data:
+                                # Use OCR to extract text from image
+                                ocr_text = extract_image_text(image_data)
+                                if ocr_text:
+                                    user_request = content if content else "Please provide a detailed, objective summary and analysis of this document."
+                                    messages.append({
+                                        "role": "user",
+                                        "content": f"""The user uploaded an image containing the following text (extracted via OCR):
 
 ---BEGIN EXTRACTED TEXT---
 {ocr_text}
@@ -750,159 +750,159 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 User's request: {user_request}
 
 Please analyze the above text objectively and thoroughly. Provide a comprehensive summary covering the main points, key details, and any important information found in the document."""
-                                })
-                            else:
+                                    })
+                                else:
+                                    messages.append({
+                                        "role": "user",
+                                        "content": f"{content or 'The user uploaded an image.'} [Note: An image was uploaded but no text could be extracted from it. Please ask the user to describe what they see.]"
+                                    })
+                            elif file_content:
                                 messages.append({
                                     "role": "user",
-                                    "content": f"{content or 'The user uploaded an image.'} [Note: An image was uploaded but no text could be extracted from it. Please ask the user to describe what they see.]"
+                                    "content": f"Here is a file the user uploaded:\n\n```\n{file_content}\n```\n\nUser's message: {content}"
                                 })
-                        elif file_content:
-                            messages.append({
-                                "role": "user",
-                                "content": f"Here is a file the user uploaded:\n\n```\n{file_content}\n```\n\nUser's message: {content}"
-                            })
-                        elif url_context:
-                            logger.info(f"Adding {len(url_context)} chars of URL context to message")
-                            messages.append({
-                                "role": "user",
-                                "content": f"{content}\n\n[The following web content was fetched from URLs mentioned in the user's message:]{url_context}"
-                            })
-                        else:
-                            messages.append({"role": "user", "content": content})
+                            elif url_context:
+                                logger.info(f"Adding {len(url_context)} chars of URL context to message")
+                                messages.append({
+                                    "role": "user",
+                                    "content": f"{content}\n\n[The following web content was fetched from URLs mentioned in the user's message:]{url_context}"
+                                })
+                            else:
+                                messages.append({"role": "user", "content": content})
 
-                        # Stream response with thinking tag filtering
-                        # Import from central location for consistency
-                        from app.services.text_utils import find_thinking_open
-                        BUFFER_MARGIN = 20  # Enough for longest closing tag
+                            # Stream response with thinking tag filtering
+                            # Import from central location for consistency
+                            from app.services.text_utils import find_thinking_open
+                            BUFFER_MARGIN = 20  # Enough for longest closing tag
 
-                        full_response = ""
-                        buffer = ""
-                        in_thinking = False
-                        current_close_tag = None  # Track which closing tag we're looking for
+                            full_response = ""
+                            buffer = ""
+                            in_thinking = False
+                            current_close_tag = None  # Track which closing tag we're looking for
 
-                        async for chunk in chat_service.chat_stream(messages):
-                            # Check if user requested stop OR switched to another chat
-                            if manager.should_stop(user.id, conn_id):
-                                break
-                            full_response += chunk
-                            buffer += chunk
-                            logger.info(f"[STREAM] Chunk received, len={len(chunk)}, buffer_len={len(buffer)}")
+                            async for chunk in chat_service.chat_stream(messages):
+                                # Check if user requested stop OR switched to another chat
+                                if manager.should_stop(user.id, conn_id):
+                                    break
+                                full_response += chunk
+                                buffer += chunk
+                                logger.info(f"[STREAM] Chunk received, len={len(chunk)}, buffer_len={len(buffer)}")
 
-                            # Filter out thinking content in real-time
-                            while True:
-                                if not in_thinking:
-                                    # Look for start of any thinking tag
-                                    think_start, tag_pair = find_thinking_open(buffer)
-                                    if think_start == -1:
-                                        # No thinking tag, send buffered content (keep margin in case tag is split)
-                                        if len(buffer) > BUFFER_MARGIN:
-                                            to_send = buffer[:-BUFFER_MARGIN]
-                                            buffer = buffer[-BUFFER_MARGIN:]
-                                            if to_send:
-                                                logger.info(f"[STREAM] Sending chunk, len={len(to_send)}")
+                                # Filter out thinking content in real-time
+                                while True:
+                                    if not in_thinking:
+                                        # Look for start of any thinking tag
+                                        think_start, tag_pair = find_thinking_open(buffer)
+                                        if think_start == -1:
+                                            # No thinking tag, send buffered content (keep margin in case tag is split)
+                                            if len(buffer) > BUFFER_MARGIN:
+                                                to_send = buffer[:-BUFFER_MARGIN]
+                                                buffer = buffer[-BUFFER_MARGIN:]
+                                                if to_send:
+                                                    logger.info(f"[STREAM] Sending chunk, len={len(to_send)}")
+                                                    await manager.send_json(user.id, {
+                                                        "type": "stream",
+                                                        "content": to_send
+                                                    }, conn_id)
+                                            break
+                                        else:
+                                            # Found opening tag, send content before it and enter thinking mode
+                                            if think_start > 0:
                                                 await manager.send_json(user.id, {
                                                     "type": "stream",
-                                                    "content": to_send
+                                                    "content": buffer[:think_start]
                                                 }, conn_id)
-                                        break
+                                            open_tag, close_tag = tag_pair
+                                            buffer = buffer[think_start + len(open_tag):]
+                                            current_close_tag = close_tag
+                                            in_thinking = True
                                     else:
-                                        # Found opening tag, send content before it and enter thinking mode
-                                        if think_start > 0:
-                                            await manager.send_json(user.id, {
-                                                "type": "stream",
-                                                "content": buffer[:think_start]
-                                            }, conn_id)
-                                        open_tag, close_tag = tag_pair
-                                        buffer = buffer[think_start + len(open_tag):]
-                                        current_close_tag = close_tag
-                                        in_thinking = True
-                                else:
-                                    # In thinking mode, look for matching end tag
-                                    think_end = buffer.lower().find(current_close_tag)
-                                    if think_end == -1:
-                                        # Still in thinking, discard buffered thinking content but keep margin
-                                        if len(buffer) > BUFFER_MARGIN:
-                                            buffer = buffer[-BUFFER_MARGIN:]
-                                        break
-                                    else:
-                                        # Found closing tag, exit thinking mode
-                                        buffer = buffer[think_end + len(current_close_tag):]
-                                        current_close_tag = None
-                                        in_thinking = False
+                                        # In thinking mode, look for matching end tag
+                                        think_end = buffer.lower().find(current_close_tag)
+                                        if think_end == -1:
+                                            # Still in thinking, discard buffered thinking content but keep margin
+                                            if len(buffer) > BUFFER_MARGIN:
+                                                buffer = buffer[-BUFFER_MARGIN:]
+                                            break
+                                        else:
+                                            # Found closing tag, exit thinking mode
+                                            buffer = buffer[think_end + len(current_close_tag):]
+                                            current_close_tag = None
+                                            in_thinking = False
 
-                        # Send any remaining buffered content
-                        if buffer and not in_thinking:
-                            logger.info(f"[STREAM] Sending final buffer, len={len(buffer)}")
-                            await manager.send_json(user.id, {
-                                "type": "stream",
-                                "content": buffer
-                            }, conn_id)
-
-                        # Ensure we always send stream_end, even if there was an error or stop request
-                        logger.info(f"[STREAM] Complete, total_len={len(full_response)}, stopped={manager.should_stop(user.id, conn_id)}")
-
-                        # Save assistant response
-                        if full_response:
-                            clean_response = chat_service.strip_thinking_tags(full_response)
-
-                            # Check for plugin tool calls in the response
-                            tool_calls = plugin_service.parse_tool_calls(clean_response)
-                            if tool_calls:
-                                # Execute tool calls
-                                stripped_response, results = await plugin_service.execute_all_tool_calls(
-                                    clean_response, user.id
-                                )
-
-                                # Send tool results to client (formatted for display)
-                                for r in results:
-                                    formatted_result = plugin_service.format_result_for_display(
-                                        r['plugin'], r['action'], r['result']
-                                    )
-                                    await manager.send_json(user.id, {
-                                        "type": "plugin_result",
-                                        "plugin": r['plugin'],
-                                        "action": r['action'],
-                                        "result": formatted_result
-                                    }, conn_id)
-
-                                # Get AI follow-up response with tool results
-                                result_context = plugin_service.format_results_for_ai(results)
-                                follow_up_messages = messages + [
-                                    {"role": "assistant", "content": stripped_response},
-                                    {"role": "user", "content": f"Plugin results:{result_context}\n\nRespond helpfully to the user based on these results. Be conversational but informative."}
-                                ]
-
-                                # Signal frontend to clear current content for follow-up
+                            # Send any remaining buffered content
+                            if buffer and not in_thinking:
+                                logger.info(f"[STREAM] Sending final buffer, len={len(buffer)}")
                                 await manager.send_json(user.id, {
-                                    "type": "stream_clear"
+                                    "type": "stream",
+                                    "content": buffer
                                 }, conn_id)
 
-                                # Stream follow-up response
-                                follow_up_response = ""
-                                async for chunk in chat_service.chat_stream(follow_up_messages):
-                                    if manager.should_stop(user.id, conn_id):
-                                        break
-                                    follow_up_response += chunk
+                            # Ensure we always send stream_end, even if there was an error or stop request
+                            logger.info(f"[STREAM] Complete, total_len={len(full_response)}, stopped={manager.should_stop(user.id, conn_id)}")
+
+                            # Save assistant response
+                            if full_response:
+                                clean_response = chat_service.strip_thinking_tags(full_response)
+
+                                # Check for plugin tool calls in the response
+                                tool_calls = plugin_service.parse_tool_calls(clean_response)
+                                if tool_calls:
+                                    # Execute tool calls
+                                    stripped_response, results = await plugin_service.execute_all_tool_calls(
+                                        clean_response, user.id
+                                    )
+
+                                    # Send tool results to client (formatted for display)
+                                    for r in results:
+                                        formatted_result = plugin_service.format_result_for_display(
+                                            r['plugin'], r['action'], r['result']
+                                        )
+                                        await manager.send_json(user.id, {
+                                            "type": "plugin_result",
+                                            "plugin": r['plugin'],
+                                            "action": r['action'],
+                                            "result": formatted_result
+                                        }, conn_id)
+
+                                    # Get AI follow-up response with tool results
+                                    result_context = plugin_service.format_results_for_ai(results)
+                                    follow_up_messages = messages + [
+                                        {"role": "assistant", "content": stripped_response},
+                                        {"role": "user", "content": f"Plugin results:{result_context}\n\nRespond helpfully to the user based on these results. Be conversational but informative."}
+                                    ]
+
+                                    # Signal frontend to clear current content for follow-up
                                     await manager.send_json(user.id, {
-                                        "type": "stream",
-                                        "content": chunk
+                                        "type": "stream_clear"
                                     }, conn_id)
 
-                                # Save combined response
-                                final_response = chat_service.strip_thinking_tags(follow_up_response) if follow_up_response else stripped_response
-                                assistant_msg = Message(
-                                    conversation_id=conversation_id,
-                                    role="assistant",
-                                    content=final_response
-                                )
-                            else:
-                                assistant_msg = Message(
-                                    conversation_id=conversation_id,
-                                    role="assistant",
-                                    content=clean_response
-                                )
-                                db.add(assistant_msg)
-                                db.commit()
+                                    # Stream follow-up response
+                                    follow_up_response = ""
+                                    async for chunk in chat_service.chat_stream(follow_up_messages):
+                                        if manager.should_stop(user.id, conn_id):
+                                            break
+                                        follow_up_response += chunk
+                                        await manager.send_json(user.id, {
+                                            "type": "stream",
+                                            "content": chunk
+                                        }, conn_id)
+
+                                    # Save combined response
+                                    final_response = chat_service.strip_thinking_tags(follow_up_response) if follow_up_response else stripped_response
+                                    assistant_msg = Message(
+                                        conversation_id=conversation_id,
+                                        role="assistant",
+                                        content=final_response
+                                    )
+                                else:
+                                    assistant_msg = Message(
+                                        conversation_id=conversation_id,
+                                        role="assistant",
+                                        content=clean_response
+                                    )
+                                    db.add(assistant_msg)
+                                    db.commit()
 
                         except Exception as stream_err:
                             logger.error(f"Error during streaming: {stream_err}", exc_info=True)

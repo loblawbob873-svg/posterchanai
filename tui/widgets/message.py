@@ -1231,8 +1231,11 @@ class MessageWidget(Widget):
         event.stop()
 
         if button.id == "copy-btn":
-            # Run copy async to avoid blocking
-            self.run_worker(lambda: self._copy_to_clipboard(), exclusive=False)
+            # Copy synchronously - it's fast enough
+            try:
+                self._copy_to_clipboard()
+            except Exception as e:
+                logger.error(f"Copy failed: {e}")
         else:
             # Check for command in both attribute and name
             command = getattr(button, 'command', None) or button.name
@@ -1241,8 +1244,11 @@ class MessageWidget(Widget):
             if command and command.startswith('tui-copy '):
                 url = command[9:]  # Remove 'tui-copy ' prefix
                 logger.info(f"Copying URL to clipboard: {url}")
-                # Run copy async to avoid blocking UI
-                self.run_worker(lambda u=url: self._copy_to_clipboard(u), exclusive=False)
+                # Copy synchronously - it's fast enough
+                try:
+                    self._copy_to_clipboard(url)
+                except Exception as e:
+                    logger.error(f"Copy URL failed: {e}")
             elif command and command.startswith(('bt ', 'mail ', 'torrents ', 'music ', 'news ', 'cal ', 'todo ')):
                 logger.info(f"Posting command: {command}")
                 self.post_message(self.CommandClicked(command))
