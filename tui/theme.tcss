@@ -1352,6 +1352,44 @@ Toast.-error {
     background: $cyan;
 }
 
+/* ═══════════ NEWS LIST - INLINE COPY BUTTONS ═══════════ */
+.news-url-row {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    layout: horizontal;
+    align: left middle;
+}
+
+.news-url {
+    width: 1fr;
+    padding: 0 1;
+    color: $cyan;
+    content-align: left middle;
+}
+
+.news-copy-btn {
+    width: auto;
+    min-width: 10;
+    height: 1;
+    padding: 0 1;
+    margin: 0;
+    background: $neon-purple;
+    color: $background;
+    border: none;
+    text-style: bold;
+}
+
+.news-copy-btn:hover {
+    background: $cyan;
+}
+
+.news-separator {
+    color: $surface;
+    margin: 1 0;
+}
+
 /* ═══════════ ATTACH BUTTON - FILE UPLOAD ═══════════ */
 .attach-btn {
     width: 5;
