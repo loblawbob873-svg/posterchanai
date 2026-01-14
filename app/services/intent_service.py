@@ -385,6 +385,9 @@ RESPOND WITH THE COMMAND ONLY!"""
             "budget",
             "what bills",
             "pay bill",
+            "paid bill",
+            "i paid",
+            "paid the",
         }
 
         for keyword in action_keywords:
