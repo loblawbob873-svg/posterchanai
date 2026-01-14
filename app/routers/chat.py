@@ -719,19 +719,27 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             for msg in conversation.messages[-21:-1]:
                                 messages.append({"role": msg.role, "content": msg.content})
 
-                            # Detect and fetch URLs in user message
+                            # Detect and fetch URLs in user message (with timeout to avoid hanging)
                             url_context = ""
                             urls = SearchService.extract_urls(content)
                             if urls:
                                 logger.info(f"Detected URLs in message: {urls}")
-                                fetched = await search_service.fetch_urls(urls, max_urls=3)
-                                for result in fetched:
-                                    if result.get("content") and not result.get("error"):
-                                        logger.info(f"Fetched {len(result['content'])} chars from {result['url']}")
-                                        url_context += f"\n\n---\nContent from {result['url']}:\nTitle: {result['title']}\n\n{result['content']}\n---"
-                                    elif result.get("error"):
-                                        logger.warning(f"Failed to fetch {result['url']}: {result['error']}")
-                                        url_context += f"\n\n[Failed to fetch {result['url']}: {result['error']}]"
+                                try:
+                                    # Add 15 second timeout for URL fetching to avoid long delays
+                                    fetched = await asyncio.wait_for(
+                                        search_service.fetch_urls(urls, max_urls=3),
+                                        timeout=15
+                                    )
+                                    for result in fetched:
+                                        if result.get("content") and not result.get("error"):
+                                            logger.info(f"Fetched {len(result['content'])} chars from {result['url']}")
+                                            url_context += f"\n\n---\nContent from {result['url']}:\nTitle: {result['title']}\n\n{result['content']}\n---"
+                                        elif result.get("error"):
+                                            logger.warning(f"Failed to fetch {result['url']}: {result['error']}")
+                                            url_context += f"\n\n[Failed to fetch {result['url']}: {result['error']}]"
+                                except asyncio.TimeoutError:
+                                    logger.warning(f"URL fetching timed out after 15s for URLs: {urls}")
+                                    url_context = "\n\n[Note: Could not fetch URL content due to timeout]"
 
                             # Add current message with file/image content if provided
                             if image_data:
