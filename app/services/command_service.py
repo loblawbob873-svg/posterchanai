@@ -22,7 +22,8 @@ from app.services.caldav_service import (
     add_event_to_calendar, add_user_contact, delete_event_from_calendar,
     get_event_by_uid, update_event_in_calendar,
     get_all_user_todos, add_todo_to_calendar, delete_todo_from_calendar,
-    format_todos_for_display, delete_user_contact, get_user_contact_by_uid
+    format_todos_for_display, delete_user_contact, get_user_contact_by_uid,
+    edit_user_contact
 )
 from app.services.mail_service import (
     fetch_all_accounts, fetch_messages, get_message_by_id, delete_message, delete_all_messages,
@@ -1907,26 +1908,63 @@ Return ONLY valid JSON, no other text."""},
                 logger.error(f"Delete contact error: {e}")
                 return {"type": "text", "content": f"Error deleting contact: {str(e)}"}
 
-        # Handle edit subcommand (for now, just show the contact details)
+        # Handle edit subcommand
         if subcommand == "edit" and len(parts) > 1:
             contact_uid = parts[1]
+
+            # If only UID provided, show current details and usage
+            if len(parts) == 2:
+                try:
+                    contact = get_user_contact_by_uid(self.user.id, self.db, contact_uid)
+                    if not contact:
+                        return {"type": "text", "content": f"❌ Contact not found with UID: {contact_uid}"}
+
+                    details = f"## 📝 Edit Contact: {contact.name}\n\n"
+                    details += "**Current details:**\n"
+                    if contact.emails:
+                        details += f"📧 Email: {', '.join(contact.emails)}\n"
+                    if contact.phone:
+                        details += f"📞 Phone: {contact.phone}\n"
+                    if contact.organization:
+                        details += f"🏢 Organization: {contact.organization}\n"
+                    if contact.note:
+                        details += f"📝 Note: {contact.note}\n"
+                    details += f"\n**Usage:**\n`contacts edit {contact_uid} <field> <value>`\n\n"
+                    details += "**Fields:** name, phone, email, organization, note\n\n"
+                    details += f"**Examples:**\n- `contacts edit {contact_uid} name John Smith`\n- `contacts edit {contact_uid} phone 555-9876`\n- `contacts edit {contact_uid} email john@example.com`"
+                    return {"type": "text", "content": details}
+                except Exception as e:
+                    logger.error(f"Edit contact error: {e}")
+                    return {"type": "text", "content": f"Error editing contact: {str(e)}"}
+
+            # Parse field and value
+            if len(parts) < 4:
+                return {"type": "text", "content": "Usage: `contacts edit <uid> <field> <value>`\n\nFields: name, phone, email, organization, note"}
+
+            field = parts[2].lower()
+            value = " ".join(parts[3:])
+
+            valid_fields = ["name", "phone", "email", "organization", "note"]
+            if field not in valid_fields:
+                return {"type": "text", "content": f"Invalid field: {field}\n\nValid fields: {', '.join(valid_fields)}"}
+
             try:
+                # Verify contact exists first
                 contact = get_user_contact_by_uid(self.user.id, self.db, contact_uid)
                 if not contact:
                     return {"type": "text", "content": f"❌ Contact not found with UID: {contact_uid}"}
 
-                # For now, show contact details (full edit UI would require more work)
-                details = f"## 📝 Edit Contact: {contact.name}\n\n"
-                if contact.emails:
-                    details += f"📧 Email: {', '.join(contact.emails)}\n"
-                if contact.phone:
-                    details += f"📞 Phone: {contact.phone}\n"
-                if contact.organization:
-                    details += f"🏢 Organization: {contact.organization}\n"
-                if contact.note:
-                    details += f"📝 Note: {contact.note}\n"
-                details += f"\n*Full contact editing coming soon. For now, delete and re-add to update.*"
-                return {"type": "text", "content": details}
+                # Perform the edit
+                updates = {field: value}
+                success = edit_user_contact(self.user.id, self.db, contact_uid, updates)
+
+                if success:
+                    # Show updated contact list
+                    contacts = get_user_contacts(self.user.id, "", self.db)
+                    contacts_text = format_contacts_for_display(contacts)
+                    return {"type": "text", "content": f"✅ Updated {field} for {contact.name}\n\n{contacts_text}"}
+                else:
+                    return {"type": "text", "content": f"❌ Failed to update contact"}
             except Exception as e:
                 logger.error(f"Edit contact error: {e}")
                 return {"type": "text", "content": f"Error editing contact: {str(e)}"}
