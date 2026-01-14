@@ -1359,12 +1359,9 @@ def format_message_list(
 
 
 def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
-    """
-    Format a single message for detailed view.
-    Updates attachments to use cmd: links so the TUI can render download buttons.
-    """
+    """Format a single message for detailed view with action buttons and attachments."""
     account_short = msg.account.split("@")[0]
-    # Ensure msg_id includes folder prefix if not in primary INBOX
+    # msg_id should include folder if it's not the default INBOX
     msg_id = f"{folder}:{msg.uid}" if folder and folder != "INBOX" else str(msg.uid)
 
     lines = [
@@ -1376,33 +1373,27 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
         f"**Account:** {msg.account}",
     ]
 
-    # Handle Attachments with TUI-compatible cmd: links
     if msg.attachments:
         lines.append(f"\n**Attachments:** {len(msg.attachments)} files")
         for i, att in enumerate(msg.attachments):
             size_kb = att.size / 1024
-            # We use the '📎' character + 'cmd:mail attachment' which the TUI interceptor looks for
-            lines.append(
-                f"  - [📎 {att.filename} ({size_kb:.1f} KB)](cmd:mail attachment {account_short} {msg_id} {i})"
-            )
+            # TUI uses 'cmd:mail attachment' to trigger the download/open logic in command_service.py
+            cmd = f"mail attachment {account_short} {msg_id} {i}"
+            lines.append(f"  - [📎 {att.filename}](cmd:{cmd}) ({size_kb:.1f} KB)")
 
     lines.append("")
     lines.append("---")
     lines.append("")
 
-    # Process Body (preferring HTML to text conversion for link preservation)
+    # Body content handling
     body_content = ""
-    # If HTML exists and has links, prioritize it to ensure URLs are formatted as [text](url)
     html_has_links = msg.body_html and "<a " in msg.body_html.lower()
 
     if html_has_links:
         body_content = html_to_text(msg.body_html)
     elif msg.body_text and msg.body_text.strip():
         body_content = msg.body_text
-        # Fallback: if plain text somehow contains raw HTML tags, convert them
-        lower_body = body_content.lower()
-        html_indicators = ["<html", "<body", "<div", "<p>", "<a href", "color:"]
-        if any(ind in lower_body for ind in html_indicators):
+        if any(ind in body_content.lower() for ind in ["<div", "<p>", "<html", "<body"]):
             body_content = html_to_text(body_content)
     elif msg.body_html:
         body_content = html_to_text(msg.body_html)
@@ -1418,7 +1409,7 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
     lines.append("*TUI: Press 'o' to open links in browser*")
     lines.append("")
 
-    # Construction of management action buttons
+    # Action buttons - restructured so TUI can easily parse them into actual Button widgets
     reply_cmd = f"mail reply {account_short} {msg_id} "
     forward_cmd = f"mail forward {account_short} {msg_id} "
     summary_cmd = f"mail summary {account_short} {msg_id}"
@@ -1428,7 +1419,6 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
     extract_event_cmd = f"mail extract-event {account_short} {msg_id}"
     extract_bill_cmd = f"mail extract-bill {account_short} {msg_id}"
 
-    # Layout buttons in rows for clean TUI rendering
     lines.append(f"[Reply](cmd:{reply_cmd}) | [Forward](cmd:{forward_cmd}) | [Summary](cmd:{summary_cmd})")
     lines.append(f"[Archive](cmd:{archive_cmd}) | [Translate](cmd:{translate_cmd}) | [Delete](cmd:{delete_cmd})")
     lines.append(f"[+ Calendar](cmd:{extract_event_cmd}) | [+ Bill](cmd:{extract_bill_cmd})")
