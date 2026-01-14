@@ -147,7 +147,7 @@ BUDGET:
 "Show my bills" -> budget bills
 "list my bills" -> budget bills
 "list bills" -> budget bills
-"paid bill electric" -> budget paid electric
+"paid bill name" -> budget paid name
 "add a new bill" -> budget add Name amount
 "got a new bill" -> budget add Name amount
 "new bill for" -> budget add Name amount
