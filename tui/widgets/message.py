@@ -711,100 +711,131 @@ class MessageWidget(Widget):
         import logging
         import re
 
-        from textual.containers import Horizontal
-        from textual.widgets import Button, Static
+        from textual.containers import Horizontal, Vertical
+        from textual.widgets import Static
 
         from tui.utils.markdown import parse_markdown
 
         logger = logging.getLogger("tui")
+        logger.info("_render_mail_detail: Starting full render")
 
         try:
             lines = content.split("\n")
 
-            # Patterns for commands
-            cmd_patterns = {
+            # 1. Define all command patterns
+            patterns = {
                 "reply": re.compile(r"\[Reply\]\(cmd:(mail reply [^)]+)\)"),
                 "forward": re.compile(r"\[Forward\]\(cmd:(mail forward [^)]+)\)"),
+                "summary": re.compile(r"\[Summary\]\(cmd:(mail summary [^)]+)\)"),
                 "archive": re.compile(r"\[Archive\]\(cmd:(mail archive [^)]+)\)"),
+                "translate": re.compile(r"\[Translate\]\(cmd:(mail translate [^)]+)\)"),
                 "delete": re.compile(r"\[Delete\]\(cmd:(mail delete [^)]+)\)"),
                 "calendar": re.compile(r"\[\+ Calendar\]\(cmd:(mail extract-event [^)]+)\)"),
+                "bill": re.compile(r"\[\+ Bill\]\(cmd:(mail extract-bill [^)]+)\)"),
+                # Pattern for attachments: [📎 Filename.pdf (XX KB)](cmd:mail download ...)
+                "attach": re.compile(r"\[📎\s*(.+?)\s*\((.+?)\)\]\(cmd:(mail download [^)]+)\)"),
             }
 
-            # Pattern for attachments: [📎 Filename.pdf (1.2 MB)](cmd:mail download <acc> <id> <part>)
-            attach_pattern = re.compile(r"\[📎\s*(.+?)\s*\((.+?)\)\]\(cmd:(mail download [^)]+)\)")
-
-            found_commands = {}
+            commands = {k: None for k in patterns}
             attachments = []
             body_lines = []
-            in_metadata_block = False
+            in_button_section = False
 
+            # 2. Parse content into Body vs. Commands
             for line in lines:
-                # Check for standard action buttons
-                is_action_line = False
-                for key, pattern in cmd_patterns.items():
-                    match = pattern.search(line)
-                    if match:
-                        found_commands[key] = match.group(1)
-                        is_action_line = True
+                found_cmd_on_line = False
 
                 # Check for attachments
-                attach_match = attach_pattern.search(line)
+                attach_match = patterns["attach"].search(line)
                 if attach_match:
                     attachments.append(
                         {"name": attach_match.group(1), "size": attach_match.group(2), "cmd": attach_match.group(3)}
                     )
-                    is_action_line = True
+                    found_cmd_on_line = True
 
-                # If it's not a command line, it's part of the email body
-                if not is_action_line:
+                # Check for other action buttons
+                for key, pat in patterns.items():
+                    if key == "attach":
+                        continue
+                    match = pat.search(line)
+                    if match:
+                        commands[key] = match.group(1)
+                        found_cmd_on_line = True
+                        in_button_section = True
+
+                if not found_cmd_on_line and not in_button_section:
                     body_lines.append(line)
 
-            # 1. Render Email Body
+            # 3. Render the Email Body
+            # Static widget MUST have can_focus=True for 'o' key URLs to be detectable
             body_content = "\n".join(body_lines)
-            rendered = parse_markdown(body_content)
-            # Ensure the Static widget is focusable so 'o' works
-            body_widget = Static(rendered, classes="message-body")
+            rendered_body = parse_markdown(body_content)
+            body_widget = Static(rendered_body, classes="message-body")
             body_widget.can_focus = True
             container.mount(body_widget)
 
-            # 2. Render Attachments Section
+            # 4. Render Attachments Section
             if attachments:
                 container.mount(Static("\n[bold cyan]📎 ATTACHMENTS[/bold cyan]", classes="mail-section-header"))
                 for att in attachments:
+                    # Clearer button for downloads
                     btn = create_non_focusable_button(
-                        f"Download {att['name']} ({att['size']})", classes="mail-attachment-btn"
+                        f"Download: {att['name']} ({att['size']})", classes="mail-attachment-btn"
                     )
                     btn.command = att["cmd"]
                     container.mount(btn)
 
-            # 3. Render Action Buttons
-            if found_commands:
+            # 5. Render Action Buttons (Multi-row layout for readability)
+            if any(commands.values()):
                 container.mount(Static("\n[bold cyan]◈ ACTIONS[/bold cyan]", classes="mail-section-header"))
-                actions_row = Horizontal(classes="mail-actions-row")
-                container.mount(actions_row)
 
-                # Map internal keys to Display Labels
-                labels = {
-                    "reply": "↩ Reply",
-                    "forward": "→ Forward",
-                    "calendar": "📅 +Cal",
-                    "archive": "📦 Archive",
-                    "delete": "🗑 Delete",
-                }
+                # Row 1: Primary Actions
+                row1 = Horizontal(classes="mail-actions-row")
+                if commands["reply"]:
+                    btn = create_non_focusable_button("↩ Reply", classes="mail-action-btn")
+                    btn.command = commands["reply"]
+                    row1.mount(btn)
+                if commands["forward"]:
+                    btn = create_non_focusable_button("→ Forward", classes="mail-action-btn")
+                    btn.command = commands["forward"]
+                    row1.mount(btn)
+                if commands["summary"]:
+                    btn = create_non_focusable_button("📝 Summary", classes="mail-action-btn")
+                    btn.command = commands["summary"]
+                    row1.mount(btn)
+                container.mount(row1)
 
-                for key, cmd in found_commands.items():
-                    btn_classes = "mail-action-btn"
-                    if key == "delete":
-                        btn_classes += " mail-btn-danger"
-                    if key == "calendar":
-                        btn_classes += " mail-action-special"
+                # Row 2: Special Extraction / Utilities
+                row2 = Horizontal(classes="mail-actions-row")
+                if commands["calendar"]:
+                    btn = create_non_focusable_button("📅 Add to Cal", classes="mail-action-btn mail-action-special")
+                    btn.command = commands["calendar"]
+                    row2.mount(btn)
+                if commands["bill"]:
+                    btn = create_non_focusable_button("💵 Add Bill", classes="mail-action-btn mail-action-special")
+                    btn.command = commands["bill"]
+                    row2.mount(btn)
+                if commands["translate"]:
+                    btn = create_non_focusable_button("🌐 Translate", classes="mail-action-btn")
+                    btn.command = commands["translate"]
+                    row2.mount(btn)
+                container.mount(row2)
 
-                    btn = create_non_focusable_button(labels.get(key, key.title()), classes=btn_classes)
-                    btn.command = cmd
-                    actions_row.mount(btn)
+                # Row 3: Management
+                row3 = Horizontal(classes="mail-actions-row")
+                if commands["archive"]:
+                    btn = create_non_focusable_button("📦 Archive", classes="mail-action-btn")
+                    btn.command = commands["archive"]
+                    row3.mount(btn)
+                if commands["delete"]:
+                    btn = create_non_focusable_button("🗑 Delete", classes="mail-action-btn mail-btn-danger")
+                    btn.command = commands["delete"]
+                    row3.mount(btn)
+                container.mount(row3)
 
         except Exception as e:
-            logger.error(f"Error rendering mail detail: {e}", exc_info=True)
+            logger.error(f"Error in _render_mail_detail: {e}", exc_info=True)
+            # Fallback to plain markdown if data parsing fails
             container.mount(Static(parse_markdown(content), classes="message-body"))
 
     def _render_cal_list(self, content: str, container: Vertical):
