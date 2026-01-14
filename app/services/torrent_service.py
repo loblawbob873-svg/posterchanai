@@ -233,8 +233,8 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
 
     from urllib.parse import quote_plus
     base_url = get_torrent_base_url(db)
-    # TorrentGalaxy uses /search/ endpoint
-    search_url = f"{base_url}/search/{quote_plus(query)}/0/0/0"
+    # TorrentGalaxy uses /get-posts/keywords: endpoint
+    search_url = f"{base_url}/get-posts/keywords:{quote_plus(query)}"
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -246,7 +246,8 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
     results = []
 
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            logger.info(f"Searching torrents: {search_url}")
             response = await client.get(search_url, headers=headers)
             response.raise_for_status()
 
@@ -254,6 +255,7 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
 
             # Find all torrent rows
             torrent_rows = soup.find_all("div", class_="tgxtablerow")
+            logger.info(f"Found {len(torrent_rows)} torrent rows")
 
             for row in torrent_rows[:limit]:
                 try:

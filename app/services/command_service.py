@@ -993,7 +993,9 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
         if subcommand in ("search", "s") and len(parts) > 1:
             query = " ".join(parts[1:])
             try:
-                results = await search_torrents(self.db, query, limit=15)
+                import asyncio
+                # Add timeout to prevent hanging
+                results = await asyncio.wait_for(search_torrents(self.db, query, limit=15), timeout=20)
 
                 if not results:
                     return {"type": "text", "content": f"No results found for '{query}' on torrent site"}
@@ -1004,6 +1006,9 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
                 formatted = format_torrent_results(results, f"SEARCH: {query.upper()}")
                 return {"type": "text", "content": formatted}
+            except asyncio.TimeoutError:
+                logger.error(f"Torrent search timed out for query: {query}")
+                return {"type": "text", "content": f"Search timed out. The torrent site may be slow or unavailable."}
             except Exception as e:
                 logger.error(f"Torrent search error: {e}")
                 return {"type": "text", "content": f"Error searching torrents: {str(e)}"}
