@@ -863,31 +863,70 @@ def add_user_contact(
 
 def delete_contact(url: str, username: str, password: str, contact_uid: str) -> bool:
     """Delete a contact (vCard) from CardDAV addressbook by UID."""
+    import requests
+    from requests.auth import HTTPBasicAuth
+    import re
+
     try:
-        client = create_caldav_client(url, username, password)
-        principal = client.principal()
-        addressbooks = principal.calendars()  # CardDAV addressbooks are accessed via calendars() method
+        # Use PROPFIND to list all vCard files
+        headers = {
+            'Content-Type': 'application/xml',
+            'Depth': '1'
+        }
+        propfind_body = '''<?xml version="1.0" encoding="utf-8" ?>
+        <D:propfind xmlns:D="DAV:">
+          <D:prop>
+            <D:getcontenttype/>
+            <D:getetag/>
+          </D:prop>
+        </D:propfind>'''
 
-        for ab in addressbooks:
+        resp = requests.request('PROPFIND', url, auth=HTTPBasicAuth(username, password),
+                               headers=headers, data=propfind_body, timeout=30)
+
+        if resp.status_code != 207:
+            logger.error(f"CardDAV PROPFIND failed: {resp.status_code}")
+            return False
+
+        # Parse response to find .vcf files
+        vcf_urls = re.findall(r'<href>([^<]+\.vcf)</href>', resp.text)
+
+        # Build base URL
+        base_url = url.rstrip('/')
+        url_parts = url.split('/')
+        scheme_host = '/'.join(url_parts[:3])
+
+        for vcf_path in vcf_urls:
             try:
-                # Get all vcards and search for matching UID
-                vcards = ab.objects()
-                for vcard_obj in vcards:
-                    try:
-                        vcard_data = vcard_obj.data
-                        vcard = vobject.readOne(vcard_data)
+                # Build full URL
+                if vcf_path.startswith('http'):
+                    vcf_url = vcf_path
+                elif vcf_path.startswith('/'):
+                    vcf_url = scheme_host + vcf_path
+                else:
+                    vcf_url = base_url + '/' + vcf_path
 
-                        # Check if UID matches
-                        vcard_uid = str(vcard.uid.value) if hasattr(vcard, 'uid') else None
-                        if vcard_uid == contact_uid:
-                            vcard_obj.delete()
-                            logger.info(f"Deleted contact with UID: {contact_uid}")
-                            return True
-                    except Exception as e:
-                        logger.debug(f"Failed to parse/delete vcard: {e}")
-                        continue
+                vcf_resp = requests.get(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10)
+                if vcf_resp.status_code != 200:
+                    continue
+
+                vcard_data = vcf_resp.text
+                vcard = vobject.readOne(vcard_data)
+
+                # Check if UID matches
+                vcard_uid = str(vcard.uid.value) if hasattr(vcard, 'uid') else None
+                if vcard_uid == contact_uid:
+                    # Delete the vCard
+                    delete_resp = requests.delete(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10)
+                    if delete_resp.status_code in (200, 204, 404):  # 404 means already deleted
+                        logger.info(f"Deleted contact with UID: {contact_uid}")
+                        return True
+                    else:
+                        logger.error(f"Failed to delete contact: HTTP {delete_resp.status_code}")
+                        return False
+
             except Exception as e:
-                logger.debug(f"Failed to get contacts from addressbook: {e}")
+                logger.debug(f"Error processing vCard: {e}")
                 continue
 
         logger.warning(f"Contact not found with UID: {contact_uid}")
@@ -915,43 +954,100 @@ def delete_user_contact(user_id: int, db: Session, contact_uid: str) -> bool:
 
 def get_contact_by_uid(url: str, username: str, password: str, contact_uid: str) -> Optional[Contact]:
     """Get a specific contact by UID."""
+    import requests
+    from requests.auth import HTTPBasicAuth
+    import re
+
     try:
-        client = create_caldav_client(url, username, password)
-        principal = client.principal()
-        addressbooks = principal.calendars()
+        # Use PROPFIND to list all vCard files
+        headers = {
+            'Content-Type': 'application/xml',
+            'Depth': '1'
+        }
+        propfind_body = '''<?xml version="1.0" encoding="utf-8" ?>
+        <D:propfind xmlns:D="DAV:">
+          <D:prop>
+            <D:getcontenttype/>
+            <D:getetag/>
+          </D:prop>
+        </D:propfind>'''
 
-        for ab in addressbooks:
+        resp = requests.request('PROPFIND', url, auth=HTTPBasicAuth(username, password),
+                               headers=headers, data=propfind_body, timeout=30)
+
+        if resp.status_code != 207:
+            logger.error(f"CardDAV PROPFIND failed: {resp.status_code}")
+            return None
+
+        # Parse response to find .vcf files
+        vcf_urls = re.findall(r'<href>([^<]+\.vcf)</href>', resp.text)
+
+        # Build base URL
+        base_url = url.rstrip('/')
+        url_parts = url.split('/')
+        scheme_host = '/'.join(url_parts[:3])
+
+        for vcf_path in vcf_urls:
             try:
-                # Get all vcards and search for matching UID
-                vcards = ab.objects()
-                for vcard_obj in vcards:
-                    try:
-                        vcard_data = vcard_obj.data
-                        vcard = vobject.readOne(vcard_data)
+                # Build full URL
+                if vcf_path.startswith('http'):
+                    vcf_url = vcf_path
+                elif vcf_path.startswith('/'):
+                    vcf_url = scheme_host + vcf_path
+                else:
+                    vcf_url = base_url + '/' + vcf_path
 
-                        # Check if UID matches
-                        vcard_uid = str(vcard.uid.value) if hasattr(vcard, 'uid') else None
-                        if vcard_uid == contact_uid:
-                            # Extract contact info
-                            name = str(vcard.fn.value) if hasattr(vcard, 'fn') else ""
-                            emails = [str(email.value) for email in vcard.contents.get('email', [])]
-                            phone = str(vcard.tel.value) if hasattr(vcard, 'tel') else None
-                            org = str(vcard.org.value[0]) if hasattr(vcard, 'org') else None
-                            note = str(vcard.note.value) if hasattr(vcard, 'note') else None
+                vcf_resp = requests.get(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10)
+                if vcf_resp.status_code != 200:
+                    continue
 
-                            return Contact(
-                                uid=contact_uid,
-                                name=name,
-                                emails=emails,
-                                phone=phone,
-                                organization=org,
-                                note=note
-                            )
-                    except Exception as e:
-                        logger.debug(f"Failed to parse vcard: {e}")
-                        continue
+                vcard_data = vcf_resp.text
+                vcard = vobject.readOne(vcard_data)
+
+                # Check if UID matches
+                vcard_uid = str(vcard.uid.value) if hasattr(vcard, 'uid') else None
+                if vcard_uid == contact_uid:
+                    # Extract contact info
+                    name = ""
+                    if hasattr(vcard, 'fn'):
+                        name = str(vcard.fn.value)
+                    elif hasattr(vcard, 'n'):
+                        name = str(vcard.n.value)
+
+                    emails = []
+                    if hasattr(vcard, 'email_list'):
+                        for em in vcard.email_list:
+                            email_val = str(em.value).strip()
+                            if email_val and email_val not in emails:
+                                emails.append(email_val)
+                    elif hasattr(vcard, 'email'):
+                        email_val = str(vcard.email.value).strip()
+                        if email_val:
+                            emails.append(email_val)
+
+                    phone = None
+                    if hasattr(vcard, 'tel'):
+                        phone = str(vcard.tel.value)
+
+                    org = None
+                    if hasattr(vcard, 'org'):
+                        org = str(vcard.org.value[0]) if vcard.org.value else None
+
+                    note = None
+                    if hasattr(vcard, 'note'):
+                        note = str(vcard.note.value)
+
+                    return Contact(
+                        uid=contact_uid,
+                        name=name,
+                        emails=emails,
+                        phone=phone,
+                        organization=org,
+                        note=note
+                    )
+
             except Exception as e:
-                logger.debug(f"Failed to get contacts from addressbook: {e}")
+                logger.debug(f"Error processing vCard: {e}")
                 continue
 
         logger.warning(f"Contact not found with UID: {contact_uid}")
