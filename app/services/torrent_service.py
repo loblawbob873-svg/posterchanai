@@ -216,6 +216,108 @@ async def get_torrents_formatted(db: Session, category: str = "movies", limit: i
     return format_torrent_results(results, category)
 
 
+async def search_torrents(db: Session, query: str, limit: int = 15) -> list[TorrentResult]:
+    """
+    Search torrents on the configured torrent site.
+
+    Args:
+        db: Database session for reading settings
+        query: Search query
+        limit: Maximum number of results to return
+
+    Returns:
+        List of TorrentResult objects
+    """
+    if not query.strip():
+        return []
+
+    from urllib.parse import quote_plus
+    base_url = get_torrent_base_url(db)
+    search_url = f"{base_url}/torrents.php?search={quote_plus(query)}"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate",
+    }
+
+    results = []
+
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            response = await client.get(search_url, headers=headers)
+            response.raise_for_status()
+
+            soup = BeautifulSoup(response.text, "lxml")
+
+            # Find all torrent rows
+            torrent_rows = soup.find_all("div", class_="tgxtablerow")
+
+            for row in torrent_rows[:limit]:
+                try:
+                    # Find title link
+                    title_div = row.find("div", class_="tgxtablecell")
+                    if not title_div:
+                        continue
+
+                    title_link = title_div.find("a", href=re.compile(r"/torrent/"))
+                    if not title_link:
+                        continue
+
+                    title = title_link.get_text(strip=True)
+                    detail_url = base_url + title_link.get("href", "")
+
+                    # Find magnet link
+                    magnet_link = row.find("a", href=re.compile(r"^magnet:\?"))
+                    if not magnet_link:
+                        continue
+
+                    magnet = magnet_link.get("href", "")
+                    if not magnet.startswith("magnet:"):
+                        continue
+
+                    # Find size
+                    size = "N/A"
+                    row_text = row.get_text()
+                    size_match = re.search(r'(\d+(?:\.\d+)?\s*(?:GB|MB|KB|TB|GiB|MiB))', row_text, re.IGNORECASE)
+                    if size_match:
+                        size = size_match.group(1)
+
+                    # Find seeders/leechers
+                    seeders = 0
+                    leechers = 0
+                    stats_spans = row.find_all("span", class_="badge")
+                    for span in stats_spans:
+                        text = span.get_text(strip=True)
+                        if text.isdigit():
+                            if span.get("title", "").lower() == "seeders":
+                                seeders = int(text)
+                            elif span.get("title", "").lower() == "leechers":
+                                leechers = int(text)
+
+                    results.append(TorrentResult(
+                        title=title,
+                        magnet=magnet,
+                        size=size,
+                        seeders=seeders,
+                        leechers=leechers,
+                        category="search",
+                        url=detail_url
+                    ))
+
+                except Exception as e:
+                    logger.debug(f"Error parsing torrent row: {e}")
+                    continue
+
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error searching torrents: {e.response.status_code}")
+    except Exception as e:
+        logger.error(f"Error searching torrents: {e}")
+
+    return results[:limit]
+
+
 async def scrape_all_categories(db: Session, limit_per_category: int = 5) -> dict[str, list[TorrentResult]]:
     """
     Scrape torrents from all categories.

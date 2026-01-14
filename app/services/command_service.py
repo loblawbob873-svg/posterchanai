@@ -12,7 +12,7 @@ from app.services.youtube_service import (
     is_youtube_url, extract_youtube_urls, summarize_youtube,
     download_and_upload_to_webdav, format_download_result, check_ytdlp_available
 )
-from app.services.torrent_service import scrape_torrents, format_torrent_results, TorrentResult, scrape_all_categories, format_all_categories
+from app.services.torrent_service import scrape_torrents, format_torrent_results, TorrentResult, scrape_all_categories, format_all_categories, search_torrents
 from app.services.nyaa_service import search_nyaa, format_nyaa_results, NyaaResult
 from app.services.miniflux_service import MinifluxService
 from app.routers.news import fetch_news_from_source, get_user_news_sources
@@ -122,7 +122,7 @@ class CommandService:
         "geni": "Generate an AI image from your prompt",
         "yt": "YouTube summarize: yt <url> - get AI summary of video transcript",
         "ytdl": "YouTube download: ytdl <url> - download video as MP3 to WebDAV Music",
-        "torrents": "Torrents: torrents | torrents <category> | torrents dl <cat> <#> | torrents list/add/pause/resume/rm/info <#>",
+        "torrents": "Torrents: torrents | torrents search <query> | torrents <category> | torrents dl <cat> <#> | torrents list/add/pause/resume/rm/info <#>",
         "nyaa": "Search nyaa.si: nyaa <query> | nyaa download <#>",
         "budget": "Budget manager: budget | budget bills | budget add <name> <amount> | budget pay <name>",
         "firewall": "Firewall: firewall | firewall search <ip> [date] | firewall analyze <ip>",
@@ -988,6 +988,25 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
             info_hash = bt_service.add_magnet(magnet)
             return {"type": "text", "content": f"**Downloading:** {torrent.title}\n\nAdded: `{info_hash}`\n\nUse `torrents list` to check progress."}
+
+        # Handle search subcommand
+        if subcommand in ("search", "s") and len(parts) > 1:
+            query = " ".join(parts[1:])
+            try:
+                results = await search_torrents(self.db, query, limit=15)
+
+                if not results:
+                    return {"type": "text", "content": f"No results found for '{query}' on torrent site"}
+
+                # Cache results for download command
+                user_id = self.user.id if self.user else 0
+                _torrent_cache[user_id] = {"search": results}
+
+                formatted = format_torrent_results(results, f"SEARCH: {query.upper()}")
+                return {"type": "text", "content": formatted}
+            except Exception as e:
+                logger.error(f"Torrent search error: {e}")
+                return {"type": "text", "content": f"Error searching torrents: {str(e)}"}
 
         # No subcommand - show all categories overview
         if not subcommand:
