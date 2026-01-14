@@ -161,13 +161,28 @@ class MessageWidget(Widget):
 
     def _is_news_list(self, content: str) -> bool:
         """Check if content is a news article list with copy buttons."""
-        # DISABLED - custom news renderer is causing hangs
-        # Let news display with standard markdown and bottom buttons
         import logging
         logger = logging.getLogger("tui")
 
-        logger.info("_is_news_list: Custom news renderer DISABLED - using standard markdown")
-        return False
+        # Check for news patterns:
+        # 1. Dailynews bullet format: - [title](url) [Copy](cmd:tui-copy url)
+        # 2. Miniflux format: **Title** followed by *Feed* and URL with [Copy URL](cmd:...)
+
+        has_news_header = "## News Update" in content or "## Daily News" in content
+        has_copy_button = "[Copy URL](cmd:tui-copy" in content or "[Copy](cmd:tui-copy" in content
+
+        # Check for bullet format
+        has_bullet_format = re.search(r'-\s*\[.+?\]\(.+?\)\s*\[Copy\]\(cmd:tui-copy', content)
+
+        # Check for miniflux format
+        has_miniflux_format = "**" in content and "[Copy URL](cmd:tui-copy" in content
+
+        is_news = (has_news_header or has_copy_button) and (has_bullet_format or has_miniflux_format)
+
+        if is_news:
+            logger.info("_is_news_list: Detected news content with copy buttons")
+
+        return is_news
 
     def _parse_torrent_entries(self, content: str) -> list[dict]:
         """Parse torrent list content into entries with inline buttons."""
@@ -1134,11 +1149,12 @@ class MessageWidget(Widget):
                     if len(display_url) > 60:
                         display_url = display_url[:57] + "..."
 
-                    url_text = Static(f"[link={article['url']}]{escape_rich_brackets(display_url)}[/link]", classes="news-url")
+                    # Don't use Rich link markup - just plain escaped text to avoid markup errors
+                    url_text = Static(f"[cyan]{escape_rich_brackets(display_url)}[/cyan]", classes="news-url")
                     url_row.mount(url_text)
 
                     if article.get('copy_cmd'):
-                        copy_btn = create_non_focusable_button("📋 Copy", classes="news-copy-btn")
+                        copy_btn = create_non_focusable_button("📋", classes="news-copy-btn")
                         copy_btn.command = article['copy_cmd']
                         url_row.mount(copy_btn)
 

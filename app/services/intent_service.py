@@ -210,6 +210,22 @@ RESPOND WITH THE COMMAND ONLY!"""
             if command.lower() == "none" or not command:
                 return None
 
+            # HARD SAFETY CHECK: Block geni command for text content creation
+            # This overrides LLM decision if text-creation keywords are detected
+            if command.lower().startswith("geni"):
+                text_creation_keywords = [
+                    "post", "article", "tweet", "caption", "message",
+                    "blog", "content", "email", "draft", "write",
+                    "facebook", "twitter", "instagram", "linkedin", "social media"
+                ]
+                user_lower = user_message.lower()
+
+                # Check if user message contains text creation keywords
+                for keyword in text_creation_keywords:
+                    if keyword in user_lower:
+                        logger.warning(f"Blocked geni command due to text creation keyword '{keyword}' in: {user_message}")
+                        return None  # Return None to use chat instead
+
             logger.info(f"Intent detected command: {command}")
 
             return {
