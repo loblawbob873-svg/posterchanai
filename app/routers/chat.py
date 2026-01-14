@@ -701,21 +701,23 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 # Fall through to regular chat on any error
 
                         # Regular chat - stream response
-                        # Build message history (exclude the just-added user message)
-                        # Replace date placeholder in system prompt
-                        system_prompt = chat_service.system_prompt.replace(
-                            "{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d")
-                        )
-                        # Add plugin information to system prompt
-                        plugin_prompt = plugin_service.build_system_prompt_addition(user.id)
-                        if plugin_prompt:
-                            system_prompt += plugin_prompt
-                        messages = [
-                            {"role": "system", "content": system_prompt}
-                        ]
-                        # Get last 19 messages (excluding the one we just added)
-                        for msg in conversation.messages[-21:-1]:
-                            messages.append({"role": msg.role, "content": msg.content})
+                        # Wrap in try-finally to ensure stream_end is always sent
+                        try:
+                            # Build message history (exclude the just-added user message)
+                            # Replace date placeholder in system prompt
+                            system_prompt = chat_service.system_prompt.replace(
+                                "{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d")
+                            )
+                            # Add plugin information to system prompt
+                            plugin_prompt = plugin_service.build_system_prompt_addition(user.id)
+                            if plugin_prompt:
+                                system_prompt += plugin_prompt
+                            messages = [
+                                {"role": "system", "content": system_prompt}
+                            ]
+                            # Get last 19 messages (excluding the one we just added)
+                            for msg in conversation.messages[-21:-1]:
+                                messages.append({"role": msg.role, "content": msg.content})
 
                         # Detect and fetch URLs in user message
                         url_context = ""
@@ -835,7 +837,9 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                 "type": "stream",
                                 "content": buffer
                             }, conn_id)
-                        logger.info(f"[STREAM] Complete, total_len={len(full_response)}")
+
+                        # Ensure we always send stream_end, even if there was an error or stop request
+                        logger.info(f"[STREAM] Complete, total_len={len(full_response)}, stopped={manager.should_stop(user.id, conn_id)}")
 
                         # Save assistant response
                         if full_response:
@@ -897,10 +901,22 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                     role="assistant",
                                     content=clean_response
                                 )
-                            db.add(assistant_msg)
-                            db.commit()
+                                db.add(assistant_msg)
+                                db.commit()
 
-                        await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
+                        except Exception as stream_err:
+                            logger.error(f"Error during streaming: {stream_err}", exc_info=True)
+                            # Try to send error message to client
+                            try:
+                                await manager.send_json(user.id, {
+                                    "type": "stream",
+                                    "content": f"\n\n[Error: {str(stream_err)}]"
+                                }, conn_id)
+                            except Exception:
+                                pass
+                        finally:
+                            # Always send stream_end to prevent UI hanging
+                            await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
 
         except WebSocketDisconnect:
             if user:
