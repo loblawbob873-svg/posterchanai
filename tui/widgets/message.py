@@ -1220,22 +1220,12 @@ class MessageWidget(Widget):
         button = event.button
         logger.info(f"Button pressed: id={button.id}, name={button.name}, has_command={hasattr(button, 'command')}")
 
-        # Immediately blur the button to prevent focus lock
-        try:
-            if hasattr(button, 'blur'):
-                button.blur()
-        except Exception:
-            pass
-
         # Stop event propagation immediately
         event.stop()
 
         if button.id == "copy-btn":
-            # Copy synchronously - it's fast enough
-            try:
-                self._copy_to_clipboard()
-            except Exception as e:
-                logger.error(f"Copy failed: {e}")
+            # Defer copy to avoid blocking UI
+            self.app.call_later(lambda: self._copy_to_clipboard())
         else:
             # Check for command in both attribute and name
             command = getattr(button, 'command', None) or button.name
@@ -1244,11 +1234,8 @@ class MessageWidget(Widget):
             if command and command.startswith('tui-copy '):
                 url = command[9:]  # Remove 'tui-copy ' prefix
                 logger.info(f"Copying URL to clipboard: {url}")
-                # Copy synchronously - it's fast enough
-                try:
-                    self._copy_to_clipboard(url)
-                except Exception as e:
-                    logger.error(f"Copy URL failed: {e}")
+                # Defer copy to avoid blocking UI
+                self.app.call_later(lambda u=url: self._copy_to_clipboard(u))
             elif command and command.startswith(('bt ', 'mail ', 'torrents ', 'music ', 'news ', 'cal ', 'todo ')):
                 logger.info(f"Posting command: {command}")
                 self.post_message(self.CommandClicked(command))
