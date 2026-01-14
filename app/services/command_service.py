@@ -1912,26 +1912,57 @@ Return ONLY valid JSON, no other text."""},
         if subcommand == "edit" and len(parts) > 1:
             contact_uid = parts[1]
 
-            # If only UID provided, show current details and usage
+            # If only UID provided, show interactive edit UI
             if len(parts) == 2:
                 try:
                     contact = get_user_contact_by_uid(self.user.id, self.db, contact_uid)
                     if not contact:
                         return {"type": "text", "content": f"❌ Contact not found with UID: {contact_uid}"}
 
-                    details = f"## 📝 Edit Contact: {contact.name}\n\n"
-                    details += "**Current details:**\n"
-                    if contact.emails:
-                        details += f"📧 Email: {', '.join(contact.emails)}\n"
+                    # Create interactive edit UI with buttons for each field
+                    details = f"## 📝 Edit Contact\n\n"
+
+                    # Name field
+                    current_name = contact.name or "Not set"
+                    details += f"**Name:** {current_name}\n"
+                    details += f"[Edit Name](cmd:contacts edit {contact_uid} name {current_name})\n\n"
+
+                    # Phone field
+                    current_phone = contact.phone or "Not set"
+                    details += f"**Phone:** {current_phone}\n"
                     if contact.phone:
-                        details += f"📞 Phone: {contact.phone}\n"
+                        details += f"[Edit Phone](cmd:contacts edit {contact_uid} phone {current_phone})\n\n"
+                    else:
+                        details += f"[Add Phone](cmd:contacts edit {contact_uid} phone 555-1234)\n\n"
+
+                    # Email field
+                    current_email = contact.emails[0] if contact.emails else "Not set"
+                    details += f"**Email:** {current_email}\n"
+                    if contact.emails:
+                        details += f"[Edit Email](cmd:contacts edit {contact_uid} email {current_email})\n\n"
+                    else:
+                        details += f"[Add Email](cmd:contacts edit {contact_uid} email name@example.com)\n\n"
+
+                    # Organization field
+                    current_org = contact.organization or "Not set"
+                    details += f"**Organization:** {current_org}\n"
                     if contact.organization:
-                        details += f"🏢 Organization: {contact.organization}\n"
+                        details += f"[Edit Organization](cmd:contacts edit {contact_uid} organization {current_org})\n\n"
+                    else:
+                        details += f"[Add Organization](cmd:contacts edit {contact_uid} organization Company Name)\n\n"
+
+                    # Note field
+                    current_note = contact.note or "Not set"
+                    details += f"**Note:** {current_note}\n"
                     if contact.note:
-                        details += f"📝 Note: {contact.note}\n"
-                    details += f"\n**Usage:**\n`contacts edit {contact_uid} <field> <value>`\n\n"
-                    details += "**Fields:** name, phone, email, organization, note\n\n"
-                    details += f"**Examples:**\n- `contacts edit {contact_uid} name John Smith`\n- `contacts edit {contact_uid} phone 555-9876`\n- `contacts edit {contact_uid} email john@example.com`"
+                        details += f"[Edit Note](cmd:contacts edit {contact_uid} note {current_note})\n\n"
+                    else:
+                        details += f"[Add Note](cmd:contacts edit {contact_uid} note Add notes here)\n\n"
+
+                    details += "---\n\n"
+                    details += "*Click an Edit/Add button above, then modify the pre-filled value in the input field before pressing Enter.*\n\n"
+                    details += f"[← Back to Contacts](cmd:contacts all)"
+
                     return {"type": "text", "content": details}
                 except Exception as e:
                     logger.error(f"Edit contact error: {e}")
