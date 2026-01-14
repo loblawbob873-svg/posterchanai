@@ -1220,9 +1220,19 @@ class MessageWidget(Widget):
         button = event.button
         logger.info(f"Button pressed: id={button.id}, name={button.name}, has_command={hasattr(button, 'command')}")
 
+        # Immediately blur the button to prevent focus lock
+        try:
+            if hasattr(button, 'blur'):
+                button.blur()
+        except Exception:
+            pass
+
+        # Stop event propagation immediately
+        event.stop()
+
         if button.id == "copy-btn":
-            self._copy_to_clipboard()
-            event.stop()
+            # Run copy async to avoid blocking
+            self.run_worker(lambda: self._copy_to_clipboard(), exclusive=False)
         else:
             # Check for command in both attribute and name
             command = getattr(button, 'command', None) or button.name
@@ -1231,12 +1241,11 @@ class MessageWidget(Widget):
             if command and command.startswith('tui-copy '):
                 url = command[9:]  # Remove 'tui-copy ' prefix
                 logger.info(f"Copying URL to clipboard: {url}")
-                self._copy_to_clipboard(url)
-                event.stop()
+                # Run copy async to avoid blocking UI
+                self.run_worker(lambda u=url: self._copy_to_clipboard(u), exclusive=False)
             elif command and command.startswith(('bt ', 'mail ', 'torrents ', 'music ', 'news ', 'cal ', 'todo ')):
                 logger.info(f"Posting command: {command}")
                 self.post_message(self.CommandClicked(command))
-                event.stop()
 
     def _copy_to_clipboard(self, custom_content: str = None):
         """Copy message content or custom content to clipboard."""
