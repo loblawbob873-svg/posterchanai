@@ -1004,108 +1004,118 @@ class MessageWidget(Widget):
         import logging
         logger = logging.getLogger("tui")
 
-        lines = content.split("\n")
-        current_article = {}
+        try:
+            lines = content.split("\n")
+            current_article = {}
 
-        # Pattern for title: **Title**
-        title_pattern = re.compile(r'^\*\*(.+?)\*\*$')
-        # Pattern for feed: *Feed Name*
-        feed_pattern = re.compile(r'^\*(.+?)\*$')
-        # Pattern for URL with copy button: URL [Copy URL](cmd:tui-copy URL)
-        copy_pattern = re.compile(r'^(https?://[^\s]+)\s+\[Copy URL\]\(cmd:tui-copy ([^)]+)\)')
+            # Pattern for title: **Title**
+            title_pattern = re.compile(r'^\*\*(.+?)\*\*$')
+            # Pattern for feed: *Feed Name*
+            feed_pattern = re.compile(r'^\*(.+?)\*$')
+            # Pattern for URL with copy button: URL [Copy URL](cmd:tui-copy URL)
+            copy_pattern = re.compile(r'^(https?://[^\s]+)\s+\[Copy URL\]\(cmd:tui-copy ([^)]+)\)')
 
-        header_lines = []
-        articles = []
+            header_lines = []
+            articles = []
 
-        for i, line in enumerate(lines):
-            stripped = line.strip()
+            for i, line in enumerate(lines):
+                stripped = line.strip()
 
-            # Collect header lines
-            if stripped.startswith("##"):
-                header_lines.append(stripped)
-                continue
-
-            # Check for title
-            title_match = title_pattern.match(stripped)
-            if title_match:
-                # Save previous article if any
-                if current_article.get('title'):
-                    articles.append(current_article)
-                current_article = {'title': title_match.group(1), 'feed': '', 'url': '', 'copy_cmd': '', 'summary': []}
-                continue
-
-            # Check for feed (only if we have a title)
-            if current_article.get('title') and not current_article.get('feed'):
-                feed_match = feed_pattern.match(stripped)
-                if feed_match:
-                    current_article['feed'] = feed_match.group(1)
+                # Collect header lines
+                if stripped.startswith("##"):
+                    header_lines.append(stripped)
                     continue
 
-            # Check for URL with copy button
-            copy_match = copy_pattern.match(stripped)
-            if copy_match:
-                current_article['url'] = copy_match.group(1)
-                current_article['copy_cmd'] = f"tui-copy {copy_match.group(2)}"
-                continue
+                # Check for title
+                title_match = title_pattern.match(stripped)
+                if title_match:
+                    # Save previous article if any
+                    if current_article.get('title'):
+                        articles.append(current_article)
+                    current_article = {'title': title_match.group(1), 'feed': '', 'url': '', 'copy_cmd': '', 'summary': []}
+                    continue
 
-            # Separator between articles
-            if stripped == "---":
-                if current_article.get('title'):
-                    articles.append(current_article)
-                    current_article = {}
-                continue
+                # Check for feed (only if we have a title)
+                if current_article.get('title') and not current_article.get('feed'):
+                    feed_match = feed_pattern.match(stripped)
+                    if feed_match:
+                        current_article['feed'] = feed_match.group(1)
+                        continue
 
-            # Everything else is summary
-            if current_article.get('title') and stripped:
-                current_article['summary'].append(line)
+                # Check for URL with copy button
+                copy_match = copy_pattern.match(stripped)
+                if copy_match:
+                    current_article['url'] = copy_match.group(1)
+                    current_article['copy_cmd'] = f"tui-copy {copy_match.group(2)}"
+                    continue
 
-        # Don't forget last article
-        if current_article.get('title'):
-            articles.append(current_article)
+                # Separator between articles
+                if stripped == "---":
+                    if current_article.get('title'):
+                        articles.append(current_article)
+                        current_article = {}
+                    continue
 
-        logger.info(f"Parsed {len(articles)} news articles")
+                # Everything else is summary
+                if current_article.get('title') and stripped:
+                    current_article['summary'].append(line)
 
-        # Render header
-        if header_lines:
-            from tui.utils.markdown import parse_markdown
-            header_text = "\n".join(header_lines)
-            container.mount(Static(parse_markdown(header_text), classes="message-body"))
+            # Don't forget last article
+            if current_article.get('title'):
+                articles.append(current_article)
 
-        # Render articles
-        for article in articles:
-            # Title
-            container.mount(Static(f"[bold]{escape_rich_brackets(article['title'])}[/bold]", classes="message-body"))
+            logger.info(f"Parsed {len(articles)} news articles")
 
-            # Feed name
-            if article.get('feed'):
-                container.mount(Static(f"[italic]{escape_rich_brackets(article['feed'])}[/italic]", classes="message-body"))
+            # If we didn't parse any articles, fall back to standard rendering
+            if not articles:
+                logger.warning("No articles parsed in news list, falling back to standard markdown")
+                raise ValueError("No articles parsed")
 
-            # URL with inline copy button
-            if article.get('url'):
-                url_row = Horizontal(classes="news-url-row")
-                container.mount(url_row)
-
-                # Truncate long URLs
-                display_url = article['url']
-                if len(display_url) > 60:
-                    display_url = display_url[:57] + "..."
-
-                url_text = Static(f"[link={article['url']}]{escape_rich_brackets(display_url)}[/link]", classes="news-url")
-                url_row.mount(url_text)
-
-                if article.get('copy_cmd'):
-                    copy_btn = create_non_focusable_button("📋 Copy", classes="news-copy-btn")
-                    copy_btn.command = article['copy_cmd']
-                    url_row.mount(copy_btn)
-
-            # Summary
-            if article.get('summary'):
-                summary_text = "\n".join(article['summary'])
+            # Render header
+            if header_lines:
                 from tui.utils.markdown import parse_markdown
-                container.mount(Static(parse_markdown(summary_text), classes="message-body"))
+                header_text = "\n".join(header_lines)
+                container.mount(Static(parse_markdown(header_text), classes="message-body"))
 
-            # Add separator
-            container.mount(Static("─" * 60, classes="news-separator"))
+            # Render articles
+            for article in articles:
+                # Title
+                container.mount(Static(f"[bold]{escape_rich_brackets(article['title'])}[/bold]", classes="message-body"))
+
+                # Feed name
+                if article.get('feed'):
+                    container.mount(Static(f"[italic]{escape_rich_brackets(article['feed'])}[/italic]", classes="message-body"))
+
+                # URL with inline copy button
+                if article.get('url'):
+                    url_row = Horizontal(classes="news-url-row")
+                    container.mount(url_row)
+
+                    # Truncate long URLs
+                    display_url = article['url']
+                    if len(display_url) > 60:
+                        display_url = display_url[:57] + "..."
+
+                    url_text = Static(f"[link={article['url']}]{escape_rich_brackets(display_url)}[/link]", classes="news-url")
+                    url_row.mount(url_text)
+
+                    if article.get('copy_cmd'):
+                        copy_btn = create_non_focusable_button("📋 Copy", classes="news-copy-btn")
+                        copy_btn.command = article['copy_cmd']
+                        url_row.mount(copy_btn)
+
+                # Summary
+                if article.get('summary'):
+                    summary_text = "\n".join(article['summary'])
+                    from tui.utils.markdown import parse_markdown
+                    container.mount(Static(parse_markdown(summary_text), classes="message-body"))
+
+                # Add separator
+                container.mount(Static("─" * 60, classes="news-separator"))
+        except Exception as e:
+            logger.error(f"Error rendering news list: {e}")
+            # Fall back to standard markdown
+            raise
 
     def _render_buttons(self):
         """Render cmd: link buttons for essential actions.
