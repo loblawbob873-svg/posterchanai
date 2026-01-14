@@ -161,21 +161,13 @@ class MessageWidget(Widget):
 
     def _is_news_list(self, content: str) -> bool:
         """Check if content is a news article list with copy buttons."""
-        # News format can be:
-        # 1. Miniflux: **Title**\n*Feed*\nURL [Copy URL](cmd:tui-copy URL)
-        # 2. Dailynews: - [title](url) [Copy](cmd:tui-copy url)
+        # DISABLED - custom news renderer is causing hangs
+        # Let news display with standard markdown and bottom buttons
         import logging
         logger = logging.getLogger("tui")
 
-        has_copy_buttons = "cmd:tui-copy " in content or "[Copy](cmd:tui-copy" in content
-        has_news_header = "News Update" in content or "Daily News" in content or ("## " in content and has_copy_buttons)
-        result = has_copy_buttons and has_news_header
-
-        logger.info(f"_is_news_list: copy_buttons={has_copy_buttons}, news_header={has_news_header}, result={result}")
-        if result:
-            logger.info(f"_is_news_list: Detected news list - will use custom renderer")
-
-        return result
+        logger.info("_is_news_list: Custom news renderer DISABLED - using standard markdown")
+        return False
 
     def _parse_torrent_entries(self, content: str) -> list[dict]:
         """Parse torrent list content into entries with inline buttons."""
