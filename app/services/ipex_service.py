@@ -399,17 +399,45 @@ class IPEXService:
 
             # Build stop sequences
             stop = list(kwargs.get("stop", []) or [])
-            # Prevent thinking mode if disabled (e.g., for models like Qwen3 that default to thinking)
-            if self.disable_thinking and "<think>" not in stop:
-                stop.append("<think>")
-                logger.info(f"Added <think> to stop sequences (disable_thinking={self.disable_thinking})")
+
+            # Handle thinking mode for Qwen3-style models
+            messages_to_use = messages
+            if self.disable_thinking:
+                # For Qwen3-abliterated and similar thinking models:
+                # Add strong system instruction + modify user message to reinforce
+                model_name = self.model_path.lower()
+                if "qwen3" in model_name or "deepseek-r1" in model_name or "reasoning" in model_name:
+                    logger.info(f"Detected thinking model: {self.model_path}")
+                    logger.info("Adding instructions to suppress thinking mode")
+
+                    messages_to_use = messages.copy()
+
+                    # Add/modify system message
+                    system_instruction = (
+                        "You must respond directly without thinking tags. "
+                        "Do NOT use <think> or show reasoning. "
+                        "Give ONLY the final answer immediately."
+                    )
+
+                    if messages_to_use and messages_to_use[0].get("role") == "system":
+                        messages_to_use[0]["content"] = system_instruction + "\n\n" + messages_to_use[0]["content"]
+                    else:
+                        messages_to_use.insert(0, {"role": "system", "content": system_instruction})
+
+                    # Also reinforce in the last user message
+                    for i in range(len(messages_to_use) - 1, -1, -1):
+                        if messages_to_use[i].get("role") == "user":
+                            messages_to_use[i]["content"] += "\n(Respond directly without <think> tags)"
+                            break
+                else:
+                    logger.info(f"Thinking mode disabled (disable_thinking={self.disable_thinking})")
 
             logger.info(f"Generating response with max_tokens={kwargs.get('max_tokens', self.num_predict)}, stop={stop}")
 
             for attempt in range(max_retries + 1):
                 try:
                     response = self._model.create_chat_completion(
-                        messages=messages,
+                        messages=messages_to_use,
                         max_tokens=kwargs.get("max_tokens", self.num_predict),
                         temperature=kwargs.get("temperature", self.temperature),
                         top_p=kwargs.get("top_p", self.top_p),
@@ -569,9 +597,31 @@ class IPEXService:
 
         # Build stop sequences
         stop = list(kwargs.get("stop", []) or [])
-        # Prevent thinking mode if disabled (e.g., for models like Qwen3 that default to thinking)
-        if self.disable_thinking and "<think>" not in stop:
-            stop.append("<think>")
+
+        # Handle thinking mode for Qwen3-style models (same as non-streaming)
+        messages_to_use = messages
+        if self.disable_thinking:
+            model_name_lower = self.model_path.lower()
+            if "qwen3" in model_name_lower or "deepseek-r1" in model_name_lower or "reasoning" in model_name_lower:
+                messages_to_use = messages.copy()
+
+                # Add/modify system message
+                system_instruction = (
+                    "You must respond directly without thinking tags. "
+                    "Do NOT use <think> or show reasoning. "
+                    "Give ONLY the final answer immediately."
+                )
+
+                if messages_to_use and messages_to_use[0].get("role") == "system":
+                    messages_to_use[0]["content"] = system_instruction + "\n\n" + messages_to_use[0]["content"]
+                else:
+                    messages_to_use.insert(0, {"role": "system", "content": system_instruction})
+
+                # Reinforce in last user message
+                for i in range(len(messages_to_use) - 1, -1, -1):
+                    if messages_to_use[i].get("role") == "user":
+                        messages_to_use[i]["content"] += "\n(Respond directly without <think> tags)"
+                        break
 
         def run_streaming():
             """Run generation in thread, put tokens in queue"""
@@ -580,7 +630,7 @@ class IPEXService:
                     if self._is_gguf:
                         # Use llama.cpp streaming for GGUF
                         for chunk in self._model.create_chat_completion(
-                            messages=messages,
+                            messages=messages_to_use,
                             max_tokens=kwargs.get("max_tokens", self.num_predict),
                             temperature=kwargs.get("temperature", self.temperature),
                             top_p=kwargs.get("top_p", self.top_p),
@@ -707,19 +757,42 @@ class IPEXService:
         with _get_inference_semaphore(self.max_concurrent):
             _current_request = f"STREAM-{request_id}"
             logger.info(f"[STREAM-{request_id}] Processing started")
+
+            # Handle thinking mode for Qwen3-style models (same as non-streaming)
+            messages_to_use = messages
+            if self.disable_thinking:
+                model_name_lower = self.model_path.lower()
+                if "qwen3" in model_name_lower or "deepseek-r1" in model_name_lower or "reasoning" in model_name_lower:
+                    messages_to_use = messages.copy()
+
+                    # Add/modify system message
+                    system_instruction = (
+                        "You must respond directly without thinking tags. "
+                        "Do NOT use <think> or show reasoning. "
+                        "Give ONLY the final answer immediately."
+                    )
+
+                    if messages_to_use and messages_to_use[0].get("role") == "system":
+                        messages_to_use[0]["content"] = system_instruction + "\n\n" + messages_to_use[0]["content"]
+                    else:
+                        messages_to_use.insert(0, {"role": "system", "content": system_instruction})
+
+                    # Reinforce in last user message
+                    for i in range(len(messages_to_use) - 1, -1, -1):
+                        if messages_to_use[i].get("role") == "user":
+                            messages_to_use[i]["content"] += "\n(Respond directly without <think> tags)"
+                            break
+
             try:
                 if self._is_gguf:
                     # Build stop sequences
                     stop = list(kwargs.get("stop", []) or [])
-                    # Prevent thinking mode if disabled (e.g., for models like Qwen3 that default to thinking)
-                    if self.disable_thinking and "<think>" not in stop:
-                        stop.append("<think>")
 
                     # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()
                     try:
                         for chunk in self._model.create_chat_completion(
-                            messages=messages,
+                            messages=messages_to_use,
                             max_tokens=kwargs.get("max_tokens", self.num_predict),
                             temperature=kwargs.get("temperature", self.temperature),
                             top_p=kwargs.get("top_p", self.top_p),
