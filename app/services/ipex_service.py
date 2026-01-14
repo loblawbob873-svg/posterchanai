@@ -261,6 +261,9 @@ class IPEXService:
         # Inference timeout (seconds) - prevents hung requests
         self.inference_timeout = int(settings.get("ollama_timeout", "120000")) // 1000  # Convert ms to seconds
 
+        # Thinking mode control
+        self.disable_thinking = settings.get("llm_disable_thinking", "false").lower() == "true"
+
     def _ensure_model_loaded(self):
         """Load model if not already loaded or if path changed"""
         # Quick check without lock
@@ -382,7 +385,12 @@ class IPEXService:
 
     def _generate_response(self, messages: List[Dict[str, Any]], **kwargs) -> str:
         """Generate a response synchronously with retry for transient errors"""
-        self._ensure_model_loaded()
+        logger.info("[DEBUG] _generate_response called at 10:19")
+        try:
+            self._ensure_model_loaded()
+        except Exception as e:
+            logger.error(f"[DEBUG] Model loading failed: {e}")
+            raise
 
         if self._is_gguf:
             # Use llama.cpp API for GGUF models with retry for transient errors
@@ -391,6 +399,12 @@ class IPEXService:
 
             # Build stop sequences
             stop = list(kwargs.get("stop", []) or [])
+            # Prevent thinking mode if disabled (e.g., for models like Qwen3 that default to thinking)
+            if self.disable_thinking and "<think>" not in stop:
+                stop.append("<think>")
+                logger.info(f"Added <think> to stop sequences (disable_thinking={self.disable_thinking})")
+
+            logger.info(f"Generating response with max_tokens={kwargs.get('max_tokens', self.num_predict)}, stop={stop}")
 
             for attempt in range(max_retries + 1):
                 try:
@@ -555,6 +569,9 @@ class IPEXService:
 
         # Build stop sequences
         stop = list(kwargs.get("stop", []) or [])
+        # Prevent thinking mode if disabled (e.g., for models like Qwen3 that default to thinking)
+        if self.disable_thinking and "<think>" not in stop:
+            stop.append("<think>")
 
         def run_streaming():
             """Run generation in thread, put tokens in queue"""
@@ -694,6 +711,9 @@ class IPEXService:
                 if self._is_gguf:
                     # Build stop sequences
                     stop = list(kwargs.get("stop", []) or [])
+                    # Prevent thinking mode if disabled (e.g., for models like Qwen3 that default to thinking)
+                    if self.disable_thinking and "<think>" not in stop:
+                        stop.append("<think>")
 
                     # Use llama.cpp streaming for GGUF with error recovery
                     last_token_time = time.time()
