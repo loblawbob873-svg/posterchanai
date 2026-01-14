@@ -2231,11 +2231,11 @@ Return ONLY valid JSON, no other text."""},
 
             elif subcommand == "extract-event":
                 # Extract calendar event from email and add to calendar
-                if len(parts) < 2:
+                if len(parts) < 3:
                     return {"type": "text", "content": "Usage: `mail extract-event <account> <id>`\n\nExample: `mail extract-event work 123`"}
 
                 account_hint = parts[1]
-                uid_part = parts[2] if len(parts) > 2 else parts[1]
+                uid_part = parts[2]
 
                 # Parse folder:uid format
                 folder = None
@@ -2250,17 +2250,14 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
                 uid = uid_match.group(1)
 
-                # Find matching account or use first account
+                # Find matching account
                 account_email = None
-                if len(parts) > 2:
-                    for acc in accounts:
-                        if account_hint.lower() in acc.email.lower():
-                            account_email = acc.email
-                            break
-                    if not account_email:
-                        return {"type": "text", "content": f"Account '{account_hint}' not found."}
-                else:
-                    account_email = accounts[0].email
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
 
                 msg = get_message_by_id(self.user.id, self.db, account_email, uid, folder=folder)
                 if not msg:
@@ -2371,11 +2368,11 @@ Return ONLY valid JSON, no other text."""},
 
             elif subcommand == "extract-bill":
                 # Extract bill information from email and add to budget
-                if len(parts) < 2:
+                if len(parts) < 3:
                     return {"type": "text", "content": "Usage: `mail extract-bill <account> <id>`\n\nExample: `mail extract-bill work 123`"}
 
                 account_hint = parts[1]
-                uid_part = parts[2] if len(parts) > 2 else parts[1]
+                uid_part = parts[2]
 
                 # Parse folder:uid format
                 folder = None
@@ -2390,17 +2387,14 @@ Return ONLY valid JSON, no other text."""},
                     return {"type": "text", "content": f"Invalid message ID: `{uid}`. Must be a number."}
                 uid = uid_match.group(1)
 
-                # Find matching account or use first account
+                # Find matching account
                 account_email = None
-                if len(parts) > 2:
-                    for acc in accounts:
-                        if account_hint.lower() in acc.email.lower():
-                            account_email = acc.email
-                            break
-                    if not account_email:
-                        return {"type": "text", "content": f"Account '{account_hint}' not found."}
-                else:
-                    account_email = accounts[0].email
+                for acc in accounts:
+                    if account_hint.lower() in acc.email.lower():
+                        account_email = acc.email
+                        break
+                if not account_email:
+                    return {"type": "text", "content": f"Account '{account_hint}' not found."}
 
                 msg = get_message_by_id(self.user.id, self.db, account_email, uid, folder=folder)
                 if not msg:
