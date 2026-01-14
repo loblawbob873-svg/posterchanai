@@ -165,15 +165,20 @@ class MessageWidget(Widget):
         import logging
         logger = logging.getLogger("tui")
 
-        has_copy_buttons = "cmd:tui-copy " in content
-        has_news_header = "News Update" in content or "## News" in content
-        result = has_copy_buttons and has_news_header
+        # TEMPORARILY DISABLED - debugging hang issue
+        # The news renderer might be causing hangs, so disable it and use standard rendering
+        logger.info("_is_news_list: DISABLED for debugging - always returning False")
+        return False
 
-        logger.info(f"_is_news_list: copy_buttons={has_copy_buttons}, news_header={has_news_header}, result={result}")
-        if has_copy_buttons and not has_news_header:
-            logger.info(f"_is_news_list: has copy buttons but no news header. Content preview: {content[:200]}")
+        # has_copy_buttons = "cmd:tui-copy " in content
+        # has_news_header = "News Update" in content or "## News" in content
+        # result = has_copy_buttons and has_news_header
 
-        return result
+        # logger.info(f"_is_news_list: copy_buttons={has_copy_buttons}, news_header={has_news_header}, result={result}")
+        # if has_copy_buttons and not has_news_header:
+        #     logger.info(f"_is_news_list: has copy buttons but no news header. Content preview: {content[:200]}")
+
+        # return result
 
     def _parse_torrent_entries(self, content: str) -> list[dict]:
         """Parse torrent list content into entries with inline buttons."""
