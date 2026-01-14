@@ -707,12 +707,12 @@ class MessageWidget(Widget):
                 container.mount(row3)
 
                 if commands['calendar']:
-                    btn = Button("+ Calendar", classes="mail-action-btn mail-action-special")
+                    btn = Button("+Cal", classes="mail-action-btn mail-action-special")
                     btn.command = commands['calendar']
                     row3.mount(btn)
 
                 if commands['bill']:
-                    btn = Button("+ Bill", classes="mail-action-btn mail-action-special")
+                    btn = Button("+Bill", classes="mail-action-btn mail-action-special")
                     btn.command = commands['bill']
                     row3.mount(btn)
 
