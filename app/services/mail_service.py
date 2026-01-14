@@ -356,9 +356,11 @@ def parse_email(raw_email: bytes, uid: str, account_email: str) -> Optional[Emai
         date_str = msg.get("Date", "")
         try:
             from email.utils import parsedate_to_datetime
+            from datetime import timezone
             msg_date = parsedate_to_datetime(date_str)
         except Exception:
-            msg_date = datetime.now()
+            from datetime import timezone
+            msg_date = datetime.now(timezone.utc)
 
         # Parse sender
         sender_raw = msg.get("From", "")

@@ -952,7 +952,7 @@ class MessageWidget(Widget):
                 shuffle_btn.command = shuffle_cmd
                 header_row.mount(shuffle_btn)
             if queue_all_cmd:
-                queue_all_btn = Button("📥 Queue All", classes="music-btn")
+                queue_all_btn = create_non_focusable_button("📥 Queue All", classes="music-btn")
                 queue_all_btn.command = queue_all_cmd
                 header_row.mount(queue_all_btn)
 
@@ -973,12 +973,12 @@ class MessageWidget(Widget):
             row.mount(row_text)
 
             # Add Play button
-            play_btn = Button("▶", classes="music-btn-play")
+            play_btn = create_non_focusable_button("▶", classes="music-btn-play")
             play_btn.command = entry['play_cmd']
             row.mount(play_btn)
 
             # Add Queue button
-            queue_btn = Button("+Q", classes="music-btn-queue")
+            queue_btn = create_non_focusable_button("+Q", classes="music-btn-queue")
             queue_btn.command = entry['queue_cmd']
             row.mount(queue_btn)
 
