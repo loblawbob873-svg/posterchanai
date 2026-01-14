@@ -524,28 +524,17 @@ class CommandService:
                     return {"type": "text", "content": f"✅ Bill added: {name} - ${float(amount):,.2f}"}
                 action = "add"
             elif subcommand in ("pay", "paid") and len(parts) >= 2:
-                # Extract bill name - join all parts after "pay" in case bill name has spaces
                 name = " ".join(parts[1:])
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.info(f"Paying bill with name: '{name}'")
                 result = await plugin_service.execute_tool_call("budget", "pay", {"name": name}, self.user.id)
-                logger.info(f"Pay result: {result}")
-                # If there's an error, return it immediately instead of formatting
                 if "error" in result:
                     return {"type": "text", "content": f"❌ {result['error']}"}
 
                 # Show payment confirmation and remaining bills
                 formatted = plugin_service.format_result_for_display("budget", "pay", result)
-
-                # Get updated bill list to show what's remaining
                 bills_result = await plugin_service.execute_tool_call("budget", "bills", {}, self.user.id)
                 bills_formatted = plugin_service.format_result_for_display("budget", "bills", bills_result)
 
                 return {"type": "text", "content": f"{formatted}\n\n{bills_formatted}"}
-                # Skip the normal formatting below since we already returned
-                continue_to_format = False
-                action = "pay"
             else:
                 return {"type": "text", "content": "Usage: `budget` | `budget bills` | `budget add <name> <amount>` | `budget pay <name>`"}
 

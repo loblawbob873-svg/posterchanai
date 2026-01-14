@@ -168,8 +168,6 @@ BUDGET COMMANDS:
 "Mark Netflix as paid" -> budget pay Netflix
 "Add bill: Internet $80" -> budget add Internet 80
 
-IMPORTANT: For budget/bill commands, respond ONLY with the command result. Do not add extra commentary, emojis, or enthusiastic responses. Keep it professional and brief.
-
 TORRENT COMMANDS:
 "Show torrents" -> torrents
 "Search movies torrents" -> torrents movies
@@ -379,15 +377,10 @@ RESPOND WITH THE COMMAND ONLY!"""
             "what's the news",
             "news about",
             # Budget/Bills
-            "show my bills",
-            "my bills",
-            "upcoming bills",
             "budget",
-            "what bills",
-            "pay bill",
-            "paid bill",
-            "i paid",
-            "paid the",
+            "bill",
+            "paid",
+            "pay",
         }
 
         for keyword in action_keywords:
