@@ -147,10 +147,8 @@ BUDGET:
 "Show my bills" -> budget bills
 "list my bills" -> budget bills
 "list bills" -> budget bills
-"pay electric" -> budget pay electric
-"paid Netflix" -> budget paid Netflix
-"pay name" -> budget pay name
-"paid name" -> budget paid name
+"I paid bill electric" -> budget pay electric
+"paid bill Netflix" -> budget paid Netflix
 "add a new bill" -> budget add Name amount
 "I got a new bill" -> budget add Name amount
 "new bill for" -> budget add Name amount
