@@ -257,28 +257,63 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
             torrent_rows = soup.find_all("div", class_=lambda c: c and "tgxtablerow" in c.split())
             logger.info(f"Found {len(torrent_rows)} torrent rows")
 
+            # Collect detail URLs first
+            detail_urls = []
             for row in torrent_rows[:limit]:
                 try:
-                    # Find title link
-                    title_div = row.find("div", class_="tgxtablecell")
-                    if not title_div:
-                        continue
-
-                    title_link = title_div.find("a", href=re.compile(r"/torrent/"))
+                    # Find title link - search uses /post-detail/ links
+                    title_link = row.find("a", href=re.compile(r"/post-detail/"))
                     if not title_link:
                         continue
 
                     title = title_link.get_text(strip=True)
-                    detail_url = base_url + title_link.get("href", "")
+                    detail_path = title_link.get("href", "")
+                    detail_url = base_url + detail_path if detail_path.startswith("/") else detail_path
 
-                    # Find magnet link
-                    magnet_link = row.find("a", href=re.compile(r"^magnet:\?"))
-                    if not magnet_link:
-                        continue
+                    detail_urls.append((title, detail_url, row))
+                except Exception as e:
+                    logger.debug(f"Error parsing search row: {e}")
+                    continue
 
-                    magnet = magnet_link.get("href", "")
-                    if not magnet.startswith("magnet:"):
-                        continue
+            logger.info(f"Found {len(detail_urls)} detail URLs from search results")
+
+            # Fetch detail pages to get magnet links (in parallel for speed)
+            import asyncio
+
+            async def fetch_magnet(title, detail_url, row):
+                try:
+                    async with httpx.AsyncClient(timeout=10) as detail_client:
+                        detail_resp = await detail_client.get(detail_url, headers=headers)
+                        detail_soup = BeautifulSoup(detail_resp.text, "lxml")
+
+                        # Find magnet link on detail page
+                        magnet_link = detail_soup.find("a", href=re.compile(r"^magnet:\?"))
+                        if not magnet_link:
+                            return None
+
+                        magnet = magnet_link.get("href", "")
+                        if not magnet.startswith("magnet:"):
+                            return None
+
+                        return (title, detail_url, row, magnet)
+                except Exception as e:
+                    logger.debug(f"Error fetching magnet for {title}: {e}")
+                    return None
+
+            # Fetch magnets in parallel
+            logger.info(f"Fetching magnet links for {len(detail_urls)} torrents...")
+            magnet_tasks = [fetch_magnet(title, url, row) for title, url, row in detail_urls]
+            magnet_results = await asyncio.gather(*magnet_tasks)
+
+            successful_magnets = [r for r in magnet_results if r is not None]
+            logger.info(f"Successfully fetched {len(successful_magnets)} magnet links")
+
+            for result in magnet_results:
+                if not result:
+                    continue
+
+                title, detail_url, row, magnet = result
+                try:
 
                     # Find size
                     size = "N/A"
