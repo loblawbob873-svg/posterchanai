@@ -1171,12 +1171,11 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 except Exception as e:
                     summary = f"(Error summarizing: {str(e)[:50]})"
 
-                # Create copy content (title + summary + url)
+                # Create copy link for URL only
                 import urllib.parse
-                copy_text = f"{title}\n\n{summary}\n\nSource: {url}"
-                copy_encoded = urllib.parse.quote(copy_text, safe='')
+                copy_encoded = urllib.parse.quote(url, safe='')
 
-                summaries.append(f"**{title}**\n*{feed_title}*\n{url}\n\n{summary}\n\n[Copy Article](copy:{copy_encoded})")
+                summaries.append(f"**{title}**\n*{feed_title}*\n{url}\n\n{summary}\n\n[Copy URL](copy:{copy_encoded})")
                 entry_ids.append(entry_id)
 
             # Mark all as read
@@ -1207,10 +1206,9 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             full_match = match.group(0)
             title = match.group(1)
             url = match.group(2)
-            # Create copy content
-            copy_text = f"{title}\n\nSource: {url}"
-            copy_encoded = urllib.parse.quote(copy_text, safe='')
-            return f"{full_match} [Copy](copy:{copy_encoded})"
+            # Create copy link for URL only
+            copy_encoded = urllib.parse.quote(url, safe='')
+            return f"{full_match} [Copy URL](copy:{copy_encoded})"
 
         # Add copy button after each markdown link in bullet points
         return re.sub(r'- \[([^\]]+)\]\(([^)]+)\)', add_copy_btn, markdown)

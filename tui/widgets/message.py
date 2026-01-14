@@ -11,12 +11,19 @@ from textual.containers import Vertical, Horizontal, VerticalScroll
 from textual.message import Message as TextualMessage
 from rich.text import Text
 
-from tui.utils.markdown import parse_markdown, parse_cmd_links
+from tui.utils.markdown import parse_markdown, parse_cmd_links, parse_copy_links
 
 
 def escape_rich_brackets(text: str) -> str:
     """Escape square brackets to prevent Rich markup parsing errors."""
     return text.replace("[", "\\[").replace("]", "\\]")
+
+
+def create_non_focusable_button(label: str, **kwargs) -> Button:
+    """Create a button that doesn't steal focus from vim bindings."""
+    btn = Button(label, **kwargs)
+    btn.can_focus = False
+    return btn
 
 
 class MessageWidget(Widget):
@@ -41,6 +48,7 @@ class MessageWidget(Widget):
         self.message_id = message_id
         self.is_streaming = is_streaming
         self._cmd_links = []
+        self._copy_links = []
 
         # Set class based on role
         self.add_class(f"message-{role}")
@@ -202,8 +210,9 @@ class MessageWidget(Widget):
             content_container.mount(Static(content + " _", classes="message-body"))
             return
 
-        # Parse and extract cmd links
+        # Parse and extract cmd links and copy links
         self._cmd_links = parse_cmd_links(content)
+        self._copy_links = parse_copy_links(content)
 
         # Check if this is a torrent list - render with inline buttons
         # Wrap in try/except to fall back to plain text on errors
@@ -333,7 +342,7 @@ class MessageWidget(Widget):
                 row_text = Static(info_text, classes="torrent-text")
 
                 if entry['command']:
-                    btn = Button("DL", classes="torrent-btn")
+                    btn = create_non_focusable_button("DL", classes="torrent-btn")
                     btn.command = entry['command']
                     container.mount(row)
                     row.mount(row_text)
@@ -464,12 +473,12 @@ class MessageWidget(Widget):
                 # Show > (play) or || (pause) based on current state
                 is_start = "Start" in (entry['toggle_label'] or "") or "Resume" in (entry['toggle_label'] or "")
                 label = ">" if is_start else "||"
-                toggle_btn = Button(label, classes="torrent-btn", name=entry['toggle_cmd'])
+                toggle_btn = create_non_focusable_button(label, classes="torrent-btn", name=entry['toggle_cmd'])
                 toggle_btn.command = entry['toggle_cmd']
                 row.mount(toggle_btn)
 
             if entry['delete_cmd']:
-                del_btn = Button("X", classes="torrent-btn torrent-btn-danger", name=entry['delete_cmd'])
+                del_btn = create_non_focusable_button("X", classes="torrent-btn torrent-btn-danger", name=entry['delete_cmd'])
                 del_btn.command = entry['delete_cmd']
                 row.mount(del_btn)
 
@@ -987,7 +996,7 @@ class MessageWidget(Widget):
             button_container = self.query_one("#message-buttons", Horizontal)
             button_container.remove_children()
 
-            logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")
+            logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links and {len(self._copy_links)} copy links")
 
             # Filter to essential action buttons
             essential_prefixes = ("mail ", "cal ", "todo ", "news ", "miniflux ", "nyaa ", "music ")
@@ -998,17 +1007,27 @@ class MessageWidget(Widget):
 
             logger.info(f"Actionable buttons: {actionable}")
 
+            buttons_to_mount = []
+
+            # Add cmd buttons
             if actionable:
-                buttons_to_mount = []
                 for label, command in actionable[:6]:  # Max 6 buttons
                     btn = Button(label, classes="cmd-button")
                     btn.command = command
                     buttons_to_mount.append(btn)
                     logger.info(f"Creating button: {label} -> {command}")
 
-                if buttons_to_mount:
-                    button_container.mount_all(buttons_to_mount)
-                    logger.info(f"Mounted {len(buttons_to_mount)} buttons")
+            # Add copy buttons
+            if self._copy_links:
+                for label, content, _, _ in self._copy_links[:6]:  # Max 6 copy buttons
+                    btn = Button(label, classes="copy-link-button")
+                    btn.copy_content = content
+                    buttons_to_mount.append(btn)
+                    logger.info(f"Creating copy button: {label} -> {content[:50]}...")
+
+            if buttons_to_mount:
+                button_container.mount_all(buttons_to_mount)
+                logger.info(f"Mounted {len(buttons_to_mount)} buttons")
         except Exception as e:
             logger.error(f"Button render error: {e}")
 
@@ -1023,6 +1042,11 @@ class MessageWidget(Widget):
         if button.id == "copy-btn":
             self._copy_to_clipboard()
             event.stop()
+        elif hasattr(button, 'copy_content'):
+            # Handle copy: link buttons
+            logger.info(f"Copy button clicked, copying: {button.copy_content[:50]}...")
+            self._copy_to_clipboard(button.copy_content)
+            event.stop()
         else:
             # Check for command in both attribute and name
             command = getattr(button, 'command', None) or button.name
@@ -1031,15 +1055,20 @@ class MessageWidget(Widget):
                 self.post_message(self.CommandClicked(command))
                 event.stop()
 
-    def _copy_to_clipboard(self):
-        """Copy message content to clipboard."""
+    def _copy_to_clipboard(self, custom_content: str = None):
+        """Copy message content or custom content to clipboard."""
         import subprocess
         import shutil
         import os
         from tui.utils.markdown import strip_markdown
 
-        # Strip markdown formatting and cmd: links for clean copy
-        clean_content = strip_markdown(self.content)
+        # Use custom content if provided, otherwise use message content
+        if custom_content:
+            clean_content = custom_content
+        else:
+            # Strip markdown formatting and cmd: links for clean copy
+            clean_content = strip_markdown(self.content)
+
         content = clean_content.encode('utf-8')
 
         errors = []

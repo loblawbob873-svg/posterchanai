@@ -86,6 +86,25 @@ def parse_cmd_links(text: str) -> List[Tuple[str, str, int, int]]:
     return links
 
 
+def parse_copy_links(text: str) -> List[Tuple[str, str, int, int]]:
+    """
+    Find all copy: links in text.
+
+    Returns:
+        List of (label, content, start_pos, end_pos) tuples
+    """
+    links = []
+    for match in COPY_LINK_PATTERN.finditer(text):
+        import urllib.parse
+        links.append((
+            match.group(1),  # label
+            urllib.parse.unquote(match.group(2)),  # content (URL-decoded)
+            match.start(),
+            match.end()
+        ))
+    return links
+
+
 def strip_html(text: str) -> str:
     """Strip HTML tags and convert to plain text."""
     import html as html_module
@@ -158,23 +177,23 @@ def parse_markdown(text: str) -> Text:
         safe_label = label.replace('[', '\\[').replace(']', '\\]')
 
         if url.startswith(('http://', 'https://')):
-            # Show both label and URL so users can Ctrl+Click the URL
+            # Show both label and URL with proper hyperlink support
             if label == url or label.startswith('http'):
-                replacement = f"[cyan underline]{url}[/cyan underline]"
+                replacement = f"[link={url}]{url}[/link]"
             else:
-                replacement = f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
+                replacement = f"[bold]{safe_label}[/bold]: [link={url}]{url}[/link]"
         elif url.startswith('mailto:'):
             # Email links - show as clickable
             if label == url[7:] or label == url:
-                replacement = f"[cyan underline]{url}[/cyan underline]"
+                replacement = f"[link={url}]{url}[/link]"
             else:
-                replacement = f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
+                replacement = f"[bold]{safe_label}[/bold]: [link={url}]{url}[/link]"
         elif url.startswith('tel:'):
             # Phone links - show as clickable
             if label == url[4:] or label == url:
-                replacement = f"[cyan underline]{url}[/cyan underline]"
+                replacement = f"[link={url}]{url}[/link]"
             else:
-                replacement = f"[bold]{safe_label}[/bold]: [cyan underline]{url}[/cyan underline]"
+                replacement = f"[bold]{safe_label}[/bold]: [link={url}]{url}[/link]"
         elif url.startswith('/'):
             # Local API paths - just show the label
             replacement = label

@@ -28,6 +28,12 @@ def is_safe_url(url: str) -> tuple[bool, str]:
         if not hostname:
             return False, "No hostname in URL"
 
+        # Trusted domains that are allowed even if they resolve to private IPs
+        # (e.g., internal git servers, local services with proper DNS entries)
+        trusted_domains = {'git.poster.place', 'poster.place'}
+        if hostname.lower() in trusted_domains:
+            return True, ""
+
         # Block localhost variations
         localhost_names = {'localhost', 'localhost.localdomain', '127.0.0.1', '::1'}
         if hostname.lower() in localhost_names:
