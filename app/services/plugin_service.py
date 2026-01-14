@@ -504,8 +504,15 @@ class PluginService:
                 amount = result.get('amount') or result.get('bill', {}).get('amount', 0)
                 return f"✅ Bill added: {name} - ${float(amount):,.2f}"
             elif action == "pay":
-                name = result.get('name') or result.get('bill', {}).get('name', 'bill')
-                return f"✅ Bill paid: {name}"
+                if 'error' in result:
+                    return f"❌ Error: {result['error']}"
+                # API returns: {'success': True, 'message': '...', 'bill_name': '...', 'amount': ...}
+                bill_name = result.get('bill_name') or result.get('name', 'bill')
+                amount = result.get('amount', 0)
+                message = result.get('message', '')
+                if message:
+                    return f"✅ {message}"
+                return f"✅ Bill paid: {bill_name} (${amount:.2f})"
 
         elif plugin == "firewall":
             # Firewall returns HTML - convert to readable text

@@ -526,8 +526,6 @@ class CommandService:
             elif subcommand in ("pay", "paid") and len(parts) >= 2:
                 name = parts[1]
                 result = await plugin_service.execute_tool_call("budget", "pay", {"name": name}, self.user.id)
-                if "error" not in result:
-                    return {"type": "text", "content": f"✅ Bill paid: {name}"}
                 action = "pay"
             else:
                 return {"type": "text", "content": "Usage: `budget` | `budget bills` | `budget add <name> <amount>` | `budget pay <name>`"}
@@ -2280,11 +2278,15 @@ Return ONLY valid JSON, no other text."""},
 - location: place if mentioned
 - rrule: iCalendar RRULE string if event repeats, null if not repeating
 
-For recurrence patterns:
-- "daily" -> "FREQ=DAILY"
-- "weekly" -> "FREQ=WEEKLY"
-- "monthly" -> "FREQ=MONTHLY"
+For recurrence patterns (ONLY use if explicitly stated):
+- "every day" or "daily" -> "FREQ=DAILY"
+- "every week" or "weekly" -> "FREQ=WEEKLY"
+- "every month" or "monthly" -> "FREQ=MONTHLY"
 - "every weekday" -> "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+- "every Monday" -> "FREQ=WEEKLY;BYDAY=MO"
+
+CRITICAL: If the event is on a SPECIFIC DATE (e.g., "Wednesday Jan 14", "next Friday", "tomorrow"), DO NOT add rrule - set it to null.
+Only use rrule if the email says "every", "recurring", "repeating", or similar recurring language.
 
 IMPORTANT: Today is {today.strftime('%A, %B %d, %Y')}. Use the current year {today.year} for dates.
 Times are in local timezone ({local_tz}). Do NOT add Z suffix to times.

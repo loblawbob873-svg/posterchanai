@@ -659,62 +659,57 @@ class MessageWidget(Widget):
             rendered = parse_markdown(body_content)
             container.mount(Static(rendered, classes="message-body"))
 
-            # Render action buttons in rows
+            # Render action buttons in 2 rows (consolidated to ensure all buttons are visible)
             logger.info("_render_mail_detail: Rendering buttons")
-            # Row 1: Reply, Forward, Summary
-            if commands['reply'] or commands['forward'] or commands['summary']:
+            # Row 1: Primary actions - Reply, Forward, Summary, +Calendar, +Bill
+            if commands['reply'] or commands['forward'] or commands['summary'] or commands['calendar'] or commands['bill']:
                 row1 = Horizontal(classes="mail-action-row")
                 container.mount(row1)
 
                 if commands['reply']:
-                    btn = Button("Reply", classes="mail-action-btn")
+                    btn = Button("R", classes="mail-action-btn")
                     btn.command = commands['reply']
                     row1.mount(btn)
 
                 if commands['forward']:
-                    btn = Button("Forward", classes="mail-action-btn")
+                    btn = Button("Fwd", classes="mail-action-btn")
                     btn.command = commands['forward']
                     row1.mount(btn)
 
                 if commands['summary']:
-                    btn = Button("Summary", classes="mail-action-btn")
+                    btn = Button("Sum", classes="mail-action-btn")
                     btn.command = commands['summary']
                     row1.mount(btn)
 
-            # Row 2: Archive, Translate, Delete
+                if commands['calendar']:
+                    btn = Button("+C", classes="mail-action-btn mail-action-special")
+                    btn.command = commands['calendar']
+                    row1.mount(btn)
+
+                if commands['bill']:
+                    btn = Button("+$", classes="mail-action-btn mail-action-special")
+                    btn.command = commands['bill']
+                    row1.mount(btn)
+
+            # Row 2: Secondary actions - Archive, Translate, Delete
             if commands['archive'] or commands['translate'] or commands['delete']:
                 row2 = Horizontal(classes="mail-action-row")
                 container.mount(row2)
 
                 if commands['archive']:
-                    btn = Button("Archive", classes="mail-action-btn")
+                    btn = Button("Arc", classes="mail-action-btn")
                     btn.command = commands['archive']
                     row2.mount(btn)
 
                 if commands['translate']:
-                    btn = Button("Translate", classes="mail-action-btn")
+                    btn = Button("Tra", classes="mail-action-btn")
                     btn.command = commands['translate']
                     row2.mount(btn)
 
                 if commands['delete']:
-                    btn = Button("Delete", classes="mail-action-btn mail-btn-danger")
+                    btn = Button("Del", classes="mail-action-btn mail-btn-danger")
                     btn.command = commands['delete']
                     row2.mount(btn)
-
-            # Row 3: + Calendar, + Bill
-            if commands['calendar'] or commands['bill']:
-                row3 = Horizontal(classes="mail-action-row")
-                container.mount(row3)
-
-                if commands['calendar']:
-                    btn = Button("+Cal", classes="mail-action-btn mail-action-special")
-                    btn.command = commands['calendar']
-                    row3.mount(btn)
-
-                if commands['bill']:
-                    btn = Button("+Bill", classes="mail-action-btn mail-action-special")
-                    btn.command = commands['bill']
-                    row3.mount(btn)
 
             logger.info(f"_render_mail_detail: Rendered with buttons: {list(k for k, v in commands.items() if v)}")
         except Exception as e:
