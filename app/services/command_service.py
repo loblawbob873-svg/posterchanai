@@ -534,6 +534,17 @@ class CommandService:
                 # If there's an error, return it immediately instead of formatting
                 if "error" in result:
                     return {"type": "text", "content": f"❌ {result['error']}"}
+
+                # Show payment confirmation and remaining bills
+                formatted = plugin_service.format_result_for_display("budget", "pay", result)
+
+                # Get updated bill list to show what's remaining
+                bills_result = await plugin_service.execute_tool_call("budget", "bills", {}, self.user.id)
+                bills_formatted = plugin_service.format_result_for_display("budget", "bills", bills_result)
+
+                return {"type": "text", "content": f"{formatted}\n\n{bills_formatted}"}
+                # Skip the normal formatting below since we already returned
+                continue_to_format = False
                 action = "pay"
             else:
                 return {"type": "text", "content": "Usage: `budget` | `budget bills` | `budget add <name> <amount>` | `budget pay <name>`"}

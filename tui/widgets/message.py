@@ -659,36 +659,48 @@ class MessageWidget(Widget):
             rendered = parse_markdown(body_content)
             container.mount(Static(rendered, classes="message-body"))
 
-            # Render action buttons in grid layout (3 per row)
+            # Render action buttons vertically (scrollable, so space is not an issue)
             logger.info("_render_mail_detail: Rendering buttons")
             if any(commands.values()):
-                # Collect all buttons
-                all_buttons = []
                 if commands['reply']:
-                    all_buttons.append(("↩ Reply", commands['reply'], 'mail-action-btn'))
-                if commands['forward']:
-                    all_buttons.append(("→ Forward", commands['forward'], 'mail-action-btn'))
-                if commands['summary']:
-                    all_buttons.append(("📝 Summary", commands['summary'], 'mail-action-btn'))
-                if commands['calendar']:
-                    all_buttons.append(("📅 Calendar", commands['calendar'], 'mail-action-btn mail-action-special'))
-                if commands['bill']:
-                    all_buttons.append(("💵 Bill", commands['bill'], 'mail-action-btn mail-action-special'))
-                if commands['archive']:
-                    all_buttons.append(("📦 Archive", commands['archive'], 'mail-action-btn'))
-                if commands['translate']:
-                    all_buttons.append(("🌐 Translate", commands['translate'], 'mail-action-btn'))
-                if commands['delete']:
-                    all_buttons.append(("🗑 Delete", commands['delete'], 'mail-action-btn mail-btn-danger'))
+                    btn = Button("↩ Reply", classes="mail-action-btn")
+                    btn.command = commands['reply']
+                    container.mount(btn)
 
-                # Create rows of 3 buttons each
-                for i in range(0, len(all_buttons), 3):
-                    row = Horizontal(classes="mail-action-row")
-                    container.mount(row)
-                    for label, cmd, css_class in all_buttons[i:i+3]:
-                        btn = Button(label, classes=css_class)
-                        btn.command = cmd
-                        row.mount(btn)
+                if commands['forward']:
+                    btn = Button("→ Forward", classes="mail-action-btn")
+                    btn.command = commands['forward']
+                    container.mount(btn)
+
+                if commands['summary']:
+                    btn = Button("📝 Summary", classes="mail-action-btn")
+                    btn.command = commands['summary']
+                    container.mount(btn)
+
+                if commands['calendar']:
+                    btn = Button("📅 Add to Calendar", classes="mail-action-btn mail-action-special")
+                    btn.command = commands['calendar']
+                    container.mount(btn)
+
+                if commands['bill']:
+                    btn = Button("💵 Add Bill", classes="mail-action-btn mail-action-special")
+                    btn.command = commands['bill']
+                    container.mount(btn)
+
+                if commands['archive']:
+                    btn = Button("📦 Archive", classes="mail-action-btn")
+                    btn.command = commands['archive']
+                    container.mount(btn)
+
+                if commands['translate']:
+                    btn = Button("🌐 Translate", classes="mail-action-btn")
+                    btn.command = commands['translate']
+                    container.mount(btn)
+
+                if commands['delete']:
+                    btn = Button("🗑 Delete", classes="mail-action-btn mail-btn-danger")
+                    btn.command = commands['delete']
+                    container.mount(btn)
 
             logger.info(f"_render_mail_detail: Rendered with buttons: {list(k for k, v in commands.items() if v)}")
         except Exception as e:

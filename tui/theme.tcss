@@ -214,6 +214,8 @@ MessageWidget {
 
 #message-content-container {
     height: auto;
+    max-height: 40;
+    overflow-y: auto;
 }
 
 /* USER MESSAGES - Cyan Transmission */
