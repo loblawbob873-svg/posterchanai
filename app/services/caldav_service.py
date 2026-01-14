@@ -870,14 +870,24 @@ def delete_contact(url: str, username: str, password: str, contact_uid: str) -> 
 
         for ab in addressbooks:
             try:
-                # Search for vCard by UID
-                vcards = ab.search(uid=contact_uid)
-                if vcards:
-                    vcards[0].delete()
-                    logger.info(f"Deleted contact with UID: {contact_uid}")
-                    return True
+                # Get all vcards and search for matching UID
+                vcards = ab.objects()
+                for vcard_obj in vcards:
+                    try:
+                        vcard_data = vcard_obj.data
+                        vcard = vobject.readOne(vcard_data)
+
+                        # Check if UID matches
+                        vcard_uid = str(vcard.uid.value) if hasattr(vcard, 'uid') else None
+                        if vcard_uid == contact_uid:
+                            vcard_obj.delete()
+                            logger.info(f"Deleted contact with UID: {contact_uid}")
+                            return True
+                    except Exception as e:
+                        logger.debug(f"Failed to parse/delete vcard: {e}")
+                        continue
             except Exception as e:
-                logger.debug(f"Failed to find/delete contact in addressbook: {e}")
+                logger.debug(f"Failed to get contacts from addressbook: {e}")
                 continue
 
         logger.warning(f"Contact not found with UID: {contact_uid}")
@@ -912,30 +922,39 @@ def get_contact_by_uid(url: str, username: str, password: str, contact_uid: str)
 
         for ab in addressbooks:
             try:
-                vcards = ab.search(uid=contact_uid)
-                if vcards:
-                    vcard_data = vcards[0].data
-                    vcard = vobject.readOne(vcard_data)
+                # Get all vcards and search for matching UID
+                vcards = ab.objects()
+                for vcard_obj in vcards:
+                    try:
+                        vcard_data = vcard_obj.data
+                        vcard = vobject.readOne(vcard_data)
 
-                    # Extract contact info
-                    name = str(vcard.fn.value) if hasattr(vcard, 'fn') else ""
-                    emails = [str(email.value) for email in vcard.contents.get('email', [])]
-                    phone = str(vcard.tel.value) if hasattr(vcard, 'tel') else None
-                    org = str(vcard.org.value[0]) if hasattr(vcard, 'org') else None
-                    note = str(vcard.note.value) if hasattr(vcard, 'note') else None
+                        # Check if UID matches
+                        vcard_uid = str(vcard.uid.value) if hasattr(vcard, 'uid') else None
+                        if vcard_uid == contact_uid:
+                            # Extract contact info
+                            name = str(vcard.fn.value) if hasattr(vcard, 'fn') else ""
+                            emails = [str(email.value) for email in vcard.contents.get('email', [])]
+                            phone = str(vcard.tel.value) if hasattr(vcard, 'tel') else None
+                            org = str(vcard.org.value[0]) if hasattr(vcard, 'org') else None
+                            note = str(vcard.note.value) if hasattr(vcard, 'note') else None
 
-                    return Contact(
-                        uid=contact_uid,
-                        name=name,
-                        emails=emails,
-                        phone=phone,
-                        organization=org,
-                        note=note
-                    )
+                            return Contact(
+                                uid=contact_uid,
+                                name=name,
+                                emails=emails,
+                                phone=phone,
+                                organization=org,
+                                note=note
+                            )
+                    except Exception as e:
+                        logger.debug(f"Failed to parse vcard: {e}")
+                        continue
             except Exception as e:
-                logger.debug(f"Failed to get contact from addressbook: {e}")
+                logger.debug(f"Failed to get contacts from addressbook: {e}")
                 continue
 
+        logger.warning(f"Contact not found with UID: {contact_uid}")
         return None
     except Exception as e:
         logger.error(f"Failed to get contact: {e}")
