@@ -94,6 +94,9 @@ class MessageWidget(Widget):
 
     def _is_mail_detail(self, content: str) -> bool:
         """Check if content is a detailed email view with action buttons."""
+        import logging
+        logger = logging.getLogger("tui")
+
         # Email detail has subject header and action buttons but NOT [Read] button
         has_subject_header = bool(re.search(r'## ◈ .+ ◈', content))
         has_from_field = "**From:**" in content
@@ -101,7 +104,12 @@ class MessageWidget(Widget):
         has_extract_buttons = ("cmd:mail extract-event" in content or "cmd:mail extract-bill" in content)
         # Exclude if it's a list (has [Read] button)
         is_not_list = content.count("[Read]") == 0
-        return has_subject_header and has_from_field and (has_action_buttons or has_extract_buttons) and is_not_list
+
+        result = has_subject_header and has_from_field and (has_action_buttons or has_extract_buttons) and is_not_list
+
+        logger.info(f"_is_mail_detail: subject={has_subject_header}, from={has_from_field}, action={has_action_buttons}, extract={has_extract_buttons}, not_list={is_not_list}, result={result}")
+
+        return result
 
     def _is_cal_list(self, content: str) -> bool:
         """Check if content is a calendar event list with action buttons."""
@@ -574,136 +582,147 @@ class MessageWidget(Widget):
         import logging
         logger = logging.getLogger("tui")
 
-        lines = content.split("\n")
+        try:
+            logger.info("_render_mail_detail: Starting render")
+            lines = content.split("\n")
+            logger.info(f"_render_mail_detail: Processing {len(lines)} lines")
 
-        # Extract button commands
-        reply_pattern = re.compile(r'\[Reply\]\(cmd:(mail reply [^)]+)\)')
-        forward_pattern = re.compile(r'\[Forward\]\(cmd:(mail forward [^)]+)\)')
-        summary_pattern = re.compile(r'\[Summary\]\(cmd:(mail summary [^)]+)\)')
-        archive_pattern = re.compile(r'\[Archive\]\(cmd:(mail archive [^)]+)\)')
-        translate_pattern = re.compile(r'\[Translate\]\(cmd:(mail translate [^)]+)\)')
-        delete_pattern = re.compile(r'\[Delete\]\(cmd:(mail delete [^)]+)\)')
-        calendar_pattern = re.compile(r'\[\+ Calendar\]\(cmd:(mail extract-event [^)]+)\)')
-        bill_pattern = re.compile(r'\[\+ Bill\]\(cmd:(mail extract-bill [^)]+)\)')
+            # Extract button commands
+            reply_pattern = re.compile(r'\[Reply\]\(cmd:(mail reply [^)]+)\)')
+            forward_pattern = re.compile(r'\[Forward\]\(cmd:(mail forward [^)]+)\)')
+            summary_pattern = re.compile(r'\[Summary\]\(cmd:(mail summary [^)]+)\)')
+            archive_pattern = re.compile(r'\[Archive\]\(cmd:(mail archive [^)]+)\)')
+            translate_pattern = re.compile(r'\[Translate\]\(cmd:(mail translate [^)]+)\)')
+            delete_pattern = re.compile(r'\[Delete\]\(cmd:(mail delete [^)]+)\)')
+            calendar_pattern = re.compile(r'\[\+ Calendar\]\(cmd:(mail extract-event [^)]+)\)')
+            bill_pattern = re.compile(r'\[\+ Bill\]\(cmd:(mail extract-bill [^)]+)\)')
 
-        commands = {
-            'reply': None,
-            'forward': None,
-            'summary': None,
-            'archive': None,
-            'translate': None,
-            'delete': None,
-            'calendar': None,
-            'bill': None,
-        }
+            commands = {
+                'reply': None,
+                'forward': None,
+                'summary': None,
+                'archive': None,
+                'translate': None,
+                'delete': None,
+                'calendar': None,
+                'bill': None,
+            }
 
-        # Split content into body and button sections
-        body_lines = []
-        in_buttons = False
+            # Split content into body and button sections
+            body_lines = []
+            in_buttons = False
 
-        for line in lines:
-            # Check if we hit the button section
-            if '[Reply]' in line or '[Archive]' in line or '[+ Calendar]' in line:
-                in_buttons = True
+            for line in lines:
+                # Check if we hit the button section
+                if '[Reply]' in line or '[Archive]' in line or '[+ Calendar]' in line:
+                    in_buttons = True
 
-                # Extract commands from this line
-                reply_match = reply_pattern.search(line)
-                if reply_match:
-                    commands['reply'] = reply_match.group(1)
+                    # Extract commands from this line
+                    reply_match = reply_pattern.search(line)
+                    if reply_match:
+                        commands['reply'] = reply_match.group(1)
 
-                forward_match = forward_pattern.search(line)
-                if forward_match:
-                    commands['forward'] = forward_match.group(1)
+                    forward_match = forward_pattern.search(line)
+                    if forward_match:
+                        commands['forward'] = forward_match.group(1)
 
-                summary_match = summary_pattern.search(line)
-                if summary_match:
-                    commands['summary'] = summary_match.group(1)
+                    summary_match = summary_pattern.search(line)
+                    if summary_match:
+                        commands['summary'] = summary_match.group(1)
 
-                archive_match = archive_pattern.search(line)
-                if archive_match:
-                    commands['archive'] = archive_match.group(1)
+                    archive_match = archive_pattern.search(line)
+                    if archive_match:
+                        commands['archive'] = archive_match.group(1)
 
-                translate_match = translate_pattern.search(line)
-                if translate_match:
-                    commands['translate'] = translate_match.group(1)
+                    translate_match = translate_pattern.search(line)
+                    if translate_match:
+                        commands['translate'] = translate_match.group(1)
 
-                delete_match = delete_pattern.search(line)
-                if delete_match:
-                    commands['delete'] = delete_match.group(1)
+                    delete_match = delete_pattern.search(line)
+                    if delete_match:
+                        commands['delete'] = delete_match.group(1)
 
-                calendar_match = calendar_pattern.search(line)
-                if calendar_match:
-                    commands['calendar'] = calendar_match.group(1)
+                    calendar_match = calendar_pattern.search(line)
+                    if calendar_match:
+                        commands['calendar'] = calendar_match.group(1)
 
-                bill_match = bill_pattern.search(line)
-                if bill_match:
-                    commands['bill'] = bill_match.group(1)
-            elif not in_buttons:
-                body_lines.append(line)
+                    bill_match = bill_pattern.search(line)
+                    if bill_match:
+                        commands['bill'] = bill_match.group(1)
+                elif not in_buttons:
+                    body_lines.append(line)
 
-        # Render email body
-        body_content = "\n".join(body_lines)
-        from tui.utils.markdown import parse_markdown
-        rendered = parse_markdown(body_content)
-        container.mount(Static(rendered, classes="message-body"))
+            # Render email body
+            logger.info("_render_mail_detail: Rendering body")
+            body_content = "\n".join(body_lines)
+            from tui.utils.markdown import parse_markdown
+            rendered = parse_markdown(body_content)
+            container.mount(Static(rendered, classes="message-body"))
 
-        # Render action buttons in rows
-        # Row 1: Reply, Forward, Summary
-        if commands['reply'] or commands['forward'] or commands['summary']:
-            row1 = Horizontal(classes="mail-action-row")
-            container.mount(row1)
+            # Render action buttons in rows
+            logger.info("_render_mail_detail: Rendering buttons")
+            # Row 1: Reply, Forward, Summary
+            if commands['reply'] or commands['forward'] or commands['summary']:
+                row1 = Horizontal(classes="mail-action-row")
+                container.mount(row1)
 
-            if commands['reply']:
-                btn = Button("Reply", classes="mail-action-btn")
-                btn.command = commands['reply']
-                row1.mount(btn)
+                if commands['reply']:
+                    btn = Button("Reply", classes="mail-action-btn")
+                    btn.command = commands['reply']
+                    row1.mount(btn)
 
-            if commands['forward']:
-                btn = Button("Forward", classes="mail-action-btn")
-                btn.command = commands['forward']
-                row1.mount(btn)
+                if commands['forward']:
+                    btn = Button("Forward", classes="mail-action-btn")
+                    btn.command = commands['forward']
+                    row1.mount(btn)
 
-            if commands['summary']:
-                btn = Button("Summary", classes="mail-action-btn")
-                btn.command = commands['summary']
-                row1.mount(btn)
+                if commands['summary']:
+                    btn = Button("Summary", classes="mail-action-btn")
+                    btn.command = commands['summary']
+                    row1.mount(btn)
 
-        # Row 2: Archive, Translate, Delete
-        if commands['archive'] or commands['translate'] or commands['delete']:
-            row2 = Horizontal(classes="mail-action-row")
-            container.mount(row2)
+            # Row 2: Archive, Translate, Delete
+            if commands['archive'] or commands['translate'] or commands['delete']:
+                row2 = Horizontal(classes="mail-action-row")
+                container.mount(row2)
 
-            if commands['archive']:
-                btn = Button("Archive", classes="mail-action-btn")
-                btn.command = commands['archive']
-                row2.mount(btn)
+                if commands['archive']:
+                    btn = Button("Archive", classes="mail-action-btn")
+                    btn.command = commands['archive']
+                    row2.mount(btn)
 
-            if commands['translate']:
-                btn = Button("Translate", classes="mail-action-btn")
-                btn.command = commands['translate']
-                row2.mount(btn)
+                if commands['translate']:
+                    btn = Button("Translate", classes="mail-action-btn")
+                    btn.command = commands['translate']
+                    row2.mount(btn)
 
-            if commands['delete']:
-                btn = Button("Delete", classes="mail-action-btn mail-btn-danger")
-                btn.command = commands['delete']
-                row2.mount(btn)
+                if commands['delete']:
+                    btn = Button("Delete", classes="mail-action-btn mail-btn-danger")
+                    btn.command = commands['delete']
+                    row2.mount(btn)
 
-        # Row 3: + Calendar, + Bill
-        if commands['calendar'] or commands['bill']:
-            row3 = Horizontal(classes="mail-action-row")
-            container.mount(row3)
+            # Row 3: + Calendar, + Bill
+            if commands['calendar'] or commands['bill']:
+                row3 = Horizontal(classes="mail-action-row")
+                container.mount(row3)
 
-            if commands['calendar']:
-                btn = Button("+ Calendar", classes="mail-action-btn mail-action-special")
-                btn.command = commands['calendar']
-                row3.mount(btn)
+                if commands['calendar']:
+                    btn = Button("+ Calendar", classes="mail-action-btn mail-action-special")
+                    btn.command = commands['calendar']
+                    row3.mount(btn)
 
-            if commands['bill']:
-                btn = Button("+ Bill", classes="mail-action-btn mail-action-special")
-                btn.command = commands['bill']
-                row3.mount(btn)
+                if commands['bill']:
+                    btn = Button("+ Bill", classes="mail-action-btn mail-action-special")
+                    btn.command = commands['bill']
+                    row3.mount(btn)
 
-        logger.info(f"Rendered email detail with buttons: {list(k for k, v in commands.items() if v)}")
+            logger.info(f"_render_mail_detail: Rendered with buttons: {list(k for k, v in commands.items() if v)}")
+        except Exception as e:
+            logger.error(f"_render_mail_detail: Error rendering email detail: {e}", exc_info=True)
+            # Fall back to standard markdown rendering
+            from tui.utils.markdown import parse_markdown
+            rendered = parse_markdown(content)
+            container.mount(Static(rendered, classes="message-body"))
 
     def _render_cal_list(self, content: str, container: Vertical):
         """Render calendar event list with inline edit/delete buttons."""
