@@ -1245,6 +1245,7 @@ class MessageWidget(Widget):
         import subprocess
         import shutil
         import os
+        import threading
         from tui.utils.markdown import strip_markdown
 
         # Use custom content if provided, otherwise use message content
@@ -1256,80 +1257,78 @@ class MessageWidget(Widget):
 
         content = clean_content.encode('utf-8')
 
-        errors = []
+        def copy_in_thread():
+            """Run clipboard copy in separate thread to avoid blocking UI"""
+            errors = []
 
-        # Try wl-copy first (Wayland) - don't rely only on WAYLAND_DISPLAY
-        wl_copy_path = shutil.which('wl-copy')
-        if wl_copy_path:
-            try:
-                process = subprocess.Popen(
-                    [wl_copy_path],
-                    stdin=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    env={**os.environ}  # Pass full environment including WAYLAND_DISPLAY
-                )
-                _, stderr = process.communicate(content)
-                if process.returncode == 0:
-                    self.notify("Copied to clipboard", severity="information", timeout=2)
-                    return
-                else:
-                    errors.append(f"wl-copy failed: {stderr.decode().strip() or f'exit code {process.returncode}'}")
-            except Exception as e:
-                errors.append(f"wl-copy error: {e}")
+            # Try wl-copy first (Wayland) - don't rely only on WAYLAND_DISPLAY
+            wl_copy_path = shutil.which('wl-copy')
+            if wl_copy_path:
+                try:
+                    process = subprocess.Popen(
+                        [wl_copy_path],
+                        stdin=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        env={**os.environ}  # Pass full environment including WAYLAND_DISPLAY
+                    )
+                    _, stderr = process.communicate(content, timeout=2)
+                    if process.returncode == 0:
+                        self.app.call_from_thread(lambda: self.notify("Copied to clipboard", severity="information", timeout=2))
+                        return
+                    else:
+                        errors.append(f"wl-copy failed: {stderr.decode().strip() or f'exit code {process.returncode}'}")
+                except Exception as e:
+                    errors.append(f"wl-copy error: {e}")
 
-        # Try xclip (X11)
-        xclip_path = shutil.which('xclip')
-        if xclip_path:
-            try:
-                process = subprocess.Popen(
-                    [xclip_path, '-selection', 'clipboard'],
-                    stdin=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                _, stderr = process.communicate(content)
-                if process.returncode == 0:
-                    self.notify("Copied to clipboard", severity="information", timeout=2)
-                    return
-                else:
-                    errors.append(f"xclip failed: {stderr.decode().strip() or f'exit code {process.returncode}'}")
-            except Exception as e:
-                errors.append(f"xclip error: {e}")
+            # Try xclip (X11)
+            xclip_path = shutil.which('xclip')
+            if xclip_path:
+                try:
+                    process = subprocess.Popen(
+                        [xclip_path, '-selection', 'clipboard'],
+                        stdin=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        stdout=subprocess.PIPE
+                    )
+                    _, stderr = process.communicate(content, timeout=2)
+                    if process.returncode == 0:
+                        self.app.call_from_thread(lambda: self.notify("Copied to clipboard", severity="information", timeout=2))
+                        return
+                    else:
+                        errors.append(f"xclip failed: {stderr.decode().strip() or f'exit code {process.returncode}'}")
+                except Exception as e:
+                    errors.append(f"xclip error: {e}")
 
-        # Try xsel (X11)
-        xsel_path = shutil.which('xsel')
-        if xsel_path:
-            try:
-                process = subprocess.Popen(
-                    [xsel_path, '--clipboard', '--input'],
-                    stdin=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                _, stderr = process.communicate(content)
-                if process.returncode == 0:
-                    self.notify("Copied to clipboard", severity="information", timeout=2)
-                    return
-                else:
-                    errors.append(f"xsel failed: {stderr.decode().strip() or f'exit code {process.returncode}'}")
-            except Exception as e:
-                errors.append(f"xsel error: {e}")
+            # Try xsel (X11)
+            xsel_path = shutil.which('xsel')
+            if xsel_path:
+                try:
+                    process = subprocess.Popen(
+                        [xsel_path, '--clipboard', '--input'],
+                        stdin=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        stdout=subprocess.PIPE
+                    )
+                    _, stderr = process.communicate(content, timeout=2)
+                    if process.returncode == 0:
+                        self.app.call_from_thread(lambda: self.notify("Copied to clipboard", severity="information", timeout=2))
+                        return
+                    else:
+                        errors.append(f"xsel failed: {stderr.decode().strip() or f'exit code {process.returncode}'}")
+                except Exception as e:
+                    errors.append(f"xsel error: {e}")
 
-        # Try pyperclip as last resort
-        try:
-            import pyperclip
-            pyperclip.copy(clean_content)
-            self.notify("Copied to clipboard", severity="information", timeout=2)
-            return
-        except ImportError:
-            errors.append("pyperclip not installed")
-        except Exception as e:
-            errors.append(f"pyperclip: {e}")
+            # Show informative error if all methods failed
+            if errors:
+                import logging
+                logger = logging.getLogger("tui")
+                logger.warning(f"Clipboard copy failed: {'; '.join(errors)}")
+                self.app.call_from_thread(lambda: self.notify("Clipboard copy failed", severity="error", timeout=3))
 
-        # Show informative error
-        if errors:
-            logger.warning(f"Clipboard copy failed: {'; '.join(errors)}")
-            self.notify(f"Copy failed: {errors[0][:50]}", severity="warning", timeout=3)
-        else:
-            self.notify("Install wl-copy (Wayland) or xclip (X11)", severity="warning", timeout=3)
+        # Start copy in background thread
+        thread = threading.Thread(target=copy_in_thread, daemon=True)
+        thread.start()
 
     def finish_streaming(self):
         """Mark streaming as complete and re-render."""
