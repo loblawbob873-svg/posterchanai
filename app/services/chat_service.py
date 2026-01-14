@@ -38,7 +38,7 @@ class ChatService:
     def _load_settings(self):
         """Load settings - inference factory handles all backend-specific settings"""
         self._settings = {s.key: s.value for s in self.db.query(Setting).all()}
-        default_prompt = """You are a helpful, friendly AI assistant with intelligent action capabilities. When writing code, use markdown code blocks with the language specified.
+        default_prompt = """You are a capable AI assistant with intelligent action capabilities. When writing code, use markdown code blocks with the language specified.
 
 INTELLIGENT ACTIONS:
 The system automatically detects when you want to perform an action and executes it. Just describe what you want naturally:
@@ -81,7 +81,7 @@ BUDGET: budget, budget bills, budget add <name> <amount>, budget pay <name>
 
 SYSTEM: firewall, logs, help
 
-For general questions, respond conversationally. The system handles action detection automatically."""
+Provide clear, concise responses. Keep confirmations brief and professional."""
         self.system_prompt = self._settings.get("ollama_system_prompt") or default_prompt
         # These are used for chat_stream kwargs
         self.temperature = float(self._settings.get("ollama_temperature", "0.7"))

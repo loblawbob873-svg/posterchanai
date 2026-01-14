@@ -659,57 +659,53 @@ class MessageWidget(Widget):
             rendered = parse_markdown(body_content)
             container.mount(Static(rendered, classes="message-body"))
 
-            # Render action buttons in 2 rows (consolidated to ensure all buttons are visible)
+            # Render action buttons in scrollable horizontal container
             logger.info("_render_mail_detail: Rendering buttons")
-            # Row 1: Primary actions - Reply, Forward, Summary, +Calendar, +Bill
-            if commands['reply'] or commands['forward'] or commands['summary'] or commands['calendar'] or commands['bill']:
-                row1 = Horizontal(classes="mail-action-row")
-                container.mount(row1)
+            # Single scrollable row with all buttons (user can scroll horizontally if needed)
+            if any(commands.values()):
+                from textual.containers import HorizontalScroll
+                button_row = HorizontalScroll(classes="mail-action-row")
+                container.mount(button_row)
 
                 if commands['reply']:
-                    btn = Button("R", classes="mail-action-btn")
+                    btn = Button("↩ Reply", classes="mail-action-btn")
                     btn.command = commands['reply']
-                    row1.mount(btn)
+                    button_row.mount(btn)
 
                 if commands['forward']:
-                    btn = Button("Fwd", classes="mail-action-btn")
+                    btn = Button("→ Forward", classes="mail-action-btn")
                     btn.command = commands['forward']
-                    row1.mount(btn)
+                    button_row.mount(btn)
 
                 if commands['summary']:
-                    btn = Button("Sum", classes="mail-action-btn")
+                    btn = Button("📝 Summary", classes="mail-action-btn")
                     btn.command = commands['summary']
-                    row1.mount(btn)
+                    button_row.mount(btn)
 
                 if commands['calendar']:
-                    btn = Button("+C", classes="mail-action-btn mail-action-special")
+                    btn = Button("📅 Calendar", classes="mail-action-btn mail-action-special")
                     btn.command = commands['calendar']
-                    row1.mount(btn)
+                    button_row.mount(btn)
 
                 if commands['bill']:
-                    btn = Button("+$", classes="mail-action-btn mail-action-special")
+                    btn = Button("💵 Bill", classes="mail-action-btn mail-action-special")
                     btn.command = commands['bill']
-                    row1.mount(btn)
-
-            # Row 2: Secondary actions - Archive, Translate, Delete
-            if commands['archive'] or commands['translate'] or commands['delete']:
-                row2 = Horizontal(classes="mail-action-row")
-                container.mount(row2)
+                    button_row.mount(btn)
 
                 if commands['archive']:
-                    btn = Button("Arc", classes="mail-action-btn")
+                    btn = Button("📦 Archive", classes="mail-action-btn")
                     btn.command = commands['archive']
-                    row2.mount(btn)
+                    button_row.mount(btn)
 
                 if commands['translate']:
-                    btn = Button("Tra", classes="mail-action-btn")
+                    btn = Button("🌐 Translate", classes="mail-action-btn")
                     btn.command = commands['translate']
-                    row2.mount(btn)
+                    button_row.mount(btn)
 
                 if commands['delete']:
-                    btn = Button("Del", classes="mail-action-btn mail-btn-danger")
+                    btn = Button("🗑 Delete", classes="mail-action-btn mail-btn-danger")
                     btn.command = commands['delete']
-                    row2.mount(btn)
+                    button_row.mount(btn)
 
             logger.info(f"_render_mail_detail: Rendered with buttons: {list(k for k, v in commands.items() if v)}")
         except Exception as e:
