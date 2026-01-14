@@ -358,6 +358,9 @@ def parse_email(raw_email: bytes, uid: str, account_email: str) -> Optional[Emai
             from email.utils import parsedate_to_datetime
             from datetime import timezone
             msg_date = parsedate_to_datetime(date_str)
+            # Ensure timezone-aware (some emails might have naive datetimes)
+            if msg_date.tzinfo is None:
+                msg_date = msg_date.replace(tzinfo=timezone.utc)
         except Exception:
             from datetime import timezone
             msg_date = datetime.now(timezone.utc)
@@ -539,6 +542,9 @@ def fetch_messages(
                     from email.utils import parsedate_to_datetime
                     from datetime import timezone
                     msg_date = parsedate_to_datetime(date_str)
+                    # Ensure timezone-aware (some emails might have naive datetimes)
+                    if msg_date.tzinfo is None:
+                        msg_date = msg_date.replace(tzinfo=timezone.utc)
                 except Exception:
                     from datetime import timezone
                     msg_date = datetime.now(timezone.utc)
