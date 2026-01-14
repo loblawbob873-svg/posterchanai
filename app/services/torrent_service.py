@@ -171,12 +171,18 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
     return results[:limit]
 
 
-def format_torrent_results(results: list[TorrentResult], category: str) -> str:
-    """Format torrent results for display"""
+def format_torrent_results(results: list[TorrentResult], category: str, title: str = None) -> str:
+    """Format torrent results for display
+
+    Args:
+        results: List of torrent results
+        category: Category identifier for download commands (e.g., "search", "movies")
+        title: Optional display title (defaults to category.upper())
+    """
     if not results:
         return f"No {category} torrents found. The site may be temporarily unavailable or not configured."
 
-    category_title = category.upper()
+    category_title = title if title else category.upper()
     lines = [f"## ◈ {category_title} TORRENTS ◈\n"]
 
     for i, t in enumerate(results, 1):

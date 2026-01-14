@@ -1004,7 +1004,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 user_id = self.user.id if self.user else 0
                 _torrent_cache[user_id] = {"search": results}
 
-                formatted = format_torrent_results(results, f"SEARCH: {query.upper()}")
+                formatted = format_torrent_results(results, category="search", title=f"SEARCH: {query.upper()}")
                 return {"type": "text", "content": formatted}
             except asyncio.TimeoutError:
                 logger.error(f"Torrent search timed out for query: {query}")
