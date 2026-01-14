@@ -191,7 +191,7 @@ RESPOND WITH THE COMMAND ONLY!"""
 
         try:
             # Use timeout to prevent hanging
-            INTENT_TIMEOUT = 15  # seconds (reduced from 30 since we're expecting simple output)
+            INTENT_TIMEOUT = 8  # seconds - keep it short to avoid delaying user experience
             response = await asyncio.wait_for(self.chat_service.chat(messages), timeout=INTENT_TIMEOUT)
 
             # Clean up response
@@ -236,10 +236,10 @@ RESPOND WITH THE COMMAND ONLY!"""
             }
 
         except asyncio.TimeoutError:
-            logger.warning(f"Intent detection timed out after {INTENT_TIMEOUT}s")
+            logger.warning(f"Intent detection timed out after {INTENT_TIMEOUT}s for message: {user_message[:50]}")
             return None
         except Exception as e:
-            logger.error(f"Intent detection failed: {e}")
+            logger.error(f"Intent detection failed for '{user_message[:50]}': {e}")
             return None
 
     async def execute_intent(self, intent_result: dict) -> Optional[dict]:
