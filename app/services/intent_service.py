@@ -145,6 +145,8 @@ NEWS:
 
 BUDGET:
 "Show my bills" -> budget bills
+"list my bills" -> budget bills
+"list bills" -> budget bills
 "Pay electric bill" -> budget pay electric
 "I paid Netflix" -> budget pay Netflix
 "add a new bill" -> budget add Name amount
