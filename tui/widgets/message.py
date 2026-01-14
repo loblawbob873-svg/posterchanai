@@ -161,12 +161,14 @@ class MessageWidget(Widget):
 
     def _is_news_list(self, content: str) -> bool:
         """Check if content is a news article list with copy buttons."""
-        # News format: **Title**\n*Feed*\nURL [Copy URL](cmd:tui-copy URL)
+        # News format can be:
+        # 1. Miniflux: **Title**\n*Feed*\nURL [Copy URL](cmd:tui-copy URL)
+        # 2. Dailynews: - [title](url) [Copy](cmd:tui-copy url)
         import logging
         logger = logging.getLogger("tui")
 
-        has_copy_buttons = "cmd:tui-copy " in content
-        has_news_header = "News Update" in content or "## News" in content
+        has_copy_buttons = "cmd:tui-copy " in content or "[Copy](cmd:tui-copy" in content
+        has_news_header = "News Update" in content or "Daily News" in content or ("## " in content and has_copy_buttons)
         result = has_copy_buttons and has_news_header
 
         logger.info(f"_is_news_list: copy_buttons={has_copy_buttons}, news_header={has_news_header}, result={result}")
@@ -1006,6 +1008,49 @@ class MessageWidget(Widget):
 
         try:
             lines = content.split("\n")
+
+            # Check if this is dailynews bullet format: - [title](url) [Copy](cmd:tui-copy url)
+            bullet_pattern = re.compile(r'^-\s*\[([^\]]+)\]\(([^)]+)\)\s*\[Copy\]\(cmd:tui-copy\s+([^)]+)\)')
+            bullet_articles = []
+            for line in lines:
+                match = bullet_pattern.match(line.strip())
+                if match:
+                    bullet_articles.append({
+                        'title': match.group(1),
+                        'url': match.group(2),
+                        'copy_cmd': f"tui-copy {match.group(3)}"
+                    })
+
+            # If we found bullet-format articles, render them
+            if bullet_articles:
+                logger.info(f"Parsed {len(bullet_articles)} dailynews bullet articles")
+
+                # Render header
+                header_lines = [line for line in lines if line.strip().startswith("##")]
+                if header_lines:
+                    from tui.utils.markdown import parse_markdown
+                    container.mount(Static(parse_markdown("\n".join(header_lines)), classes="message-body"))
+
+                # Render each article with inline copy button
+                for article in bullet_articles:
+                    row = Horizontal(classes="news-url-row")
+                    container.mount(row)
+
+                    # Title as text (truncate if too long)
+                    title = article['title']
+                    if len(title) > 70:
+                        title = title[:67] + "..."
+                    title_text = Static(f"[link={article['url']}]{escape_rich_brackets(title)}[/link]", classes="news-url")
+                    row.mount(title_text)
+
+                    # Copy button
+                    copy_btn = create_non_focusable_button("📋", classes="news-copy-btn")
+                    copy_btn.command = article['copy_cmd']
+                    row.mount(copy_btn)
+
+                return  # Done rendering
+
+            # Otherwise parse miniflux format
             current_article = {}
 
             # Pattern for title: **Title**

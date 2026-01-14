@@ -1221,11 +1221,20 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
     def _add_copy_buttons_to_news(self, markdown: str) -> str:
         """Add copy buttons to news article links in markdown."""
         import re
-        import urllib.parse
 
-        # Match markdown links: - [title](url)
-        # Return markdown as-is
-        return markdown
+        # Match markdown links in bullet points: - [title](url)
+        # Add [Copy](cmd:tui-copy url) after each link
+        def add_copy_button(match):
+            title = match.group(1)
+            url = match.group(2)
+            # Return the link with a copy button
+            return f"- [{title}]({url}) [Copy](cmd:tui-copy {url})"
+
+        # Pattern: - [title](url)
+        pattern = r'- \[([^\]]+)\]\(([^)]+)\)'
+        result = re.sub(pattern, add_copy_button, markdown)
+
+        return result
 
     async def _dailynews_command(self, arg: str) -> dict:
         """Get news from configured web sources (CNN, NPR, etc.)"""
