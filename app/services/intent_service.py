@@ -97,16 +97,20 @@ SEARCH & IMAGES:
 "Search for AI news" -> search AI news
 "Find images of cats" -> images cats
 
-IMAGE GENERATION (visual images only):
+IMAGE GENERATION (visual images only - must include "image", "picture", "photo"):
 "Generate image of a sunset" -> geni a sunset
 "Create an image of a cat" -> geni a cat
 "Make a picture of mountains" -> geni mountains
+"Generate a photo of the beach" -> geni beach
 
-WRITING/TEXT CREATION (use chat, not commands):
+WRITING/TEXT CREATION (use chat, not commands - posts, articles, emails, etc.):
 "Create a viral social media post" -> none
+"Generate a viral social media post" -> none
 "Write a blog post" -> none
+"Generate a post for Twitter" -> none
 "Draft an email" -> none
 "Help me write a message" -> none
+"Create content for my website" -> none
 
 YOUTUBE:
 "Summarize https://youtube.com/watch?v=abc123" -> yt https://youtube.com/watch?v=abc123
