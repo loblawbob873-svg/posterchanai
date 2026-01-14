@@ -567,22 +567,22 @@ class MessageWidget(Widget):
 
             # Add action buttons
             if entry['read_cmd']:
-                read_btn = Button("R", classes="mail-btn")
+                read_btn = create_non_focusable_button("R", classes="mail-btn")
                 read_btn.command = entry['read_cmd']
                 row.mount(read_btn)
 
             if entry['reply_cmd']:
-                reply_btn = Button("↩", classes="mail-btn")
+                reply_btn = create_non_focusable_button("↩", classes="mail-btn")
                 reply_btn.command = entry['reply_cmd']
                 row.mount(reply_btn)
 
             if entry['archive_cmd']:
-                archive_btn = Button("A", classes="mail-btn")
+                archive_btn = create_non_focusable_button("A", classes="mail-btn")
                 archive_btn.command = entry['archive_cmd']
                 row.mount(archive_btn)
 
             if entry['delete_cmd']:
-                del_btn = Button("X", classes="mail-btn mail-btn-danger")
+                del_btn = create_non_focusable_button("X", classes="mail-btn mail-btn-danger")
                 del_btn.command = entry['delete_cmd']
                 row.mount(del_btn)
 
@@ -672,42 +672,42 @@ class MessageWidget(Widget):
             logger.info("_render_mail_detail: Rendering buttons")
             if any(commands.values()):
                 if commands['reply']:
-                    btn = Button("↩ Reply", classes="mail-action-btn")
+                    btn = create_non_focusable_button("↩ Reply", classes="mail-action-btn")
                     btn.command = commands['reply']
                     container.mount(btn)
 
                 if commands['forward']:
-                    btn = Button("→ Forward", classes="mail-action-btn")
+                    btn = create_non_focusable_button("→ Forward", classes="mail-action-btn")
                     btn.command = commands['forward']
                     container.mount(btn)
 
                 if commands['summary']:
-                    btn = Button("📝 Summary", classes="mail-action-btn")
+                    btn = create_non_focusable_button("📝 Summary", classes="mail-action-btn")
                     btn.command = commands['summary']
                     container.mount(btn)
 
                 if commands['calendar']:
-                    btn = Button("📅 Add to Calendar", classes="mail-action-btn mail-action-special")
+                    btn = create_non_focusable_button("📅 Add to Calendar", classes="mail-action-btn mail-action-special")
                     btn.command = commands['calendar']
                     container.mount(btn)
 
                 if commands['bill']:
-                    btn = Button("💵 Add Bill", classes="mail-action-btn mail-action-special")
+                    btn = create_non_focusable_button("💵 Add Bill", classes="mail-action-btn mail-action-special")
                     btn.command = commands['bill']
                     container.mount(btn)
 
                 if commands['archive']:
-                    btn = Button("📦 Archive", classes="mail-action-btn")
+                    btn = create_non_focusable_button("📦 Archive", classes="mail-action-btn")
                     btn.command = commands['archive']
                     container.mount(btn)
 
                 if commands['translate']:
-                    btn = Button("🌐 Translate", classes="mail-action-btn")
+                    btn = create_non_focusable_button("🌐 Translate", classes="mail-action-btn")
                     btn.command = commands['translate']
                     container.mount(btn)
 
                 if commands['delete']:
-                    btn = Button("🗑 Delete", classes="mail-action-btn mail-btn-danger")
+                    btn = create_non_focusable_button("🗑 Delete", classes="mail-action-btn mail-btn-danger")
                     btn.command = commands['delete']
                     container.mount(btn)
 
@@ -830,12 +830,12 @@ class MessageWidget(Widget):
 
                 # Add action buttons
                 if entry.get('edit_cmd'):
-                    edit_btn = Button("E", classes="cal-btn")
+                    edit_btn = create_non_focusable_button("E", classes="cal-btn")
                     edit_btn.command = entry['edit_cmd']
                     row.mount(edit_btn)
 
                 if entry.get('delete_cmd'):
-                    del_btn = Button("X", classes="cal-btn cal-btn-danger")
+                    del_btn = create_non_focusable_button("X", classes="cal-btn cal-btn-danger")
                     del_btn.command = entry['delete_cmd']
                     row.mount(del_btn)
 
@@ -884,7 +884,7 @@ class MessageWidget(Widget):
 
             # Add Done button
             if entry.get('command'):
-                done_btn = Button("✓", classes="todo-btn")
+                done_btn = create_non_focusable_button("✓", classes="todo-btn")
                 done_btn.command = entry['command']
                 row.mount(done_btn)
 
@@ -948,7 +948,7 @@ class MessageWidget(Widget):
             header_row = Horizontal(classes="music-header-row")
             container.mount(header_row)
             if shuffle_cmd:
-                shuffle_btn = Button("🔀 Shuffle", classes="music-btn")
+                shuffle_btn = create_non_focusable_button("🔀 Shuffle", classes="music-btn")
                 shuffle_btn.command = shuffle_cmd
                 header_row.mount(shuffle_btn)
             if queue_all_cmd:
@@ -1012,7 +1012,7 @@ class MessageWidget(Widget):
             # Add cmd buttons
             if actionable:
                 for label, command in actionable[:6]:  # Max 6 buttons
-                    btn = Button(label, classes="cmd-button")
+                    btn = create_non_focusable_button(label, classes="cmd-button")
                     btn.command = command
                     buttons_to_mount.append(btn)
                     logger.info(f"Creating button: {label} -> {command}")
@@ -1020,7 +1020,7 @@ class MessageWidget(Widget):
             # Add copy buttons
             if self._copy_links:
                 for label, content, _, _ in self._copy_links[:6]:  # Max 6 copy buttons
-                    btn = Button(label, classes="copy-link-button")
+                    btn = create_non_focusable_button(label, classes="copy-link-button")
                     btn.copy_content = content
                     buttons_to_mount.append(btn)
                     logger.info(f"Creating copy button: {label} -> {content[:50]}...")
