@@ -54,9 +54,7 @@ class IntentService:
         if len(user_message.strip()) < 10:
             return None
 
-        # Only run intent detection if message contains action keywords
-        if not self._has_action_keywords(user_message):
-            return None
+        # Let LLM be smart - no keyword filtering
 
         # Limit context size to prevent slow processing
         MAX_CONTEXT_CHARS = 4000
@@ -77,124 +75,70 @@ USER MESSAGE:
 
 TRAINING - Learn these command formats by example:
 
-CALENDAR COMMANDS:
-"Add a meeting with Bob tomorrow at 3pm" -> cal add Meeting with Bob tomorrow at 3pm
-"Schedule dentist appointment today at 2pm" -> cal add Dentist appointment today at 2pm
-"Add lunch meeting Friday at noon" -> cal add Lunch meeting Friday at noon
-"Add event: Team standup every Monday at 9am" -> cal add Team standup every Monday at 9am
-"Schedule daily standup at 9am every weekday" -> cal add Daily standup at 9am every weekday
-"Add weekly team meeting every Friday at 2pm" -> cal add Team meeting every Friday at 2pm
-"Create recurring event: Gym every Monday Wednesday Friday at 6pm" -> cal add Gym every Monday Wednesday Friday at 6pm
-"Schedule workout daily at 7am" -> cal add Workout daily at 7am
-"Show my calendar today" -> cal today
-"Show this week's events" -> cal week
-"View my calendar" -> cal
+CALENDAR:
+"Add meeting tomorrow at 3pm" -> cal add meeting tomorrow at 3pm
+"Team standup every Monday at 9am" -> cal add team standup every Monday at 9am
+"Show my calendar" -> cal
 
-CONTACT COMMANDS:
+CONTACTS:
 "Add John Doe 555-1234 john@example.com" -> contacts add John Doe 555-1234 john@example.com
-"Save contact Jane Smith 555-5678" -> contacts add Jane Smith 555-5678
-"Add new contact Bob Wilson" -> contacts add Bob Wilson
-"Find contact named Sarah" -> contacts Sarah
-"Search for Mike" -> contacts Mike
-"Show all contacts" -> contacts all
+"Find Sarah" -> contacts Sarah
 
-TODO COMMANDS:
-"Remind me to buy groceries" -> todo add Buy groceries
-"Add task: call mom tomorrow" -> todo add Call mom tomorrow
-"Don't forget to pay electric bill" -> todo add Pay electric bill
+TODO:
+"Remind me to buy groceries" -> todo add buy groceries
 "Show my todos" -> todo
-"Remove todo number 3" -> todo rm 3
-"Delete todo 5" -> todo rm 5
 
-EMAIL COMMANDS:
-"Send email to john@example.com saying Hello there!" -> mail send john@example.com Hello there!
-"Email Sarah: Meeting at 3pm tomorrow" -> mail send Sarah Meeting at 3pm tomorrow
+EMAIL:
+"Send email to john@example.com saying Hello" -> mail send john@example.com Hello
 "Check my email" -> mail
-"Show unread emails" -> mail unread
-"Read email 123" -> mail read 123
-"Delete email 456" -> mail delete 456
-"Archive this email 789" -> mail archive 789
-"Reply to email 123: Thanks for the info!" -> mail reply verita84 123 Thanks for the info!
-"Forward email 456 to john@example.com" -> mail forward verita84 456 john@example.com
-"Show email folders" -> mail folders
+"Reply to email 123: Thanks!" -> mail reply verita84 123 Thanks!
 
-SEARCH & IMAGES COMMANDS:
-"Search for latest AI news" -> search latest AI news
-"Look up weather forecast" -> search weather forecast
-"Google Python tutorials" -> search Python tutorials
-"Find images of cute cats" -> images cute cats
-"Search images sunset" -> images sunset
+SEARCH & IMAGES:
+"Search for AI news" -> search AI news
+"Find images of cats" -> images cats
 
 IMAGE GENERATION:
-"Generate image of a sunset over mountains" -> geni a sunset over mountains
-"Create picture of a cute cat" -> geni a cute cat
-"Draw a futuristic city" -> geni a futuristic city
+"Generate image of a sunset" -> geni a sunset
+"Create picture of a cat" -> geni a cat
 
-YOUTUBE COMMANDS:
+YOUTUBE:
 "Summarize https://youtube.com/watch?v=abc123" -> yt https://youtube.com/watch?v=abc123
-"Download this song https://youtu.be/xyz789" -> ytdl https://youtu.be/xyz789
+"Download https://youtu.be/xyz789" -> ytdl https://youtu.be/xyz789
 
-MUSIC COMMANDS:
-"Play some music" -> music
-"Play random music" -> music
+MUSIC:
+"Play music" -> music
 "Play happy music" -> music mood happy
-"Play chill vibes" -> music mood chill
-"Search for Beatles songs" -> music search Beatles
-"Browse my music" -> music browse
-"Play track number 5" -> music play 5
-"Skip this song" -> music skip
-"Next track" -> music next
+"Skip song" -> music skip
 
 TRANSLATION:
 "Translate to Spanish" -> translate Spanish
-"Say that in French" -> translate French
 "Translate email to German" -> translate email German
 
-NEWS COMMANDS:
+NEWS:
 "Check the news" -> news
 "News about technology" -> news technology
-"Refresh news feed" -> news refresh
-"Get daily news" -> dailynews
 
-BUDGET COMMANDS:
+BUDGET:
 "Show my bills" -> budget bills
-"What bills are due" -> budget bills
-"View budget" -> budget
-"Pay the electric bill" -> budget pay electric
-"Pay Netflix" -> budget pay Netflix
-"I paid the Anthropic bill" -> budget pay Anthropic
-"I paid the bill from Anthropic" -> budget pay Anthropic
-"Paid my electric bill" -> budget pay electric
-"Mark Netflix as paid" -> budget pay Netflix
-"Add bill: Internet $80" -> budget add Internet 80
+"Pay electric bill" -> budget pay electric
+"I paid Netflix" -> budget pay Netflix
 
-TORRENT COMMANDS:
+TORRENT:
 "Show torrents" -> torrents
-"Search movies torrents" -> torrents movies
 "Search anime torrents" -> torrents anime
-"Add torrent magnet:..." -> torrents add magnet:...
 "Pause torrent 3" -> torrents pause 3
-"Resume torrent 2" -> torrents resume 2
-"Delete torrent 5" -> torrents rm 5
-"Search nyaa for anime" -> nyaa anime
-"Download nyaa result 2" -> nyaa download 2
 
-FIREWALL & LOGS (Admin):
+FIREWALL & LOGS:
 "Check firewall" -> firewall
 "Search firewall logs for 192.168.1.1" -> firewall search 192.168.1.1
-"Analyze IP 10.0.0.5" -> firewall analyze 10.0.0.5
-"Check system logs" -> logs
 
-OTHER COMMANDS:
+OTHER:
 "Show help" -> help
 "Refresh Miniflux" -> miniflux
 
 NO ACTION (just chat):
 "Hello" -> none
 "How are you?" -> none
-"Tell me a joke" -> none
-"What's 2+2?" -> none
-"Thanks!" -> none
 
 IMPORTANT RULES:
 1. For calendar events, preserve the natural time description (e.g., "tomorrow at 3pm", "Friday at noon")
@@ -299,111 +243,6 @@ RESPOND WITH THE COMMAND ONLY!"""
         }
         return message.lower().strip() in greetings
 
-    def _has_action_keywords(self, message: str) -> bool:
-        """Check if message contains keywords that suggest an action request."""
-        message_lower = message.lower()
-
-        # Action keywords that suggest user wants to DO something
-        action_keywords = {
-            # Calendar
-            "add to calendar",
-            "add event",
-            "schedule",
-            "create event",
-            "add to my calendar",
-            "put on calendar",
-            "calendar event",
-            "make calendar",
-            "make event",
-            "new event",
-            "add this to calendar",
-            "add this to my calendar",
-            "calendar from this",
-            "event from this",
-            # Contacts
-            "save contact",
-            "add contact",
-            "save number",
-            "save phone",
-            "new contact",
-            "create contact",
-            # Todo
-            "remind me",
-            "add todo",
-            "add task",
-            "add to list",
-            "don't forget",
-            "remember to",
-            "todo from",
-            "task from",
-            # Email
-            "send email",
-            "send mail",
-            "email to",
-            "mail to",
-            "check email",
-            "check mail",
-            "my emails",
-            "my mail",
-            "compose email",
-            # Music
-            "play music",
-            "play song",
-            "play something",
-            "play some",
-            # Search
-            "search for",
-            "look up",
-            "google",
-            "find info",
-            # Image
-            "generate image",
-            "create image",
-            "make image",
-            "draw",
-            "generate picture",
-            # YouTube
-            "summarize video",
-            "summarize this video",
-            "youtube",
-            "download song",
-            "download video",
-            # Translation
-            "translate to",
-            "translate this",
-            "say that in",
-            # News
-            "check news",
-            "what's the news",
-            "news about",
-            # Budget/Bills
-            "budget",
-            "bill",
-            "paid",
-            "pay",
-        }
-
-        for keyword in action_keywords:
-            if keyword in message_lower:
-                return True
-
-        # Also check for patterns like "add X to calendar" or "email X saying"
-        import re
-
-        action_patterns = [
-            r"\badd\b.*\b(calendar|todo|contact|task|list)\b",
-            r"\b(create|make|schedule)\b.*\b(event|meeting|appointment)\b",
-            r"\b(send|email|mail)\b.*\b(to|saying)\b",
-            r"\bplay\b.*\b(music|song|track)\b",
-            r"\bsearch\b",
-            r"\bgenerate?\b.*\b(image|picture|art)\b",
-        ]
-
-        for pattern in action_patterns:
-            if re.search(pattern, message_lower):
-                return True
-
-        return False
 
 
 async def detect_and_execute(db: Session, user: "User", message: str, context: str = "") -> Optional[dict]:
