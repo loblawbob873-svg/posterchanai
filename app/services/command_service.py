@@ -22,7 +22,7 @@ from app.services.caldav_service import (
     add_event_to_calendar, add_user_contact, delete_event_from_calendar,
     get_event_by_uid, update_event_in_calendar,
     get_all_user_todos, add_todo_to_calendar, delete_todo_from_calendar,
-    format_todos_for_display
+    format_todos_for_display, delete_user_contact, get_user_contact_by_uid
 )
 from app.services.mail_service import (
     fetch_all_accounts, fetch_messages, get_message_by_id, delete_message, delete_all_messages,
@@ -1891,6 +1891,51 @@ Return ONLY valid JSON, no other text."""},
             except Exception as e:
                 logger.error(f"Contacts search error: {e}")
                 return {"type": "text", "content": f"Error searching contacts: {str(e)}"}
+
+        # Handle delete subcommand
+        if subcommand == "delete" and len(parts) > 1:
+            contact_uid = parts[1]
+            try:
+                # Get contact first to show what's being deleted
+                contact = get_user_contact_by_uid(self.user.id, self.db, contact_uid)
+                if not contact:
+                    return {"type": "text", "content": f"❌ Contact not found with UID: {contact_uid}"}
+
+                # Delete the contact
+                if delete_user_contact(self.user.id, self.db, contact_uid):
+                    # Show updated contact list
+                    contacts = get_user_contacts(self.user.id, "", self.db)
+                    contacts_text = format_contacts_for_display(contacts)
+                    return {"type": "text", "content": f"✅ Deleted contact: {contact.name}\n\n{contacts_text}"}
+                else:
+                    return {"type": "text", "content": f"❌ Failed to delete contact: {contact.name}"}
+            except Exception as e:
+                logger.error(f"Delete contact error: {e}")
+                return {"type": "text", "content": f"Error deleting contact: {str(e)}"}
+
+        # Handle edit subcommand (for now, just show the contact details)
+        if subcommand == "edit" and len(parts) > 1:
+            contact_uid = parts[1]
+            try:
+                contact = get_user_contact_by_uid(self.user.id, self.db, contact_uid)
+                if not contact:
+                    return {"type": "text", "content": f"❌ Contact not found with UID: {contact_uid}"}
+
+                # For now, show contact details (full edit UI would require more work)
+                details = f"## 📝 Edit Contact: {contact.name}\n\n"
+                if contact.emails:
+                    details += f"📧 Email: {', '.join(contact.emails)}\n"
+                if contact.phone:
+                    details += f"📞 Phone: {contact.phone}\n"
+                if contact.organization:
+                    details += f"🏢 Organization: {contact.organization}\n"
+                if contact.note:
+                    details += f"📝 Note: {contact.note}\n"
+                details += f"\n*Full contact editing coming soon. For now, delete and re-add to update.*"
+                return {"type": "text", "content": details}
+            except Exception as e:
+                logger.error(f"Edit contact error: {e}")
+                return {"type": "text", "content": f"Error editing contact: {str(e)}"}
 
         # Handle add subcommand
         if subcommand == "add":

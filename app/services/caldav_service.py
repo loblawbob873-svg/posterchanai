@@ -861,6 +861,103 @@ def add_user_contact(
     return add_contact(url, username, password, name, phone, email)
 
 
+def delete_contact(url: str, username: str, password: str, contact_uid: str) -> bool:
+    """Delete a contact (vCard) from CardDAV addressbook by UID."""
+    try:
+        client = create_caldav_client(url, username, password)
+        principal = client.principal()
+        addressbooks = principal.calendars()  # CardDAV addressbooks are accessed via calendars() method
+
+        for ab in addressbooks:
+            try:
+                # Search for vCard by UID
+                vcards = ab.search(uid=contact_uid)
+                if vcards:
+                    vcards[0].delete()
+                    logger.info(f"Deleted contact with UID: {contact_uid}")
+                    return True
+            except Exception as e:
+                logger.debug(f"Failed to find/delete contact in addressbook: {e}")
+                continue
+
+        logger.warning(f"Contact not found with UID: {contact_uid}")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to delete contact: {e}")
+        return False
+
+
+def delete_user_contact(user_id: int, db: Session, contact_uid: str) -> bool:
+    """Delete a contact using user's CardDAV configuration."""
+    config = get_user_contacts_config(user_id, db)
+    if not config:
+        return False
+
+    url = config.get('url', '')
+    username = config.get('username', '')
+    password = config.get('password', '')
+
+    if not url or not username:
+        return False
+
+    return delete_contact(url, username, password, contact_uid)
+
+
+def get_contact_by_uid(url: str, username: str, password: str, contact_uid: str) -> Optional[Contact]:
+    """Get a specific contact by UID."""
+    try:
+        client = create_caldav_client(url, username, password)
+        principal = client.principal()
+        addressbooks = principal.calendars()
+
+        for ab in addressbooks:
+            try:
+                vcards = ab.search(uid=contact_uid)
+                if vcards:
+                    vcard_data = vcards[0].data
+                    vcard = vobject.readOne(vcard_data)
+
+                    # Extract contact info
+                    name = str(vcard.fn.value) if hasattr(vcard, 'fn') else ""
+                    emails = [str(email.value) for email in vcard.contents.get('email', [])]
+                    phone = str(vcard.tel.value) if hasattr(vcard, 'tel') else None
+                    org = str(vcard.org.value[0]) if hasattr(vcard, 'org') else None
+                    note = str(vcard.note.value) if hasattr(vcard, 'note') else None
+
+                    return Contact(
+                        uid=contact_uid,
+                        name=name,
+                        emails=emails,
+                        phone=phone,
+                        organization=org,
+                        note=note
+                    )
+            except Exception as e:
+                logger.debug(f"Failed to get contact from addressbook: {e}")
+                continue
+
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get contact: {e}")
+        return None
+
+
+def get_user_contact_by_uid(user_id: int, db: Session, contact_uid: str) -> Optional[Contact]:
+    """Get a contact using user's CardDAV configuration."""
+    config = get_user_contacts_config(user_id, db)
+    if not config:
+        return None
+
+    url = config.get('url', '')
+    username = config.get('username', '')
+    password = config.get('password', '')
+
+    if not url or not username:
+        return None
+
+    return get_contact_by_uid(url, username, password, contact_uid)
+
+
 def format_events_for_display(events: List[CalendarEvent], include_description: bool = False, cyberpunk: bool = False) -> str:
     """Format events for display with clickable map links for locations and delete buttons."""
     import urllib.parse
@@ -932,7 +1029,7 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
 
 
 def format_contacts_for_display(contacts: List[Contact]) -> str:
-    """Format contacts for display with clickable phone and email links."""
+    """Format contacts for display with clickable phone and email links and action buttons."""
     import re
 
     if not contacts:
@@ -944,23 +1041,30 @@ def format_contacts_for_display(contacts: List[Contact]) -> str:
         clean = re.sub(r'[^\d+]', '', phone)
         return f"[{phone}](tel:{clean})"
 
-    lines = []
-    for contact in contacts:
-        lines.append(f"\n**{contact.name}**")
+    lines = ["## 📇 Contacts\n"]
+
+    for i, contact in enumerate(contacts, 1):
+        # Contact header with edit/delete buttons
+        lines.append(f"**{i}. {contact.name}** [✏️](cmd:contacts edit {contact.uid}) [🗑️](cmd:contacts delete {contact.uid})")
+
         if contact.emails:
             if len(contact.emails) == 1:
-                lines.append(f"  Email: [{contact.emails[0]}](mailto:{contact.emails[0]})")
+                lines.append(f"   📧 [{contact.emails[0]}](mailto:{contact.emails[0]})")
             else:
                 # Multiple emails - show each on its own line
-                for i, email in enumerate(contact.emails):
-                    label = "Email" if i == 0 else "     "
-                    lines.append(f"  {label}: [{email}](mailto:{email})")
+                for email in contact.emails:
+                    lines.append(f"   📧 [{email}](mailto:{email})")
+
         if contact.phone:
-            lines.append(f"  Phone: {format_phone_link(contact.phone)}")
+            lines.append(f"   📞 {format_phone_link(contact.phone)}")
+
         if contact.organization:
-            lines.append(f"  Organization: {contact.organization}")
+            lines.append(f"   🏢 {contact.organization}")
+
         if contact.note:
-            lines.append(f"  Note: {contact.note}")
+            lines.append(f"   📝 {contact.note}")
+
+        lines.append("")  # Empty line between contacts
 
     return "\n".join(lines)
 
