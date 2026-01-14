@@ -162,6 +162,10 @@ BUDGET COMMANDS:
 "View budget" -> budget
 "Pay the electric bill" -> budget pay electric
 "Pay Netflix" -> budget pay Netflix
+"I paid the Anthropic bill" -> budget pay Anthropic
+"I paid the bill from Anthropic" -> budget pay Anthropic
+"Paid my electric bill" -> budget pay electric
+"Mark Netflix as paid" -> budget pay Netflix
 "Add bill: Internet $80" -> budget add Internet 80
 
 TORRENT COMMANDS:

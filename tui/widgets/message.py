@@ -659,53 +659,52 @@ class MessageWidget(Widget):
             rendered = parse_markdown(body_content)
             container.mount(Static(rendered, classes="message-body"))
 
-            # Render action buttons in scrollable horizontal container
+            # Render action buttons vertically (always visible on any terminal width)
             logger.info("_render_mail_detail: Rendering buttons")
-            # Single scrollable row with all buttons (user can scroll horizontally if needed)
             if any(commands.values()):
-                from textual.containers import HorizontalScroll
-                button_row = HorizontalScroll(classes="mail-action-row")
-                container.mount(button_row)
+                # Create a vertical container for buttons
+                button_container = Vertical(classes="mail-buttons-vertical")
+                container.mount(button_container)
 
                 if commands['reply']:
                     btn = Button("↩ Reply", classes="mail-action-btn")
                     btn.command = commands['reply']
-                    button_row.mount(btn)
+                    button_container.mount(btn)
 
                 if commands['forward']:
                     btn = Button("→ Forward", classes="mail-action-btn")
                     btn.command = commands['forward']
-                    button_row.mount(btn)
+                    button_container.mount(btn)
 
                 if commands['summary']:
                     btn = Button("📝 Summary", classes="mail-action-btn")
                     btn.command = commands['summary']
-                    button_row.mount(btn)
+                    button_container.mount(btn)
 
                 if commands['calendar']:
                     btn = Button("📅 Calendar", classes="mail-action-btn mail-action-special")
                     btn.command = commands['calendar']
-                    button_row.mount(btn)
+                    button_container.mount(btn)
 
                 if commands['bill']:
                     btn = Button("💵 Bill", classes="mail-action-btn mail-action-special")
                     btn.command = commands['bill']
-                    button_row.mount(btn)
+                    button_container.mount(btn)
 
                 if commands['archive']:
                     btn = Button("📦 Archive", classes="mail-action-btn")
                     btn.command = commands['archive']
-                    button_row.mount(btn)
+                    button_container.mount(btn)
 
                 if commands['translate']:
                     btn = Button("🌐 Translate", classes="mail-action-btn")
                     btn.command = commands['translate']
-                    button_row.mount(btn)
+                    button_container.mount(btn)
 
                 if commands['delete']:
                     btn = Button("🗑 Delete", classes="mail-action-btn mail-btn-danger")
                     btn.command = commands['delete']
-                    button_row.mount(btn)
+                    button_container.mount(btn)
 
             logger.info(f"_render_mail_detail: Rendered with buttons: {list(k for k, v in commands.items() if v)}")
         except Exception as e:
