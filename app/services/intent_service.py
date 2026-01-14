@@ -152,6 +152,7 @@ BUDGET:
 "I paid Netflix" -> budget paid Netflix
 "add a new bill" -> budget add Name amount
 "I got a new bill" -> budget add Name amount
+"new bill for" -> budget add Name amount
 
 TORRENT:
 "Show torrents" -> torrents
