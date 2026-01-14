@@ -659,52 +659,36 @@ class MessageWidget(Widget):
             rendered = parse_markdown(body_content)
             container.mount(Static(rendered, classes="message-body"))
 
-            # Render action buttons vertically (container is scrollable, so no space constraints)
+            # Render action buttons in grid layout (3 per row)
             logger.info("_render_mail_detail: Rendering buttons")
             if any(commands.values()):
-                # Create a vertical container for buttons
-                button_container = Vertical(classes="mail-buttons-vertical")
-                container.mount(button_container)
-
+                # Collect all buttons
+                all_buttons = []
                 if commands['reply']:
-                    btn = Button("↩ Reply", classes="mail-action-btn")
-                    btn.command = commands['reply']
-                    button_container.mount(btn)
-
+                    all_buttons.append(("↩ Reply", commands['reply'], 'mail-action-btn'))
                 if commands['forward']:
-                    btn = Button("→ Forward", classes="mail-action-btn")
-                    btn.command = commands['forward']
-                    button_container.mount(btn)
-
+                    all_buttons.append(("→ Forward", commands['forward'], 'mail-action-btn'))
                 if commands['summary']:
-                    btn = Button("📝 Summary", classes="mail-action-btn")
-                    btn.command = commands['summary']
-                    button_container.mount(btn)
-
+                    all_buttons.append(("📝 Summary", commands['summary'], 'mail-action-btn'))
                 if commands['calendar']:
-                    btn = Button("📅 Add to Calendar", classes="mail-action-btn mail-action-special")
-                    btn.command = commands['calendar']
-                    button_container.mount(btn)
-
+                    all_buttons.append(("📅 Calendar", commands['calendar'], 'mail-action-btn mail-action-special'))
                 if commands['bill']:
-                    btn = Button("💵 Add Bill", classes="mail-action-btn mail-action-special")
-                    btn.command = commands['bill']
-                    button_container.mount(btn)
-
+                    all_buttons.append(("💵 Bill", commands['bill'], 'mail-action-btn mail-action-special'))
                 if commands['archive']:
-                    btn = Button("📦 Archive", classes="mail-action-btn")
-                    btn.command = commands['archive']
-                    button_container.mount(btn)
-
+                    all_buttons.append(("📦 Archive", commands['archive'], 'mail-action-btn'))
                 if commands['translate']:
-                    btn = Button("🌐 Translate", classes="mail-action-btn")
-                    btn.command = commands['translate']
-                    button_container.mount(btn)
-
+                    all_buttons.append(("🌐 Translate", commands['translate'], 'mail-action-btn'))
                 if commands['delete']:
-                    btn = Button("🗑 Delete", classes="mail-action-btn mail-btn-danger")
-                    btn.command = commands['delete']
-                    button_container.mount(btn)
+                    all_buttons.append(("🗑 Delete", commands['delete'], 'mail-action-btn mail-btn-danger'))
+
+                # Create rows of 3 buttons each
+                for i in range(0, len(all_buttons), 3):
+                    row = Horizontal(classes="mail-action-row")
+                    container.mount(row)
+                    for label, cmd, css_class in all_buttons[i:i+3]:
+                        btn = Button(label, classes=css_class)
+                        btn.command = cmd
+                        row.mount(btn)
 
             logger.info(f"_render_mail_detail: Rendered with buttons: {list(k for k, v in commands.items() if v)}")
         except Exception as e:
