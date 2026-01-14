@@ -159,6 +159,10 @@ class MessageWidget(Widget):
         has_numbered_items = bool(re.search(r'\*\*\d+\.\*\*', content))
         return has_music_buttons and has_numbered_items
 
+    def _is_contacts_list(self, content: str) -> bool:
+        """Check if content is a contacts list."""
+        return "## 📇 Contacts" in content and "[✏️](cmd:contacts edit" in content
+
     def _is_news_list(self, content: str) -> bool:
         """Check if content is a news article list with copy buttons."""
         import logging
@@ -240,7 +244,10 @@ class MessageWidget(Widget):
         # Check if this is a torrent list - render with inline buttons
         # Wrap in try/except to fall back to plain text on errors
         try:
-            if self._is_torrent_list(content):
+            if self._is_contacts_list(content):
+                self._render_contacts_list(content, content_container)
+                return
+            elif self._is_torrent_list(content):
                 self._render_torrent_list(content, content_container)
                 return
             elif self._is_bt_list(content):
@@ -279,6 +286,63 @@ class MessageWidget(Widget):
 
         # Render action buttons at bottom
         self._render_buttons()
+
+    def _render_contacts_list(self, content: str, container: Vertical):
+        """Render contacts list with inline edit/delete buttons."""
+        import logging
+        logger = logging.getLogger("tui")
+
+        lines = content.split("\n")
+
+        # Render header
+        if lines and lines[0].startswith("## "):
+            header_text = lines[0]
+            container.mount(Static(parse_markdown(header_text), classes="message-body"))
+
+        # Parse contacts - pattern: **1. Name** [✏️](cmd:contacts edit uid) [🗑️](cmd:contacts delete uid)
+        i = 1
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+
+            # Check for contact header
+            contact_match = re.match(r'\*\*(\d+)\.\s+(.+?)\*\*\s+\[✏️\]\(cmd:(contacts edit [^)]+)\)\s+\[🗑️\]\(cmd:(contacts delete [^)]+)\)', stripped)
+            if contact_match:
+                num = contact_match.group(1)
+                name = contact_match.group(2)
+                edit_cmd = contact_match.group(3)
+                delete_cmd = contact_match.group(4)
+
+                # Create row for contact name and buttons
+                row = Horizontal(classes="contact-row")
+                container.mount(row)
+
+                # Name
+                name_text = Static(f"[bold]{num}. {name}[/bold]", classes="contact-name")
+                row.mount(name_text)
+
+                # Edit button
+                edit_btn = create_non_focusable_button("✏️", classes="contact-btn")
+                edit_btn.command = edit_cmd
+                row.mount(edit_btn)
+
+                # Delete button
+                delete_btn = create_non_focusable_button("🗑️", classes="contact-btn contact-btn-danger")
+                delete_btn.command = delete_cmd
+                row.mount(delete_btn)
+
+                # Parse contact details (email, phone, etc) on following lines
+                i += 1
+                while i < len(lines) and lines[i].strip() and not lines[i].strip().startswith("**"):
+                    detail_line = lines[i].strip()
+                    if detail_line:
+                        # Remove markdown links but keep the text
+                        detail_clean = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', detail_line)
+                        container.mount(Static(f"  {detail_clean}", classes="contact-detail"))
+                    i += 1
+                continue
+
+            i += 1
 
     def _render_torrent_list(self, content: str, container: Vertical):
         """Render torrent list with inline download buttons."""

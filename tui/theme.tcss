@@ -1352,6 +1352,53 @@ Toast.-error {
     background: $cyan;
 }
 
+/* ═══════════ CONTACTS LIST - INLINE BUTTONS ═══════════ */
+.contact-row {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    layout: horizontal;
+    align: left middle;
+}
+
+.contact-name {
+    width: 1fr;
+    padding: 0 1;
+    color: $cyan;
+    content-align: left middle;
+}
+
+.contact-btn {
+    width: auto;
+    min-width: 6;
+    height: 1;
+    padding: 0 1;
+    margin: 0 0 0 1;
+    background: $neon-purple;
+    color: $background;
+    border: none;
+    text-style: bold;
+}
+
+.contact-btn:hover {
+    background: $cyan;
+}
+
+.contact-btn-danger {
+    background: $error;
+}
+
+.contact-btn-danger:hover {
+    background: $warning;
+}
+
+.contact-detail {
+    color: $text-muted;
+    padding: 0 2;
+    margin: 0;
+}
+
 /* ═══════════ NEWS LIST - INLINE COPY BUTTONS ═══════════ */
 .news-url-row {
     height: auto;
