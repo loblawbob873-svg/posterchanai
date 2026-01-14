@@ -1190,11 +1190,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
                 except Exception as e:
                     summary = f"(Error summarizing: {str(e)[:50]})"
 
-                # Create copy link for URL only
-                import urllib.parse
-                copy_encoded = urllib.parse.quote(url, safe='')
-
-                summaries.append(f"**{title}**\n*{feed_title}*\n{url}\n\n{summary}\n\n[Copy URL](copy:{copy_encoded})")
+                summaries.append(f"**{title}**\n*{feed_title}*\n{url}\n\n{summary}")
                 entry_ids.append(entry_id)
 
             # Mark all as read
@@ -1221,16 +1217,8 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
         import urllib.parse
 
         # Match markdown links: - [title](url)
-        def add_copy_btn(match):
-            full_match = match.group(0)
-            title = match.group(1)
-            url = match.group(2)
-            # Create copy link for URL only
-            copy_encoded = urllib.parse.quote(url, safe='')
-            return f"{full_match} [Copy URL](copy:{copy_encoded})"
-
-        # Add copy button after each markdown link in bullet points
-        return re.sub(r'- \[([^\]]+)\]\(([^)]+)\)', add_copy_btn, markdown)
+        # Return markdown as-is
+        return markdown
 
     async def _dailynews_command(self, arg: str) -> dict:
         """Get news from configured web sources (CNN, NPR, etc.)"""

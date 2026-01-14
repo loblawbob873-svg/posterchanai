@@ -233,7 +233,8 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
 
     from urllib.parse import quote_plus
     base_url = get_torrent_base_url(db)
-    search_url = f"{base_url}/torrents.php?search={quote_plus(query)}"
+    # TorrentGalaxy uses /search/ endpoint
+    search_url = f"{base_url}/search/{quote_plus(query)}/0/0/0"
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

@@ -11,7 +11,7 @@ from textual.containers import Vertical, Horizontal, VerticalScroll
 from textual.message import Message as TextualMessage
 from rich.text import Text
 
-from tui.utils.markdown import parse_markdown, parse_cmd_links, parse_copy_links
+from tui.utils.markdown import parse_markdown, parse_cmd_links
 
 
 def escape_rich_brackets(text: str) -> str:
@@ -48,7 +48,6 @@ class MessageWidget(Widget):
         self.message_id = message_id
         self.is_streaming = is_streaming
         self._cmd_links = []
-        self._copy_links = []
 
         # Set class based on role
         self.add_class(f"message-{role}")
@@ -210,9 +209,8 @@ class MessageWidget(Widget):
             content_container.mount(Static(content + " _", classes="message-body"))
             return
 
-        # Parse and extract cmd links and copy links
+        # Parse and extract cmd links
         self._cmd_links = parse_cmd_links(content)
-        self._copy_links = parse_copy_links(content)
 
         # Check if this is a torrent list - render with inline buttons
         # Wrap in try/except to fall back to plain text on errors
@@ -996,7 +994,7 @@ class MessageWidget(Widget):
             button_container = self.query_one("#message-buttons", Horizontal)
             button_container.remove_children()
 
-            logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links and {len(self._copy_links)} copy links")
+            logger.info(f"_render_buttons: found {len(self._cmd_links)} cmd links")
 
             # Filter to essential action buttons
             essential_prefixes = ("mail ", "cal ", "todo ", "news ", "miniflux ", "nyaa ", "music ")
@@ -1017,14 +1015,6 @@ class MessageWidget(Widget):
                     buttons_to_mount.append(btn)
                     logger.info(f"Creating button: {label} -> {command}")
 
-            # Add copy buttons
-            if self._copy_links:
-                for label, content, _, _ in self._copy_links[:6]:  # Max 6 copy buttons
-                    btn = create_non_focusable_button(label, classes="copy-link-button")
-                    btn.copy_content = content
-                    buttons_to_mount.append(btn)
-                    logger.info(f"Creating copy button: {label} -> {content[:50]}...")
-
             if buttons_to_mount:
                 button_container.mount_all(buttons_to_mount)
                 logger.info(f"Mounted {len(buttons_to_mount)} buttons")
@@ -1041,11 +1031,6 @@ class MessageWidget(Widget):
 
         if button.id == "copy-btn":
             self._copy_to_clipboard()
-            event.stop()
-        elif hasattr(button, 'copy_content'):
-            # Handle copy: link buttons
-            logger.info(f"Copy button clicked, copying: {button.copy_content[:50]}...")
-            self._copy_to_clipboard(button.copy_content)
             event.stop()
         else:
             # Check for command in both attribute and name
