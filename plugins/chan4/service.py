@@ -337,6 +337,25 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             if "404" in html or "not found" in html.lower() or "error" in html.lower()[:500]:
                 logger.warning(f"Possible error page received. HTML preview: {html[:500]}")
             
+            # Check for embedded JSON in script tags (4chan sometimes embeds catalog data)
+            script_tags = re.findall(r'<script[^>]*>(.*?)</script>', html, re.DOTALL | re.IGNORECASE)
+            if script_tags:
+                logger.info(f"Found {len(script_tags)} script tags in HTML, checking for embedded JSON...")
+                for i, script_content in enumerate(script_tags[:5]):  # Check first 5 scripts
+                    # Look for JSON-like structures
+                    if '"threads"' in script_content or '"catalog"' in script_content or f'"/{board}/thread/' in script_content:
+                        logger.info(f"Script tag #{i} contains thread/catalog data (length: {len(script_content)})")
+                        # Try to extract JSON from script
+                        json_match = re.search(r'(\{[^{}]*"threads"[^{}]*\})', script_content, re.DOTALL)
+                        if json_match:
+                            try:
+                                embedded_json = json.loads(json_match.group(1))
+                                logger.info(f"Found embedded JSON in script tag #{i}")
+                                # Process embedded JSON similar to catalog.json
+                                # (This would need similar parsing logic as the JSON catalog section)
+                            except json.JSONDecodeError:
+                                pass
+            
             # Parse HTML catalog
             soup = BeautifulSoup(html, "lxml")
             
@@ -385,6 +404,23 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                     logger.info(f"Found {len(divs4)} threads via 'id=thread*'")
                     thread_divs.extend(divs4)
             
+            # Check HTML content for thread indicators BEFORE parsing
+            thread_indicators = ["/thread/", f"/{board}/thread/", "thread", "data-thread", "catalog"]
+            found_indicators = [ind for ind in thread_indicators if ind in html or ind.lower() in html.lower()]
+            if found_indicators:
+                logger.info(f"HTML contains thread indicators: {found_indicators}")
+            else:
+                logger.warning("HTML does not contain obvious thread indicators - may be wrong page or Cloudflare challenge")
+            
+            # Log HTML sample for debugging
+            logger.info(f"HTML sample (first 2000 chars): {html[:2000]}")
+            logger.info(f"HTML sample (last 1000 chars): {html[-1000:]}")
+            
+            # Check for Cloudflare or blocking indicators
+            if "cf-browser-verification" in html.lower() or "challenge-platform" in html.lower() or "just a moment" in html.lower():
+                logger.error("Cloudflare protection detected in HTML")
+                raise ValueError("Cloudflare protection detected. The site may be blocking proxy/Tor connections.")
+            
             # PRIMARY METHOD: Search raw HTML with regex FIRST (most reliable - works regardless of HTML structure)
             logger.info(f"Searching raw HTML ({len(html)} chars) with regex for thread URLs...")
             
@@ -396,16 +432,26 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                 (r'thread[_-]?(\d+)', 'underscore'),  # thread_12345678 or thread-12345678
                 (r'href=["\']([^"\']*/(\w+)/thread/(\d+)[^"\']*)["\']', 'href-with-board'),  # href="/g/thread/12345678"
                 (r'data-thread-id=["\']?(\d+)["\']?', 'data-attr'),  # data-thread-id="12345678"
+                (r'id=["\']thread[_-]?(\d+)["\']', 'id-attr'),  # id="thread12345678"
+                (r'class=["\'][^"\']*thread[^"\']*["\']', 'thread-class'),  # class="thread" or "boardThread"
             ]
             
             regex_matches = []
             for pattern, name in patterns:
-                matches = re.findall(pattern, html, re.IGNORECASE)
+                try:
+                    matches = re.findall(pattern, html, re.IGNORECASE)
+                    if matches:
+                        logger.info(f"✓ Pattern '{name}' ({pattern}) found {len(matches)} matches")
+                        # Show first few matches for debugging
+                        if len(matches) > 0:
+                            logger.info(f"  First 5 matches: {matches[:5]}")
+                    else:
+                        logger.info(f"✗ Pattern '{name}' found 0 matches")
+                except Exception as e:
+                    logger.warning(f"Error with pattern '{name}': {e}")
+                    continue
+                
                 if matches:
-                    logger.info(f"Pattern '{name}' ({pattern}) found {len(matches)} matches")
-                    # Show first few matches for debugging
-                    if len(matches) > 0:
-                        logger.info(f"  First 3 matches: {matches[:3]}")
                     
                     if name == 'standard':
                         regex_matches = matches
@@ -442,6 +488,8 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                 simple_patterns = [
                     (r'/{}/?(\d{{8,}})'.format(board), 'board-number'),  # /g/12345678 (8+ digits)
                     (r'/{}/thread/?(\d+)'.format(board), 'board-thread-simple'),  # /g/thread12345678
+                    (r'threads?["\']?\s*:\s*(\d+)', 'json-thread'),  # JSON format: "thread": 12345678
+                    (r'"no"\s*:\s*(\d+)', 'json-no'),  # JSON format: "no": 12345678
                 ]
                 for pattern, name in simple_patterns:
                     try:
@@ -458,8 +506,17 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                 if not regex_matches:
                     if f"/{board}/" in html:
                         logger.warning(f"HTML contains '/{board}/' but no thread URLs found - may be Cloudflare challenge page")
+                        # Try to find any numeric IDs that might be thread IDs (8+ digits)
+                        all_numbers = re.findall(r'\b(\d{8,})\b', html)
+                        if all_numbers:
+                            logger.info(f"Found {len(all_numbers)} potential thread IDs (8+ digits): {all_numbers[:10]}")
                     else:
                         logger.warning(f"HTML does not contain '/{board}/' - may be wrong page")
+                        # Log what the page actually contains
+                        if "json" in html.lower()[:500]:
+                            logger.info("HTML appears to contain JSON - may need JSON parsing")
+                        if "<script" in html.lower()[:1000]:
+                            logger.info("HTML contains scripts - may be JavaScript-rendered content")
             
             # If we found matches but they're in wrong format, try to fix
             if regex_matches and isinstance(regex_matches[0], str):
