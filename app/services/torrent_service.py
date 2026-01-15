@@ -170,8 +170,16 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
 
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error scraping torrent site: {e.response.status_code}")
+        raise ValueError(f"HTTP error {e.response.status_code} accessing torrent site. Check proxy configuration.")
+    except httpx.RequestError as e:
+        logger.error(f"Request error scraping torrent site: {e}")
+        raise ValueError(f"Failed to connect to torrent site. Check proxy configuration: {str(e)}")
+    except ValueError:
+        # Re-raise proxy requirement errors
+        raise
     except Exception as e:
-        logger.error(f"Error scraping torrent site: {e}")
+        logger.error(f"Error scraping torrent site: {e}", exc_info=True)
+        raise ValueError(f"Error accessing torrent site: {str(e)}")
 
     return results[:limit]
 
@@ -367,8 +375,16 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
 
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error searching torrents: {e.response.status_code}")
+        raise ValueError(f"HTTP error {e.response.status_code} accessing torrent site. Check proxy configuration.")
+    except httpx.RequestError as e:
+        logger.error(f"Request error searching torrents: {e}")
+        raise ValueError(f"Failed to connect to torrent site. Check proxy configuration: {str(e)}")
+    except ValueError:
+        # Re-raise proxy requirement errors
+        raise
     except Exception as e:
-        logger.error(f"Error searching torrents: {e}")
+        logger.error(f"Error searching torrents: {e}", exc_info=True)
+        raise ValueError(f"Error accessing torrent site: {str(e)}")
 
     return results[:limit]
 
