@@ -93,8 +93,13 @@ async def fetch_headlines_from_url(url: str) -> dict:
 async def summarize_with_ai(links: list, db: Session) -> str:
     """Use native inference service to create clickable summaries"""
     try:
+        logger.info(f"Starting AI summarization for {len(links)} headlines")
         prepare_vram_for_llm(db)
         service = get_inference_service(db)
+        
+        if service is None:
+            logger.error("No inference service available for news summarization")
+            return None
 
         messages = [
             {"role": "system", "content": """Summarize each news headline in 1 sentence.
@@ -106,6 +111,7 @@ No extra text or commentary."""},
             {"role": "user", "content": "\n".join(links)}
         ]
 
+        logger.info(f"Calling inference service: {type(service).__name__}")
         result = await service.chat_completion(
             messages=messages,
             temperature=0.3,
@@ -113,16 +119,20 @@ No extra text or commentary."""},
         )
 
         if "error" in result:
-            logger.warning(f"AI summarization error: {result['error']}")
+            logger.error(f"AI summarization returned error: {result['error']}")
             return None
 
         content = result["choices"][0]["message"]["content"]
         if content:
             from app.services.text_utils import strip_thinking_tags
-            return strip_thinking_tags(content.strip())
+            summary = strip_thinking_tags(content.strip())
+            logger.info(f"AI summarization successful, {len(summary)} chars")
+            return summary
+        else:
+            logger.warning("AI summarization returned empty content")
 
     except Exception as e:
-        logger.warning(f"AI summarization failed: {e}")
+        logger.error(f"AI summarization failed with exception: {e}", exc_info=True)
 
     return None
 
