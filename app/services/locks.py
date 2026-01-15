@@ -31,12 +31,12 @@ class GPUResourceLock:
         self.wait_start = None
     
     async def __aenter__(self):
+        global _gpu_lock_holder
         self.wait_start = time.time()
         if _gpu_lock_holder:
             logger.info(f"[GPU-LOCK] {self.request_type} request{' ' + self.request_id if self.request_id else ''} waiting for GPU (currently held by {_gpu_lock_holder})")
         await _gpu_lock_base.acquire()
         wait_time = time.time() - self.wait_start
-        global _gpu_lock_holder
         _gpu_lock_holder = f"{self.request_type}{' ' + self.request_id if self.request_id else ''}"
         self.acquired_at = time.time()
         if wait_time > 0.1:  # Only log if waited more than 100ms
