@@ -172,9 +172,12 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
         "Referer": f"{CHAN4_BASE_URL}/",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
     }
     
     threads = []
@@ -272,11 +275,16 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                 logger.debug(f"JSON catalog failed: {e}, falling back to HTML")
             
             # Fallback to HTML catalog
-            logger.info(f"Using HTML catalog endpoint")
+            logger.info(f"Using HTML catalog endpoint: {catalog_url}")
             response = await client.get(catalog_url, headers=headers)
             response.raise_for_status()
             html = response.text
-            logger.info(f"HTML catalog response: status={response.status_code}, length={len(html)}")
+            logger.info(f"HTML catalog response: status={response.status_code}, length={len(html)}, content-type: {response.headers.get('content-type', 'unknown')}")
+            
+            # Quick check: if HTML is very short, might be an error page
+            if len(html) < 500:
+                logger.error(f"HTML response is suspiciously short ({len(html)} chars). Content: {html}")
+                raise ValueError(f"Received suspiciously short response from 4chan. May be blocked or error page.")
         
             # Check if we got an error page
             if "404" in html or "not found" in html.lower() or "error" in html.lower()[:500]:
@@ -330,71 +338,129 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                     logger.info(f"Found {len(divs4)} threads via 'id=thread*'")
                     thread_divs.extend(divs4)
             
-            # Method 5: Find by links to threads (most reliable fallback)
-            if not thread_divs:
-                thread_links = soup.find_all("a", href=re.compile(r'/\w+/thread/\d+'))
-                logger.info(f"Found {len(thread_links)} thread links in HTML")
-                
-                seen_thread_ids = set()
-                for link in thread_links:
-                    href = link.get("href", "")
-                    match = re.search(r'/(\w+)/thread/(\d+)', href)
-                    if match:
-                        thread_id = int(match.group(2))
-                        if thread_id in seen_thread_ids:
+            # PRIMARY METHOD: Find by links to threads (most reliable - works regardless of HTML structure)
+            # Search for any links matching the thread pattern
+            thread_links = soup.find_all("a", href=re.compile(r'/\w+/thread/\d+'))
+            logger.info(f"Found {len(thread_links)} thread links in HTML")
+            
+            # Also try searching in raw HTML with regex as fallback
+            if not thread_links:
+                logger.warning("No thread links found via BeautifulSoup, trying regex on raw HTML")
+                # Extract thread URLs directly from HTML text
+                thread_url_pattern = re.compile(r'/(\w+)/thread/(\d+)')
+                matches = thread_url_pattern.findall(html)
+                logger.info(f"Found {len(matches)} thread URLs via regex")
+                if matches:
+                    # Create minimal thread objects from regex matches
+                    seen_thread_ids = set()
+                    for board_match, thread_id_str in matches[:limit]:
+                        try:
+                            thread_id = int(thread_id_str)
+                            if thread_id in seen_thread_ids:
+                                continue
+                            seen_thread_ids.add(thread_id)
+                            
+                            thread_url = f"{CHAN4_BASE_URL}/{board}/thread/{thread_id}"
+                            threads.append(Chan4Thread(
+                                thread_id=thread_id,
+                                board=board,
+                                subject=f"Thread {thread_id}",
+                                comment="",
+                                image_url=None,
+                                thumbnail_url=None,
+                                replies=0,
+                                images=0,
+                                thread_url=thread_url
+                            ))
+                        except ValueError:
                             continue
-                        seen_thread_ids.add(thread_id)
-                        
-                        # Try to find parent container
-                        parent = link.find_parent("div", class_=re.compile("thread|post"))
-                        if not parent:
-                            parent = link.find_parent("div")
-                        if not parent:
-                            parent = link.find_parent("article")
-                        if not parent:
-                            parent = link.find_parent("li")
-                        
-                        if parent:
-                            thread_divs.append(parent)
-                        else:
-                            # Create a minimal container from the link itself
-                            thread_divs.append(link)
+                    
+                    if threads:
+                        logger.info(f"Extracted {len(threads)} threads from regex pattern matching")
+                        return threads[:limit]
+            
+            # Always try extracting from links as primary method (most reliable)
+            seen_thread_ids = set()
+            link_threads = []
+            
+            for link in thread_links:
+                href = link.get("href", "")
+                match = re.search(r'/(\w+)/thread/(\d+)', href)
+                if match:
+                    thread_id = int(match.group(2))
+                    if thread_id in seen_thread_ids:
+                        continue
+                    seen_thread_ids.add(thread_id)
+                    
+                    # Try to find parent container for more info
+                    parent = None
+                    for parent_selector in [
+                        lambda: link.find_parent("div", class_=re.compile("thread|post")),
+                        lambda: link.find_parent("div"),
+                        lambda: link.find_parent("article"),
+                        lambda: link.find_parent("li"),
+                    ]:
+                        try:
+                            parent = parent_selector()
+                            if parent:
+                                break
+                        except:
+                            pass
+                    
+                    link_threads.append((thread_id, parent or link, href))
+            
+            logger.info(f"Extracted {len(link_threads)} unique thread IDs from links")
+            
+            # If we have link-based threads, use those
+            if link_threads:
+                thread_divs = [item[1] for item in link_threads]
+                logger.info(f"Using {len(thread_divs)} threads from link extraction")
             
             logger.info(f"Total found: {len(thread_divs)} thread containers in HTML")
             
-            # If we still have no thread divs, try extracting directly from links
-            if not thread_divs:
-                logger.warning("No thread containers found, trying direct link extraction")
-                thread_links = soup.find_all("a", href=re.compile(r'/\w+/thread/\d+'))
-                logger.info(f"Found {len(thread_links)} thread links for direct extraction")
-                
+            # If we still have no thread divs but have link_threads, extract minimal info
+            if not thread_divs and link_threads:
+                logger.warning("No thread containers found, extracting minimal thread info from links")
                 seen_thread_ids = set()
-                for link in thread_links[:limit]:
-                    href = link.get("href", "")
-                    match = re.search(r'/(\w+)/thread/(\d+)', href)
-                    if match:
-                        thread_id = int(match.group(2))
-                        if thread_id in seen_thread_ids:
-                            continue
-                        seen_thread_ids.add(thread_id)
-                        
-                        # Extract basic info from link text
-                        link_text = link.get_text(strip=True)
-                        subject = link_text[:100] if link_text else f"Thread {thread_id}"
-                        
-                        thread_url = f"{CHAN4_BASE_URL}/{board}/thread/{thread_id}"
-                        
-                        threads.append(Chan4Thread(
-                            thread_id=thread_id,
-                            board=board,
-                            subject=subject,
-                            comment="",
-                            image_url=None,
-                            thumbnail_url=None,
-                            replies=0,
-                            images=0,
-                            thread_url=thread_url
-                        ))
+                for thread_id, link_elem, href in link_threads[:limit]:
+                    if thread_id in seen_thread_ids:
+                        continue
+                    seen_thread_ids.add(thread_id)
+                    
+                    # Extract basic info from link text or nearby elements
+                    link_text = ""
+                    if hasattr(link_elem, 'get_text'):
+                        link_text = link_elem.get_text(strip=True)[:100]
+                    elif hasattr(link_elem, 'text'):
+                        link_text = link_elem.text[:100] if link_elem.text else ""
+                    
+                    subject = link_text if link_text else f"Thread {thread_id}"
+                    
+                    # Try to find thumbnail in nearby elements
+                    thumbnail_url = None
+                    if hasattr(link_elem, 'find'):
+                        img = link_elem.find("img")
+                        if img:
+                            thumbnail_url = img.get("src", "") or img.get("data-src", "")
+                            if thumbnail_url and not thumbnail_url.startswith("http"):
+                                if thumbnail_url.startswith("//"):
+                                    thumbnail_url = f"https:{thumbnail_url}"
+                                elif thumbnail_url.startswith("/"):
+                                    thumbnail_url = f"{CHAN4_BASE_URL}{thumbnail_url}"
+                    
+                    thread_url = f"{CHAN4_BASE_URL}/{board}/thread/{thread_id}"
+                    
+                    threads.append(Chan4Thread(
+                        thread_id=thread_id,
+                        board=board,
+                        subject=subject,
+                        comment="",
+                        image_url=None,
+                        thumbnail_url=thumbnail_url,
+                        replies=0,
+                        images=0,
+                        thread_url=thread_url
+                    ))
                 
                 if threads:
                     logger.info(f"Extracted {len(threads)} threads directly from links")
