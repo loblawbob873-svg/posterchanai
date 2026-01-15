@@ -96,43 +96,39 @@ async def update_contact(
 ) -> dict:
     """Update a contact by UID."""
     import logging
+    import traceback
     logger = logging.getLogger(__name__)
     
-    # Convert Pydantic model to dict, excluding unset values
-    # Use dict() for Pydantic v1 compatibility, model_dump() for v2
     try:
-        updates_dict = updates.model_dump(exclude_unset=True)
-    except AttributeError:
-        # Pydantic v1 fallback - just use dict and exclude None
-        updates_dict = {k: v for k, v in updates.dict().items() if v is not None}
-    logger.info(f"Update contact request: uid={uid}, updates={updates_dict}")
-    
-    config = get_user_contacts_config(current_user.id, db)
-    if not config:
-        logger.error("CardDAV not configured")
-        raise HTTPException(status_code=404, detail="CardDAV not configured")
+        # Convert Pydantic model to dict, excluding unset values
+        try:
+            updates_dict = updates.model_dump(exclude_unset=True)
+        except AttributeError:
+            updates_dict = {k: v for k, v in updates.dict().items() if v is not None}
+        
+        logger.info(f"Update contact request: uid={uid}, updates={updates_dict}")
+        
+        config = get_user_contacts_config(current_user.id, db)
+        if not config:
+            return {"success": False, "error": "CardDAV not configured"}
 
-    # Validate that contact exists
-    contact = get_user_contact_by_uid(current_user.id, db, uid)
-    if not contact:
-        logger.error(f"Contact not found: {uid}")
-        raise HTTPException(status_code=404, detail="Contact not found")
+        contact = get_user_contact_by_uid(current_user.id, db, uid)
+        if not contact:
+            return {"success": False, "error": f"Contact not found: {uid}"}
 
-    if not updates_dict:
-        raise HTTPException(status_code=400, detail="No valid fields to update")
+        if not updates_dict:
+            return {"success": False, "error": "No valid fields to update"}
 
-    try:
         success = edit_user_contact(current_user.id, db, uid, updates_dict)
         if not success:
-            logger.error(f"edit_user_contact returned False for uid={uid}")
-            raise HTTPException(status_code=500, detail="Failed to update contact in CardDAV server")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Exception updating contact: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error updating contact: {str(e)}")
+            return {"success": False, "error": "CardDAV server rejected the update"}
 
-    return {"success": True, "message": "Contact updated"}
+        return {"success": True, "message": "Contact updated"}
+    
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        logger.error(f"Exception updating contact: {error_trace}")
+        return {"success": False, "error": str(e), "trace": error_trace}
 
 
 @router.get("/attachment/{account_hint}/{uid}/{index}")

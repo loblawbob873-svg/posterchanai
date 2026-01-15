@@ -989,7 +989,10 @@ function initContactsModal() {
             });
 
             console.log('Response status:', response.status);
-            if (response.ok) {
+            const result = await response.json();
+            console.log('Response:', result);
+            
+            if (result.success) {
                 contactsModal.style.display = 'none';
                 clearContactsForm();
                 // Refresh contacts list
@@ -1000,13 +1003,10 @@ function initContactsModal() {
                     }));
                 }
             } else {
-                const errorText = await response.text();
-                console.error('Update failed:', response.status, errorText);
-                try {
-                    const error = JSON.parse(errorText);
-                    alert('Failed to update contact: ' + (error.detail || 'Unknown error'));
-                } catch {
-                    alert('Failed to update contact: ' + errorText);
+                console.error('Update failed:', result);
+                alert('Failed to update contact: ' + (result.error || result.detail || 'Unknown error'));
+                if (result.trace) {
+                    console.error('Traceback:', result.trace);
                 }
             }
         } catch (e) {
