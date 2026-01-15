@@ -599,7 +599,14 @@ class IPEXService:
         **kwargs
     ) -> AsyncGenerator[str, None]:
         """Streaming chat completion using async queue."""
+        global _request_counter, _pending_requests
         self._ensure_model_loaded()
+
+        # Generate request ID and track
+        with _request_counter_lock:
+            _request_counter += 1
+            request_id = _request_counter
+            _pending_requests += 1
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
@@ -740,11 +747,16 @@ class IPEXService:
 
             _executor.submit(run_streaming)
 
-            while True:
-                chunk = await queue.get()
-                if chunk is None:
-                    break
-                yield chunk
+            try:
+                while True:
+                    chunk = await queue.get()
+                    if chunk is None:
+                        break
+                    yield chunk
+            finally:
+                # Update request counter when stream completes
+                with _request_counter_lock:
+                    _pending_requests -= 1
 
     def stream_chat_content(
         self,
