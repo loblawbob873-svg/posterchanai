@@ -65,12 +65,16 @@ class RssService:
             
             logger.info(f"RSS feed fetching via proxy: {proxy_config} for URL: {url}")
             
-            # aiohttp uses connector for proxy
-            connector = aiohttp.ProxyConnector.from_url(proxy_config)
-            logger.debug(f"Created aiohttp ProxyConnector with proxy: {proxy_config}")
-            async with aiohttp.ClientSession(connector=connector) as session:
+            # aiohttp supports proxy parameter directly in session.get()
+            # ProxyConnector was removed in newer versions, use proxy parameter instead
+            logger.debug(f"Using proxy parameter: {proxy_config}")
+            async with aiohttp.ClientSession() as session:
                 headers = {"User-Agent": "Mozilla/5.0 (compatible; Posterchanai/1.0)"}
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                async with session.get(url, headers=headers, proxy=proxy_config, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status != 200:
+                        return {"error": f"HTTP {resp.status}", "entries": []}
+
+                    content = await resp.text()
                     if resp.status != 200:
                         return {"error": f"HTTP {resp.status}", "entries": []}
 
@@ -270,12 +274,12 @@ class RssService:
             
             logger.info(f"RSS article fetching via proxy: {proxy_config} for URL: {url}")
             
-            # aiohttp uses connector for proxy
-            connector = aiohttp.ProxyConnector.from_url(proxy_config)
-            logger.debug(f"Created aiohttp ProxyConnector with proxy: {proxy_config}")
-            async with aiohttp.ClientSession(connector=connector) as session:
+            # aiohttp supports proxy parameter directly in session.get()
+            # ProxyConnector was removed in newer versions, use proxy parameter instead
+            logger.debug(f"Using proxy parameter: {proxy_config}")
+            async with aiohttp.ClientSession() as session:
                 headers = {"User-Agent": "Mozilla/5.0 (compatible; Posterchanai/1.0)"}
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                async with session.get(url, headers=headers, proxy=proxy_config, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status != 200:
                         return None
 
