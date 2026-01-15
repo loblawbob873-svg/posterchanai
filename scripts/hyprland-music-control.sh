@@ -8,6 +8,35 @@ BROWSER_CLASS="brave|Brave|brave-browser|Brave-browser"
 
 ACTION="${1:-toggle}"
 
+# Debug mode
+if [ "$ACTION" = "--debug" ] || [ "$ACTION" = "-d" ]; then
+    echo "=== Browser Window Detection Debug ==="
+    echo ""
+    
+    if command -v hyprctl &> /dev/null; then
+        echo "Hyprland clients:"
+        hyprctl clients | grep -i "brave\|browser" | head -5
+        echo ""
+    fi
+    
+    if command -v xdotool &> /dev/null; then
+        echo "xdotool search results:"
+        for pattern in "brave" "Brave" "brave-browser" "Brave-browser"; do
+            echo "  Pattern: $pattern"
+            xdotool search --class "$pattern" 2>/dev/null | head -3
+        done
+        echo ""
+    fi
+    
+    echo "Available tools:"
+    command -v ydotool &> /dev/null && echo "  ✓ ydotool" || echo "  ✗ ydotool (not installed)"
+    command -v xdotool &> /dev/null && echo "  ✓ xdotool" || echo "  ✗ xdotool (not installed)"
+    command -v hyprctl &> /dev/null && echo "  ✓ hyprctl" || echo "  ✗ hyprctl (not installed)"
+    echo ""
+    echo "Usage: $0 {play|pause|toggle|next|prev|previous|stop|--debug}"
+    exit 0
+fi
+
 # Focus the browser window (try multiple Brave patterns)
 FOCUSED=0
 if command -v hyprctl &> /dev/null; then
@@ -25,35 +54,59 @@ if command -v hyprctl &> /dev/null; then
 fi
 
 # Method 1: Use ydotool if available (Wayland-native, works globally)
+# ydotool doesn't need window detection - it sends keys globally
 if command -v ydotool &> /dev/null; then
     case "$ACTION" in
         play|pause|toggle)
             # Send Alt+P (play/pause)
-            ydotool key 29:1 25:1 29:0 25:0 2>/dev/null
+            # Key codes: 29=Alt, 25=P
+            if ydotool key 29:1 25:1 29:0 25:0 2>/dev/null; then
+                exit 0
+            else
+                # Try with sudo if permission denied
+                sudo ydotool key 29:1 25:1 29:0 25:0 2>/dev/null && exit 0 || true
+            fi
             ;;
         next)
             # Send Alt+F (next track)
-            ydotool key 29:1 33:1 29:0 33:0 2>/dev/null
+            # Key codes: 29=Alt, 33=F
+            if ydotool key 29:1 33:1 29:0 33:0 2>/dev/null; then
+                exit 0
+            else
+                sudo ydotool key 29:1 33:1 29:0 33:0 2>/dev/null && exit 0 || true
+            fi
             ;;
         prev|previous)
             # Send Alt+R (previous track)
-            ydotool key 29:1 19:1 29:0 19:0 2>/dev/null
+            # Key codes: 29=Alt, 19=R
+            if ydotool key 29:1 19:1 29:0 19:0 2>/dev/null; then
+                exit 0
+            else
+                sudo ydotool key 29:1 19:1 29:0 19:0 2>/dev/null && exit 0 || true
+            fi
             ;;
         stop)
             # Send Alt+S (stop)
-            ydotool key 29:1 31:1 29:0 31:0 2>/dev/null
+            # Key codes: 29=Alt, 31=S
+            if ydotool key 29:1 31:1 29:0 31:0 2>/dev/null; then
+                exit 0
+            else
+                sudo ydotool key 29:1 31:1 29:0 31:0 2>/dev/null && exit 0 || true
+            fi
             ;;
         *)
             echo "Usage: $0 {play|pause|toggle|next|prev|previous|stop}"
             exit 1
             ;;
     esac
-    exit 0
+    # If we get here, ydotool failed
+    echo "ydotool failed. Trying alternative methods..."
 fi
 
 # Method 2: Use xdotool if available (X11 compatibility layer)
-if command -v xdotool &> /dev/null; then
-    # Find browser window (try multiple Brave patterns)
+# Note: xdotool may not work well in Wayland
+if command -v xdotool &> /dev/null && [ -n "$DISPLAY" ]; then
+    # Try to find browser window first
     WINDOW_ID=""
     for pattern in "brave" "Brave" "brave-browser" "Brave-browser"; do
         WINDOW_ID=$(xdotool search --class "$pattern" 2>/dev/null | head -1)
@@ -67,77 +120,83 @@ if command -v xdotool &> /dev/null; then
         fi
     done
     
-    if [ -z "$WINDOW_ID" ]; then
-        echo "Browser window not found. Make sure Brave is running."
-        exit 1
-    fi
-    
+    # If window found, use it; otherwise send keys globally
     case "$ACTION" in
         play|pause|toggle)
-            xdotool key --window "$WINDOW_ID" alt+p 2>/dev/null || xdotool key alt+p
+            if [ -n "$WINDOW_ID" ]; then
+                xdotool key --window "$WINDOW_ID" alt+p 2>/dev/null || xdotool key alt+p
+            else
+                xdotool key alt+p 2>/dev/null
+            fi
+            exit 0
             ;;
         next)
-            xdotool key --window "$WINDOW_ID" alt+f 2>/dev/null || xdotool key alt+f
+            if [ -n "$WINDOW_ID" ]; then
+                xdotool key --window "$WINDOW_ID" alt+f 2>/dev/null || xdotool key alt+f
+            else
+                xdotool key alt+f 2>/dev/null
+            fi
+            exit 0
             ;;
         prev|previous)
-            xdotool key --window "$WINDOW_ID" alt+r 2>/dev/null || xdotool key alt+r
+            if [ -n "$WINDOW_ID" ]; then
+                xdotool key --window "$WINDOW_ID" alt+r 2>/dev/null || xdotool key alt+r
+            else
+                xdotool key alt+r 2>/dev/null
+            fi
+            exit 0
             ;;
         stop)
-            xdotool key --window "$WINDOW_ID" alt+s 2>/dev/null || xdotool key alt+s
+            if [ -n "$WINDOW_ID" ]; then
+                xdotool key --window "$WINDOW_ID" alt+s 2>/dev/null || xdotool key alt+s
+            else
+                xdotool key alt+s 2>/dev/null
+            fi
+            exit 0
             ;;
         *)
             echo "Usage: $0 {play|pause|toggle|next|prev|previous|stop}"
             exit 1
             ;;
     esac
-    exit 0
 fi
 
-# Method 3: Fallback - try to focus browser and use hyprctl to send keys
-if command -v hyprctl &> /dev/null; then
-    # Focus browser first
-    for pattern in "brave" "Brave" "brave-browser" "Brave-browser"; do
-        if hyprctl dispatch focuswindow "class:.*$pattern" &>/dev/null; then
-            sleep 0.2  # Wait for focus
-            break
-        fi
-    done
-    
-    case "$ACTION" in
-        play|pause|toggle)
-            # Use hyprctl to type Alt+P
-            hyprctl dispatch exec "xdotool key alt+p" 2>/dev/null || echo "Browser focused. Press Alt+P to play/pause."
-            ;;
-        next)
-            hyprctl dispatch exec "xdotool key alt+f" 2>/dev/null || echo "Browser focused. Press Alt+F for next track."
-            ;;
-        prev|previous)
-            hyprctl dispatch exec "xdotool key alt+r" 2>/dev/null || echo "Browser focused. Press Alt+R for previous track."
-            ;;
-        stop)
-            hyprctl dispatch exec "xdotool key alt+s" 2>/dev/null || echo "Browser focused. Press Alt+S to stop."
-            ;;
-        *)
-            echo "Usage: $0 {play|pause|toggle|next|prev|previous|stop}"
-            exit 1
-            ;;
-    esac
-    exit 0
-fi
-
-# Final fallback - just focus browser
+# Method 3: Final fallback - focus browser and inform user
+# Browser is already focused from the beginning of the script
 case "$ACTION" in
-    play|pause|toggle|next|prev|previous|stop)
-        echo "Browser focused. Use Alt+P (play/pause), Alt+F (next), Alt+R (prev), or Alt+S (stop) when browser is active."
+    play|pause|toggle)
+        echo "Browser focused. Press Alt+P to play/pause."
         echo ""
-        echo "Note: Install 'ydotool' or 'xdotool' for automatic keyboard control."
-        echo "      Or use system media keys when browser tab is active."
+        echo "To enable automatic control, install ydotool:"
+        echo "  sudo emerge -av app-misc/ydotool"
+        echo ""
+        echo "Or use system media keys when browser tab is active."
+        ;;
+    next)
+        echo "Browser focused. Press Alt+F for next track."
+        echo ""
+        echo "To enable automatic control, install ydotool:"
+        echo "  sudo emerge -av app-misc/ydotool"
+        ;;
+    prev|previous)
+        echo "Browser focused. Press Alt+R for previous track."
+        echo ""
+        echo "To enable automatic control, install ydotool:"
+        echo "  sudo emerge -av app-misc/ydotool"
+        ;;
+    stop)
+        echo "Browser focused. Press Alt+S to stop."
+        echo ""
+        echo "To enable automatic control, install ydotool:"
+        echo "  sudo emerge -av app-misc/ydotool"
         ;;
     *)
         echo "Usage: $0 {play|pause|toggle|next|prev|previous|stop}"
         echo ""
-        echo "Note: Install 'ydotool' or 'xdotool' for full keyboard control."
-        echo "      Or use system media keys when browser is focused."
+        echo "Note: Install 'ydotool' for automatic keyboard control:"
+        echo "  sudo emerge -av app-misc/ydotool"
+        echo ""
+        echo "Or use system media keys when browser tab is active."
         exit 1
         ;;
 esac
