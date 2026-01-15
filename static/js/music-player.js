@@ -194,6 +194,12 @@ class MusicPlayer {
         this.container.querySelector('#music-prev').addEventListener('click', () => this.prev());
         this.container.querySelector('#music-next').addEventListener('click', () => this.next());
 
+        // Global keyboard shortcuts (work when page is focused)
+        this.setupKeyboardShortcuts();
+
+        // Media Session API (for system media keys and Wayland global shortcuts)
+        this.setupMediaSession();
+
         // Progress bar - use currentTarget to always get the container element
         const progressEl = this.container.querySelector('#music-progress');
         progressEl.addEventListener('click', (e) => {
@@ -265,6 +271,132 @@ class MusicPlayer {
         window.addEventListener('resize', () => this.resizeCanvas());
     }
 
+    setupKeyboardShortcuts() {
+        // Global keyboard shortcuts for music control
+        // These work when the page/browser window is focused
+        document.addEventListener('keydown', (e) => {
+            // Only handle if not typing in an input field
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+                return;
+            }
+
+            // Alt+P or Space: Play/Pause
+            if ((e.altKey && e.key === 'p') || (e.key === ' ' && !e.ctrlKey && !e.shiftKey && !e.metaKey)) {
+                e.preventDefault();
+                this.togglePlay();
+                return;
+            }
+
+            // Alt+N or Arrow Right: Next track
+            if ((e.altKey && e.key === 'n') || (e.key === 'ArrowRight' && !e.ctrlKey && !e.shiftKey && !e.metaKey)) {
+                e.preventDefault();
+                this.next();
+                return;
+            }
+
+            // Alt+B or Arrow Left: Previous track
+            if ((e.altKey && e.key === 'b') || (e.key === 'ArrowLeft' && !e.ctrlKey && !e.shiftKey && !e.metaKey)) {
+                e.preventDefault();
+                this.prev();
+                return;
+            }
+
+            // Alt+S: Stop
+            if (e.altKey && e.key === 's') {
+                e.preventDefault();
+                this.stop();
+                return;
+            }
+        });
+    }
+
+    setupMediaSession() {
+        // Media Session API - enables system media keys and Wayland global shortcuts
+        if (!('mediaSession' in navigator)) {
+            console.log('Media Session API not supported');
+            return;
+        }
+
+        const mediaSession = navigator.mediaSession;
+
+        // Set action handlers for media keys
+        try {
+            mediaSession.setActionHandler('play', () => {
+                if (!this.isPlaying) {
+                    this.audio.play();
+                }
+            });
+
+            mediaSession.setActionHandler('pause', () => {
+                if (this.isPlaying) {
+                    this.audio.pause();
+                }
+            });
+
+            mediaSession.setActionHandler('previoustrack', () => {
+                this.prev();
+            });
+
+            mediaSession.setActionHandler('nexttrack', () => {
+                this.next();
+            });
+
+            mediaSession.setActionHandler('stop', () => {
+                this.stop();
+            });
+
+            // Seek handlers (optional, for seek buttons)
+            mediaSession.setActionHandler('seekbackward', (details) => {
+                const skipTime = details.seekOffset || 10;
+                if (this.audio) {
+                    this.audio.currentTime = Math.max(0, this.audio.currentTime - skipTime);
+                }
+            });
+
+            mediaSession.setActionHandler('seekforward', (details) => {
+                const skipTime = details.seekOffset || 10;
+                if (this.audio && this.audio.duration) {
+                    this.audio.currentTime = Math.min(this.audio.duration, this.audio.currentTime + skipTime);
+                }
+            });
+
+            console.log('Media Session API handlers registered');
+        } catch (error) {
+            console.warn('Error setting up Media Session API:', error);
+        }
+    }
+
+    updateMediaSessionMetadata(track) {
+        // Update Media Session metadata for system integration
+        if (!('mediaSession' in navigator)) return;
+
+        try {
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: track.title || track.filename || 'Unknown Track',
+                artist: track.artist || '',
+                album: track.album || '',
+                artwork: track.artwork ? [{ src: track.artwork }] : []
+            });
+        } catch (error) {
+            console.warn('Error updating Media Session metadata:', error);
+        }
+    }
+
+    updateMediaSessionPlaybackState() {
+        // Update playback state for system integration
+        if (!('mediaSession' in navigator)) return;
+
+        try {
+            if (this.isPlaying) {
+                navigator.mediaSession.playbackState = 'playing';
+            } else {
+                navigator.mediaSession.playbackState = 'paused';
+            }
+        } catch (error) {
+            console.warn('Error updating Media Session playback state:', error);
+        }
+    }
+
     resizeCanvas() {
         if (!this.canvas) return;
         this.canvas.width = this.canvas.offsetWidth * window.devicePixelRatio;
@@ -301,6 +433,9 @@ class MusicPlayer {
         // Update UI
         this.container.querySelector('.music-track-title').textContent = currentTrack.title || currentTrack.filename || 'Unknown';
         this.container.querySelector('.music-track-artist').textContent = currentTrack.artist || '';
+
+        // Update Media Session metadata
+        this.updateMediaSessionMetadata(currentTrack);
 
         this.show();
         this.updateQueueUI();
@@ -414,6 +549,7 @@ class MusicPlayer {
         this.container.classList.add('playing');
         this.container.querySelector('#music-play').innerHTML = '&#10074;&#10074;';
         this.startVisualizer();
+        this.updateMediaSessionPlaybackState();
     }
 
     onPause() {
@@ -421,6 +557,7 @@ class MusicPlayer {
         this.container.classList.remove('playing');
         this.container.querySelector('#music-play').innerHTML = '&#9654;';
         this.stopVisualizer();
+        this.updateMediaSessionPlaybackState();
     }
 
     onError(e) {

@@ -1002,13 +1002,14 @@ Works from anywhere, even while typing in input:
 | `Ctrl+U/D` | Page up / down |
 | `Escape` | Stop AI generation |
 
-**Music Controls**
+**Music Controls (Web Interface)**
 | Key | Action |
 |-----|--------|
-| `Alt+P` | Play/Pause |
-| `Alt+F` | Next track |
-| `Alt+R` | Previous track |
-| `Alt+M` | Minimize player |
+| `Alt+P` or `Space` | Play/Pause |
+| `Alt+N` or `→` | Next track |
+| `Alt+B` or `←` | Previous track |
+| `Alt+S` | Stop |
+| **System Media Keys** | Automatically work via Media Session API |
 
 ### Features
 
@@ -1198,31 +1199,46 @@ The music command provides WebDAV-based music streaming with a cyberpunk-styled 
 
 Works with Nextcloud, ownCloud, or any WebDAV-compatible server.
 
-**Global Keyboard Shortcuts (Wayland/Hyprland):**
+**Global Keyboard Shortcuts (Wayland):**
 
-Control music playback from anywhere on your desktop using global shortcuts. The TUI must be running.
+The web interface supports global shortcuts via the Media Session API and keyboard shortcuts:
 
-Add to your Hyprland config (`~/.config/hypr/hyprland.conf`):
+**Automatic (Media Session API):**
+- System media keys (Play/Pause, Next, Previous) work automatically when music is playing
+- Works with most Wayland compositors (Hyprland, Sway, KDE, GNOME)
+- No configuration needed - just use your keyboard/media keys
+
+**Custom Wayland Shortcuts (Optional):**
+
+For custom global shortcuts that work even when the browser isn't focused, configure your Wayland compositor to send media key events:
+
+**Hyprland** (`~/.config/hypr/hyprland.conf`):
 ```
-bind = SUPER, P, exec, /path/to/posterchanai/scripts/music-control.sh toggle
-bind = SUPER, F, exec, /path/to/posterchanai/scripts/music-control.sh next
-bind = SUPER, R, exec, /path/to/posterchanai/scripts/music-control.sh prev
+# Send media keys to browser (works with Media Session API)
+bind = , XF86AudioPlay, exec, playerctl play-pause  # or use a script to focus browser
+bind = , XF86AudioNext, exec, playerctl next
+bind = , XF86AudioPrev, exec, playerctl previous
 ```
 
-For Sway (`~/.config/sway/config`):
+**Sway** (`~/.config/sway/config`):
 ```
-bindsym Mod4+p exec /path/to/posterchanai/scripts/music-control.sh toggle
-bindsym Mod4+f exec /path/to/posterchanai/scripts/music-control.sh next
-bindsym Mod4+r exec /path/to/posterchanai/scripts/music-control.sh prev
+# Send media keys to browser
+bindsym XF86AudioPlay exec playerctl play-pause
+bindsym XF86AudioNext exec playerctl next
+bindsym XF86AudioPrev exec playerctl previous
 ```
 
-Then reload your compositor config (`hyprctl reload` for Hyprland).
+**Alternative: Use playerctl with browser focus:**
+```bash
+# Script to control browser music player
+#!/bin/bash
+# Focus browser window and send media key
+hyprctl dispatch focuswindow "class:.*[Bb]rowser.*"
+sleep 0.1
+# Media keys will be handled by Media Session API
+```
 
-| Shortcut | Action |
-|----------|--------|
-| Super+P | Play/Pause toggle |
-| Super+F | Next track (Forward) |
-| Super+R | Previous track (Rewind) |
+**Note:** The Media Session API automatically handles system media keys when the browser tab is active. For true global control, use `playerctl` or configure your compositor to send media key events to the browser window.
 
 ### Intelligent Actions
 
