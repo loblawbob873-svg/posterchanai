@@ -3,8 +3,9 @@ Mail Router - API endpoints for email functionality.
 """
 from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from app.database import get_db
 from app.auth import get_current_user
@@ -18,6 +19,14 @@ from app.services.caldav_service import (
 )
 
 router = APIRouter(prefix="/api/mail", tags=["mail"])
+
+
+class ContactUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    organization: Optional[str] = None
+    note: Optional[str] = None
 
 
 @router.get("/contacts/emails")
@@ -81,7 +90,7 @@ async def get_contact(
 @router.put("/contacts/{uid}")
 async def update_contact(
     uid: str,
-    updates: dict = Body(...),
+    updates: ContactUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ) -> dict:
@@ -89,7 +98,13 @@ async def update_contact(
     import logging
     logger = logging.getLogger(__name__)
     
-    logger.info(f"Update contact request: uid={uid}, updates={updates}")
+    # Convert Pydantic model to dict, excluding None values
+    # Use dict() for Pydantic v1 compatibility, model_dump() for v2
+    try:
+        updates_dict = updates.model_dump(exclude_none=True)
+    except AttributeError:
+        updates_dict = {k: v for k, v in updates.dict().items() if v is not None}
+    logger.info(f"Update contact request: uid={uid}, updates={updates_dict}")
     
     config = get_user_contacts_config(current_user.id, db)
     if not config:
@@ -102,17 +117,11 @@ async def update_contact(
         logger.error(f"Contact not found: {uid}")
         raise HTTPException(status_code=404, detail="Contact not found")
 
-    # Filter to only allowed fields
-    allowed_fields = {"name", "phone", "email", "organization", "note"}
-    filtered_updates = {k: v for k, v in updates.items() if k in allowed_fields}
-    
-    logger.info(f"Filtered updates: {filtered_updates}")
-
-    if not filtered_updates:
+    if not updates_dict:
         raise HTTPException(status_code=400, detail="No valid fields to update")
 
     try:
-        success = edit_user_contact(current_user.id, db, uid, filtered_updates)
+        success = edit_user_contact(current_user.id, db, uid, updates_dict)
         if not success:
             logger.error(f"edit_user_contact returned False for uid={uid}")
             raise HTTPException(status_code=500, detail="Failed to update contact in CardDAV server")
