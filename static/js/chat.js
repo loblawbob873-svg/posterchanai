@@ -2760,7 +2760,9 @@ class ChatHandler {
         'music mood': ['chill', 'upbeat', 'focus', 'workout', 'relaxing', 'energetic', 'party', 'calm'],
         'music queue': ['add', 'clear'],
         // Todo subcommands
-        'todo': ['add', 'rm', 'list']
+        'todo': ['add', 'rm', 'list'],
+        // RSS subcommands
+        'rss': ['sync', 'add', 'remove', 'list']
     };
 
     // Tab autocomplete for commands
