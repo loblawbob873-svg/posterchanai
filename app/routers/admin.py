@@ -115,6 +115,28 @@ def update_user_password(
     return {"message": "Password updated"}
 
 
+@router.post("/users/{user_id}/toggle-rss-skip")
+def toggle_rss_skip_summarization(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Toggle rss_skip_summarization for a user (for bot users that do their own summarization)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    user.rss_skip_summarization = not getattr(user, 'rss_skip_summarization', False)
+    db.commit()
+    return {
+        "message": "RSS skip summarization toggled",
+        "rss_skip_summarization": user.rss_skip_summarization
+    }
+
+
 class TestEmailRequest(BaseModel):
     to_email: str
 

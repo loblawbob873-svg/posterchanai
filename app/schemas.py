@@ -26,6 +26,7 @@ class UserResponse(BaseModel):
     username: str
     email: Optional[str] = None
     is_admin: bool
+    rss_skip_summarization: bool = False
     created_at: datetime
 
     class Config:

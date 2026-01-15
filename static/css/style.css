@@ -1047,6 +1047,17 @@ fieldset legend {
     font-weight: 500;
     color: var(--accent);
 }
+.user-item .user-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.85em;
+    color: var(--muted);
+    cursor: pointer;
+}
+.user-item .user-toggle input {
+    cursor: pointer;
+}
 .user-form {
     background: rgba(0, 0, 0, 0.3);
     padding: 20px;

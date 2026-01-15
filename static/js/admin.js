@@ -111,6 +111,9 @@ async function loadUsers() {
                 <div class="user-item">
                     <span class="username">${escapeHtml(u.username)}</span>
                     <span class="badge ${u.is_admin ? 'admin' : ''}">${u.is_admin ? 'Admin' : 'User'}</span>
+                    <label class="user-toggle" title="Skip AI summarization for RSS (for bot users)">
+                        <input type="checkbox" ${u.rss_skip_summarization ? 'checked' : ''} onchange="toggleRssSkip(${u.id})"> Bot
+                    </label>
                     <button class="btn-secondary btn-small" onclick="resetPassword(${u.id}, '${escapeHtml(u.username)}')">Reset Password</button>
                     <button class="btn-danger btn-small" onclick="deleteUser(${u.id})">Delete</button>
                 </div>
@@ -162,6 +165,21 @@ async function deleteUser(id) {
         }
     } catch (err) {
         alert('Error deleting user');
+    }
+}
+
+// Toggle RSS skip summarization (for bot users)
+async function toggleRssSkip(id) {
+    try {
+        const response = await csrfFetch(`/api/admin/users/${id}/toggle-rss-skip`, { method: 'POST' });
+        if (!response.ok) {
+            const data = await response.json();
+            alert(data.detail || 'Failed to toggle setting');
+            loadUsers(); // Reload to reset checkbox
+        }
+    } catch (err) {
+        alert('Error toggling setting');
+        loadUsers();
     }
 }
 
