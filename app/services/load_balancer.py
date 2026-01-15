@@ -268,12 +268,18 @@ class LoadBalancer:
                     headers=self.headers,
                     json=request_body
                 ) as response:
-                    logger.info(f"STREAM RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
+                    logger.info(f"STREAM RESPONSE from {server} | status={response.status_code} | headers={dict(response.headers)} | time={time.time()-start_time:.2f}s")
                     response.raise_for_status()
+                    
+                    # Check content-type to verify it's a stream
+                    content_type = response.headers.get("content-type", "")
+                    if "text/event-stream" not in content_type and "stream" not in content_type.lower():
+                        logger.warning(f"STREAM WARNING from {server} | Unexpected content-type: {content_type}")
 
                     chunk_count = 0
                     first_chunk_time = None
                     empty_stream = True
+                    non_data_lines = []
                     async for line in response.aiter_lines():
                         line = line.strip()
                         if not line:
@@ -287,15 +293,20 @@ class LoadBalancer:
                             # Ensure proper SSE format with \n\n
                             yield line + "\n\n" if not line.endswith("\n\n") else line
                         else:
-                            # Log non-data lines for debugging
+                            # Collect non-data lines for debugging
+                            non_data_lines.append(line[:100])
                             logger.debug(f"STREAM non-data line from {server}: {line[:100]}")
 
                     total_time = time.time() - start_time
                     if chunk_count == 0:
-                        logger.info(f"STREAM COMPLETE from {server} | chunks=0 | total_time={total_time:.2f}s | Remote server returned empty stream (may need code update), falling back to local")
-                        # Don't mark as unhealthy immediately - might just need code update
+                        # Log details about what we received (or didn't receive)
+                        if non_data_lines:
+                            logger.info(f"STREAM COMPLETE from {server} | chunks=0 | Received {len(non_data_lines)} non-data lines: {non_data_lines[:3]}")
+                        else:
+                            logger.info(f"STREAM COMPLETE from {server} | chunks=0 | No data lines received (empty response body)")
+                        # Don't mark as unhealthy immediately - remote may be processing but stream format issue
                         # Instead, raise exception to trigger fallback to local, but keep server in rotation
-                        raise NoHealthyServersError(f"Remote server {server} returned empty stream (remote may need code update - falling back to local)")
+                        raise NoHealthyServersError("Remote server unavailable, using local")
                     else:
                         logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={total_time:.2f}s")
                         # Mark as healthy if we got chunks
