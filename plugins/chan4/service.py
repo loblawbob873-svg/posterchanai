@@ -399,30 +399,30 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                 # Create minimal thread objects from regex matches
                 seen_thread_ids = set()
                 for board_match, thread_id_str in regex_matches[:limit]:
-                        try:
-                            thread_id = int(thread_id_str)
-                            if thread_id in seen_thread_ids:
-                                continue
-                            seen_thread_ids.add(thread_id)
-                            
-                            thread_url = f"{CHAN4_BASE_URL}/{board}/thread/{thread_id}"
-                            threads.append(Chan4Thread(
-                                thread_id=thread_id,
-                                board=board,
-                                subject=f"Thread {thread_id}",
-                                comment="",
-                                image_url=None,
-                                thumbnail_url=None,
-                                replies=0,
-                                images=0,
-                                thread_url=thread_url
-                            ))
-                        except ValueError:
+                    try:
+                        thread_id = int(thread_id_str)
+                        if thread_id in seen_thread_ids:
                             continue
-                    
-                    if threads:
-                        logger.info(f"Extracted {len(threads)} threads from regex pattern matching")
-                        return threads[:limit]
+                        seen_thread_ids.add(thread_id)
+                        
+                        thread_url = f"{CHAN4_BASE_URL}/{board}/thread/{thread_id}"
+                        threads.append(Chan4Thread(
+                            thread_id=thread_id,
+                            board=board,
+                            subject=f"Thread {thread_id}",
+                            comment="",
+                            image_url=None,
+                            thumbnail_url=None,
+                            replies=0,
+                            images=0,
+                            thread_url=thread_url
+                        ))
+                    except ValueError:
+                        continue
+                
+                if threads:
+                    logger.info(f"Extracted {len(threads)} threads from regex pattern matching")
+                    return threads[:limit]
             
             # Always try extracting from links as primary method (most reliable)
             seen_thread_ids = set()
