@@ -1460,7 +1460,7 @@ class ChatHandler {
         setTimeout(() => toast.remove(), 2000);
     }
 
-    executeCommand(cmd) {
+    async executeCommand(cmd) {
         // Execute a command from a button click
         // Validate command
         if (!cmd || typeof cmd !== 'string') {
@@ -1514,16 +1514,65 @@ class ChatHandler {
             console.log('Tracked last read email:', this.lastReadEmail);
         }
 
+        // Ensure we have a conversation - create one if needed
+        if (!this.currentConversationId) {
+            console.log('executeCommand: No conversation exists, creating one...');
+            try {
+                if (window.app && window.app.createConversation) {
+                    await window.app.createConversation();
+                    // Wait a bit for the conversation to be set
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                } else {
+                    console.error('executeCommand: Cannot create conversation - app.createConversation not available');
+                    alert('Please create a conversation first');
+                    return;
+                }
+            } catch (err) {
+                console.error('executeCommand: Failed to create conversation:', err);
+                alert('Failed to create conversation. Please refresh the page.');
+                return;
+            }
+        }
+
         // Check WebSocket connection
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             console.warn('executeCommand: WebSocket not connected, attempting reconnect...');
             // Try to reconnect and queue the command
-            this.connect().then(() => {
+            if (this.currentConversationId) {
+                this.connect(this.currentConversationId);
                 setTimeout(() => this.executeCommand(decodedCmd), 500);
-            }).catch(err => {
-                console.error('executeCommand: Reconnect failed', err);
-                alert('Connection lost. Please refresh the page.');
-            });
+            } else {
+                // No conversation - create one first
+                console.log('executeCommand: No conversation exists, creating one...');
+                try {
+                    if (window.app && window.app.createConversation) {
+                        await window.app.createConversation();
+                        // Wait for WebSocket to connect
+                        await new Promise(resolve => {
+                            const checkConnection = () => {
+                                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                                    resolve();
+                                } else if (this.currentConversationId) {
+                                    // Try connecting
+                                    this.connect(this.currentConversationId);
+                                    setTimeout(checkConnection, 200);
+                                } else {
+                                    setTimeout(checkConnection, 100);
+                                }
+                            };
+                            checkConnection();
+                        });
+                        // Retry the command after connection is established
+                        setTimeout(() => this.executeCommand(decodedCmd), 300);
+                    } else {
+                        console.error('executeCommand: Cannot create conversation - app.createConversation not available');
+                        alert('Please create a conversation first');
+                    }
+                } catch (err) {
+                    console.error('executeCommand: Failed to create conversation:', err);
+                    alert('Failed to create conversation. Please refresh the page.');
+                }
+            }
             return;
         }
 
@@ -2810,7 +2859,7 @@ class ChatHandler {
         // Todo subcommands
         'todo': ['add', 'rm', 'list'],
         // RSS subcommands
-        'rss': ['sync', 'add', 'remove', 'list']
+        'rss': ['sync', 'add', 'remove', 'list', 'search']
     };
 
     // Tab autocomplete for commands

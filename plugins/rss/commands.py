@@ -39,12 +39,22 @@ async def handle_rss_command(arg: str, user: User, db: Session) -> dict:
                     new_count = await rss_service.sync_feed(feed)
                     total_new += new_count
 
+            # Clean up old entries (keep only 1000 most recent per user)
+            try:
+                deleted_count = rss_service.cleanup_old_entries(user.id, retention_limit=1000)
+                db.commit()  # Commit cleanup transaction
+            except Exception as e:
+                logger.error(f"Error during RSS cleanup: {e}")
+                deleted_count = 0
+
             # Run summarization in background (don't block)
             if total_new > 0:
                 asyncio.create_task(process_rss_for_user(user.id))
-                return {"type": "text", "content": f"RSS sync complete. {total_new} new articles found. Summaries are being generated in the background - check 'RSS News' conversation shortly."}
+                cleanup_msg = f" Cleaned up {deleted_count} old entries." if deleted_count > 0 else ""
+                return {"type": "text", "content": f"RSS sync complete. {total_new} new articles found.{cleanup_msg} Summaries are being generated in the background - check 'RSS News' conversation shortly."}
             else:
-                return {"type": "text", "content": "RSS sync complete. No new articles found."}
+                cleanup_msg = f" Cleaned up {deleted_count} old entries." if deleted_count > 0 else ""
+                return {"type": "text", "content": f"RSS sync complete. No new articles found.{cleanup_msg}"}
 
         elif subcommand == "add":
             if not subarg:
@@ -71,6 +81,23 @@ async def handle_rss_command(arg: str, user: User, db: Session) -> dict:
             else:
                 return {"type": "text", "content": "Feed not found."}
 
+        elif subcommand == "search":
+            if not subarg:
+                return {"type": "text", "content": "Usage: `rss search <query>`\nExample: `rss search python`"}
+
+            entries = rss_service.search_entries(user.id, subarg, limit=50)
+            if not entries:
+                return {"type": "text", "content": f"No articles found matching '{subarg}'."}
+
+            lines = [f"**Found {len(entries)} article(s) matching '{subarg}':**\n"]
+            for entry in entries:
+                feed_name = entry.feed.display_name
+                published = entry.published_at.strftime("%Y-%m-%d") if entry.published_at else "Unknown date"
+                url_text = f" [{entry.url}]({entry.url})" if entry.url else ""
+                lines.append(f"- **{entry.title}** ({feed_name}, {published}){url_text}")
+
+            return {"type": "text", "content": "\n".join(lines)}
+
         elif subcommand == "list" or not subcommand:
             feeds = rss_service.get_user_feeds(user.id)
             if not feeds:
@@ -86,11 +113,12 @@ async def handle_rss_command(arg: str, user: User, db: Session) -> dict:
             lines.append("- `rss sync` - Fetch new articles now")
             lines.append("- `rss add <url> [name]` - Add a feed")
             lines.append("- `rss remove <id>` - Remove a feed")
+            lines.append("- `rss search <query>` - Search old articles")
 
             return {"type": "text", "content": "\n".join(lines)}
 
         else:
-            return {"type": "text", "content": "Unknown subcommand. Use `rss`, `rss sync`, `rss add <url>`, or `rss remove <id>`."}
+            return {"type": "text", "content": "Unknown subcommand. Use `rss`, `rss sync`, `rss add <url>`, `rss remove <id>`, or `rss search <query>`."}
 
     except Exception as e:
         logger.error(f"RSS command error: {e}")

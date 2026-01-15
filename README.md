@@ -1356,12 +1356,14 @@ A self-contained RSS feed reader plugin with AI-powered article summarization.
 | `rss sync` | Manually fetch and summarize articles |
 | `rss add <url> [name]` | Add a new feed |
 | `rss remove <id>` | Remove a feed by ID |
+| `rss search <query>` | Search old articles |
 
 **Examples:**
 - `rss` - List all feeds with status
 - `rss add https://news.ycombinator.com/rss Hacker News` - Add feed
 - `rss sync` - Fetch articles now
 - `rss remove 3` - Remove feed #3
+- `rss search python` - Search for articles containing "python"
 
 **OPML Import/Export:**
 1. Export OPML from your current RSS reader (Feedly, Inoreader, etc.)

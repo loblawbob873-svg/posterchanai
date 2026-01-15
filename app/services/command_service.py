@@ -172,7 +172,7 @@ class CommandService:
         "nyaa": "Anime torrents: nyaa <query>",
         "news": "RSS news (alias for rss sync)",
         "dailynews": "Web news: dailynews <source>",
-        "rss": "RSS feeds: rss | rss sync | rss add <url> | rss remove <id>",
+        "rss": "RSS feeds: rss | rss sync | rss add <url> | rss remove <id> | rss search <query>",
         "logs": "View system logs",
         "cal": "Calendar: cal | cal today | cal week | cal month | cal nextmonth | cal add <event> <time>",
         "contacts": "Contacts: contacts <query>",

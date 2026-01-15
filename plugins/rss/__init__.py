@@ -12,4 +12,4 @@ Enable in Admin → Services → Native RSS
 
 __version__ = "1.0.0"
 __plugin_name__ = "rss"
-COMMAND_HELP = "RSS feeds: rss | rss sync | rss add <url> | rss import (OPML via UI)"
+COMMAND_HELP = "RSS feeds: rss | rss sync | rss add <url> | rss remove <id> | rss search <query> | rss import (OPML via UI)"

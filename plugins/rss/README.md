@@ -27,6 +27,7 @@ A self-contained RSS feed reader plugin for Posterchanai.
 - `rss sync` - Manually fetch and summarize articles
 - `rss add <url> [name]` - Add a new feed
 - `rss remove <id>` - Remove a feed
+- `rss search <query>` - Search old articles
 
 ## OPML Import/Export
 

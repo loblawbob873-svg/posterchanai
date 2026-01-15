@@ -248,9 +248,15 @@ class App {
                 this.renderConversationList();
                 window.chatHandler.clear();  // Ensure clean slate
                 window.chatHandler.connect(conv.id);
+                
+                // Return the conversation so callers can wait for it
+                return conv;
+            } else {
+                throw new Error(`Failed to create conversation: ${response.status}`);
             }
         } catch (err) {
             console.error('Failed to create conversation:', err);
+            throw err;  // Re-throw so callers can handle it
         }
     }
 

@@ -94,6 +94,16 @@ async def process_rss_for_user(user_id: int):
                 new_count = await rss_service.sync_feed(feed)
                 total_new += new_count
 
+        # Clean up old entries (keep only 1000 most recent per user)
+        try:
+            deleted_count = rss_service.cleanup_old_entries(user_id, retention_limit=1000)
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} old RSS entries for user {user.username}")
+            db.commit()  # Commit cleanup transaction
+        except Exception as e:
+            logger.error(f"Error during RSS cleanup for user {user.username}: {e}")
+            db.rollback()
+
         if total_new == 0:
             return
 

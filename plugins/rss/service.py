@@ -9,6 +9,7 @@ import aiohttp
 import feedparser
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+from sqlalchemy import case, exists
 from sqlalchemy.orm import Session
 from time import mktime
 
@@ -258,3 +259,77 @@ class RssService:
         except Exception as e:
             logger.error(f"Error fetching article from {url}: {e}")
             return None
+
+    def search_entries(self, user_id: int, query: str, limit: int = 50) -> List[RssEntry]:
+        """
+        Search through old RSS entries for a user.
+        Searches in title, content, and summary fields.
+        
+        Args:
+            user_id: User ID to search entries for
+            query: Search query string
+            limit: Maximum number of results to return
+            
+        Returns:
+            List of matching RssEntry objects, ordered by published_at descending
+        """
+        if not query or not query.strip():
+            return []
+        
+        search_term = f"%{query.strip()}%"
+        
+        # Search in title, content, and summary fields
+        entries = self.db.query(RssEntry).join(RssFeed).filter(
+            RssFeed.user_id == user_id,
+            RssFeed.enabled == True
+        ).filter(
+            (RssEntry.title.ilike(search_term)) |
+            (RssEntry.content.ilike(search_term)) |
+            (RssEntry.summary.ilike(search_term))
+        ).order_by(RssEntry.published_at.desc()).limit(limit).all()
+        
+        return entries
+
+    def cleanup_old_entries(self, user_id: int, retention_limit: int = 1000) -> int:
+        """
+        Clean up old RSS entries, keeping only the most recent ones.
+        
+        Uses a subquery with NOT EXISTS to avoid SQLite IN clause limits (999 items).
+        This approach is database-agnostic and handles large retention limits safely.
+        
+        Args:
+            user_id: User ID to clean entries for
+            retention_limit: Maximum number of entries to keep (default: 1000)
+            
+        Returns:
+            Number of entries deleted
+        """
+        try:
+            # Create a subquery of IDs to keep (most recent entries)
+            keep_subquery = self.db.query(RssEntry.id).join(RssFeed).filter(
+                RssFeed.user_id == user_id
+            ).order_by(
+                case(
+                    (RssEntry.published_at.isnot(None), RssEntry.published_at),
+                    else_=RssEntry.created_at
+                ).desc()
+            ).limit(retention_limit).subquery()
+            
+            # Use NOT EXISTS to delete entries not in the keep list
+            # This avoids SQLite's IN clause limit and is more efficient
+            deleted_count = self.db.query(RssEntry).join(RssFeed).filter(
+                RssFeed.user_id == user_id,
+                ~exists().where(keep_subquery.c.id == RssEntry.id)
+            ).delete(synchronize_session=False)
+            
+            # Note: We don't commit here - let the caller handle transactions
+            # This allows the method to be used within larger transactions
+            
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} old RSS entries for user {user_id} (kept {retention_limit} most recent)")
+            
+            return deleted_count
+        except Exception as e:
+            logger.error(f"Error cleaning up old RSS entries for user {user_id}: {e}")
+            # Don't raise - allow sync to continue even if cleanup fails
+            return 0
