@@ -170,12 +170,13 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
     # Use HTML catalog endpoint (more reliable than JSON)
     catalog_url = f"{CHAN4_BASE_URL}/{board}/catalog"
     
+    # Browser-like headers - match what a real browser sends
+    # Start with minimal headers for initial request, then add more if needed
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
-        "Referer": f"{CHAN4_BASE_URL}/",
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
     }
@@ -202,33 +203,35 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             follow_redirects=True,
             proxy=proxy_config
         ) as client:
-            # First, test basic connectivity to 4chan
-            connectivity_ok = False
-            try:
-                test_response = await client.get(f"{CHAN4_BASE_URL}/", timeout=10)
-                logger.info(f"4chan connectivity test: status={test_response.status_code}, length={len(test_response.text)}")
-                if test_response.status_code == 200:
-                    connectivity_ok = True
-                else:
-                    logger.warning(f"4chan main page returned {test_response.status_code}, may be blocked")
-                    # If main page fails, catalog will likely fail too
-                    if test_response.status_code in [403, 503]:
-                        raise ValueError(f"4chan is blocking requests (HTTP {test_response.status_code}). The site may be blocking proxy/Tor connections.")
-            except httpx.RequestError as e:
-                logger.error(f"4chan connectivity test failed - cannot reach 4chan: {e}")
-                raise ValueError(f"Cannot connect to 4chan through proxy. Check proxy configuration and ensure proxy is running. Error: {str(e)}")
-            except ValueError:
-                raise  # Re-raise proxy blocking errors
-            except Exception as e:
-                logger.warning(f"4chan connectivity test failed: {e}")
+            # Skip connectivity test - go straight to catalog to avoid extra requests that might trigger blocking
             
-            if not connectivity_ok:
-                logger.warning("4chan connectivity test failed, but continuing with catalog fetch...")
+            # First, visit the main page to establish session (like a browser does)
+            try:
+                main_page_response = await client.get(f"{CHAN4_BASE_URL}/", headers=headers, timeout=10)
+                logger.debug(f"Main page visit: status={main_page_response.status_code}")
+                # Update referer for subsequent requests
+                headers["Referer"] = f"{CHAN4_BASE_URL}/"
+            except Exception as e:
+                logger.warning(f"Could not visit main page first: {e}, continuing anyway")
             
             # Try JSON first, fallback to HTML
             json_url = f"{CHAN4_BASE_URL}/{board}/catalog.json"
             try:
                 json_response = await client.get(json_url, headers=headers)
+                
+                # Check for blocking
+                if json_response.status_code == 403:
+                    logger.error(f"4chan returned 403 Forbidden for {json_url}. Response headers: {dict(json_response.headers)}")
+                    # Try without some headers that might trigger detection
+                    logger.info("Retrying with minimal headers...")
+                    minimal_headers = {
+                        "User-Agent": headers["User-Agent"],
+                        "Accept": "application/json, text/html, */*",
+                    }
+                    json_response = await client.get(json_url, headers=minimal_headers)
+                    if json_response.status_code == 403:
+                        raise ValueError(f"4chan is blocking requests (HTTP 403). The site may be blocking proxy/Tor connections. If you can access 4chan in your browser through the proxy, check that the proxy configuration matches.")
+                
                 json_response.raise_for_status()
                 json_text = json_response.text
                 content_type = json_response.headers.get("content-type", "").lower()
@@ -300,6 +303,20 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             # Fallback to HTML catalog
             logger.info(f"Using HTML catalog endpoint: {catalog_url}")
             response = await client.get(catalog_url, headers=headers)
+            
+            # Check for blocking
+            if response.status_code == 403:
+                logger.error(f"4chan returned 403 Forbidden for {catalog_url}. Response headers: {dict(response.headers)}")
+                # Try with minimal headers
+                logger.info("Retrying HTML catalog with minimal headers...")
+                minimal_headers = {
+                    "User-Agent": headers["User-Agent"],
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                }
+                response = await client.get(catalog_url, headers=minimal_headers)
+                if response.status_code == 403:
+                    raise ValueError(f"4chan is blocking requests (HTTP 403). If you can access 4chan in your browser through the proxy, verify that:\n1. The proxy configuration in Admin Settings matches your browser proxy settings\n2. The proxy is the same one your browser uses\n3. Try accessing {catalog_url} directly in your browser through the proxy to confirm it works")
+            
             response.raise_for_status()
             html = response.text
             logger.info(f"HTML catalog response: status={response.status_code}, length={len(html)}, content-type: {response.headers.get('content-type', 'unknown')}")
