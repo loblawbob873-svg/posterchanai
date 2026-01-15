@@ -286,15 +286,18 @@ class LlamaService:
         Non-streaming chat completion.
         Returns OpenAI-compatible response format.
         """
-        loop = asyncio.get_event_loop()
+        # Acquire shared GPU lock to prevent LLM and image from running simultaneously
+        from app.services.locks import gpu_resource_lock
+        async with gpu_resource_lock:
+            loop = asyncio.get_event_loop()
 
-        # Run synchronous inference in thread pool
-        result = await loop.run_in_executor(
-            _executor,
-            lambda: self._sync_chat_completion(messages, **kwargs)
-        )
+            # Run synchronous inference in thread pool
+            result = await loop.run_in_executor(
+                _executor,
+                lambda: self._sync_chat_completion(messages, **kwargs)
+            )
 
-        return result
+            return result
 
     async def chat_completion_stream(
         self,
@@ -316,12 +319,15 @@ class LlamaService:
         queue = asyncio.Queue()
         loop = asyncio.get_event_loop()
 
-        def run_streaming():
-            """Run synchronous generation in thread, put SSE chunks in queue"""
-            token_timeout = self.token_timeout
-            last_token_time = time.time()
+        # Acquire shared GPU lock to prevent LLM and image from running simultaneously
+        from app.services.locks import gpu_resource_lock
+        async with gpu_resource_lock:
+            def run_streaming():
+                """Run synchronous generation in thread, put SSE chunks in queue"""
+                token_timeout = self.token_timeout
+                last_token_time = time.time()
 
-            with _get_inference_semaphore(self.max_concurrent):
+                with _get_inference_semaphore(self.max_concurrent):
                 try:
                     for chunk in self._model.create_chat_completion(
                         messages=messages,
@@ -386,15 +392,15 @@ class LlamaService:
                     _last_used = time.time()
                     loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        # Start streaming in background thread
-        _executor.submit(run_streaming)
+            # Start streaming in background thread
+            _executor.submit(run_streaming)
 
-        # Yield from queue as chunks arrive
-        while True:
-            chunk = await queue.get()
-            if chunk is None:
-                break
-            yield chunk
+            # Yield from queue as chunks arrive
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    break
+                yield chunk
 
     def stream_chat_content(
         self,

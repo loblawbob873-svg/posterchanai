@@ -144,10 +144,13 @@ class OllamaService:
         model = model or self.default_model
         options = self.get_model_options(**kwargs)
 
-        # Acquire semaphore for rate limiting
-        semaphore = await _get_semaphore(self.max_concurrent)
+        # Acquire shared GPU lock to prevent LLM and image from running simultaneously
+        from app.services.locks import gpu_resource_lock
+        async with gpu_resource_lock:
+            # Acquire semaphore for rate limiting
+            semaphore = await _get_semaphore(self.max_concurrent)
 
-        async with semaphore:
+            async with semaphore:
             host = self.ollama_url
             client = await _get_http_client(timeout=self.timeout)
             try:
@@ -248,10 +251,13 @@ class OllamaService:
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
 
-        # Acquire semaphore for rate limiting
-        semaphore = await _get_semaphore(self.max_concurrent)
+        # Acquire shared GPU lock to prevent LLM and image from running simultaneously
+        from app.services.locks import gpu_resource_lock
+        async with gpu_resource_lock:
+            # Acquire semaphore for rate limiting
+            semaphore = await _get_semaphore(self.max_concurrent)
 
-        async with semaphore:
+            async with semaphore:
             host = self.ollama_url
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 try:
@@ -427,9 +433,12 @@ class OllamaService:
         model = model or self.default_model
         options = self.get_model_options(**kwargs)
 
-        semaphore = await _get_semaphore(self.max_concurrent)
+        # Acquire shared GPU lock to prevent LLM and image from running simultaneously
+        from app.services.locks import gpu_resource_lock
+        async with gpu_resource_lock:
+            semaphore = await _get_semaphore(self.max_concurrent)
 
-        async with semaphore:
+            async with semaphore:
             host = self.ollama_url
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 try:

@@ -525,22 +525,25 @@ class IPEXService:
         logger.info(f"[REQ-{request_id}] Queued: \"{user_msg}...\" (pending: {_pending_requests})")
         start_time = time.time()
 
-        def run_with_lock():
-            global _current_request
-            with _get_inference_semaphore(self.max_concurrent):
-                _current_request = f"REQ-{request_id}"
-                logger.info(f"[REQ-{request_id}] Processing started")
-                try:
-                    return self._generate_response(messages, **kwargs)
-                finally:
-                    _current_request = None
+        # Acquire shared GPU lock to prevent LLM and image from running simultaneously
+        from app.services.locks import gpu_resource_lock
+        async with gpu_resource_lock:
+            def run_with_lock():
+                global _current_request
+                with _get_inference_semaphore(self.max_concurrent):
+                    _current_request = f"REQ-{request_id}"
+                    logger.info(f"[REQ-{request_id}] Processing started")
+                    try:
+                        return self._generate_response(messages, **kwargs)
+                    finally:
+                        _current_request = None
 
-        try:
-            # Use wait_for to add timeout
-            response = await asyncio.wait_for(
-                loop.run_in_executor(_executor, run_with_lock),
-                timeout=self.inference_timeout
-            )
+            try:
+                # Use wait_for to add timeout
+                response = await asyncio.wait_for(
+                    loop.run_in_executor(_executor, run_with_lock),
+                    timeout=self.inference_timeout
+                )
             elapsed = time.time() - start_time
             logger.info(f"[REQ-{request_id}] Completed in {elapsed:.1f}s (pending: {_pending_requests - 1})")
             # Update last used time for idle timeout
@@ -623,9 +626,12 @@ class IPEXService:
                         messages_to_use[i]["content"] += "\n(Respond directly without <think> tags)"
                         break
 
-        def run_streaming():
-            """Run generation in thread, put tokens in queue"""
-            with _get_inference_semaphore(self.max_concurrent):
+        # Acquire shared GPU lock to prevent LLM and image from running simultaneously
+        from app.services.locks import gpu_resource_lock
+        async with gpu_resource_lock:
+            def run_streaming():
+                """Run generation in thread, put tokens in queue"""
+                with _get_inference_semaphore(self.max_concurrent):
                 try:
                     if self._is_gguf:
                         # Use llama.cpp streaming for GGUF
@@ -722,13 +728,13 @@ class IPEXService:
                     _last_used = time.time()
                     loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        _executor.submit(run_streaming)
+            _executor.submit(run_streaming)
 
-        while True:
-            chunk = await queue.get()
-            if chunk is None:
-                break
-            yield chunk
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    break
+                yield chunk
 
     def stream_chat_content(
         self,

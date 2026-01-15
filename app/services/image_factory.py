@@ -102,17 +102,20 @@ async def generate_image_with_load_balancing(
     logger.info("Using local backend for image generation (serialized)")
     result = None
     try:
-        async with image_generation_lock:
-            prepare_vram_for_image(db)
-            backend = get_image_backend(db)
-            result = await backend.generate_image(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                width=width,
-                height=height,
-                steps=steps,
-                cfg=cfg,
-            )
+        # Use shared GPU lock to prevent LLM and image from running simultaneously
+        from app.services.locks import gpu_resource_lock, image_generation_lock
+        async with gpu_resource_lock:
+            async with image_generation_lock:
+                prepare_vram_for_image(db)
+                backend = get_image_backend(db)
+                result = await backend.generate_image(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    width=width,
+                    height=height,
+                    steps=steps,
+                    cfg=cfg,
+                )
     except Exception as e:
         logger.error(f"Local image generation failed with exception: {e}")
         result = None
