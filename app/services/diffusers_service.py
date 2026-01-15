@@ -210,6 +210,14 @@ class DiffusersService:
                 # Determine dtype based on device
                 if self._device == "cpu":
                     dtype = torch.float32
+                elif self._device == "xpu":
+                    # Intel Arc: bfloat16 is better supported and faster than float16
+                    try:
+                        dtype = torch.bfloat16
+                        logger.info("Using bfloat16 for Intel Arc (better performance)")
+                    except AttributeError:
+                        dtype = torch.float32
+                        logger.info("bfloat16 not available, using float32 for Intel Arc")
                 else:
                     dtype = torch.float16
 
@@ -252,6 +260,20 @@ class DiffusersService:
                         except Exception as e:
                             logger.warning(f"CPU offload failed: {e}, loading to GPU")
                             self._pipe = self._pipe.to(self._device)
+                    elif self._device == "xpu":
+                        # Intel Arc: Load directly to XPU, disable VAE upcast for performance
+                        try:
+                            # Disable VAE upcast to fp32 (saves VRAM and improves speed)
+                            if hasattr(self._pipe, 'vae') and hasattr(self._pipe.vae, 'config'):
+                                self._pipe.vae.config.force_upcast = False
+                            if hasattr(self._pipe, 'upcast_vae'):
+                                self._pipe.upcast_vae = False
+                            logger.info("Intel Arc: disabled VAE upcast for better performance")
+                        except Exception as e:
+                            logger.warning(f"Failed to disable VAE upcast: {e}")
+                        
+                        self._pipe = self._pipe.to(self._device)
+                        logger.info("Intel Arc: model loaded to XPU")
                     else:
                         self._pipe = self._pipe.to(self._device)
 
@@ -270,11 +292,21 @@ class DiffusersService:
                     except Exception:
                         pass
 
-                    try:
-                        self._pipe.enable_xformers_memory_efficient_attention()
-                        logger.info("Enabled xformers memory efficient attention")
-                    except Exception:
-                        pass
+                    # xformers only works on CUDA, not Intel XPU or ROCm
+                    if self._device == "cuda":
+                        try:
+                            self._pipe.enable_xformers_memory_efficient_attention()
+                            logger.info("Enabled xformers memory efficient attention (CUDA only)")
+                        except Exception:
+                            pass
+                    elif self._device == "xpu":
+                        # Intel Arc: Use attention slicing instead (xformers not available)
+                        try:
+                            # Use more aggressive slicing for Intel Arc
+                            self._pipe.enable_attention_slicing("max")
+                            logger.info("Intel Arc: enabled max attention slicing (xformers not available)")
+                        except Exception as e:
+                            logger.warning(f"Failed to enable attention slicing: {e}")
                 else:
                     self._pipe = self._pipe.to(self._device)
 
