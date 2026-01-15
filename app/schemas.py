@@ -211,12 +211,6 @@ class SettingsResponse(BaseModel):
     # Intelligent Intent Detection settings
     intent_detection_enabled: str = "true"  # Enable AI-powered intent detection for natural language actions (only triggers on action keywords)
     intent_confidence_threshold: str = "0.7"  # Minimum confidence to execute detected actions (0.0-1.0)
-    # Miniflux news plugin settings
-    miniflux_enabled: str = "false"
-    miniflux_url: str = ""
-    miniflux_username: str = ""
-    miniflux_password: str = ""
-    miniflux_interval: str = "30"
     # Logs scheduler settings
     logs_scheduler_enabled: str = "false"
     logs_schedule: str = "1,12,18"
@@ -371,11 +365,6 @@ class UserSettingsUpdate(BaseModel):
     news_sources: Optional[str] = None  # Custom sources, one per line: url|name
     # Native RSS settings
     rss_enabled: Optional[bool] = None
-    # Miniflux news plugin settings
-    miniflux_enabled: Optional[bool] = None
-    miniflux_url: Optional[str] = None
-    miniflux_username: Optional[str] = None
-    miniflux_password: Optional[str] = None
     # Calendar & Contacts settings
     schedule_enabled: Optional[bool] = None
     caldav_calendars: Optional[List[dict]] = None  # List of {name, url, username, password}
@@ -406,11 +395,6 @@ class UserSettingsResponse(BaseModel):
     news_schedule_enabled: bool = False
     news_schedule_time: str = "12:00"
     news_sources: str = ""  # Custom sources, one per line: url|name
-    # Miniflux news plugin settings
-    miniflux_enabled: bool = True
-    miniflux_url: Optional[str] = None
-    miniflux_username: Optional[str] = None
-    miniflux_has_password: bool = False  # Don't expose actual password
     # Calendar & Contacts settings
     schedule_enabled: bool = False
     caldav_calendars: List[dict] = []  # List of calendars (passwords masked)

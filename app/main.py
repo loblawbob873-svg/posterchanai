@@ -97,10 +97,6 @@ async def startup():
         from app.services.news_scheduler import start_scheduler
         start_scheduler()
 
-        # Start Miniflux news scheduler
-        from app.services.miniflux_scheduler import start_miniflux_scheduler
-        start_miniflux_scheduler()
-
         # Start plugin schedulers
         from plugins import start_plugin_schedulers
         start_plugin_schedulers()
@@ -240,9 +236,6 @@ async def shutdown():
         # Stop news scheduler
         from app.services.news_scheduler import stop_scheduler
         stop_scheduler()
-        # Stop Miniflux news scheduler
-        from app.services.miniflux_scheduler import stop_miniflux_scheduler
-        stop_miniflux_scheduler()
 
         # Stop plugin schedulers
         from plugins import stop_plugin_schedulers

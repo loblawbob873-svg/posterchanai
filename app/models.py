@@ -32,12 +32,6 @@ class User(Base):
     news_schedule_time = Column(String(5), default="12:00")  # HH:MM format, default noon
     news_sources = Column(Text, default="")  # Custom news sources, one per line: url|name
 
-    # Miniflux news plugin settings (per-user override)
-    miniflux_enabled = Column(Boolean, default=True)  # Whether to enable for this user
-    miniflux_url = Column(String(500), nullable=True)  # User-specific Miniflux URL (overrides default)
-    miniflux_username = Column(String(200), nullable=True)  # User-specific username
-    miniflux_password = Column(String(500), nullable=True)  # User-specific password
-
     # Native RSS settings (per-user)
     rss_enabled = Column(Boolean, default=False)  # Whether native RSS is enabled for this user
 

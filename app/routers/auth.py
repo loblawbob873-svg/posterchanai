@@ -481,11 +481,6 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         news_sources=current_user.news_sources or "",
         # Native RSS settings
         rss_enabled=current_user.rss_enabled if hasattr(current_user, 'rss_enabled') else False,
-        # Miniflux news plugin settings
-        miniflux_enabled=current_user.miniflux_enabled if current_user.miniflux_enabled is not None else True,
-        miniflux_url=current_user.miniflux_url,
-        miniflux_username=current_user.miniflux_username,
-        miniflux_has_password=bool(current_user.miniflux_password),
         # Calendar & Contacts settings
         schedule_enabled=schedule_enabled,
         caldav_calendars=caldav_calendars,
@@ -557,17 +552,6 @@ def update_user_settings(
     # Update Native RSS settings
     if settings.rss_enabled is not None:
         current_user.rss_enabled = settings.rss_enabled
-
-    # Update Miniflux settings
-    if settings.miniflux_enabled is not None:
-        current_user.miniflux_enabled = settings.miniflux_enabled
-    if settings.miniflux_url is not None:
-        current_user.miniflux_url = settings.miniflux_url.strip() if settings.miniflux_url else None
-    if settings.miniflux_username is not None:
-        current_user.miniflux_username = settings.miniflux_username.strip() if settings.miniflux_username else None
-    if settings.miniflux_password is not None:
-        # Allow clearing the password with empty string
-        current_user.miniflux_password = settings.miniflux_password if settings.miniflux_password else None
 
     # Update Calendar & Contacts settings (stored in UserSetting table)
     import json

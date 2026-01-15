@@ -61,11 +61,6 @@ def _run_migrations():
         ("custom_ai_api_key", "VARCHAR(500)"),
         ("custom_image_enabled", "BOOLEAN DEFAULT 0"),
         ("custom_image_url", "VARCHAR(500)"),
-        # Miniflux news plugin settings
-        ("miniflux_enabled", "BOOLEAN DEFAULT 1"),
-        ("miniflux_url", "VARCHAR(500)"),
-        ("miniflux_username", "VARCHAR(200)"),
-        ("miniflux_password", "VARCHAR(500)"),
     ]
 
     # Add missing columns
@@ -231,12 +226,6 @@ When asked to write or modify code or files:
             "news_sources": "",
             # Native RSS settings (default/global)
             "rss_enabled": "false",
-            # Miniflux news plugin settings (default/global)
-            "miniflux_enabled": "true",
-            "miniflux_url": "",
-            "miniflux_username": "",
-            "miniflux_password": "",
-            "miniflux_interval": "30",  # Minutes between checks
             # RAG (Retrieval-Augmented Generation) settings
             "rag_enabled": "true",
             "rag_embedding_model": "all-MiniLM-L6-v2",
