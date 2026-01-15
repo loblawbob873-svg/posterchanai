@@ -527,60 +527,70 @@ class IPEXService:
 
         # Acquire shared GPU lock to prevent LLM and image from running simultaneously
         from app.services.locks import GPUResourceLock
-        async with GPUResourceLock("LLM", f"REQ-{request_id}"):
-            def run_with_lock():
-                global _current_request
-                with _get_inference_semaphore(self.max_concurrent):
-                    _current_request = f"REQ-{request_id}"
-                    logger.info(f"[REQ-{request_id}] Processing started")
-                    try:
-                        return self._generate_response(messages, **kwargs)
-                    finally:
-                        _current_request = None
+        try:
+            async with GPUResourceLock("LLM", f"REQ-{request_id}"):
+                def run_with_lock():
+                    global _current_request
+                    with _get_inference_semaphore(self.max_concurrent):
+                        _current_request = f"REQ-{request_id}"
+                        logger.info(f"[REQ-{request_id}] Processing started")
+                        try:
+                            return self._generate_response(messages, **kwargs)
+                        finally:
+                            _current_request = None
 
-            try:
-                # Use wait_for to add timeout
-                response = await asyncio.wait_for(
-                    loop.run_in_executor(_executor, run_with_lock),
-                    timeout=self.inference_timeout
-                )
-            elapsed = time.time() - start_time
-            logger.info(f"[REQ-{request_id}] Completed in {elapsed:.1f}s (pending: {_pending_requests - 1})")
-            # Update last used time for idle timeout
-            global _last_used
-            _last_used = time.time()
-        except asyncio.TimeoutError:
-            elapsed = time.time() - start_time
-            logger.error(f"[REQ-{request_id}] Timed out after {elapsed:.1f}s")
+                try:
+                    # Use wait_for to add timeout
+                    response = await asyncio.wait_for(
+                        loop.run_in_executor(_executor, run_with_lock),
+                        timeout=self.inference_timeout
+                    )
+                    elapsed = time.time() - start_time
+                    logger.info(f"[REQ-{request_id}] Completed in {elapsed:.1f}s (pending: {_pending_requests - 1})")
+                    # Update last used time for idle timeout
+                    global _last_used
+                    _last_used = time.time()
+                except asyncio.TimeoutError:
+                    elapsed = time.time() - start_time
+                    logger.error(f"[REQ-{request_id}] Timed out after {elapsed:.1f}s")
+                    with _request_counter_lock:
+                        _pending_requests -= 1
+                    return {
+                        "error": {"message": f"Inference timed out after {self.inference_timeout} seconds", "type": "timeout_error"}
+                    }
+                except Exception as e:
+                    elapsed = time.time() - start_time
+                    logger.error(f"[REQ-{request_id}] Error after {elapsed:.1f}s: {e}")
+                    with _request_counter_lock:
+                        _pending_requests -= 1
+                    return {
+                        "error": {"message": str(e), "type": "inference_error"}
+                    }
+            
+            # Success - response is available here
             with _request_counter_lock:
                 _pending_requests -= 1
+
             return {
-                "error": {"message": f"Inference timed out after {self.inference_timeout} seconds", "type": "timeout_error"}
+                "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": model or self.default_model,
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": response},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
             }
         except Exception as e:
             elapsed = time.time() - start_time
-            logger.error(f"[REQ-{request_id}] Error after {elapsed:.1f}s: {e}")
+            logger.error(f"[REQ-{request_id}] GPU lock error after {elapsed:.1f}s: {e}")
             with _request_counter_lock:
                 _pending_requests -= 1
             return {
-                "error": {"message": str(e), "type": "inference_error"}
+                "error": {"message": str(e), "type": "gpu_lock_error"}
             }
-
-        with _request_counter_lock:
-            _pending_requests -= 1
-
-        return {
-            "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": model or self.default_model,
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": response},
-                "finish_reason": "stop"
-            }],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        }
 
     async def chat_completion_stream(
         self,
