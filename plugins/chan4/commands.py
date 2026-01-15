@@ -98,7 +98,26 @@ All requests are routed through Tor proxy for privacy."""
         raise
     except Exception as e:
         logger.error(f"Error in 4chan command: {e}", exc_info=True)
+        error_msg = str(e)
+        # Provide more helpful error message
+        if "No threads found" in error_msg or "empty or unavailable" in error_msg:
+            return {
+                "type": "text",
+                "content": f"""No threads found on /{board}/. 
+
+**Possible causes:**
+1. Proxy connection issue - check if proxy is working
+2. Board may be temporarily unavailable
+3. Network/connectivity issue
+
+**Debug steps:**
+- Check application logs for detailed error messages
+- Verify proxy is configured correctly in Admin Settings
+- Try a different board (e.g., `4chan b` for Random)
+
+**Error details:** {error_msg}"""
+            }
         return {
             "type": "text",
-            "content": f"Error fetching /{board}/ catalog: {str(e)}"
+            "content": f"Error fetching /{board}/ catalog: {error_msg}\n\nCheck application logs for more details."
         }

@@ -179,15 +179,20 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
     
     threads = []
     # Proxy is REQUIRED for 4chan (privacy/security)
-    proxy_config = require_proxy("4chan access")
+    try:
+        proxy_config = require_proxy("4chan access")
+    except ValueError as e:
+        logger.error(f"Proxy requirement failed: {e}")
+        raise
     
     # Verify proxy_config is a string (httpx 0.28.1 uses 'proxy' parameter with string URL)
     if not isinstance(proxy_config, str):
         logger.error(f"Invalid proxy_config type: {type(proxy_config)}, expected str. Value: {proxy_config}")
         raise ValueError(f"Proxy configuration must be a string URL, got {type(proxy_config)}")
     
+    logger.info(f"Fetching 4chan /{board}/catalog via proxy: {proxy_config}")
+    
     try:
-        logger.info(f"Fetching 4chan /{board}/catalog via proxy: {proxy_config}")
         # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
         async with httpx.AsyncClient(
             timeout=30,
@@ -498,6 +503,15 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                     continue
             
             logger.info(f"Successfully parsed {len(threads)} threads from HTML catalog for /{board}/")
+            
+            if not threads:
+                logger.error(f"No threads found after parsing HTML. HTML length: {len(html)}, checking for error indicators...")
+                # Check for common error indicators
+                if "cloudflare" in html.lower() or "cf-ray" in html.lower():
+                    logger.error("Cloudflare protection detected - may need different approach")
+                if len(html) < 1000:
+                    logger.warning(f"HTML response is very short ({len(html)} chars), might be an error page")
+                    logger.warning(f"HTML content: {html[:500]}")
     
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error fetching 4chan catalog: {e.response.status_code}")
