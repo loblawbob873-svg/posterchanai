@@ -82,6 +82,8 @@ def prepare_for_llm(db: Session) -> bool:
                 if service.is_loaded():
                     logger.info("Unloading image model to free VRAM for LLM...")
                     service.unload_model()
+                    # Force reset current mode to ensure proper tracking
+                    _current_mode = None
             except Exception as e:
                 logger.error(f"Error unloading image model: {e}")
 
@@ -137,6 +139,8 @@ def prepare_for_image(db: Session) -> bool:
                 if service._model is not None:
                     logger.info("Unloading LLM to free VRAM for image generation...")
                     service.unload_model()
+                    # Force reset current mode to ensure proper tracking
+                    _current_mode = None
             except Exception as e:
                 logger.error(f"Error unloading LLM: {e}")
 
