@@ -1,12 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List
 from pydantic import BaseModel
+import logging
 from app.database import get_db
 from app.models import User, Setting
 from app.schemas import UserCreate, UserResponse, SettingsUpdate, SettingsResponse
 from app.auth import get_admin_user, get_password_hash
 from app.services.email_service import get_email_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -88,9 +92,25 @@ def delete_user(
             detail="User not found"
         )
 
-    db.delete(user)
-    db.commit()
-    return {"message": "User deleted"}
+    try:
+        db.delete(user)
+        db.commit()
+        logger.info(f"User {user_id} ({user.username}) deleted by admin {admin.id}")
+        return {"message": "User deleted"}
+    except IntegrityError as e:
+        db.rollback()
+        logger.error(f"Failed to delete user {user_id}: IntegrityError - {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete user due to database constraints: {str(e)}"
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to delete user {user_id}: {type(e).__name__} - {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete user: {str(e)}"
+        )
 
 
 class PasswordUpdate(BaseModel):

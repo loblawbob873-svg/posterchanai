@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool, StaticPool
@@ -16,10 +16,20 @@ if "sqlite" in DATABASE_URL:
     # SQLite: use StaticPool for better concurrency with check_same_thread=False
     engine = create_engine(
         DATABASE_URL,
-        connect_args={"check_same_thread": False},
+        connect_args={
+            "check_same_thread": False,
+            "timeout": 30.0  # Add timeout for locked database
+        },
         poolclass=StaticPool,  # Reuse single connection
         pool_pre_ping=True,    # Verify connection health
     )
+    
+    # Enable foreign key constraints for SQLite (required for CASCADE deletes to work)
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.close()
 else:
     # PostgreSQL/MySQL: use QueuePool with connection recycling
     engine = create_engine(
