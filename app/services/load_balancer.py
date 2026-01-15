@@ -276,6 +276,8 @@ class LoadBalancer:
         self.model = model
         self.api_key = api_key
         self.headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        # Add header to indicate this is a load-balanced request (prevents loops)
+        self.headers["X-Posterchanai-Load-Balanced"] = "true"
 
     async def chat_stream(
         self,

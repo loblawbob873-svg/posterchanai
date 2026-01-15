@@ -247,10 +247,14 @@ async def v1_chat_completions(
     # If so, skip load balancing to prevent loops
     skip_lb = False
     user_agent = http_request.headers.get("user-agent", "").lower()
-    # Check if request is from httpx (used by load balancer) or another posterchanai instance
-    if "httpx" in user_agent:
+    load_balanced_header = http_request.headers.get("x-posterchanai-load-balanced", "").lower()
+    
+    # Check if request is from httpx (used by load balancer) or has load-balanced header
+    if "httpx" in user_agent or load_balanced_header == "true":
         skip_lb = True
-        logger.debug("Detected request from httpx (load balancer), skipping load balancing to prevent loops")
+        logger.info(f"Detected load-balanced request (httpx={('httpx' in user_agent)}, header={load_balanced_header}), skipping load balancing to prevent loops")
+    else:
+        logger.debug(f"Request user-agent: {user_agent[:100] if user_agent else 'None'}")
     return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
@@ -273,9 +277,11 @@ async def api_chat_completions(
     user: Optional[User] = Depends(verify_api_key)
 ):
     """OpenWebUI-compatible chat completions endpoint"""
-    skip_lb = "httpx" in http_request.headers.get("user-agent", "").lower()
+    user_agent = http_request.headers.get("user-agent", "").lower()
+    load_balanced_header = http_request.headers.get("x-posterchanai-load-balanced", "").lower()
+    skip_lb = "httpx" in user_agent or load_balanced_header == "true"
     if skip_lb:
-        logger.debug("Detected httpx request, skipping load balancing")
+        logger.info(f"Detected load-balanced request, skipping load balancing")
     return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
@@ -298,9 +304,11 @@ async def root_chat_completions(
     user: Optional[User] = Depends(verify_api_key)
 ):
     """Root-level chat completions endpoint"""
-    skip_lb = "httpx" in http_request.headers.get("user-agent", "").lower()
+    user_agent = http_request.headers.get("user-agent", "").lower()
+    load_balanced_header = http_request.headers.get("x-posterchanai-load-balanced", "").lower()
+    skip_lb = "httpx" in user_agent or load_balanced_header == "true"
     if skip_lb:
-        logger.debug("Detected httpx request, skipping load balancing")
+        logger.info(f"Detected load-balanced request, skipping load balancing")
     return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
@@ -441,20 +449,26 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
 
     # Handle streaming vs non-streaming
     if request.stream:
-        stream = service.chat_completion_stream(
-            messages=messages,
-            model=request.model,
-            **kwargs
-        )
-        return StreamingResponse(
-            filter_thinking_stream(stream),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            }
-        )
+        logger.info("Starting local streaming inference")
+        try:
+            stream = service.chat_completion_stream(
+                messages=messages,
+                model=request.model,
+                **kwargs
+            )
+            logger.info("Stream generator created, returning StreamingResponse")
+            return StreamingResponse(
+                filter_thinking_stream(stream),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                }
+            )
+        except Exception as e:
+            logger.error(f"Error creating stream: {e}", exc_info=True)
+            raise
     else:
         result = await service.chat_completion(
             messages=messages,
