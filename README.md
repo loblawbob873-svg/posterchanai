@@ -1212,21 +1212,33 @@ The web interface supports global shortcuts via the Media Session API and keyboa
 
 See **[docs/HYPRLAND_MUSIC_CONTROLS.md](docs/HYPRLAND_MUSIC_CONTROLS.md)** for detailed setup instructions.
 
-**Quick Setup (Using Provided Script):**
+**Quick Setup (Automatic):**
 
-Add to `~/.config/hypr/hyprland.conf`:
+Run the setup script to automatically add keybinds:
 
 ```bash
-# Use the provided control script (auto-detects ydotool/xdotool)
-bind = SUPER, P, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh toggle
-bind = SUPER, N, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh next
-bind = SUPER, B, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh prev
-
-# Or use with system media keys
-bind = , XF86AudioPlay, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh toggle
-bind = , XF86AudioNext, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh next
-bind = , XF86AudioPrev, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh prev
+./scripts/setup-hyprland-keybinds.sh
 ```
+
+This will add Alt+P, Alt+N, Alt+B, Alt+S shortcuts to your `~/.config/hypr/hyprland.conf`.
+
+**Manual Setup:**
+
+Or manually add to `~/.config/hypr/hyprland.conf`:
+
+```bash
+# Custom keyboard shortcuts (Alt+P, Alt+N, Alt+B, Alt+S)
+bind = ALT, P, exec, /home/verita84/posterchanai/scripts/hyprland-music-control.sh toggle
+bind = ALT, N, exec, /home/verita84/posterchanai/scripts/hyprland-music-control.sh next
+bind = ALT, B, exec, /home/verita84/posterchanai/scripts/hyprland-music-control.sh prev
+bind = ALT, S, exec, /home/verita84/posterchanai/scripts/hyprland-music-control.sh stop
+```
+
+**Note:** Adjust the path `/home/verita84/posterchanai` to match your installation directory.
+
+**Alternative shortcuts:**
+- Use `SUPER` instead of `ALT` if you prefer: `bind = SUPER, P, ...`
+- Or use media keys if your keyboard has them: `bind = , XF86AudioPlay, ...`
 
 **Simple Setup (Browser Focus Only):**
 
