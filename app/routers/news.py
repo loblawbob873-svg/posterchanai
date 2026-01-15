@@ -219,6 +219,7 @@ async def get_headlines(
     current_user: User = Depends(get_current_user)
 ):
     """Get news headlines from a source with AI summaries"""
+    print(f"[NEWS] === get_headlines called for: {source_url} ===")
     from app.models import Conversation, Message
 
     sources = get_user_news_sources(current_user, db)
@@ -229,7 +230,9 @@ async def get_headlines(
             source_name = s["name"]
             break
 
+    print(f"[NEWS] Calling fetch_news_from_source for {source_name}")
     markdown = await fetch_news_from_source(source_url, source_name, db)
+    print(f"[NEWS] Got markdown response: {len(markdown)} chars")
 
     # Save to conversation if provided
     if conversation_id:
