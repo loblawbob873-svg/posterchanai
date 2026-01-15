@@ -19,7 +19,7 @@ logging.basicConfig(
 from app.database import init_db, get_db
 from app.auth import get_current_user_optional, create_access_token
 from app.models import User, VerificationToken
-from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, news, rag, plugins, mail, music, torrent
+from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, news, rag, plugins, mail, music, torrent, contacts
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -51,6 +51,7 @@ app.include_router(news.router)
 app.include_router(rag.router)
 app.include_router(plugins.router)
 app.include_router(mail.router)
+app.include_router(contacts.router)
 app.include_router(music.router)
 app.include_router(torrent.router)
 

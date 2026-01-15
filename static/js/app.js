@@ -988,7 +988,7 @@ function initContactsModal() {
                 .find(row => row.startsWith('csrf_token='))
                 ?.split('=')[1] || '';
             
-            const response = await fetch(`/api/mail/contacts/${uid}`, {
+            const response = await fetch(`/api/contacts/${uid}`, {
                 method: 'PUT',
                 headers: { 
                     'Content-Type': 'application/json',
@@ -1045,7 +1045,7 @@ function initContactsModal() {
         if (contactUid) {
             // Edit mode - fetch contact data
             try {
-                const response = await fetch(`/api/mail/contacts/${contactUid}`);
+                const response = await fetch(`/api/contacts/${contactUid}`);
                 if (response.ok) {
                     const contact = await response.json();
                     document.getElementById('contactsModalTitle').textContent = 'Edit Contact';

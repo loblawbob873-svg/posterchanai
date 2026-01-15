@@ -2512,7 +2512,7 @@ class ChatHandler {
 
     async loadContactEmailsForAutocomplete() {
         try {
-            const response = await fetch('/api/mail/contacts/emails');
+            const response = await fetch('/api/contacts/emails');
             if (response.ok) {
                 const contacts = await response.json();
                 if (contacts && contacts.length > 0) {
