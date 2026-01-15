@@ -55,7 +55,7 @@ async def search_nyaa(query: str, limit: int = 15) -> list[NyaaResult]:
 
     try:
         logger.info(f"Searching nyaa.si via proxy: {proxy_config}")
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxies=proxy_config) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxy=proxy_config) as client:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
 
@@ -128,8 +128,16 @@ async def search_nyaa(query: str, limit: int = 15) -> list[NyaaResult]:
 
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error searching nyaa.si: {e.response.status_code}")
+        raise ValueError(f"HTTP error {e.response.status_code} accessing nyaa.si. Check proxy configuration.")
+    except httpx.RequestError as e:
+        logger.error(f"Request error searching nyaa.si: {e}")
+        raise ValueError(f"Failed to connect to nyaa.si. Check proxy configuration: {str(e)}")
+    except ValueError:
+        # Re-raise proxy requirement errors
+        raise
     except Exception as e:
-        logger.error(f"Error searching nyaa.si: {e}")
+        logger.error(f"Error searching nyaa.si: {e}", exc_info=True)
+        raise ValueError(f"Error accessing nyaa.si: {str(e)}")
 
     return results[:limit]
 

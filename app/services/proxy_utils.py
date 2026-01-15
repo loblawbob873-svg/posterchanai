@@ -7,7 +7,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-def get_proxy_config() -> Optional[dict]:
+def get_proxy_config() -> Optional[str]:
     """
     Get HTTP proxy configuration for Tor.
     
@@ -17,7 +17,7 @@ def get_proxy_config() -> Optional[dict]:
     3. Built-in Tor enabled - use default HTTP proxy port (if Tor is running, HTTP proxy should be too)
     
     Returns:
-        Proxy config dict for httpx, or None if not configured
+        Proxy URL string for httpx (e.g., "http://127.0.0.1:8118"), or None if not configured
     """
     try:
         from app.database import SessionLocal
@@ -32,10 +32,8 @@ def get_proxy_config() -> Optional[dict]:
                 proxy_port_setting = db.query(Setting).filter(Setting.key == "bt_proxy_port").first()
                 proxy_port = proxy_port_setting.value if proxy_port_setting and proxy_port_setting.value else "8118"
                 logger.debug(f"Using bt_proxy_host: {bt_proxy.value}:{proxy_port}")
-                return {
-                    "http://": f"http://{bt_proxy.value}:{proxy_port}",
-                    "https://": f"http://{bt_proxy.value}:{proxy_port}",
-                }
+                # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
+                return f"http://{bt_proxy.value}:{proxy_port}"
             
             # Check built-in HTTP proxy
             proxy_enabled = db.query(Setting).filter(Setting.key == "proxy_enabled").first()
@@ -45,10 +43,8 @@ def get_proxy_config() -> Optional[dict]:
                 proxy_listen_host = proxy_listen_host_setting.value if proxy_listen_host_setting and proxy_listen_host_setting.value else "127.0.0.1"
                 proxy_listen_port = proxy_listen_port_setting.value if proxy_listen_port_setting and proxy_listen_port_setting.value else "8118"
                 logger.debug(f"Using built-in HTTP proxy: {proxy_listen_host}:{proxy_listen_port}")
-                return {
-                    "http://": f"http://{proxy_listen_host}:{proxy_listen_port}",
-                    "https://": f"http://{proxy_listen_host}:{proxy_listen_port}",
-                }
+                # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
+                return f"http://{proxy_listen_host}:{proxy_listen_port}"
             
             # Check if Tor is enabled - if so, check if HTTP proxy is also enabled
             # The HTTP proxy should be enabled and running when Tor is enabled
@@ -67,10 +63,8 @@ def get_proxy_config() -> Optional[dict]:
                 proxy_listen_host = proxy_listen_host_setting.value if proxy_listen_host_setting and proxy_listen_host_setting.value else "127.0.0.1"
                 proxy_listen_port = proxy_listen_port_setting.value if proxy_listen_port_setting and proxy_listen_port_setting.value else "8118"
                 logger.debug(f"Tor and HTTP proxy enabled, using HTTP proxy at {proxy_listen_host}:{proxy_listen_port}")
-                return {
-                    "http://": f"http://{proxy_listen_host}:{proxy_listen_port}",
-                    "https://": f"http://{proxy_listen_host}:{proxy_listen_port}",
-                }
+                # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
+                return f"http://{proxy_listen_host}:{proxy_listen_port}"
         finally:
             db.close()
     except Exception as e:
@@ -79,7 +73,7 @@ def get_proxy_config() -> Optional[dict]:
     return None
 
 
-def require_proxy(service_name: str) -> dict:
+def require_proxy(service_name: str) -> str:
     """
     Get proxy config and raise ValueError if not configured.
     
@@ -87,7 +81,7 @@ def require_proxy(service_name: str) -> dict:
         service_name: Name of service (for error message)
     
     Returns:
-        Proxy config dict for httpx
+        Proxy URL string for httpx (e.g., "http://127.0.0.1:8118")
     
     Raises:
         ValueError: If proxy is not configured

@@ -80,7 +80,7 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
 
     try:
         logger.info(f"Fetching torrents via proxy: {proxy_config}")
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxies=proxy_config) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxy=proxy_config) as client:
             response = await client.get(base_url, headers=headers)
             response.raise_for_status()
 
@@ -270,7 +270,7 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
 
     try:
         logger.info(f"Searching torrents via proxy: {proxy_config}")
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, proxies=proxy_config) as client:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, proxy=proxy_config) as client:
             logger.info(f"Searching torrents: {search_url}")
             response = await client.get(search_url, headers=headers)
             response.raise_for_status()
@@ -307,7 +307,7 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
             async def fetch_magnet(title, detail_url, row):
                 try:
                     # Proxy is required - use same proxy config for detail requests
-                    async with httpx.AsyncClient(timeout=10, proxies=proxy_config) as detail_client:
+                    async with httpx.AsyncClient(timeout=10, proxy=proxy_config) as detail_client:
                         detail_resp = await detail_client.get(detail_url, headers=headers)
                         detail_soup = BeautifulSoup(detail_resp.text, "lxml")
                         
