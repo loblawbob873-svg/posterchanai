@@ -170,15 +170,21 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
     # Use HTML catalog endpoint (more reliable than JSON)
     catalog_url = f"{CHAN4_BASE_URL}/{board}/catalog"
     
-    # Browser-like headers - match what a real browser sends
-    # Start with minimal headers for initial request, then add more if needed
+    # Browser-like headers - exactly match what Chrome sends
+    # These headers are critical for bypassing Cloudflare
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Cache-Control": "max-age=0",
+        "DNT": "1",
     }
     
     threads = []
@@ -205,12 +211,32 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
         ) as client:
             # Skip connectivity test - go straight to catalog to avoid extra requests that might trigger blocking
             
-            # First, visit the main page to establish session (like a browser does)
+            # First, visit the main page to establish session and get cookies (like a browser does)
+            # This helps bypass Cloudflare by establishing a session first
             try:
-                main_page_response = await client.get(f"{CHAN4_BASE_URL}/", headers=headers, timeout=10)
-                logger.debug(f"Main page visit: status={main_page_response.status_code}")
+                # Use minimal headers for initial request
+                initial_headers = {
+                    "User-Agent": headers["User-Agent"],
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                }
+                main_page_response = await client.get(f"{CHAN4_BASE_URL}/", headers=initial_headers, timeout=10)
+                logger.debug(f"Main page visit: status={main_page_response.status_code}, length={len(main_page_response.text)}")
+                
+                # Check if we got Cloudflare challenge on main page
+                main_html_lower = main_page_response.text.lower()
+                if "checking your browser" in main_html_lower or "just a moment" in main_html_lower:
+                    logger.warning("Cloudflare challenge detected on main page")
+                    # Wait a moment (simulate browser delay) and try again
+                    import asyncio
+                    await asyncio.sleep(3)
+                    # Try main page again
+                    main_page_response = await client.get(f"{CHAN4_BASE_URL}/", headers=initial_headers, timeout=10)
+                    logger.debug(f"Main page retry: status={main_page_response.status_code}, length={len(main_page_response.text)}")
+                
                 # Update referer for subsequent requests
                 headers["Referer"] = f"{CHAN4_BASE_URL}/"
+                # Cookies should be handled automatically by httpx
+                logger.debug(f"Cookies after main page: {len(client.cookies)} cookies")
             except Exception as e:
                 logger.warning(f"Could not visit main page first: {e}, continuing anyway")
             
@@ -387,19 +413,20 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             # PRIMARY METHOD: Find by links to threads (most reliable - works regardless of HTML structure)
             # Search for any links matching the thread pattern
             thread_links = soup.find_all("a", href=re.compile(r'/\w+/thread/\d+'))
-            logger.info(f"Found {len(thread_links)} thread links in HTML")
+            logger.info(f"Found {len(thread_links)} thread links in HTML via BeautifulSoup")
             
-            # Also try searching in raw HTML with regex as fallback
-            if not thread_links:
-                logger.warning("No thread links found via BeautifulSoup, trying regex on raw HTML")
-                # Extract thread URLs directly from HTML text
-                thread_url_pattern = re.compile(r'/(\w+)/thread/(\d+)')
-                matches = thread_url_pattern.findall(html)
-                logger.info(f"Found {len(matches)} thread URLs via regex")
-                if matches:
-                    # Create minimal thread objects from regex matches
-                    seen_thread_ids = set()
-                    for board_match, thread_id_str in matches[:limit]:
+            # Also try searching in raw HTML with regex as fallback (more reliable)
+            logger.info("Also searching raw HTML with regex for thread URLs...")
+            thread_url_pattern = re.compile(r'/(\w+)/thread/(\d+)')
+            regex_matches = thread_url_pattern.findall(html)
+            logger.info(f"Found {len(regex_matches)} thread URLs via regex in raw HTML")
+            
+            # Use regex matches if we found any (more reliable than BeautifulSoup parsing)
+            if regex_matches:
+                logger.info(f"Using {len(regex_matches)} thread URLs found via regex")
+                # Create minimal thread objects from regex matches
+                seen_thread_ids = set()
+                for board_match, thread_id_str in regex_matches[:limit]:
                         try:
                             thread_id = int(thread_id_str)
                             if thread_id in seen_thread_ids:
@@ -465,8 +492,9 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             logger.info(f"Total found: {len(thread_divs)} thread containers in HTML")
             
             # If we found no containers and no links, log the HTML structure for debugging
-            if not thread_divs and not link_threads:
-                logger.error(f"No thread containers or links found. HTML structure analysis:")
+            if not thread_divs and not link_threads and not regex_matches:
+                logger.error(f"No thread containers, links, or regex matches found. HTML structure analysis:")
+                logger.error(f"HTML length: {len(html)}")
                 # Check for common HTML elements
                 body = soup.find("body")
                 if body:
@@ -478,8 +506,17 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                         # Show classes of first 10 divs
                         div_classes = [div.get("class") for div in all_divs[:10]]
                         logger.error(f"First 10 div classes: {div_classes}")
+                    # Check for any links at all
+                    all_links = soup.find_all("a", href=True)
+                    logger.error(f"Total links in page: {len(all_links)}")
+                    if all_links:
+                        # Show first 5 link hrefs
+                        link_hrefs = [link.get("href", "")[:50] for link in all_links[:5]]
+                        logger.error(f"First 5 link hrefs: {link_hrefs}")
                 else:
                     logger.error("No body tag found in HTML")
+                # Log a sample of the HTML to see what we got
+                logger.error(f"HTML sample (first 2000 chars): {html[:2000]}")
             
             # If we still have no thread divs but have link_threads, extract minimal info
             if not thread_divs and link_threads:
