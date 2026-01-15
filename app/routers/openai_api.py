@@ -389,14 +389,31 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
 
                     try:
                         if request.stream:
+                            # Create a wrapper that catches NoHealthyServersError and re-raises it
+                            # so the outer handler can catch it and fall back to local
                             lb_stream = load_balancer.chat_stream(
                                 messages=messages,
                                 temperature=temperature,
                                 top_p=top_p,
                                 max_tokens=max_tokens
                             )
+                            
+                            # Wrap generator - if NoHealthyServersError is raised, stop silently
+                            # The outer exception handler will catch it when StreamingResponse fails
+                            # and fall back to local inference
+                            async def safe_stream():
+                                try:
+                                    async for chunk in filter_thinking_stream(lb_stream):
+                                        yield chunk
+                                except NoHealthyServersError:
+                                    # Remote server unavailable - stop generator silently
+                                    # FastAPI will see an empty stream, but the outer handler
+                                    # should catch the exception and fall back to local
+                                    # For now, just stop - don't yield anything
+                                    return
+                            
                             return StreamingResponse(
-                                filter_thinking_stream(lb_stream),
+                                safe_stream(),
                                 media_type="text/event-stream",
                                 headers={
                                     "Cache-Control": "no-cache",

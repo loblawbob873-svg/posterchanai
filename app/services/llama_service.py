@@ -323,7 +323,7 @@ class LlamaService:
 
         # Acquire shared GPU lock to prevent LLM and image from running simultaneously
         from app.services.locks import GPUResourceLock
-        import uuid
+        # uuid is already imported at module level
         request_id = f"LLAMA-STREAM-{uuid.uuid4().hex[:8]}"
         async with GPUResourceLock("LLM", request_id):
             def run_streaming():

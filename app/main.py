@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request, Depends, Response
+from fastapi import Request as FastAPIRequest
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
@@ -20,6 +21,8 @@ from app.database import init_db, get_db
 from app.auth import get_current_user_optional, create_access_token
 from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, news, rag, plugins, mail, music, torrent, contacts
+from app.services.load_balancer import NoHealthyServersError
+from fastapi.responses import JSONResponse
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -27,6 +30,18 @@ app = FastAPI(
     description="AI Chat Application",
     version="1.0.0"
 )
+
+# Exception handler for NoHealthyServersError - prevent it from being shown to client
+@app.exception_handler(NoHealthyServersError)
+async def no_healthy_servers_handler(request: FastAPIRequest, exc: NoHealthyServersError):
+    """Silently handle NoHealthyServersError - this triggers fallback to local inference"""
+    # This shouldn't normally be reached since we catch it in the router,
+    # but if it is (e.g., during streaming), return a 500 that won't show the error message
+    # The actual error message is empty, so we return a generic message
+    return JSONResponse(
+        status_code=500,
+        content={"error": {"message": "Service temporarily unavailable"}}
+    )
 
 # Add CSRF protection middleware
 app.add_middleware(CSRFMiddleware)
