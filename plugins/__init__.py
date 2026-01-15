@@ -76,6 +76,11 @@ def load_plugin(plugin_name: str, app: Optional[FastAPI] = None) -> bool:
             commands = importlib.import_module(f"plugins.{plugin_name}.commands")
             # Look for handle_X_command function
             handler_name = f"handle_{plugin_name}_command"
+            
+            # List all available handler functions for debugging
+            available_funcs = [name for name in dir(commands) if name.startswith("handle") and callable(getattr(commands, name))]
+            logger.debug(f"Plugin '{plugin_name}' available handler functions: {available_funcs}")
+            
             if hasattr(commands, handler_name):
                 _command_handlers[plugin_name] = getattr(commands, handler_name)
                 logger.info(f"Plugin '{plugin_name}' command handler registered as '{handler_name}'")
@@ -86,12 +91,19 @@ def load_plugin(plugin_name: str, app: Optional[FastAPI] = None) -> bool:
                     _command_handlers[plugin_name] = getattr(commands, alt_handler_name)
                     logger.info(f"Plugin '{plugin_name}' command handler registered (alt name: '{alt_handler_name}')")
                 else:
-                    # List available functions for debugging
-                    available_funcs = [name for name in dir(commands) if name.startswith("handle") and callable(getattr(commands, name))]
-                    logger.warning(f"Plugin '{plugin_name}' has no handler '{handler_name}' or '{alt_handler_name}'. Available handlers: {available_funcs}")
+                    # Try to find any handler function
+                    if available_funcs:
+                        # Use the first available handler
+                        first_handler = available_funcs[0]
+                        _command_handlers[plugin_name] = getattr(commands, first_handler)
+                        logger.info(f"Plugin '{plugin_name}' command handler registered using first available: '{first_handler}'")
+                    else:
+                        logger.warning(f"Plugin '{plugin_name}' has no handler '{handler_name}' or '{alt_handler_name}'. No handler functions found.")
         except ImportError as e:
             logger.warning(f"Could not import commands for plugin '{plugin_name}': {e}")
             pass
+        except Exception as e:
+            logger.error(f"Error loading command handler for plugin '{plugin_name}': {e}", exc_info=True)
             
         _loaded_plugins[plugin_name] = plugin_module
         logger.info(f"Plugin '{plugin_name}' loaded successfully")
