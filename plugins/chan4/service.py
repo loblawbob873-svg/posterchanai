@@ -428,9 +428,35 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                         logger.info(f"✓ Using data-attr pattern with {len(regex_matches)} matches (using board: {board})")
                         break
                 else:
-                    logger.debug(f"Pattern '{name}' found 0 matches")
+                    logger.info(f"✗ Pattern '{name}' found 0 matches")
             
             logger.info(f"Total found: {len(regex_matches)} thread URLs via regex in raw HTML")
+            
+            # If no matches, try a very simple pattern - just find any numbers that might be thread IDs
+            if not regex_matches:
+                logger.warning("No regex matches found with standard patterns, trying simple number search...")
+                # Look for patterns like /g/12345678 or similar
+                simple_patterns = [
+                    (r'/{}/?(\d{{8,}})'.format(board), 'board-number'),  # /g/12345678 (8+ digits)
+                    (r'/{}/thread/?(\d+)'.format(board), 'board-thread-simple'),  # /g/thread12345678
+                ]
+                for pattern, name in simple_patterns:
+                    try:
+                        matches = re.findall(pattern, html, re.IGNORECASE)
+                        if matches:
+                            logger.info(f"Simple pattern '{name}' found {len(matches)} matches: {matches[:5]}")
+                            regex_matches = [(board, str(tid)) for tid in matches[:limit]]
+                            break
+                    except Exception as e:
+                        logger.warning(f"Error with simple pattern '{name}': {e}")
+                        continue
+                
+                # If still no matches, check if HTML contains the board name at all
+                if not regex_matches:
+                    if f"/{board}/" in html:
+                        logger.warning(f"HTML contains '/{board}/' but no thread URLs found - may be Cloudflare challenge page")
+                    else:
+                        logger.warning(f"HTML does not contain '/{board}/' - may be wrong page")
             
             # If we found matches but they're in wrong format, try to fix
             if regex_matches and isinstance(regex_matches[0], str):
