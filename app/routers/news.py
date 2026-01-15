@@ -107,12 +107,17 @@ async def summarize_with_ai(links: list, db: Session) -> str:
             return None
 
         messages = [
-            {"role": "system", "content": """Summarize each news headline in 1 sentence.
+            {"role": "system", "content": """For each news headline, provide a 2-3 sentence summary explaining the story.
 IMPORTANT: You MUST preserve the exact markdown link format [title](url) for each item.
-Output as a bullet list starting with "- ".
-Example input: - [Biden announces new policy](https://example.com/article)
-Example output: - [Biden unveils initiative affecting millions](https://example.com/article)
-No extra text or commentary."""},
+Format each item as:
+- [Headline Title](url)
+  Brief 2-3 sentence summary of what this story is about, key details, and why it matters.
+
+Example:
+- [Major Tech Company Announces Layoffs](https://example.com/article)
+  The company is cutting 10% of its workforce amid economic uncertainty. This affects approximately 5,000 employees across multiple divisions. Industry analysts suggest this reflects broader trends in the tech sector.
+
+Provide informative summaries that give readers context about each story."""},
             {"role": "user", "content": "\n".join(links)}
         ]
 
@@ -120,7 +125,7 @@ No extra text or commentary."""},
         result = await service.chat_completion(
             messages=messages,
             temperature=0.3,
-            max_tokens=2048
+            max_tokens=4096
         )
         log(f"chat_completion returned: {list(result.keys()) if isinstance(result, dict) else type(result)}")
 
@@ -232,11 +237,17 @@ async def get_headlines(
     print(f"[NEWS] === get_headlines called for: {source_url} ===", flush=True)
     
     # Also write to a file for debugging
-    with open("/tmp/news_debug.log", "a") as f:
-        f.write(f"get_headlines called for: {source_url}\n")
+    def log(msg):
+        with open("/tmp/news_debug.log", "a") as f:
+            f.write(f"{msg}\n")
+    
+    log(f"get_headlines called for: {source_url}")
+    
     from app.models import Conversation, Message
 
+    log("Getting user news sources...")
     sources = get_user_news_sources(current_user, db)
+    log(f"Got {len(sources)} sources")
 
     source_name = source_url
     for s in sources:
@@ -244,8 +255,9 @@ async def get_headlines(
             source_name = s["name"]
             break
 
-    print(f"[NEWS] Calling fetch_news_from_source for {source_name}")
+    log(f"Calling fetch_news_from_source for {source_name}")
     markdown = await fetch_news_from_source(source_url, source_name, db)
+    log(f"Got markdown: {len(markdown)} chars")
     print(f"[NEWS] Got markdown response: {len(markdown)} chars")
 
     # Save to conversation if provided
