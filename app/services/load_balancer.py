@@ -57,17 +57,27 @@ async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) 
         return None
 
     async with _cycle_lock:
-        # Reset cycle if server list changed (compare as tuples to ensure content comparison, preserve order)
+        # Reset cycle only if server list actually changed (compare as tuples to ensure content comparison, preserve order)
         servers_tuple = tuple(servers)
         current_list_tuple = tuple(_server_list) if _server_list else ()
-        if _server_cycle is None or current_list_tuple != servers_tuple:
+        
+        # Only reset if cycle is None OR if the server list has actually changed
+        if _server_cycle is None:
             _server_list = servers.copy()
             _server_cycle = cycle(servers)
             logger.info(f"Load balancer initialized with {len(servers)} server(s): {servers}")
+        elif current_list_tuple != servers_tuple:
+            # Server list changed - reset cycle
+            _server_list = servers.copy()
+            _server_cycle = cycle(servers)
+            logger.info(f"Load balancer reinitialized with {len(servers)} server(s): {servers} (list changed)")
+        else:
+            # Cycle exists and list hasn't changed - just advance it
+            logger.debug(f"Cycle exists, list unchanged, advancing round-robin (current list: {_server_list})")
 
-        # Simple round-robin - get next server
+        # Simple round-robin - get next server (this advances the cycle)
         server = next(_server_cycle)
-        logger.info(f"Selected server (round-robin): {server}")
+        logger.info(f"Selected server (round-robin): {server} (from {len(_server_list)} servers: {_server_list})")
         return server
 
 
@@ -242,11 +252,16 @@ class LoadBalancer:
         if not self.servers:
             raise ValueError("No servers configured for load balancing")
 
-        # Get a healthy server
-        server = await get_healthy_server(self.servers, self.api_key)
-        if not server:
-            logger.warning("No healthy remote servers - signaling to use local")
-            raise NoHealthyServersError("No healthy remote servers available")
+        # If only one server, use it directly (don't call get_healthy_server to avoid creating a new cycle)
+        if len(self.servers) == 1:
+            server = self.servers[0]
+            logger.info(f"Using single server: {server}")
+        else:
+            # Get a healthy server from round-robin
+            server = await get_healthy_server(self.servers, self.api_key)
+            if not server:
+                logger.warning("No healthy remote servers - signaling to use local")
+                raise NoHealthyServersError("No healthy remote servers available")
 
         start_time = time.time()
         logger.info(f"STREAM REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
@@ -357,11 +372,16 @@ class LoadBalancer:
         if not self.servers:
             raise ValueError("No servers configured for load balancing")
 
-        # Get a healthy server
-        server = await get_healthy_server(self.servers, self.api_key)
-        if not server:
-            logger.warning("No healthy remote servers - signaling to use local")
-            raise NoHealthyServersError("No healthy remote servers available")
+        # If only one server, use it directly (don't call get_healthy_server to avoid creating a new cycle)
+        if len(self.servers) == 1:
+            server = self.servers[0]
+            logger.info(f"Using single server: {server}")
+        else:
+            # Get a healthy server from round-robin
+            server = await get_healthy_server(self.servers, self.api_key)
+            if not server:
+                logger.warning("No healthy remote servers - signaling to use local")
+                raise NoHealthyServersError("No healthy remote servers available")
 
         start_time = time.time()
         logger.info(f"CHAT REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
