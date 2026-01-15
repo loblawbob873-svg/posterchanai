@@ -119,6 +119,7 @@ async def filter_thinking_stream(stream: AsyncGenerator[str, None]) -> AsyncGene
     """
     buffer = ""
     thinking_done = False
+    chunk_count = 0
 
     # Pattern to detect end of any thinking tag variant
     end_pattern = re.compile(r'</(?:think(?:ing)?|thought|reasoning|internal[_-]?thought)>', re.IGNORECASE)
@@ -126,6 +127,7 @@ async def filter_thinking_stream(stream: AsyncGenerator[str, None]) -> AsyncGene
     start_pattern = re.compile(r'<(?:think(?:ing)?|thought|reasoning|internal[_-]?thought)', re.IGNORECASE)
 
     async for chunk in stream:
+        chunk_count += 1
         if not chunk.startswith("data: "):
             yield chunk
             continue
@@ -138,6 +140,7 @@ async def filter_thinking_stream(stream: AsyncGenerator[str, None]) -> AsyncGene
                 if clean and clean != "I apologize, I wasn't able to generate a proper response. Please try again.":
                     # Re-emit as SSE chunk
                     yield f"data: {json.dumps({'choices': [{'delta': {'content': clean}}]})}\n\n"
+            logger.debug(f"filter_thinking_stream: received [DONE] after {chunk_count} chunks, buffer_len={len(buffer)}")
             yield "data: [DONE]\n\n"
             continue
 
@@ -166,8 +169,24 @@ async def filter_thinking_stream(stream: AsyncGenerator[str, None]) -> AsyncGene
                 else:
                     # thinking_done=True, just pass through chunks (don't buffer)
                     yield chunk
-        except json.JSONDecodeError:
+            else:
+                # No content in this chunk, but might be a valid chunk (like finish_reason)
+                # Pass it through to maintain proper SSE format
+                yield chunk
+        except json.JSONDecodeError as e:
+            # Invalid JSON, but pass it through anyway (might be a comment or other SSE data)
+            logger.debug(f"filter_thinking_stream: JSON decode error on chunk {chunk_count}: {e}, passing through")
             yield chunk
+    
+    # Log if we didn't receive any chunks with content
+    if chunk_count == 0:
+        logger.warning("filter_thinking_stream: received 0 chunks from stream")
+    elif buffer and not thinking_done:
+        # We have buffered content but never found thinking end - flush it
+        logger.debug(f"filter_thinking_stream: flushing remaining buffer (len={len(buffer)})")
+        clean = strip_thinking_tags(buffer)
+        if clean and clean != "I apologize, I wasn't able to generate a proper response. Please try again.":
+            yield f"data: {json.dumps({'choices': [{'delta': {'content': clean}}]})}\n\n"
 
 
 def verify_api_key(
