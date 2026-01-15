@@ -167,14 +167,13 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
         # Allow any board name, just warn
         logger.info(f"Unknown board: {board}, fetching anyway")
     
-    # 4chan catalog endpoint (JSON format)
-    catalog_url = f"{CHAN4_BASE_URL}/{board}/catalog.json"
+    # Use HTML catalog endpoint (more reliable than JSON)
+    catalog_url = f"{CHAN4_BASE_URL}/{board}/catalog"
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate",
         "Referer": f"{CHAN4_BASE_URL}/",
     }
     
@@ -195,167 +194,151 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             follow_redirects=True,
             proxy=proxy_config
         ) as client:
+            # Try JSON first, fallback to HTML
+            json_url = f"{CHAN4_BASE_URL}/{board}/catalog.json"
+            try:
+                json_response = await client.get(json_url, headers=headers)
+                json_response.raise_for_status()
+                json_text = json_response.text
+                content_type = json_response.headers.get("content-type", "").lower()
+                
+                # Only use JSON if it's actually JSON
+                if "application/json" in content_type and not json_text.strip().startswith("<"):
+                    logger.info(f"Using JSON catalog: status={json_response.status_code}, length={len(json_text)}")
+                    try:
+                        catalog_data = json.loads(json_text)
+                        all_threads = {}
+                        
+                        if isinstance(catalog_data, dict):
+                            # Iterate through pages
+                            for page_key, page_data in catalog_data.items():
+                                if isinstance(page_data, dict):
+                                    page_threads = page_data.get("threads", {})
+                                    if not page_threads and all(isinstance(k, str) and k.isdigit() for k in list(page_data.keys())[:5]):
+                                        page_threads = page_data
+                                    if isinstance(page_threads, dict):
+                                        all_threads.update(page_threads)
+                        
+                        logger.info(f"Found {len(all_threads)} threads in catalog JSON for /{board}/")
+                        
+                        # Parse threads from JSON
+                        for thread_id_str, thread_data in list(all_threads.items())[:limit]:
+                            try:
+                                thread_id = int(thread_id_str)
+                                subject = thread_data.get("sub", "") or thread_data.get("teaser", "")[:100]
+                                comment = thread_data.get("com", "") or ""
+                                if comment:
+                                    soup = BeautifulSoup(comment, "html.parser")
+                                    comment = soup.get_text()[:200]
+                                
+                                image_url = None
+                                thumbnail_url = None
+                                if "tim" in thread_data and "ext" in thread_data:
+                                    tim = thread_data["tim"]
+                                    ext = thread_data["ext"]
+                                    image_url = f"{CHAN4_BASE_URL}/{board}/{tim}{ext}"
+                                    thumbnail_url = f"{CHAN4_BASE_URL}/{board}/thumb/{tim}s.jpg"
+                                
+                                replies = thread_data.get("replies", 0)
+                                images = thread_data.get("images", 0)
+                                thread_url = f"{CHAN4_BASE_URL}/{board}/thread/{thread_id}".strip()
+                                
+                                threads.append(Chan4Thread(
+                                    thread_id=thread_id,
+                                    board=board,
+                                    subject=subject or comment[:50] or f"Thread {thread_id}",
+                                    comment=comment,
+                                    image_url=image_url,
+                                    thumbnail_url=thumbnail_url,
+                                    replies=replies,
+                                    images=images,
+                                    thread_url=thread_url
+                                ))
+                            except (ValueError, KeyError, TypeError) as e:
+                                logger.debug(f"Error parsing thread {thread_id_str}: {e}")
+                                continue
+                        
+                        if threads:
+                            logger.info(f"Successfully parsed {len(threads)} threads from catalog JSON for /{board}/")
+                            return threads[:limit]
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse JSON catalog: {e}")
+            except Exception as e:
+                logger.debug(f"JSON catalog failed: {e}, falling back to HTML")
+            
+            # Fallback to HTML catalog
+            logger.info(f"Using HTML catalog endpoint")
             response = await client.get(catalog_url, headers=headers)
             response.raise_for_status()
             html = response.text
-            content_type = response.headers.get("content-type", "").lower()
-            logger.info(f"Catalog response: status={response.status_code}, content-type={content_type}, length={len(html)}")
-            
-            # Check if we got HTML instead of JSON (might be an error page or redirect)
-            if "text/html" in content_type or html.strip().startswith("<"):
-                logger.warning(f"Received HTML instead of JSON from catalog.json. Response preview: {html[:300]}")
-                # Fall through to HTML parsing
-                raise json.JSONDecodeError("HTML response instead of JSON", html, 0)
-            
-            # Log first 500 chars to see what we're getting
-            if len(html) > 0:
-                logger.debug(f"Response preview (first 500 chars): {html[:500]}")
+            logger.info(f"HTML catalog response: status={response.status_code}, length={len(html)}")
         
-        # Parse the catalog JSON (4chan catalog is a JSON endpoint)
-        try:
-            # Try to parse as JSON first (modern 4chan catalog API)
-            # 4chan returns JSON with content-type application/json
-            catalog_data = json.loads(html)
-            
-            logger.debug(f"Catalog JSON structure: {type(catalog_data)}, keys: {list(catalog_data.keys())[:5] if isinstance(catalog_data, dict) else 'not a dict'}")
-            
-            # 4chan catalog.json format: {"0": {"threads": {...}}, "1": {"threads": {...}}, ...}
-            # Each page number is a key, and each page contains a "threads" dict
-            all_threads = {}
-            
-            if isinstance(catalog_data, dict):
-                # Iterate through pages
-                for page_key, page_data in catalog_data.items():
-                    if isinstance(page_data, dict):
-                        # Try to get threads from the page
-                        page_threads = page_data.get("threads", {})
-                        
-                        # If no "threads" key, maybe the page_data itself IS the threads dict?
-                        # (Some 4chan API versions might structure it differently)
-                        if not page_threads and all(isinstance(k, str) and k.isdigit() for k in list(page_data.keys())[:5]):
-                            # Looks like page_data might be the threads dict directly
-                            logger.debug(f"Page {page_key} appears to be threads dict directly")
-                            page_threads = page_data
-                        
-                        if isinstance(page_threads, dict):
-                            all_threads.update(page_threads)
-            
-            logger.info(f"Found {len(all_threads)} threads in catalog JSON for /{board}/")
-            
-            if not all_threads:
-                logger.warning(f"No threads found in catalog JSON structure.")
-                if isinstance(catalog_data, dict):
-                    logger.warning(f"Catalog data keys: {list(catalog_data.keys())[:10]}")
-                    # Check if first page has threads
-                    if catalog_data:
-                        first_page_key = list(catalog_data.keys())[0]
-                        first_page = catalog_data[first_page_key]
-                        logger.warning(f"First page ({first_page_key}) type: {type(first_page)}")
-                        if isinstance(first_page, dict):
-                            logger.warning(f"First page keys: {list(first_page.keys())}")
-                            # Maybe threads are directly in the page, not in a "threads" key?
-                            if "threads" not in first_page:
-                                logger.warning(f"No 'threads' key in first page. Trying direct iteration...")
-                                # Try treating the page itself as threads dict
-                                for key, value in list(first_page.items())[:5]:
-                                    logger.warning(f"  Page item: {key} -> {type(value)}")
-                else:
-                    logger.warning(f"Catalog data is not a dict, type: {type(catalog_data)}")
-                    # Maybe it's a list?
-                    if isinstance(catalog_data, list):
-                        logger.warning(f"Catalog data is a list with {len(catalog_data)} items")
-            
-            # Extract threads from all pages
-            for thread_id_str, thread_data in list(all_threads.items())[:limit]:
-                try:
-                    thread_id = int(thread_id_str)
-                    
-                    # Extract thread info
-                    subject = thread_data.get("sub", "") or thread_data.get("teaser", "")[:100]
-                    comment = thread_data.get("com", "") or ""
-                    
-                    # Clean HTML from comment
-                    if comment:
-                        soup = BeautifulSoup(comment, "html.parser")
-                        comment = soup.get_text()[:200]  # Limit length
-                    
-                    # Get image info
-                    image_url = None
-                    thumbnail_url = None
-                    if "tim" in thread_data and "ext" in thread_data:
-                        tim = thread_data["tim"]
-                        ext = thread_data["ext"]
-                        # Direct image URL: /board/tim.ext
-                        image_url = f"{CHAN4_BASE_URL}/{board}/{tim}{ext}"
-                        # Thumbnail URL: /board/thumb/tims.jpg
-                        thumbnail_url = f"{CHAN4_BASE_URL}/{board}/thumb/{tim}s.jpg"
-                    
-                    replies = thread_data.get("replies", 0)
-                    images = thread_data.get("images", 0)
-                    # Ensure thread URL is properly formatted
-                    thread_url = f"{CHAN4_BASE_URL}/{board}/thread/{thread_id}".strip()
-                    
-                    threads.append(Chan4Thread(
-                        thread_id=thread_id,
-                        board=board,
-                        subject=subject or comment[:50] or f"Thread {thread_id}",
-                        comment=comment,
-                        image_url=image_url,
-                        thumbnail_url=thumbnail_url,
-                        replies=replies,
-                        images=images,
-                        thread_url=thread_url
-                    ))
-                except (ValueError, KeyError, TypeError) as e:
-                    logger.debug(f"Error parsing thread {thread_id_str}: {e}")
-                    continue
-            
-            logger.info(f"Successfully parsed {len(threads)} threads from catalog JSON for /{board}/")
-            
-            # If we parsed JSON but got no threads, try HTML fallback
-            if not threads:
-                logger.warning(f"JSON parsing succeeded but no threads found. Trying HTML catalog as fallback...")
-                raise json.JSONDecodeError("No threads in JSON", html, 0)
-        
-        except json.JSONDecodeError as e:
-            # Fallback to HTML parsing if JSON fails (try HTML catalog endpoint)
-            logger.warning(f"Failed to parse catalog as JSON or no threads found: {e}. Trying HTML catalog endpoint...")
-            # Try HTML catalog endpoint
-            html_catalog_url = f"{CHAN4_BASE_URL}/{board}/catalog"
-            try:
-                # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
-                async with httpx.AsyncClient(
-                    timeout=30,
-                    follow_redirects=True,
-                    proxy=proxy_config
-                ) as html_client:
-                    html_response = await html_client.get(html_catalog_url, headers=headers)
-                    html_response.raise_for_status()
-                    html = html_response.text
-                    logger.info(f"HTML catalog response: status={html_response.status_code}, length={len(html)}")
-            except Exception as e:
-                logger.error(f"Failed to fetch HTML catalog: {e}")
-                raise ValueError(f"Failed to fetch /{board}/ catalog. The board may not exist or be unavailable.")
-            
+            # Parse HTML catalog
             soup = BeautifulSoup(html, "lxml")
             
-            # Find thread containers
-            thread_divs = soup.find_all("div", class_="thread")
+            logger.info(f"Parsing HTML catalog for /{board}/")
+            
+            # Find thread containers - 4chan uses various class names
+            # Try multiple selectors to find threads
+            thread_divs = (
+                soup.find_all("div", class_="thread") or
+                soup.find_all("div", class_="boardThread") or
+                soup.find_all("div", {"data-thread-id": True}) or
+                soup.find_all("div", id=lambda x: x and x.startswith("thread"))
+            )
+            
+            # Also try finding by links to threads
+            if not thread_divs:
+                thread_links = soup.find_all("a", href=re.compile(r'/\w+/thread/\d+'))
+                logger.info(f"Found {len(thread_links)} thread links in HTML")
+                # Extract thread info from links
+                seen_thread_ids = set()
+                for link in thread_links[:limit]:
+                    href = link.get("href", "")
+                    match = re.search(r'/(\w+)/thread/(\d+)', href)
+                    if match:
+                        thread_id = int(match.group(2))
+                        if thread_id in seen_thread_ids:
+                            continue
+                        seen_thread_ids.add(thread_id)
+                        
+                        # Try to find parent container
+                        parent = link.find_parent("div", class_=re.compile("thread|post"))
+                        if not parent:
+                            parent = link.find_parent("div")
+                        
+                        if parent:
+                            thread_divs.append(parent)
+            
+            logger.info(f"Found {len(thread_divs)} thread containers in HTML")
             
             for div in thread_divs[:limit]:
                 try:
-                    # Extract thread ID from data attribute or link
-                    thread_link = div.find("a", href=True)
-                    if not thread_link:
-                        continue
+                    # Extract thread ID from data attribute, link, or div ID
+                    thread_id = None
                     
-                    href = thread_link.get("href", "")
-                    # Extract thread ID from href like "/g/thread/12345678"
-                    match = re.search(r'/thread/(\d+)', href)
-                    if not match:
-                        continue
+                    # Try data-thread-id attribute first
+                    if div.get("data-thread-id"):
+                        thread_id = int(div.get("data-thread-id"))
+                    # Try div ID like "thread_12345678"
+                    elif div.get("id"):
+                        id_match = re.search(r'thread[_-]?(\d+)', div.get("id", ""))
+                        if id_match:
+                            thread_id = int(id_match.group(1))
                     
-                    thread_id = int(match.group(1))
+                    # Fallback to finding link
+                    if not thread_id:
+                        thread_link = div.find("a", href=True)
+                        if thread_link:
+                            href = thread_link.get("href", "")
+                            # Extract thread ID from href like "/g/thread/12345678"
+                            match = re.search(r'/thread/(\d+)', href)
+                            if match:
+                                thread_id = int(match.group(1))
+                    
+                    if not thread_id:
+                        logger.debug(f"Could not extract thread ID from div")
+                        continue
                     
                     # Get subject
                     subject_elem = div.find("span", class_="subject")
