@@ -67,7 +67,14 @@ async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) 
             _server_cycle = cycle(servers)
             logger.info(f"Load balancer initialized with {len(servers)} server(s): {servers}")
 
-    # Try each server in round-robin order (one full cycle through all servers)
+    # Prefer self URLs first to avoid unnecessary remote calls when local is available
+    # Check self servers first (before round-robin)
+    for server in servers:
+        if is_self_url(server):
+            logger.info(f"Selected self URL (local inference): {server}")
+            return server
+    
+    # Then try remote servers in round-robin order (one full cycle through all servers)
     tried = set()
     start_server = None
     
@@ -79,17 +86,16 @@ async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) 
             if start_server is None:
                 start_server = server
 
+        # Skip self URLs (already tried above)
+        if is_self_url(server):
+            continue
+
         # If we've tried all servers, break
         if server in tried:
             # We've completed a full cycle without finding a healthy server
             break
         
         tried.add(server)
-
-        # Self URLs are always "healthy" - we use local inference directly
-        if is_self_url(server):
-            logger.info(f"Selected self URL (local inference): {server}")
-            return server
 
         # Check cached health status
         async with _health_lock:
