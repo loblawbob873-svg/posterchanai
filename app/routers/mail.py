@@ -86,25 +86,41 @@ async def update_contact(
     current_user: User = Depends(get_current_user)
 ) -> dict:
     """Update a contact by UID."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"Update contact request: uid={uid}, updates={updates}")
+    
     config = get_user_contacts_config(current_user.id, db)
     if not config:
+        logger.error("CardDAV not configured")
         raise HTTPException(status_code=404, detail="CardDAV not configured")
 
     # Validate that contact exists
     contact = get_user_contact_by_uid(current_user.id, db, uid)
     if not contact:
+        logger.error(f"Contact not found: {uid}")
         raise HTTPException(status_code=404, detail="Contact not found")
 
     # Filter to only allowed fields
     allowed_fields = {"name", "phone", "email", "organization", "note"}
     filtered_updates = {k: v for k, v in updates.items() if k in allowed_fields}
+    
+    logger.info(f"Filtered updates: {filtered_updates}")
 
     if not filtered_updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
 
-    success = edit_user_contact(current_user.id, db, uid, filtered_updates)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to update contact")
+    try:
+        success = edit_user_contact(current_user.id, db, uid, filtered_updates)
+        if not success:
+            logger.error(f"edit_user_contact returned False for uid={uid}")
+            raise HTTPException(status_code=500, detail="Failed to update contact in CardDAV server")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Exception updating contact: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error updating contact: {str(e)}")
 
     return {"success": True, "message": "Contact updated"}
 
