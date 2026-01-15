@@ -7,7 +7,7 @@ from fastapi import Depends, HTTPException, status, Request, WebSocket
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User
+from app.models import User, APIKey
 import os
 import warnings
 
@@ -91,6 +91,28 @@ def get_current_user(
             detail="Not authenticated"
         )
 
+    # Check if this is an API key (starts with sk-)
+    if token.startswith("sk-"):
+        api_key = db.query(APIKey).filter(
+            APIKey.key == token,
+            APIKey.is_active == True
+        ).first()
+        
+        if api_key:
+            # Update last used timestamp
+            api_key.last_used_at = datetime.utcnow()
+            db.commit()
+            
+            user = db.query(User).filter(User.id == api_key.user_id).first()
+            if user:
+                return user
+        
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key"
+        )
+
+    # Otherwise treat as JWT token
     payload = decode_token(token)
     if payload is None:
         raise HTTPException(
