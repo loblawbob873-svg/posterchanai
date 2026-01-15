@@ -93,13 +93,73 @@ def delete_user(
         )
 
     try:
+        # Manually delete related records in the correct order to avoid foreign key violations
+        # This is necessary because existing databases might not have CASCADE constraints
+        
+        from app.models import (
+            Conversation, Message, UserSetting, APIKey, VerificationToken,
+            RAGCollection, RAGDocument, RAGWatcher, Plugin
+        )
+        
+        # Try to import RSS models (they might not be loaded)
+        try:
+            from plugins.rss.models import RssFeed, RssEntry
+            rss_available = True
+        except ImportError:
+            rss_available = False
+        
+        # 1. Delete messages (referenced by conversations)
+        # Get conversation IDs first to avoid subquery issues
+        conversation_ids = [c.id for c in db.query(Conversation.id).filter(Conversation.user_id == user_id).all()]
+        if conversation_ids:
+            db.query(Message).filter(Message.conversation_id.in_(conversation_ids)).delete(synchronize_session=False)
+        
+        # 2. Delete conversations
+        db.query(Conversation).filter(Conversation.user_id == user_id).delete(synchronize_session=False)
+        
+        # 3. Delete RSS entries (referenced by RSS feeds)
+        if rss_available:
+            # Get feed IDs first
+            feed_ids = [f.id for f in db.query(RssFeed.id).filter(RssFeed.user_id == user_id).all()]
+            if feed_ids:
+                db.query(RssEntry).filter(RssEntry.feed_id.in_(feed_ids)).delete(synchronize_session=False)
+            # Delete RSS feeds
+            db.query(RssFeed).filter(RssFeed.user_id == user_id).delete(synchronize_session=False)
+        
+        # 4. Delete RAG documents (referenced by collections)
+        # Get collection IDs first
+        collection_ids = [c.id for c in db.query(RAGCollection.id).filter(RAGCollection.user_id == user_id).all()]
+        if collection_ids:
+            db.query(RAGDocument).filter(RAGDocument.collection_id.in_(collection_ids)).delete(synchronize_session=False)
+        
+        # 5. Delete RAG watchers (references both users and collections)
+        db.query(RAGWatcher).filter(RAGWatcher.user_id == user_id).delete(synchronize_session=False)
+        
+        # 6. Delete RAG collections
+        db.query(RAGCollection).filter(RAGCollection.user_id == user_id).delete(synchronize_session=False)
+        
+        # 7. Delete user settings
+        db.query(UserSetting).filter(UserSetting.user_id == user_id).delete(synchronize_session=False)
+        
+        # 8. Delete API keys
+        db.query(APIKey).filter(APIKey.user_id == user_id).delete(synchronize_session=False)
+        
+        # 9. Delete verification tokens
+        db.query(VerificationToken).filter(VerificationToken.user_id == user_id).delete(synchronize_session=False)
+        
+        # 10. Delete plugins (user_id can be NULL for global plugins, so only delete user-specific ones)
+        db.query(Plugin).filter(Plugin.user_id == user_id).delete(synchronize_session=False)
+        
+        # 11. Finally, delete the user
         db.delete(user)
         db.commit()
+        
         logger.info(f"User {user_id} ({user.username}) deleted by admin {admin.id}")
         return {"message": "User deleted"}
+        
     except IntegrityError as e:
         db.rollback()
-        logger.error(f"Failed to delete user {user_id}: IntegrityError - {str(e)}")
+        logger.error(f"Failed to delete user {user_id}: IntegrityError - {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete user due to database constraints: {str(e)}"
