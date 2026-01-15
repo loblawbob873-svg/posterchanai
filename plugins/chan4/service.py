@@ -581,17 +581,26 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
     
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error fetching 4chan catalog: {e.response.status_code}")
+        logger.error(f"Response text preview: {e.response.text[:500] if hasattr(e.response, 'text') else 'N/A'}")
         if e.response.status_code == 404:
             raise ValueError(f"Board /{board}/ not found. Check board name.")
         elif e.response.status_code == 403:
-            raise ValueError(f"Access denied to /{board}/. The board may be restricted.")
-        raise ValueError(f"HTTP error {e.response.status_code} fetching /{board}/ catalog")
+            raise ValueError(f"Access denied to /{board}/. The board may be restricted or blocked.")
+        elif e.response.status_code == 503:
+            raise ValueError(f"4chan service unavailable (503). The site may be down or blocking requests.")
+        raise ValueError(f"HTTP error {e.response.status_code} fetching /{board}/ catalog. Check proxy configuration and network connectivity.")
     except httpx.RequestError as e:
         logger.error(f"Request error fetching 4chan catalog: {e}")
-        raise ValueError(f"Failed to connect to 4chan. Check proxy configuration.")
-    except Exception as e:
-        logger.error(f"Error fetching 4chan catalog: {e}")
+        raise ValueError(f"Failed to connect to 4chan. Check proxy configuration and ensure proxy is running.")
+    except ValueError as e:
+        # Re-raise proxy requirement errors
+        if "proxy" in str(e).lower():
+            raise
+        logger.error(f"ValueError fetching 4chan catalog: {e}")
         raise
+    except Exception as e:
+        logger.error(f"Unexpected error fetching 4chan catalog: {e}", exc_info=True)
+        raise ValueError(f"Error fetching /{board}/ catalog: {str(e)}. Check logs for details.")
     
     logger.info(f"Returning {len(threads[:limit])} threads from fetch_board_catalog for /{board}/")
     return threads[:limit]

@@ -15,6 +15,7 @@ from time import mktime
 
 from plugins.rss.models import RssFeed, RssEntry
 from app.models import User
+from app.services.proxy_utils import require_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,12 @@ class RssService:
         - error: Error message if failed
         """
         try:
-            async with aiohttp.ClientSession() as session:
+            # Proxy is required for RSS feed fetching
+            proxy_config = require_proxy("RSS feed fetching")
+            
+            # aiohttp uses connector for proxy
+            connector = aiohttp.ProxyConnector.from_url(proxy_config)
+            async with aiohttp.ClientSession(connector=connector) as session:
                 headers = {"User-Agent": "Mozilla/5.0 (compatible; Posterchanai/1.0)"}
                 async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status != 200:
@@ -246,7 +252,12 @@ class RssService:
         Used when RSS content is too short.
         """
         try:
-            async with aiohttp.ClientSession() as session:
+            # Proxy is required for RSS article fetching
+            proxy_config = require_proxy("RSS article fetching")
+            
+            # aiohttp uses connector for proxy
+            connector = aiohttp.ProxyConnector.from_url(proxy_config)
+            async with aiohttp.ClientSession(connector=connector) as session:
                 headers = {"User-Agent": "Mozilla/5.0 (compatible; Posterchanai/1.0)"}
                 async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status != 200:

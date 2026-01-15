@@ -9,6 +9,7 @@ from app.database import get_db
 from app.models import User, Setting
 from app.auth import get_current_user
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
+from app.services.proxy_utils import require_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +27,15 @@ async def fetch_headlines_from_url(url: str) -> dict:
     if not url.startswith("http"):
         url = f"https://{url}"
 
+    # Proxy is required for news fetching
+    proxy_config = require_proxy("News fetching")
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxy=proxy_config) as client:
         try:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
@@ -268,7 +272,10 @@ async def summarize_article(
     import re
     from bs4 import BeautifulSoup
 
-    try:
+        try:
+        # Proxy is required for news article fetching
+        proxy_config = require_proxy("News article fetching")
+        
         # Fetch the article with full browser-like headers
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -284,7 +291,7 @@ async def summarize_article(
             "Sec-Fetch-User": "?1",
             "Cache-Control": "max-age=0",
         }
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, proxy=proxy_config) as client:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
             html = response.text

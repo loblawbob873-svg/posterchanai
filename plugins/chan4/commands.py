@@ -58,9 +58,27 @@ All requests are routed through Tor proxy for privacy."""
         threads = await fetch_board_catalog(board, limit=20)
         
         if not threads:
+            # Provide more helpful error message with troubleshooting
             return {
                 "type": "text",
-                "content": f"No threads found on /{board}/. The board may be empty or unavailable."
+                "content": f"""No threads found on /{board}/. 
+
+**Possible causes:**
+1. Proxy connection issue - verify proxy is working
+2. Board may be temporarily unavailable
+3. Network/connectivity issue
+4. 4chan may be blocking requests
+
+**Troubleshooting:**
+- Check application logs for detailed error messages
+- Verify proxy is configured in Admin Settings → Site Settings → BitTorrent Client → HTTP Proxy Host
+- Try a different board (e.g., `4chan b` for Random)
+- Ensure Tor and HTTP proxy are running
+
+**Check logs for:**
+- "Fetching 4chan /{board}/catalog via proxy: ..."
+- "Found X thread links in HTML"
+- Any HTTP error codes or connection errors"""
             }
         
         # Collect images from thread thumbnails
