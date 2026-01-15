@@ -424,7 +424,11 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
                                         choice["message"]["content"] = strip_thinking_tags(choice["message"]["content"])
                             return result
                     except (NoHealthyServersError, Exception) as e:
-                        logger.warning(f"Load balancer request failed ({type(e).__name__}: {e}), falling back to local inference")
+                        # NoHealthyServersError is expected when remote returns empty stream - fallback is automatic
+                        if isinstance(e, NoHealthyServersError):
+                            logger.debug(f"Load balancer: {e} - falling back to local inference")
+                        else:
+                            logger.warning(f"Load balancer request failed ({type(e).__name__}: {e}), falling back to local inference")
                         # Fall through to local inference
             else:
                 logger.info("No healthy servers from load balancer, using local inference")

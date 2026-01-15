@@ -47,16 +47,13 @@ async def check_image_server_health(server: str) -> bool:
 
 async def get_healthy_image_server(servers: List[str]) -> Optional[str]:
     """
-    Get next healthy image server using round-robin.
-    Skips unhealthy servers, re-checks them after IMAGE_HEALTH_CHECK_INTERVAL.
-    Returns None if no healthy servers available.
+    Get next image server using simple round-robin (50/50 distribution).
+    No health checking - just pure round-robin alternation.
     """
-    global _image_server_cycle, _image_server_list, _image_server_health
+    global _image_server_cycle, _image_server_list
 
     if not servers:
         return None
-
-    current_time = time.time()
 
     async with _image_cycle_lock:
         # Reset cycle if server list changed
@@ -65,51 +62,10 @@ async def get_healthy_image_server(servers: List[str]) -> Optional[str]:
             _image_server_cycle = cycle(servers)
             logger.info(f"Image load balancer initialized with {len(servers)} server(s): {servers}")
 
-    # Try each server in round-robin order
-    tried = set()
-    while len(tried) < len(servers):
-        async with _image_cycle_lock:
-            server = next(_image_server_cycle)
-
-        if server in tried:
-            continue
-        tried.add(server)
-
-        # Check cached health status
-        async with _image_health_lock:
-            if server in _image_server_health:
-                is_healthy, last_check = _image_server_health[server]
-
-                # If healthy, use it
-                if is_healthy:
-                    logger.info(f"Selected healthy image server: {server}")
-                    return server
-
-                # If unhealthy but check is stale, re-check
-                if current_time - last_check < IMAGE_HEALTH_CHECK_INTERVAL:
-                    logger.info(f"Skipping unhealthy image server: {server} (checked {current_time - last_check:.0f}s ago)")
-                    continue
-            else:
-                # First time seeing this server, assume healthy
-                _image_server_health[server] = (True, current_time)
-                logger.info(f"Selected image server (first use): {server}")
-                return server
-
-        # Do health check for previously failed server
-        logger.info(f"Health checking image server {server}...")
-        is_healthy = await check_image_server_health(server)
-
-        async with _image_health_lock:
-            _image_server_health[server] = (is_healthy, current_time)
-
-        if is_healthy:
-            logger.info(f"Image server {server} is now healthy")
-            return server
-        else:
-            logger.warning(f"Image server {server} still unhealthy")
-
-    logger.warning("No healthy image servers available")
-    return None
+        # Simple round-robin - get next server
+        server = next(_image_server_cycle)
+        logger.info(f"Selected image server (round-robin): {server}")
+        return server
 
 
 async def mark_image_server_unhealthy(server: str):

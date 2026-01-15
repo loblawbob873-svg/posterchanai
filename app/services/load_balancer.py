@@ -292,10 +292,10 @@ class LoadBalancer:
 
                     total_time = time.time() - start_time
                     if chunk_count == 0:
-                        logger.warning(f"STREAM COMPLETE from {server} | chunks=0 | total_time={total_time:.2f}s | WARNING: No chunks received! This may indicate a load balancing loop or the remote server doesn't have updated code.")
+                        logger.info(f"STREAM COMPLETE from {server} | chunks=0 | total_time={total_time:.2f}s | Remote server returned empty stream (may need code update), falling back to local")
                         # Don't mark as unhealthy immediately - might just need code update
                         # Instead, raise exception to trigger fallback to local, but keep server in rotation
-                        raise NoHealthyServersError(f"Remote server {server} returned empty stream (likely load balancing loop or missing code update)")
+                        raise NoHealthyServersError(f"Remote server {server} returned empty stream (remote may need code update - falling back to local)")
                     else:
                         logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={total_time:.2f}s")
                         # Mark as healthy if we got chunks

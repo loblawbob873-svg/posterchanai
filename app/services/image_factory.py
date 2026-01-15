@@ -79,27 +79,40 @@ async def generate_image_with_load_balancing(
     # If vram_mode is llm_only, always use remote servers (no local image generation)
     force_remote = vram_mode == "llm_only"
 
-    # If remote image servers are configured, use them exclusively
+    # If remote image servers are configured, use load balancing
     if servers:
+        from app.services.image_load_balancer import get_healthy_image_server
+        from app.services.load_balancer import is_self_url
+        
         timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
-        load_balancer = ImageLoadBalancer(servers, timeout=timeout)
-        logger.info(f"Using remote image server(s) from load balancer: {servers}")
-        try:
-            result = await load_balancer.generate_image(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                width=width,
-                height=height,
-                steps=steps,
-                cfg=cfg,
-            )
-            return result  # Return even if None - don't fall back to local
-        except Exception as e:
-            logger.error(f"Remote image generation failed: {e}")
-            return None  # Return None instead of falling back to local
+        selected_server = await get_healthy_image_server(servers)
+        
+        if selected_server:
+            # Check if selected server is THIS instance
+            if is_self_url(selected_server):
+                logger.info(f"Image load balancer: selected {selected_server} -> LOCAL inference (self detected)")
+                # Fall through to local inference below (with GPU lock)
+            else:
+                # Remote server - make HTTP request
+                logger.info(f"Image load balancer: selected {selected_server} -> REMOTE")
+                load_balancer = ImageLoadBalancer([selected_server], timeout=timeout)
+                try:
+                    result = await load_balancer.generate_image(
+                        prompt=prompt,
+                        negative_prompt=negative_prompt,
+                        width=width,
+                        height=height,
+                        steps=steps,
+                        cfg=cfg,
+                    )
+                    return result  # Return even if None - don't fall back to local
+                except Exception as e:
+                    logger.error(f"Remote image generation failed: {e}")
+                    return None  # Return None instead of falling back to local
 
-    # No remote servers - use local backend with LOCK to prevent GPU overload
-    logger.info("Using local backend for image generation (serialized)")
+    # Use local backend with GPU LOCK to prevent GPU overload
+    # This handles both: no remote servers configured, and when "self" is selected by load balancer
+    logger.info("Using local backend for image generation (serialized with GPU lock)")
     result = None
     try:
         # Use shared GPU lock to prevent LLM and image from running simultaneously
