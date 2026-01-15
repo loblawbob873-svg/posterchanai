@@ -371,15 +371,28 @@ class DiffusersService:
                     # Works for both NVIDIA CUDA and AMD ROCm
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
+                    # Reset memory stats to help with fragmentation
+                    try:
+                        torch.cuda.reset_peak_memory_stats()
+                    except Exception:
+                        pass
+                    # Additional aggressive cleanup
+                    torch.cuda.empty_cache()
                     # ROCm may need additional cleanup
                     if is_rocm():
-                        # Reset memory stats and run IPC collect for ROCm
-                        torch.cuda.reset_peak_memory_stats()
                         try:
                             torch.cuda.ipc_collect()
                         except Exception:
                             pass
                         logger.debug("Cleared ROCm HIP memory cache")
+                    else:
+                        # NVIDIA CUDA - log memory stats after cleanup
+                        try:
+                            allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+                            reserved = torch.cuda.memory_reserved() / 1024**3  # GB
+                            logger.info(f"CUDA memory after cleanup: {allocated:.2f} GB allocated, {reserved:.2f} GB reserved")
+                        except Exception:
+                            pass
             except Exception as e:
                 logger.warning(f"Error during GPU memory cleanup: {e}")
 
