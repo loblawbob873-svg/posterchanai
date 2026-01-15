@@ -130,9 +130,17 @@ async def fetch_thread_posts(board: str, thread_id: int, proxy_config: str) -> L
                 except Exception as e:
                     logger.debug(f"Error parsing post: {e}")
                     continue
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error fetching thread {thread_id}: {e.response.status_code}")
+        return []
+    except httpx.RequestError as e:
+        logger.error(f"Request error fetching thread {thread_id}: {e}")
+        return []
     except Exception as e:
-        logger.error(f"Error fetching thread {thread_id}: {e}")
+        logger.error(f"Error fetching thread {thread_id}: {e}", exc_info=True)
+        return []
     
+    logger.debug(f"Fetched {len(posts)} posts from thread {thread_id} on /{board}/")
     return posts
 
 
@@ -363,7 +371,10 @@ async def fetch_all_front_page_posts(board: str, limit: int = 20) -> Tuple[List[
     threads = await fetch_board_catalog(board, limit=limit)
     
     if not threads:
+        logger.warning(f"No threads found in catalog for /{board}/")
         return [], []
+    
+    logger.info(f"Found {len(threads)} threads in catalog for /{board}/, fetching posts...")
     
     # Fetch all posts from each thread
     all_posts = []
@@ -382,13 +393,17 @@ async def fetch_all_front_page_posts(board: str, limit: int = 20) -> Tuple[List[
     # Collect all posts and images
     for result in results:
         if isinstance(result, Exception):
-            logger.debug(f"Error fetching thread posts: {result}")
+            logger.warning(f"Error fetching thread posts: {result}", exc_info=True)
+            continue
+        if not result:
+            logger.debug(f"Thread returned no posts")
             continue
         for post in result:
             all_posts.append(post)
             if post.image_url:
                 all_images.append(post.image_url)
     
+    logger.info(f"Fetched {len(all_posts)} total posts from {len(threads)} threads on /{board}/")
     return all_posts, all_images
 
 

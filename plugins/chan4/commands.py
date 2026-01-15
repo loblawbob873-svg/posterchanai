@@ -57,6 +57,17 @@ All requests are routed through Tor proxy for privacy."""
         # Fetch all posts from front page threads
         posts, images = await fetch_all_front_page_posts(board, limit=20)
         
+        # If no posts found, try to show catalog threads instead
+        if not posts:
+            logger.info(f"No posts found, falling back to catalog view for /{board}/")
+            threads = await fetch_board_catalog(board, limit=20)
+            if threads:
+                formatted = format_catalog_results(threads, board)
+                return {
+                    "type": "text",
+                    "content": formatted
+                }
+        
         # Format results
         formatted = format_posts_results(posts, board)
         
