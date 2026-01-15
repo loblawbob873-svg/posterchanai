@@ -74,6 +74,7 @@ GENERATE: geni <prompt>
 YOUTUBE: yt <url> (summarize), ytdl <url> (download)
 
 TORRENTS: torrents, torrents list, torrents download/pause/resume/rm <num>
+4CHAN: 4chan <board>, 4chang <board> (e.g., 4chan g, 4chan pol)
 
 TRANSLATE: translate <language>
 

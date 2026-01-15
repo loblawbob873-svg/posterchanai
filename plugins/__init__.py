@@ -79,6 +79,11 @@ def load_plugin(plugin_name: str, app: Optional[FastAPI] = None) -> bool:
             if hasattr(commands, handler_name):
                 _command_handlers[plugin_name] = getattr(commands, handler_name)
                 logger.info(f"Plugin '{plugin_name}' command handler registered")
+            # Also check for alternative handler names (e.g., chan4 -> handle_chan4_command)
+            alt_handler_name = handler_name.replace("_", "")
+            if hasattr(commands, alt_handler_name):
+                _command_handlers[plugin_name] = getattr(commands, alt_handler_name)
+                logger.info(f"Plugin '{plugin_name}' command handler registered (alt name)")
         except ImportError:
             pass
             
@@ -123,7 +128,12 @@ def stop_plugin_schedulers():
 
 def get_command_handler(command: str) -> Optional[Callable]:
     """Get command handler for a plugin command."""
-    return _command_handlers.get(command)
+    # Map command names to plugin names
+    command_to_plugin = {
+        "chan4": "chan4",  # 4chan/4chang commands use chan4 plugin
+    }
+    plugin_name = command_to_plugin.get(command, command)
+    return _command_handlers.get(plugin_name)
 
 
 def get_plugin_commands() -> Dict[str, str]:
@@ -147,7 +157,7 @@ def get_plugin_commands() -> Dict[str, str]:
 def load_enabled_plugins(app: Optional[FastAPI] = None):
     """Load all plugins (routers always loaded, schedulers only if enabled)."""
     # List of known plugins - routers are always loaded for API access
-    known_plugins = ['rss']
+    known_plugins = ['rss', 'chan4']
     
     for plugin_name in known_plugins:
         # Always load the plugin (router, models, commands)

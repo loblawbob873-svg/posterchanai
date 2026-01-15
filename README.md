@@ -78,7 +78,7 @@ AI Chat Application with OpenAI-compatible API, image generation, web search, an
 - **Full-featured terminal client** - Access all features from the command line
 - **Vim-style navigation** - h/l for panels, j/k for scrolling
 - **Cyberpunk theme** - Styled with cyan/magenta color scheme
-- **All commands supported** - Mail, calendar, contacts, music, torrents, and more
+- **All commands supported** - Mail, calendar, contacts, music, torrents, 4chan, and more
 - **Real-time streaming** - See AI responses as they generate
 - **Music player** - Built-in audio player with visualizer
 
@@ -914,6 +914,8 @@ Type these commands in the chat (or use the mode buttons):
 | `regen` | Regenerate the last image with a new seed |
 | `yt <url>` | Summarize a YouTube video transcript |
 | `torrents` | Built-in torrent client: browse, download, pause, resume, delete |
+| `nyaa <query>` | Search nyaa.si for anime torrents |
+| `4chan <board>` | Browse 4chan board catalog (e.g., 4chan g, 4chan pol) |
 | `budget` | Budget manager (summary, bills, add, pay) |
 | `firewall` | Firewall status and log search |
 | `cal` | Calendar: today's events, week view, add events (aliases: sched, schedule) |
@@ -1015,7 +1017,7 @@ Works from anywhere, even while typing in input:
 - **Command history** - Use ↑/↓ in input to recall previous commands
 - **File attachments** - Attach files to messages
 - **Music player** - Built-in audio player with visualizer (requires mpv)
-- **All commands** - Full access to mail, calendar, contacts, music, torrents, etc.
+- **All commands** - Full access to mail, calendar, contacts, music, torrents, 4chan, etc.
 
 ### Screenshots
 
@@ -1060,6 +1062,9 @@ Click the microphone button to speak commands naturally. Voice input works in Ch
 
 **Torrents:**
 - "torrents" / "my torrents"
+
+**4chan:**
+- "show me 4chan g" / "4chan pol" / "show me the board pol"
 - "movies" / "tv" / "anime"
 - "download movie 3"
 - "download tv 5"
@@ -1263,7 +1268,7 @@ The intelligent action system automatically detects user intent from natural lan
 
 ### Torrents Command
 
-Built-in BitTorrent client with proxy support for anonymous downloading. Browse torrent sites, download, and manage torrents directly from chat.
+Built-in BitTorrent client with **required Tor proxy support** for anonymous downloading. Browse torrent sites, download, and manage torrents directly from chat. **All torrent and nyaa searches require HTTP proxy to Tor.**
 
 | Subcommand | Description |
 |------------|-------------|
@@ -1290,12 +1295,46 @@ Built-in BitTorrent client with proxy support for anonymous downloading. Browse 
 - `nyaa one piece` - Search for One Piece on nyaa.si
 - `nyaa download 2` - Download result #2
 
+### 4chan Command
+
+Browse 4chan board catalogs with images and thread descriptions. **Requires HTTP proxy to Tor** - all requests are routed through proxy for privacy and security.
+
+**Usage:**
+| Command | Description |
+|---------|-------------|
+| `4chan <board>` | Browse board catalog (e.g., `4chan g`, `4chan pol`) |
+| `4chang <board>` | Alias for `4chan` |
+
+**Popular boards:**
+- `4chan g` - Technology
+- `4chan pol` - Politically Incorrect
+- `4chan b` - Random
+- `4chan a` - Anime & Manga
+- `4chan v` - Video Games
+- `4chan mu` - Music
+- `4chan tv` - Television & Film
+
+**Examples:**
+- `4chan g` - Browse /g/ catalog
+- `4chang pol` - Browse /pol/ catalog
+
 **Features:**
-- **Proxy support** - All traffic routed through HTTP proxy (configurable for Tor)
+- **Tor proxy required** - All requests MUST be routed through HTTP proxy over Tor (configure in Admin Settings)
+- **Image thumbnails** - Displays thread images in results
+- **Clickable links** - Visit threads directly from results
+- **Thread stats** - Shows reply and image counts
+
+**Setup:**
+1. Configure HTTP proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host
+2. Or enable built-in HTTP proxy in Admin → Site Settings → Built-in HTTP Proxy
+
+**Features:**
+- **Tor proxy required** - All torrent/nyaa/4chan requests MUST be routed through HTTP proxy over Tor (configure in Admin Settings)
 - **Progress tracking** - Real-time download/upload speeds and progress bars
 - **Seeding** - Continues seeding after download completes
 - **Category browsing** - Movies, TV, Anime, Games, and more
-- **Nyaa integration** - Direct anime torrent search
+- **Nyaa integration** - Direct anime torrent search (requires proxy)
+- **4chan browsing** - Browse board catalogs (requires proxy)
 
 **Setup:**
 

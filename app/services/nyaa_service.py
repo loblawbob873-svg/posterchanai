@@ -47,10 +47,41 @@ async def search_nyaa(query: str, limit: int = 15) -> list[NyaaResult]:
         "Accept-Encoding": "gzip, deflate",
     }
 
+    # Get proxy configuration
+    proxy_config = None
+    try:
+        from app.database import get_setting
+        proxy_host = get_setting("bt_proxy_host")
+        proxy_port = get_setting("bt_proxy_port", "8118")
+        
+        if proxy_host:
+            proxy_config = {
+                "http://": f"http://{proxy_host}:{proxy_port}",
+                "https://": f"http://{proxy_host}:{proxy_port}",
+            }
+        else:
+            # Fallback to built-in proxy if enabled
+            proxy_enabled = get_setting("proxy_enabled", "false").lower() == "true"
+            if proxy_enabled:
+                proxy_listen_host = get_setting("proxy_listen_host", "127.0.0.1")
+                proxy_listen_port = get_setting("proxy_listen_port", "8118")
+                proxy_config = {
+                    "http://": f"http://{proxy_listen_host}:{proxy_listen_port}",
+                    "https://": f"http://{proxy_listen_host}:{proxy_listen_port}",
+                }
+    except Exception as e:
+        logger.debug(f"Could not get proxy config: {e}")
+
+    # Proxy is REQUIRED for nyaa searches (privacy/security)
+    if not proxy_config:
+        logger.error("Nyaa search requires HTTP proxy to Tor. Configure bt_proxy_host or enable built-in proxy.")
+        raise ValueError("Nyaa search requires HTTP proxy to Tor. Please configure proxy in Admin Settings.")
+    
     results = []
 
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        logger.info(f"Searching nyaa.si via proxy: {proxy_config}")
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxies=proxy_config) as client:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
 

@@ -72,10 +72,41 @@ async def scrape_torrents(db: Session, category: str = "movies", limit: int = 15
         "Accept-Encoding": "gzip, deflate",
     }
 
+    # Get proxy configuration
+    proxy_config = None
+    try:
+        from app.database import get_setting
+        proxy_host = get_setting("bt_proxy_host")
+        proxy_port = get_setting("bt_proxy_port", "8118")
+        
+        if proxy_host:
+            proxy_config = {
+                "http://": f"http://{proxy_host}:{proxy_port}",
+                "https://": f"http://{proxy_host}:{proxy_port}",
+            }
+        else:
+            # Fallback to built-in proxy if enabled
+            proxy_enabled = get_setting("proxy_enabled", "false").lower() == "true"
+            if proxy_enabled:
+                proxy_listen_host = get_setting("proxy_listen_host", "127.0.0.1")
+                proxy_listen_port = get_setting("proxy_listen_port", "8118")
+                proxy_config = {
+                    "http://": f"http://{proxy_listen_host}:{proxy_listen_port}",
+                    "https://": f"http://{proxy_listen_host}:{proxy_listen_port}",
+                }
+    except Exception as e:
+        logger.debug(f"Could not get proxy config: {e}")
+
+    # Proxy is REQUIRED for torrent searches (privacy/security)
+    if not proxy_config:
+        logger.error("Torrent search requires HTTP proxy to Tor. Configure bt_proxy_host or enable built-in proxy.")
+        raise ValueError("Torrent search requires HTTP proxy to Tor. Please configure proxy in Admin Settings.")
+    
     results = []
 
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        logger.info(f"Fetching torrents via proxy: {proxy_config}")
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxies=proxy_config) as client:
             response = await client.get(base_url, headers=headers)
             response.raise_for_status()
 
@@ -249,10 +280,41 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
         "Accept-Encoding": "gzip, deflate",
     }
 
+    # Get proxy configuration
+    proxy_config = None
+    try:
+        from app.database import get_setting
+        proxy_host = get_setting("bt_proxy_host")
+        proxy_port = get_setting("bt_proxy_port", "8118")
+        
+        if proxy_host:
+            proxy_config = {
+                "http://": f"http://{proxy_host}:{proxy_port}",
+                "https://": f"http://{proxy_host}:{proxy_port}",
+            }
+        else:
+            # Fallback to built-in proxy if enabled
+            proxy_enabled = get_setting("proxy_enabled", "false").lower() == "true"
+            if proxy_enabled:
+                proxy_listen_host = get_setting("proxy_listen_host", "127.0.0.1")
+                proxy_listen_port = get_setting("proxy_listen_port", "8118")
+                proxy_config = {
+                    "http://": f"http://{proxy_listen_host}:{proxy_listen_port}",
+                    "https://": f"http://{proxy_listen_host}:{proxy_listen_port}",
+                }
+    except Exception as e:
+        logger.debug(f"Could not get proxy config: {e}")
+
+    # Proxy is REQUIRED for torrent searches (privacy/security)
+    if not proxy_config:
+        logger.error("Torrent search requires HTTP proxy to Tor. Configure bt_proxy_host or enable built-in proxy.")
+        raise ValueError("Torrent search requires HTTP proxy to Tor. Please configure proxy in Admin Settings.")
+    
     results = []
 
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        logger.info(f"Searching torrents via proxy: {proxy_config}")
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, proxies=proxy_config) as client:
             logger.info(f"Searching torrents: {search_url}")
             response = await client.get(search_url, headers=headers)
             response.raise_for_status()
@@ -288,10 +350,11 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
 
             async def fetch_magnet(title, detail_url, row):
                 try:
-                    async with httpx.AsyncClient(timeout=10) as detail_client:
+                    # Proxy is required - use same proxy config for detail requests
+                    async with httpx.AsyncClient(timeout=10, proxies=proxy_config) as detail_client:
                         detail_resp = await detail_client.get(detail_url, headers=headers)
                         detail_soup = BeautifulSoup(detail_resp.text, "lxml")
-
+                        
                         # Find magnet link on detail page
                         magnet_link = detail_soup.find("a", href=re.compile(r"^magnet:\?"))
                         if not magnet_link:

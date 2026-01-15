@@ -171,6 +171,8 @@ class CommandService:
         "ytdl": "Download YouTube: ytdl <url> | ytdl video <url>",
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
+        "4chan": "4chan boards: 4chan <board>",
+        "4chang": "4chan boards: 4chang <board>",
         "news": "RSS news (alias for rss sync)",
         "dailynews": "Web news: dailynews <source>",
         "rss": "RSS feeds: rss | rss sync | rss add <url> | rss remove <id> | rss search <query>",
@@ -189,6 +191,7 @@ class CommandService:
         "flood": "torrents",  # Combine flood into torrents command
         "torrent": "torrents",  # Allow singular form
         "bt": "torrents",  # Short alias for torrents
+        "4chang": "4chan",  # Alias for 4chan
         "yt-dlp": "ytdl",  # YouTube download alias
         "youtube": "yt",  # YouTube summarize alias
     }
@@ -294,6 +297,8 @@ class CommandService:
             return await self._torrents_command(arg)
         elif command == "nyaa":
             return await self._nyaa_command(arg)
+        elif command in ("4chan", "4chang"):
+            return await self._chan4_command(arg)
         elif command == "news":
             return await self._news_command(arg)
         elif command == "dailynews":
@@ -412,23 +417,52 @@ class CommandService:
         # Lock is handled inside image_factory for local generation only
         # Remote requests (load balanced or custom user endpoint) run in parallel
         try:
+            logger.info(f"Generating image with prompt: {prompt[:100]}...")
             image_data = await generate_image_for_user(
                 db=self.db,
                 user=self.user,
                 prompt=prompt,
             )
         except Exception as e:
-            logger.error(f"Image generation exception: {e}")
-            return {"type": "text", "content": f"Image generation error: {str(e)}"}
+            logger.error(f"Image generation exception: {e}", exc_info=True)
+            return {"type": "text", "content": f"Image generation error: {str(e)}\n\nCheck logs for details."}
 
         if stop_check and stop_check():
             return {"type": "text", "content": "Generation cancelled."}
 
         if not image_data:
-            return {
-                "type": "text",
-                "content": "Failed to generate image. Check that ComfyUI/image server is running and configured in settings.",
-            }
+            # Get backend info for better error message
+            from app.services.image_factory import get_image_backend_info
+            backend_info = get_image_backend_info(self.db)
+            backend_type = backend_info.get("backend", "unknown")
+            
+            error_msg = "## ❌ Image Generation Failed\n\n"
+            
+            if backend_type == "comfyui":
+                comfyui_url = backend_info.get("comfyui_url", "")
+                if not comfyui_url:
+                    error_msg += "**ComfyUI URL not configured.**\n\n"
+                    error_msg += "Go to Admin → Services → Image Generation and set the ComfyUI URL.\n"
+                else:
+                    error_msg += f"**ComfyUI backend configured** (`{comfyui_url}`)\n\n"
+                    error_msg += "Possible issues:\n"
+                    error_msg += "- ComfyUI server is not running\n"
+                    error_msg += "- ComfyUI server is not accessible at the configured URL\n"
+                    error_msg += "- Check server logs for errors\n"
+            elif backend_type == "native":
+                error_msg += "**Native diffusers backend**\n\n"
+                error_msg += "Possible issues:\n"
+                error_msg += "- Model not loaded (check VRAM availability)\n"
+                error_msg += "- Generation failed (check logs)\n"
+                error_msg += "- GPU/XPU not available\n"
+            else:
+                error_msg += "**Image backend not properly configured.**\n\n"
+                error_msg += "Go to Admin → Services → Image Generation to configure.\n"
+            
+            error_msg += "\n**Prompt:** " + prompt
+            logger.warning(f"Image generation returned None for prompt: {prompt[:100]}...")
+            
+            return {"type": "text", "content": error_msg}
 
         return {
             "type": "generated_image",
@@ -1242,6 +1276,14 @@ Example: `yt https://youtube.com/watch?v=...`""",
             except asyncio.TimeoutError:
                 logger.error(f"Torrent search timed out for query: {query}")
                 return {"type": "text", "content": f"Search timed out. The torrent site may be slow or unavailable."}
+            except ValueError as e:
+                # Proxy requirement error
+                if "proxy" in str(e).lower():
+                    return {
+                        "type": "text",
+                        "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
+                    }
+                raise
             except Exception as e:
                 logger.error(f"Torrent search error: {e}")
                 return {"type": "text", "content": f"Error searching torrents: {str(e)}"}
@@ -1257,6 +1299,14 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
                 formatted = format_all_categories(all_results)
                 return {"type": "text", "content": formatted}
+            except ValueError as e:
+                # Proxy requirement error
+                if "proxy" in str(e).lower():
+                    return {
+                        "type": "text",
+                        "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
+                    }
+                raise
             except Exception as e:
                 logger.error(f"Torrents command error: {e}")
                 return {"type": "text", "content": f"Error fetching torrents: {str(e)}"}
@@ -1288,6 +1338,24 @@ Example: `yt https://youtube.com/watch?v=...`""",
             return {"type": "text", "content": formatted}
 
         except Exception as e:
+            if isinstance(e, ValueError) and "proxy" in str(e).lower():
+                # Proxy requirement error
+                return {
+                    "type": "text",
+                    "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
+                }
+            if isinstance(e, ValueError) and "proxy" in str(e).lower():
+                # Proxy requirement error
+                return {
+                    "type": "text",
+                    "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
+                }
+            if isinstance(e, ValueError) and "proxy" in str(e).lower():
+                # Proxy requirement error
+                return {
+                    "type": "text",
+                    "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
+                }
             logger.error(f"Torrents command error: {e}")
             return {"type": "text", "content": f"Error fetching torrents: {str(e)}"}
 
@@ -1375,9 +1443,29 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
             return {"type": "text", "content": formatted}
 
+        except ValueError as e:
+            # Proxy requirement error
+            return {
+                "type": "text",
+                "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
+            }
         except Exception as e:
             logger.error(f"Nyaa command error: {e}")
             return {"type": "text", "content": f"Error searching nyaa.si: {str(e)}"}
+
+    async def _chan4_command(self, arg: str) -> dict:
+        """Browse 4chan board catalog"""
+        from plugins import get_command_handler
+        
+        handler = get_command_handler("chan4")
+        if handler:
+            return await handler(arg, self.user, self.db)
+        
+        # Fallback if plugin not loaded
+        return {
+            "type": "text",
+            "content": "4chan plugin not available. Please contact administrator."
+        }
 
     async def _news_command(self, arg: str) -> dict:
         """Get news - redirects to native RSS plugin or dailynews"""
