@@ -982,9 +982,18 @@ function initContactsModal() {
             }
 
             console.log('Updating contact:', uid, 'with:', updates);
+            
+            // Get CSRF token from cookie
+            const csrfToken = document.cookie.split('; ')
+                .find(row => row.startsWith('csrf_token='))
+                ?.split('=')[1] || '';
+            
             const response = await fetch(`/api/mail/contacts/${uid}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': csrfToken
+                },
                 body: JSON.stringify(updates)
             });
 

@@ -1,11 +1,13 @@
 """
 Mail Router - API endpoints for email functionality.
 """
-from fastapi import APIRouter, Body, Depends, HTTPException
-from fastapi.responses import Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Optional
+import logging
+import traceback
 
 from app.database import get_db
 from app.auth import get_current_user
@@ -90,45 +92,43 @@ async def get_contact(
 @router.put("/contacts/{uid}")
 async def update_contact(
     uid: str,
-    updates: ContactUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
-) -> dict:
+):
     """Update a contact by UID."""
-    import logging
-    import traceback
     logger = logging.getLogger(__name__)
     
     try:
-        # Convert Pydantic model to dict, excluding unset values
-        try:
-            updates_dict = updates.model_dump(exclude_unset=True)
-        except AttributeError:
-            updates_dict = {k: v for k, v in updates.dict().items() if v is not None}
+        # Parse JSON body manually
+        body = await request.json()
+        logger.info(f"Update contact request: uid={uid}, body={body}")
         
-        logger.info(f"Update contact request: uid={uid}, updates={updates_dict}")
+        # Filter to allowed fields
+        allowed_fields = {"name", "phone", "email", "organization", "note"}
+        updates_dict = {k: v for k, v in body.items() if k in allowed_fields and v is not None}
+        
+        if not updates_dict:
+            return JSONResponse({"success": False, "error": "No valid fields to update"})
         
         config = get_user_contacts_config(current_user.id, db)
         if not config:
-            return {"success": False, "error": "CardDAV not configured"}
+            return JSONResponse({"success": False, "error": "CardDAV not configured"})
 
         contact = get_user_contact_by_uid(current_user.id, db, uid)
         if not contact:
-            return {"success": False, "error": f"Contact not found: {uid}"}
-
-        if not updates_dict:
-            return {"success": False, "error": "No valid fields to update"}
+            return JSONResponse({"success": False, "error": f"Contact not found: {uid}"})
 
         success = edit_user_contact(current_user.id, db, uid, updates_dict)
         if not success:
-            return {"success": False, "error": "CardDAV server rejected the update"}
+            return JSONResponse({"success": False, "error": "CardDAV server rejected the update"})
 
-        return {"success": True, "message": "Contact updated"}
+        return JSONResponse({"success": True, "message": "Contact updated"})
     
     except Exception as e:
         error_trace = traceback.format_exc()
         logger.error(f"Exception updating contact: {error_trace}")
-        return {"success": False, "error": str(e), "trace": error_trace}
+        return JSONResponse({"success": False, "error": str(e), "trace": error_trace})
 
 
 @router.get("/attachment/{account_hint}/{uid}/{index}")
