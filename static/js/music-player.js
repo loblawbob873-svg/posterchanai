@@ -320,47 +320,69 @@ class MusicPlayer {
         const mediaSession = navigator.mediaSession;
 
         // Set action handlers for media keys
+        // Note: These must be set before playback starts for some browsers
         try {
+            // Clear any existing handlers first
+            try {
+                mediaSession.setActionHandler('play', null);
+                mediaSession.setActionHandler('pause', null);
+                mediaSession.setActionHandler('previoustrack', null);
+                mediaSession.setActionHandler('nexttrack', null);
+                mediaSession.setActionHandler('stop', null);
+            } catch (e) {
+                // Ignore errors when clearing
+            }
+
             mediaSession.setActionHandler('play', () => {
-                if (!this.isPlaying) {
-                    this.audio.play();
+                console.log('Media Session: play action triggered');
+                if (!this.isPlaying && this.audio) {
+                    this.audio.play().catch(e => console.error('Media Session play error:', e));
                 }
             });
 
             mediaSession.setActionHandler('pause', () => {
-                if (this.isPlaying) {
+                console.log('Media Session: pause action triggered');
+                if (this.isPlaying && this.audio) {
                     this.audio.pause();
                 }
             });
 
             mediaSession.setActionHandler('previoustrack', () => {
+                console.log('Media Session: previous track action triggered');
                 this.prev();
             });
 
             mediaSession.setActionHandler('nexttrack', () => {
+                console.log('Media Session: next track action triggered');
                 this.next();
             });
 
             mediaSession.setActionHandler('stop', () => {
+                console.log('Media Session: stop action triggered');
                 this.stop();
             });
 
             // Seek handlers (optional, for seek buttons)
-            mediaSession.setActionHandler('seekbackward', (details) => {
-                const skipTime = details.seekOffset || 10;
-                if (this.audio) {
-                    this.audio.currentTime = Math.max(0, this.audio.currentTime - skipTime);
-                }
-            });
+            try {
+                mediaSession.setActionHandler('seekbackward', (details) => {
+                    const skipTime = details.seekOffset || 10;
+                    if (this.audio) {
+                        this.audio.currentTime = Math.max(0, this.audio.currentTime - skipTime);
+                    }
+                });
 
-            mediaSession.setActionHandler('seekforward', (details) => {
-                const skipTime = details.seekOffset || 10;
-                if (this.audio && this.audio.duration) {
-                    this.audio.currentTime = Math.min(this.audio.duration, this.audio.currentTime + skipTime);
-                }
-            });
+                mediaSession.setActionHandler('seekforward', (details) => {
+                    const skipTime = details.seekOffset || 10;
+                    if (this.audio && this.audio.duration) {
+                        this.audio.currentTime = Math.min(this.audio.duration, this.audio.currentTime + skipTime);
+                    }
+                });
+            } catch (e) {
+                // Seek handlers may not be supported in all browsers
+                console.debug('Seek handlers not supported:', e);
+            }
 
-            console.log('Media Session API handlers registered');
+            console.log('Media Session API handlers registered successfully');
         } catch (error) {
             console.warn('Error setting up Media Session API:', error);
         }
@@ -371,12 +393,21 @@ class MusicPlayer {
         if (!('mediaSession' in navigator)) return;
 
         try {
-            navigator.mediaSession.metadata = new MediaMetadata({
+            const metadata = {
                 title: track.title || track.filename || 'Unknown Track',
                 artist: track.artist || '',
-                album: track.album || '',
-                artwork: track.artwork ? [{ src: track.artwork }] : []
-            });
+                album: track.album || ''
+            };
+            
+            // Add artwork if available
+            if (track.artwork) {
+                metadata.artwork = [{ src: track.artwork }];
+            } else if (track.thumbnail_url) {
+                metadata.artwork = [{ src: track.thumbnail_url }];
+            }
+            
+            navigator.mediaSession.metadata = new MediaMetadata(metadata);
+            console.log('Media Session metadata updated:', metadata.title);
         } catch (error) {
             console.warn('Error updating Media Session metadata:', error);
         }
@@ -387,11 +418,9 @@ class MusicPlayer {
         if (!('mediaSession' in navigator)) return;
 
         try {
-            if (this.isPlaying) {
-                navigator.mediaSession.playbackState = 'playing';
-            } else {
-                navigator.mediaSession.playbackState = 'paused';
-            }
+            const state = this.isPlaying ? 'playing' : 'paused';
+            navigator.mediaSession.playbackState = state;
+            console.log('Media Session playback state updated:', state);
         } catch (error) {
             console.warn('Error updating Media Session playback state:', error);
         }
@@ -410,6 +439,11 @@ class MusicPlayer {
 
         // Setup audio context on first user interaction
         this.setupAudioContext();
+        
+        // Ensure Media Session API is set up before playing
+        if ('mediaSession' in navigator) {
+            this.setupMediaSession();
+        }
 
         if (track) {
             // Add to queue if not already there
@@ -428,14 +462,19 @@ class MusicPlayer {
 
         const currentTrack = this.queue[this.currentIndex];
         this.audio.src = this.getStreamUrl(currentTrack);
-        this.audio.play();
+        
+        // Update Media Session metadata BEFORE playing (required by some browsers)
+        this.updateMediaSessionMetadata(currentTrack);
+        
+        this.audio.play().catch(e => {
+            console.error('Error playing audio:', e);
+        });
 
         // Update UI
-        this.container.querySelector('.music-track-title').textContent = currentTrack.title || currentTrack.filename || 'Unknown';
-        this.container.querySelector('.music-track-artist').textContent = currentTrack.artist || '';
-
-        // Update Media Session metadata
-        this.updateMediaSessionMetadata(currentTrack);
+        if (this.container) {
+            this.container.querySelector('.music-track-title').textContent = currentTrack.title || currentTrack.filename || 'Unknown';
+            this.container.querySelector('.music-track-artist').textContent = currentTrack.artist || '';
+        }
 
         this.show();
         this.updateQueueUI();
@@ -549,7 +588,12 @@ class MusicPlayer {
         this.container.classList.add('playing');
         this.container.querySelector('#music-play').innerHTML = '&#10074;&#10074;';
         this.startVisualizer();
+        // Update Media Session immediately when playback starts
         this.updateMediaSessionPlaybackState();
+        // Ensure handlers are still registered (some browsers clear them)
+        if ('mediaSession' in navigator) {
+            this.setupMediaSession();
+        }
     }
 
     onPause() {
@@ -557,6 +601,7 @@ class MusicPlayer {
         this.container.classList.remove('playing');
         this.container.querySelector('#music-play').innerHTML = '&#9654;';
         this.stopVisualizer();
+        // Update Media Session immediately when playback pauses
         this.updateMediaSessionPlaybackState();
     }
 
