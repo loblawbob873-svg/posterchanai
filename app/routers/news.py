@@ -219,7 +219,13 @@ async def get_headlines(
     current_user: User = Depends(get_current_user)
 ):
     """Get news headlines from a source with AI summaries"""
-    print(f"[NEWS] === get_headlines called for: {source_url} ===")
+    # Multiple ways to ensure we see the log
+    logger.warning(f"[NEWS] === get_headlines called for: {source_url} ===")
+    print(f"[NEWS] === get_headlines called for: {source_url} ===", flush=True)
+    
+    # Also write to a file for debugging
+    with open("/tmp/news_debug.log", "a") as f:
+        f.write(f"get_headlines called for: {source_url}\n")
     from app.models import Conversation, Message
 
     sources = get_user_news_sources(current_user, db)
