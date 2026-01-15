@@ -78,34 +78,59 @@ class MessageFormatter {
 
         // Process markdown links BEFORE escaping (preserve URLs)
         const links = [];
-        // Match http/https links - handle URLs with balanced parens or no parens
-        processed = processed.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+(?:\([^)]*\)[^)\s]*)*)\)/g, (match, text, url) => {
+        // First, fix malformed links where URL is on a new line (most common issue)
+        // Pattern: [text](\nhttps://... or [text](\nwww....
+        // This handles cases where the URL starts on the next line after the opening paren
+        processed = processed.replace(/\[([^\]]+)\]\(\s*\n\s*(https?:\/\/[^\s\)\n]+)/g, (match, text, url) => {
             const index = links.length;
-            links.push({ text, url, external: true });
+            links.push({ text: text.trim(), url: url.trim(), external: true });
+            return `\x00LINK${index}\x00`;
+        });
+        processed = processed.replace(/\[([^\]]+)\]\(\s*\n\s*(www\.[^\s\)\n]+)/g, (match, text, url) => {
+            const index = links.length;
+            links.push({ text: text.trim(), url: 'https://' + url.trim(), external: true });
+            return `\x00LINK${index}\x00`;
+        });
+        // Also handle cases where there's a closing paren on a later line: [text](\nurl\n)
+        processed = processed.replace(/\[([^\]]+)\]\(\s*\n\s*(https?:\/\/[^\s\)\n]+)\s*\n\s*\)/g, (match, text, url) => {
+            const index = links.length;
+            links.push({ text: text.trim(), url: url.trim(), external: true });
+            return `\x00LINK${index}\x00`;
+        });
+        processed = processed.replace(/\[([^\]]+)\]\(\s*\n\s*(www\.[^\s\)\n]+)\s*\n\s*\)/g, (match, text, url) => {
+            const index = links.length;
+            links.push({ text: text.trim(), url: 'https://' + url.trim(), external: true });
+            return `\x00LINK${index}\x00`;
+        });
+        // Match http/https links - handle URLs with balanced parens (e.g., Wikipedia)
+        // Allow whitespace around the URL
+        processed = processed.replace(/\[([^\]]+)\]\(\s*(https?:\/\/[^)\s]+(?:\([^)]*\)[^)\s]*)*)\s*\)/g, (match, text, url) => {
+            const index = links.length;
+            links.push({ text: text.trim(), url: url.trim(), external: true });
             return `\x00LINK${index}\x00`;
         });
         // Match www. links
-        processed = processed.replace(/\[([^\]]+)\]\((www\.[^)]+)\)/g, (match, text, url) => {
+        processed = processed.replace(/\[([^\]]+)\]\(\s*(www\.[^)\s]+(?:\([^)]*\)[^)\s]*)*)\s*\)/g, (match, text, url) => {
             const index = links.length;
-            links.push({ text, url: 'https://' + url, external: true });
+            links.push({ text: text.trim(), url: 'https://' + url.trim(), external: true });
             return `\x00LINK${index}\x00`;
         });
         // Match tel: links (phone numbers)
-        processed = processed.replace(/\[([^\]]+)\]\((tel:[^)]+)\)/g, (match, text, url) => {
+        processed = processed.replace(/\[([^\]]+)\]\(\s*(tel:[^)\s]+)\s*\)/g, (match, text, url) => {
             const index = links.length;
-            links.push({ text, url, external: false });
+            links.push({ text: text.trim(), url: url.trim(), external: false });
             return `\x00LINK${index}\x00`;
         });
         // Match mailto: links (email addresses)
-        processed = processed.replace(/\[([^\]]+)\]\((mailto:[^)]+)\)/g, (match, text, url) => {
+        processed = processed.replace(/\[([^\]]+)\]\(\s*(mailto:[^)\s]+)\s*\)/g, (match, text, url) => {
             const index = links.length;
-            links.push({ text, url, external: false });
+            links.push({ text: text.trim(), url: url.trim(), external: false });
             return `\x00LINK${index}\x00`;
         });
         // Match relative URL links (starting with /)
-        processed = processed.replace(/\[([^\]]+)\]\((\/[^)]+)\)/g, (match, text, url) => {
+        processed = processed.replace(/\[([^\]]+)\]\(\s*(\/[^)\s]+)\s*\)/g, (match, text, url) => {
             const index = links.length;
-            links.push({ text, url, external: false, download: true });
+            links.push({ text: text.trim(), url: url.trim(), external: false, download: true });
             return `\x00LINK${index}\x00`;
         });
 
