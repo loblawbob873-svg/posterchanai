@@ -202,6 +202,29 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             follow_redirects=True,
             proxy=proxy_config
         ) as client:
+            # First, test basic connectivity to 4chan
+            connectivity_ok = False
+            try:
+                test_response = await client.get(f"{CHAN4_BASE_URL}/", timeout=10)
+                logger.info(f"4chan connectivity test: status={test_response.status_code}, length={len(test_response.text)}")
+                if test_response.status_code == 200:
+                    connectivity_ok = True
+                else:
+                    logger.warning(f"4chan main page returned {test_response.status_code}, may be blocked")
+                    # If main page fails, catalog will likely fail too
+                    if test_response.status_code in [403, 503]:
+                        raise ValueError(f"4chan is blocking requests (HTTP {test_response.status_code}). The site may be blocking proxy/Tor connections.")
+            except httpx.RequestError as e:
+                logger.error(f"4chan connectivity test failed - cannot reach 4chan: {e}")
+                raise ValueError(f"Cannot connect to 4chan through proxy. Check proxy configuration and ensure proxy is running. Error: {str(e)}")
+            except ValueError:
+                raise  # Re-raise proxy blocking errors
+            except Exception as e:
+                logger.warning(f"4chan connectivity test failed: {e}")
+            
+            if not connectivity_ok:
+                logger.warning("4chan connectivity test failed, but continuing with catalog fetch...")
+            
             # Try JSON first, fallback to HTML
             json_url = f"{CHAN4_BASE_URL}/{board}/catalog.json"
             try:
@@ -283,8 +306,14 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             
             # Quick check: if HTML is very short, might be an error page
             if len(html) < 500:
-                logger.error(f"HTML response is suspiciously short ({len(html)} chars). Content: {html}")
-                raise ValueError(f"Received suspiciously short response from 4chan. May be blocked or error page.")
+                logger.error(f"HTML response is suspiciously short ({len(html)} chars). Content: {html[:1000]}")
+                # Check if it's a specific error message
+                if "cloudflare" in html.lower():
+                    raise ValueError(f"4chan is using Cloudflare protection. The site may be blocking proxy/Tor connections.")
+                elif "access denied" in html.lower() or "blocked" in html.lower():
+                    raise ValueError(f"4chan is blocking access. The site may be blocking proxy/Tor connections.")
+                else:
+                    raise ValueError(f"Received suspiciously short response from 4chan ({len(html)} chars). May be blocked or error page. Response: {html[:500]}")
         
             # Check if we got an error page
             if "404" in html or "not found" in html.lower() or "error" in html.lower()[:500]:
@@ -417,6 +446,23 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                 logger.info(f"Using {len(thread_divs)} threads from link extraction")
             
             logger.info(f"Total found: {len(thread_divs)} thread containers in HTML")
+            
+            # If we found no containers and no links, log the HTML structure for debugging
+            if not thread_divs and not link_threads:
+                logger.error(f"No thread containers or links found. HTML structure analysis:")
+                # Check for common HTML elements
+                body = soup.find("body")
+                if body:
+                    logger.error(f"Body found, contains {len(body.find_all())} elements")
+                    # Look for any divs
+                    all_divs = soup.find_all("div")
+                    logger.error(f"Total divs in page: {len(all_divs)}")
+                    if all_divs:
+                        # Show classes of first 10 divs
+                        div_classes = [div.get("class") for div in all_divs[:10]]
+                        logger.error(f"First 10 div classes: {div_classes}")
+                else:
+                    logger.error("No body tag found in HTML")
             
             # If we still have no thread divs but have link_threads, extract minimal info
             if not thread_divs and link_threads:
@@ -603,6 +649,14 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
         raise ValueError(f"Error fetching /{board}/ catalog: {str(e)}. Check logs for details.")
     
     logger.info(f"Returning {len(threads[:limit])} threads from fetch_board_catalog for /{board}/")
+    
+    if not threads:
+        # Log detailed diagnostic information
+        logger.error(f"DIAGNOSTIC: No threads found for /{board}/")
+        logger.error(f"  - Proxy config: {proxy_config}")
+        logger.error(f"  - Catalog URL: {catalog_url}")
+        logger.error(f"  - This indicates either: proxy not working, 4chan blocking, or parsing failed")
+    
     return threads[:limit]
 
 
