@@ -2365,10 +2365,33 @@ Return ONLY valid JSON, no other text.""",
 
                 # Use AI to extract event details
                 import time as time_module
-                from datetime import date, datetime
+                from datetime import date, datetime, timedelta
 
                 today = date.today()
+                today_datetime = datetime.now()
                 local_tz = time_module.tzname[0]
+                
+                # Calculate what day of week today is (0=Monday, 6=Sunday)
+                today_weekday = today.weekday()  # 0=Monday, 1=Tuesday, ..., 6=Sunday
+                weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                today_name = weekday_names[today_weekday]
+                
+                # Calculate next Friday (if today is not Friday)
+                days_until_friday = (4 - today_weekday) % 7
+                if days_until_friday == 0:
+                    # Today is Friday - check if it means today or next Friday
+                    next_friday = today + timedelta(days=7)
+                else:
+                    next_friday = today + timedelta(days=days_until_friday)
+                
+                # Calculate next occurrence of each weekday for reference
+                next_weekdays = {}
+                for i, day_name in enumerate(weekday_names):
+                    days_until = (i - today_weekday) % 7
+                    if days_until == 0:
+                        next_weekdays[day_name] = today + timedelta(days=7)  # Next week
+                    else:
+                        next_weekdays[day_name] = today + timedelta(days=days_until)
 
                 email_content = f"From: {msg.sender}\nSubject: {msg.subject}\nDate: {msg.date}\n\n{msg.body_text}"
 
@@ -2393,15 +2416,34 @@ For recurrence patterns (ONLY use if explicitly stated):
 CRITICAL: If the event is on a SPECIFIC DATE (e.g., "Wednesday Jan 14", "next Friday", "tomorrow"), DO NOT add rrule - set it to null.
 Only use rrule if the email says "every", "recurring", "repeating", or similar recurring language.
 
-IMPORTANT: Today is {today.strftime("%A, %B %d, %Y")}. Use the current year {today.year} for dates.
+IMPORTANT: Today is {today_name}, {today.strftime("%B %d, %Y")} (weekday {today_weekday}, where 0=Monday, 6=Sunday). Use the current year {today.year} for dates.
 
-CRITICAL DATE CALCULATION RULES:
-- If email says "Friday" and today is Thursday, the event is TOMORROW (next day) - calculate the actual date
-- If email says "Friday" and today is Friday, check if it means today or next Friday based on context
-- If email says "Friday" and today is Saturday/Sunday/Monday/Tuesday/Wednesday, it means the UPCOMING Friday (this week or next week)
-- Always calculate the ACTUAL calendar date (YYYY-MM-DD) - never use relative terms like "Friday" in the date field
-- Example: If today is Thursday Jan 16, 2025 and email says "Friday at 9:50 AM", use "2025-01-17T09:50:00"
-- Example: If today is Saturday Jan 18, 2025 and email says "Friday at 9:50 AM", use "2025-01-24T09:50:00" (next Friday)
+CRITICAL DATE CALCULATION - YOU MUST CALCULATE THE EXACT DATE:
+When the email mentions a day of the week (like "Friday", "Monday", etc.), calculate the ACTUAL calendar date:
+
+- If email says "Friday" and today is {today_name}:
+  - The next Friday is: {next_friday.strftime("%A, %B %d, %Y")} = {next_friday.strftime("%Y-%m-%d")}
+  - USE THIS DATE: {next_friday.strftime("%Y-%m-%d")}
+
+- Reference dates for ALL weekdays (use these exact dates):
+  - Next Monday = {next_weekdays['Monday'].strftime("%Y-%m-%d")} ({next_weekdays['Monday'].strftime("%A, %B %d")})
+  - Next Tuesday = {next_weekdays['Tuesday'].strftime("%Y-%m-%d")} ({next_weekdays['Tuesday'].strftime("%A, %B %d")})
+  - Next Wednesday = {next_weekdays['Wednesday'].strftime("%Y-%m-%d")} ({next_weekdays['Wednesday'].strftime("%A, %B %d")})
+  - Next Thursday = {next_weekdays['Thursday'].strftime("%Y-%m-%d")} ({next_weekdays['Thursday'].strftime("%A, %B %d")})
+  - Next Friday = {next_friday.strftime("%Y-%m-%d")} ({next_friday.strftime("%A, %B %d")})
+  - Next Saturday = {next_weekdays['Saturday'].strftime("%Y-%m-%d")} ({next_weekdays['Saturday'].strftime("%A, %B %d")})
+  - Next Sunday = {next_weekdays['Sunday'].strftime("%Y-%m-%d")} ({next_weekdays['Sunday'].strftime("%A, %B %d")})
+
+- CRITICAL: If email says "Friday", use the date {next_friday.strftime("%Y-%m-%d")} (which is {next_friday.strftime("%A")})
+- CRITICAL: If email says "Monday", use the date {next_weekdays['Monday'].strftime("%Y-%m-%d")}
+- CRITICAL: If email says "Tuesday", use the date {next_weekdays['Tuesday'].strftime("%Y-%m-%d")}
+- CRITICAL: If email says "Wednesday", use the date {next_weekdays['Wednesday'].strftime("%Y-%m-%d")}
+- CRITICAL: If email says "Thursday", use the date {next_weekdays['Thursday'].strftime("%Y-%m-%d")}
+- CRITICAL: If email says "Saturday", use the date {next_weekdays['Saturday'].strftime("%Y-%m-%d")}
+- CRITICAL: If email says "Sunday", use the date {next_weekdays['Sunday'].strftime("%Y-%m-%d")}
+
+- Always use the EXACT date from the reference above - never guess or calculate differently
+- Example: If email says "Friday at 9:50 AM", use "{next_friday.strftime('%Y-%m-%d')}T09:50:00" (NOT any other date)
 
 Times are in local timezone ({local_tz}). Do NOT add Z suffix to times.
 Return ONLY valid JSON, no other text.""",
