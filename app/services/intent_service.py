@@ -169,9 +169,14 @@ FIREWALL & LOGS:
 "Check firewall" -> firewall
 "Search firewall logs for 192.168.1.1" -> firewall search 192.168.1.1
 
+RSS/NEWS:
+"Check my news feeds" -> rss sync
+"Sync RSS feeds" -> rss sync
+"Add RSS feed https://example.com/feed" -> rss add https://example.com/feed
+"List my feeds" -> rss
+
 OTHER:
 "Show help" -> help
-"Refresh Miniflux" -> miniflux
 
 NO ACTION (just chat):
 "Hello" -> none

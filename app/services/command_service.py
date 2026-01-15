@@ -291,8 +291,6 @@ class CommandService:
             return await self._dailynews_command(arg)
         elif command == "logs":
             return await self._logs_command(arg)
-        elif command == "miniflux":
-            return await self._miniflux_command(arg)
         elif command == "rss":
             # Delegate to RSS plugin
             from plugins import get_command_handler
@@ -1345,12 +1343,9 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             return {"type": "text", "content": f"Error searching nyaa.si: {str(e)}"}
 
     async def _news_command(self, arg: str) -> dict:
-        """Get unread news from Miniflux with AI summaries"""
-        import re
-        from datetime import datetime
-
+        """Get news - redirects to native RSS plugin or dailynews"""
         if not self.user:
-            return {"type": "text", "content": "Please log in to use Miniflux news."}
+            return {"type": "text", "content": "Please log in to use the news command."}
 
         parts = arg.strip().split()
         subcommand = parts[0].lower() if parts else ""
@@ -1361,92 +1356,17 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
         if subcommand and any(kw in subcommand for kw in news_source_keywords):
             return await self._dailynews_command(arg)
 
-        # Check if user has Miniflux enabled
-        if not self.user.miniflux_enabled:
-            return {
-                "type": "text",
-                "content": "Miniflux is disabled for your account. Enable it in settings.\n\nTip: Use `dailynews` to get news from web sources instead.",
-            }
-
-        # Get Miniflux service
-        miniflux = MinifluxService.from_settings(self.db, self.user)
-        if not miniflux:
-            return {
-                "type": "text",
-                "content": "Miniflux is not configured. Ask your admin to set it up in the admin panel.\n\nTip: Use `dailynews` to get news from web sources instead.",
-            }
-
-        # Handle refresh - force fetch new articles
-        if subcommand in ("refresh", "fetch", "update"):
-            pass  # Same as default, just fetch
-
-        try:
-            # Fetch unread entries - limit to 10 for faster response
-            entries = await miniflux.get_unread_entries(limit=10)
-
-            if not entries:
-                return {"type": "text", "content": "No unread articles in Miniflux."}
-
-            # Build response with summaries
-            summaries = []
-            entry_ids = []
-
-            # Limit to 3 summaries to prevent hanging
-            import asyncio
-
-            for entry in entries[:3]:
-                entry_id = entry.get("id")
-                title = entry.get("title", "Untitled")
-                url = entry.get("url", "")
-                content = entry.get("content", "")
-                feed_title = entry.get("feed", {}).get("title", "Unknown Feed")
-
-                # Convert HTML to text
-                text_content = re.sub(r"<script[^>]*>.*?</script>", "", content, flags=re.DOTALL | re.IGNORECASE)
-                text_content = re.sub(r"<style[^>]*>.*?</style>", "", text_content, flags=re.DOTALL | re.IGNORECASE)
-                text_content = re.sub(r"<[^>]+>", " ", text_content)
-                text_content = re.sub(r"\s+", " ", text_content).strip()
-
-                # Truncate for summarization
-                if len(text_content) > 3000:
-                    text_content = text_content[:3000] + "..."
-
-                # Generate AI summary with timeout
-                messages = [
-                    {
-                        "role": "system",
-                        "content": "You are a news summarizer. Provide a concise 2-3 sentence summary of this article. Focus on the key facts.",
-                    },
-                    {"role": "user", "content": f"Title: {title}\n\nContent:\n{text_content}"},
-                ]
-
-                try:
-                    # Add 20 second timeout per summary
-                    summary = await asyncio.wait_for(self.chat_service.chat(messages), timeout=20)
-                except asyncio.TimeoutError:
-                    summary = "(Summary timed out)"
-                    logger.warning(f"News summary timed out for: {title}")
-                except Exception as e:
-                    summary = f"(Error summarizing: {str(e)[:50]})"
-                    logger.error(f"News summary error for {title}: {e}")
-
-                # Add copy button for TUI (cmd: link works in TUI)
-                summaries.append(f"**{title}**\n*{feed_title}*\n{url} [Copy URL](cmd:tui-copy {url})\n\n{summary}")
-                entry_ids.append(entry_id)
-
-            # Mark all as read
-            await miniflux.mark_entries_as_read(entry_ids)
-
-            # Format response
-            timestamp = datetime.now().strftime("%B %d, %Y %H:%M")
-            result = f"## News Update - {timestamp}\n\n" + "\n\n---\n\n".join(summaries)
-            result += f"\n\n---\n*Marked {len(entry_ids)} articles as read*"
-
-            # Note if there are more articles available
-            if len(entries) > 3:
-                result += f"\n\n_({len(entries) - 3} more articles available - run `news` again to see more)_"
-
-            return {"type": "text", "content": result}
+        # Redirect to native RSS plugin with sync command
+        from plugins import get_command_handler
+        handler = get_command_handler("rss")
+        if handler:
+            # Pass "sync" to fetch and summarize articles
+            return await handler("sync", self.user, self.db)
+        
+        return {
+            "type": "text",
+            "content": "RSS plugin not enabled. Enable it in Admin → Services, then add feeds in User Settings.\n\nTip: Use `dailynews` to get news from web sources instead.",
+        }
 
         except Exception as e:
             logger.error(f"News command error: {e}")
@@ -1589,25 +1509,6 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
         except Exception as e:
             logger.error(f"Logs command error: {e}")
             return {"type": "text", "content": f"Error collecting logs: {str(e)}"}
-
-    async def _miniflux_command(self, arg: str) -> dict:
-        """Manually trigger Miniflux article fetch"""
-        if not self.user:
-            return {"type": "text", "content": "Please log in to use the miniflux command."}
-
-        # Check if user has Miniflux enabled
-        if not self.user.miniflux_enabled:
-            return {"type": "text", "content": "Miniflux is disabled for your account. Enable it in settings."}
-
-        try:
-            from app.services.miniflux_scheduler import process_miniflux_news_for_user
-
-            await process_miniflux_news_for_user(self.user.id)
-            return {"type": "text", "content": "Miniflux articles fetched and added to your Miniflux conversation."}
-
-        except Exception as e:
-            logger.error(f"Miniflux command error: {e}")
-            return {"type": "text", "content": f"Error fetching Miniflux articles: {str(e)}"}
 
     async def check_youtube_url(self, message: str) -> Optional[dict]:
         """Check if message contains a YouTube URL and summarize it"""
