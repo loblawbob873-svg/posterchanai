@@ -48,17 +48,13 @@ async def check_server_health(server: str, api_key: Optional[str] = None) -> boo
 
 async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) -> Optional[str]:
     """
-    Get next healthy server using round-robin.
-    Skips unhealthy servers, re-checks them after HEALTH_CHECK_INTERVAL.
-    Ensures proper round-robin distribution across all configured nodes.
-    Returns None if no healthy servers available.
+    Get next server using simple round-robin (50/50 distribution).
+    No health checking - just pure round-robin alternation.
     """
-    global _server_cycle, _server_list, _server_health
+    global _server_cycle, _server_list
 
     if not servers:
         return None
-
-    current_time = time.time()
 
     async with _cycle_lock:
         # Reset cycle if server list changed
@@ -67,61 +63,10 @@ async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) 
             _server_cycle = cycle(servers)
             logger.info(f"Load balancer initialized with {len(servers)} server(s): {servers}")
 
-    # Try each server in round-robin order (one full cycle through all servers)
-    # This ensures 50/50 distribution between local and remote servers
-    tried = set()
-    start_server = None
-    
-    while len(tried) < len(servers):
-        # Get next server from round-robin cycle
-        async with _cycle_lock:
-            server = next(_server_cycle)
-            # Track starting point to detect full cycle
-            if start_server is None:
-                start_server = server
-
-        # If we've tried all servers, break
-        if server in tried:
-            # We've completed a full cycle without finding a healthy server
-            break
-        
-        tried.add(server)
-
-        # Self URLs are always "healthy" - we use local inference directly
-        if is_self_url(server):
-            logger.info(f"Selected self URL (local inference): {server}")
-            return server
-
-        # Check cached health status
-        async with _health_lock:
-            if server in _server_health:
-                is_healthy, last_check = _server_health[server]
-
-                # If healthy, use it (round-robin maintained)
-                if is_healthy:
-                    logger.info(f"Selected healthy server: {server} (round-robin)")
-                    return server
-
-                # If unhealthy but check is stale, re-check
-                if current_time - last_check < HEALTH_CHECK_INTERVAL:
-                    logger.debug(f"Skipping unhealthy server: {server} (checked {current_time - last_check:.0f}s ago)")
-                    continue
-
-        # Do health check for this server
-        logger.info(f"Health checking {server}...")
-        is_healthy = await check_server_health(server, api_key)
-
-        async with _health_lock:
-            _server_health[server] = (is_healthy, current_time)
-
-        if is_healthy:
-            logger.info(f"Server {server} is healthy (round-robin)")
-            return server
-        else:
-            logger.warning(f"Server {server} marked unhealthy, trying next server")
-
-    logger.warning("No healthy remote servers available after checking all servers")
-    return None
+        # Simple round-robin - get next server
+        server = next(_server_cycle)
+        logger.info(f"Selected server (round-robin): {server}")
+        return server
 
 
 def is_self_url(url: str, current_port: int = 3051) -> bool:
