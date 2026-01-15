@@ -54,22 +54,26 @@ All requests are routed through Tor proxy for privacy."""
     board = arg.strip().lower()
     
     try:
-        # Fetch all posts from front page threads
-        posts, images = await fetch_all_front_page_posts(board, limit=20)
+        # Fetch catalog threads (faster and more reliable than fetching all posts)
+        threads = await fetch_board_catalog(board, limit=20)
         
-        # If no posts found, try to show catalog threads instead
-        if not posts:
-            logger.info(f"No posts found, falling back to catalog view for /{board}/")
-            threads = await fetch_board_catalog(board, limit=20)
-            if threads:
-                formatted = format_catalog_results(threads, board)
-                return {
-                    "type": "text",
-                    "content": formatted
-                }
+        if not threads:
+            return {
+                "type": "text",
+                "content": f"No threads found on /{board}/. The board may be empty or unavailable."
+            }
         
-        # Format results
-        formatted = format_posts_results(posts, board)
+        # Collect images from thread thumbnails
+        images = []
+        for thread in threads:
+            if thread.image_url:
+                images.append(thread.image_url)
+            elif thread.thumbnail_url:
+                # Use thumbnail if full image not available
+                images.append(thread.thumbnail_url)
+        
+        # Format catalog results
+        formatted = format_catalog_results(threads, board)
         
         # Return with images if available
         if images:

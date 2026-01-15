@@ -131,16 +131,22 @@ async def fetch_thread_posts(board: str, thread_id: int, proxy_config: str) -> L
                     logger.debug(f"Error parsing post: {e}")
                     continue
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error fetching thread {thread_id}: {e.response.status_code}")
+        logger.error(f"HTTP error fetching thread /{board}/thread/{thread_id}: {e.response.status_code} - {e.response.text[:200] if hasattr(e.response, 'text') else ''}")
         return []
     except httpx.RequestError as e:
-        logger.error(f"Request error fetching thread {thread_id}: {e}")
+        logger.error(f"Request error fetching thread /{board}/thread/{thread_id}: {e}")
+        return []
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error for thread /{board}/thread/{thread_id}: {e}")
         return []
     except Exception as e:
-        logger.error(f"Error fetching thread {thread_id}: {e}", exc_info=True)
+        logger.error(f"Error fetching thread /{board}/thread/{thread_id}: {e}", exc_info=True)
         return []
     
-    logger.debug(f"Fetched {len(posts)} posts from thread {thread_id} on /{board}/")
+    if posts:
+        logger.debug(f"Fetched {len(posts)} posts from thread {thread_id} on /{board}/")
+    else:
+        logger.warning(f"No posts found in thread {thread_id} on /{board}/ (thread may be deleted or empty)")
     return posts
 
 
@@ -391,19 +397,29 @@ async def fetch_all_front_page_posts(board: str, limit: int = 20) -> Tuple[List[
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Collect all posts and images
-    for result in results:
+    successful_threads = 0
+    failed_threads = 0
+    for i, result in enumerate(results):
         if isinstance(result, Exception):
-            logger.warning(f"Error fetching thread posts: {result}", exc_info=True)
+            logger.warning(f"Error fetching thread {threads[i].thread_id} posts: {result}", exc_info=True)
+            failed_threads += 1
             continue
         if not result:
-            logger.debug(f"Thread returned no posts")
+            logger.debug(f"Thread {threads[i].thread_id} returned no posts")
+            failed_threads += 1
             continue
+        successful_threads += 1
         for post in result:
             all_posts.append(post)
             if post.image_url:
                 all_images.append(post.image_url)
     
-    logger.info(f"Fetched {len(all_posts)} total posts from {len(threads)} threads on /{board}/")
+    logger.info(f"Fetched {len(all_posts)} total posts from {successful_threads}/{len(threads)} threads on /{board}/ ({failed_threads} failed)")
+    
+    # If we got threads but no posts, log a warning
+    if threads and not all_posts:
+        logger.warning(f"Found {len(threads)} threads but 0 posts. This may indicate an issue fetching individual thread data.")
+    
     return all_posts, all_images
 
 
@@ -429,6 +445,10 @@ def format_catalog_results(threads: List[Chan4Thread], board: str) -> str:
         thread_display = f"**{i}. {subject_escaped}**"
         if comment_escaped:
             thread_display += f"\n   {comment_escaped}"
+        
+        # Add image thumbnail if available
+        if thread.thumbnail_url:
+            thread_display += f"\n   ![Thumb]({thread.thumbnail_url})"
         
         # Add thread link - markdown format will be converted to clickable <a> tag with target="_blank"
         # Ensure link is on its own line for proper parsing
