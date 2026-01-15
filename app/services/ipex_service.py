@@ -526,8 +526,8 @@ class IPEXService:
         start_time = time.time()
 
         # Acquire shared GPU lock to prevent LLM and image from running simultaneously
-        from app.services.locks import gpu_resource_lock
-        async with gpu_resource_lock:
+        from app.services.locks import GPUResourceLock
+        async with GPUResourceLock("LLM", f"REQ-{request_id}"):
             def run_with_lock():
                 global _current_request
                 with _get_inference_semaphore(self.max_concurrent):
@@ -627,8 +627,8 @@ class IPEXService:
                         break
 
         # Acquire shared GPU lock to prevent LLM and image from running simultaneously
-        from app.services.locks import gpu_resource_lock
-        async with gpu_resource_lock:
+        from app.services.locks import GPUResourceLock
+        async with GPUResourceLock("LLM", f"STREAM-{request_id}"):
             def run_streaming():
                 """Run generation in thread, put tokens in queue"""
                 with _get_inference_semaphore(self.max_concurrent):

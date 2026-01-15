@@ -145,8 +145,10 @@ class OllamaService:
         options = self.get_model_options(**kwargs)
 
         # Acquire shared GPU lock to prevent LLM and image from running simultaneously
-        from app.services.locks import gpu_resource_lock
-        async with gpu_resource_lock:
+        from app.services.locks import GPUResourceLock
+        import uuid
+        request_id = f"OLLAMA-{uuid.uuid4().hex[:8]}"
+        async with GPUResourceLock("LLM", request_id):
             # Acquire semaphore for rate limiting
             semaphore = await _get_semaphore(self.max_concurrent)
 
@@ -252,8 +254,9 @@ class OllamaService:
         created = int(time.time())
 
         # Acquire shared GPU lock to prevent LLM and image from running simultaneously
-        from app.services.locks import gpu_resource_lock
-        async with gpu_resource_lock:
+        from app.services.locks import GPUResourceLock
+        request_id = f"OLLAMA-STREAM-{completion_id[:8]}"
+        async with GPUResourceLock("LLM", request_id):
             # Acquire semaphore for rate limiting
             semaphore = await _get_semaphore(self.max_concurrent)
 
@@ -434,8 +437,10 @@ class OllamaService:
         options = self.get_model_options(**kwargs)
 
         # Acquire shared GPU lock to prevent LLM and image from running simultaneously
-        from app.services.locks import gpu_resource_lock
-        async with gpu_resource_lock:
+        from app.services.locks import GPUResourceLock
+        import uuid
+        request_id = f"OLLAMA-GEN-{uuid.uuid4().hex[:8]}"
+        async with GPUResourceLock("LLM", request_id):
             semaphore = await _get_semaphore(self.max_concurrent)
 
             async with semaphore:

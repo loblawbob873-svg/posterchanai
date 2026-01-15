@@ -694,6 +694,7 @@ VRAM modes:
 **Notes:**
 - When using `image_only`, the LLM health check is automatically disabled
 - Sequential processing: Only one image is generated at a time to prevent GPU overload
+- **GPU Resource Serialization**: LLM and image generation requests are automatically serialized per node. Only one type (LLM or image) runs at a time on each node to prevent GPU RAM exhaustion, even with load balancing across multiple nodes
 - CUDA memory fragmentation is handled automatically with `PYTORCH_CUDA_ALLOC_CONF`
 
 #### ComfyUI/External Backend (Recommended for proxy setups)
@@ -758,6 +759,7 @@ Posterchanai supports round-robin load balancing for both chat and image generat
 - Health checks skip unresponsive servers (re-checked after 30 seconds)
 - **Local URLs use local inference directly** (no HTTP loop) - if the selected server is "self", the request is processed locally using the GPU
 - Remote URLs are called via HTTP
+- **GPU Resource Locking**: On each node, LLM and image generation requests are automatically serialized to prevent GPU RAM from being maxed out. Only one type (LLM or image) runs at a time per node, ensuring stable operation even under high load
 
 **Example multi-server setup:**
 ```

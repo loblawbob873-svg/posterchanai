@@ -103,8 +103,8 @@ async def generate_image_with_load_balancing(
     result = None
     try:
         # Use shared GPU lock to prevent LLM and image from running simultaneously
-        from app.services.locks import gpu_resource_lock, image_generation_lock
-        async with gpu_resource_lock:
+        from app.services.locks import GPUResourceLock, image_generation_lock
+        async with GPUResourceLock("Image", f"prompt={prompt[:30]}..."):
             async with image_generation_lock:
                 prepare_vram_for_image(db)
                 backend = get_image_backend(db)

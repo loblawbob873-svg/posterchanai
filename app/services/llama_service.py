@@ -287,8 +287,10 @@ class LlamaService:
         Returns OpenAI-compatible response format.
         """
         # Acquire shared GPU lock to prevent LLM and image from running simultaneously
-        from app.services.locks import gpu_resource_lock
-        async with gpu_resource_lock:
+        from app.services.locks import GPUResourceLock
+        import uuid
+        request_id = f"LLAMA-{uuid.uuid4().hex[:8]}"
+        async with GPUResourceLock("LLM", request_id):
             loop = asyncio.get_event_loop()
 
             # Run synchronous inference in thread pool
@@ -320,8 +322,10 @@ class LlamaService:
         loop = asyncio.get_event_loop()
 
         # Acquire shared GPU lock to prevent LLM and image from running simultaneously
-        from app.services.locks import gpu_resource_lock
-        async with gpu_resource_lock:
+        from app.services.locks import GPUResourceLock
+        import uuid
+        request_id = f"LLAMA-STREAM-{uuid.uuid4().hex[:8]}"
+        async with GPUResourceLock("LLM", request_id):
             def run_streaming():
                 """Run synchronous generation in thread, put SSE chunks in queue"""
                 token_timeout = self.token_timeout
