@@ -2907,7 +2907,11 @@ class ChatHandler {
                 const matches = subs.filter(s => s.toLowerCase().startsWith(lastPart.toLowerCase()));
 
                 console.log('Autocomplete matches:', matches.length, matches);
-                if (matches.length === 1) {
+                // Check for empty lastPart first to show all options
+                if (lastPart === '') {
+                    this.showToast(`${subs.join(' | ')}`);
+                    return;
+                } else if (matches.length === 1) {
                     // Don't add trailing space if match ends with : (like folder hints)
                     const trailingSpace = matches[0].endsWith(':') ? '' : ' ';
                     const completed = cmdPrefix + ' ' + matches[0] + trailingSpace;
@@ -2932,9 +2936,6 @@ class ChatHandler {
                         this.messageInput.setSelectionRange(completed.length, completed.length);
                     }
                     this.showToast(`${matches.join(' | ')}`);
-                    return;
-                } else if (lastPart === '') {
-                    this.showToast(`${subs.join(' | ')}`);
                     return;
                 }
             }
