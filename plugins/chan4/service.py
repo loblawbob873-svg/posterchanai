@@ -383,13 +383,16 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                     thread_divs.extend(divs4)
             
             # PRIMARY METHOD: Search raw HTML with regex FIRST (most reliable - works regardless of HTML structure)
-            logger.info("Searching raw HTML with regex for thread URLs...")
+            logger.info(f"Searching raw HTML ({len(html)} chars) with regex for thread URLs...")
             
             # Try multiple regex patterns to find thread URLs
+            # 4chan uses /board/thread/ID format in URLs
             patterns = [
                 (r'/(\w+)/thread/(\d+)', 'standard'),  # /g/thread/12345678
                 (r'/thread/(\d+)', 'no-board'),  # /thread/12345678 (if board is in URL already)
                 (r'thread[_-]?(\d+)', 'underscore'),  # thread_12345678 or thread-12345678
+                (r'href=["\']([^"\']*/(\w+)/thread/(\d+)[^"\']*)["\']', 'href-with-board'),  # href="/g/thread/12345678"
+                (r'data-thread-id=["\']?(\d+)["\']?', 'data-attr'),  # data-thread-id="12345678"
             ]
             
             regex_matches = []
@@ -397,15 +400,43 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                 matches = re.findall(pattern, html, re.IGNORECASE)
                 if matches:
                     logger.info(f"Pattern '{name}' ({pattern}) found {len(matches)} matches")
+                    # Show first few matches for debugging
+                    if len(matches) > 0:
+                        logger.info(f"  First 3 matches: {matches[:3]}")
+                    
                     if name == 'standard':
                         regex_matches = matches
+                        logger.info(f"✓ Using standard pattern with {len(regex_matches)} matches")
                         break
+                    elif name == 'href-with-board':
+                        # Extract (board, thread_id) from href matches - matches are tuples like (full_href, board, thread_id)
+                        try:
+                            regex_matches = [(m[1], m[2]) if isinstance(m, tuple) and len(m) >= 3 else (board, str(m)) for m in matches]
+                            logger.info(f"✓ Using href pattern with {len(regex_matches)} matches")
+                            break
+                        except (IndexError, TypeError) as e:
+                            logger.warning(f"Error parsing href matches: {e}, matches: {matches[:3]}")
+                            continue
                     elif name == 'no-board' and not regex_matches:
-                        # Convert to (board, thread_id) format
-                        regex_matches = [(board, tid) for tid in matches]
+                        # Convert to (board, thread_id) format using current board
+                        regex_matches = [(board, str(tid)) for tid in matches]
+                        logger.info(f"✓ Using no-board pattern with {len(regex_matches)} matches (using board: {board})")
                         break
+                    elif name == 'data-attr' and not regex_matches:
+                        # Convert to (board, thread_id) format
+                        regex_matches = [(board, str(tid)) for tid in matches]
+                        logger.info(f"✓ Using data-attr pattern with {len(regex_matches)} matches (using board: {board})")
+                        break
+                else:
+                    logger.debug(f"Pattern '{name}' found 0 matches")
             
             logger.info(f"Total found: {len(regex_matches)} thread URLs via regex in raw HTML")
+            
+            # If we found matches but they're in wrong format, try to fix
+            if regex_matches and isinstance(regex_matches[0], str):
+                # Single string matches - convert to (board, thread_id)
+                logger.warning(f"Regex matches are in wrong format, converting...")
+                regex_matches = [(board, str(m)) for m in regex_matches]
             
             # Use regex matches if we found any (most reliable method)
             if regex_matches:
