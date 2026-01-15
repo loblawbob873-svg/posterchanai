@@ -287,15 +287,15 @@ class MusicPlayer {
                 return;
             }
 
-            // Alt+N or Arrow Right: Next track
-            if ((e.altKey && e.key === 'n') || (e.key === 'ArrowRight' && !e.ctrlKey && !e.shiftKey && !e.metaKey)) {
+            // Alt+F: Skip forward (next track)
+            if (e.altKey && e.key === 'f') {
                 e.preventDefault();
                 this.next();
                 return;
             }
 
-            // Alt+B or Arrow Left: Previous track
-            if ((e.altKey && e.key === 'b') || (e.key === 'ArrowLeft' && !e.ctrlKey && !e.shiftKey && !e.metaKey)) {
+            // Alt+R: Skip back (previous track)
+            if (e.altKey && e.key === 'r') {
                 e.preventDefault();
                 this.prev();
                 return;

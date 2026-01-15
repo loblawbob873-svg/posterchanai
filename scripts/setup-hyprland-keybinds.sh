@@ -1,6 +1,6 @@
 #!/bin/bash
 # Setup script to add Hyprland keybinds for music controls
-# This adds Alt+P, Alt+N, Alt+B, Alt+S shortcuts
+# This adds Alt+P, Alt+F, Alt+R, Alt+S shortcuts
 
 HYPRLAND_CONFIG="${HOME}/.config/hypr/hyprland.conf"
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hyprland-music-control.sh"
@@ -41,8 +41,8 @@ fi
 echo "" >> "$HYPRLAND_CONFIG"
 echo "$KEYBINDS_MARKER" >> "$HYPRLAND_CONFIG"
 echo "bind = ALT, P, exec, $SCRIPT_PATH toggle" >> "$HYPRLAND_CONFIG"
-echo "bind = ALT, N, exec, $SCRIPT_PATH next" >> "$HYPRLAND_CONFIG"
-echo "bind = ALT, B, exec, $SCRIPT_PATH prev" >> "$HYPRLAND_CONFIG"
+echo "bind = ALT, F, exec, $SCRIPT_PATH next" >> "$HYPRLAND_CONFIG"
+echo "bind = ALT, R, exec, $SCRIPT_PATH prev" >> "$HYPRLAND_CONFIG"
 echo "bind = ALT, S, exec, $SCRIPT_PATH stop" >> "$HYPRLAND_CONFIG"
 echo "" >> "$HYPRLAND_CONFIG"
 
@@ -50,8 +50,8 @@ echo -e "${GREEN}✓ Keybinds added to $HYPRLAND_CONFIG${NC}"
 echo ""
 echo "Added shortcuts:"
 echo "  Alt+P - Play/Pause"
-echo "  Alt+N - Next track"
-echo "  Alt+B - Previous track"
+echo "  Alt+F - Skip forward (next track)"
+echo "  Alt+R - Skip back (previous track)"
 echo "  Alt+S - Stop"
 echo ""
 echo "To apply, reload Hyprland:"

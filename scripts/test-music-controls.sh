@@ -221,8 +221,8 @@ test_keyboard_shortcuts() {
     
     print_info "Expected shortcuts in browser:"
     echo "  - Space or Alt+P: Play/Pause"
-    echo "  - Alt+N or →: Next track"
-    echo "  - Alt+B or ←: Previous track"
+            echo "  - Alt+F: Skip forward (next track)"
+            echo "  - Alt+R: Skip back (previous track)"
     echo "  - Alt+S: Stop"
     
     if [ "$YDOTOOL_AVAILABLE" = "1" ]; then

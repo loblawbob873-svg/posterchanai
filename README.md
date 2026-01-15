@@ -1005,8 +1005,8 @@ Works from anywhere, even while typing in input:
 | Key | Action |
 |-----|--------|
 | `Alt+P` or `Space` | Play/Pause |
-| `Alt+N` or `→` | Next track |
-| `Alt+B` or `←` | Previous track |
+| `Alt+F` | Skip forward (next track) |
+| `Alt+R` | Skip back (previous track) |
 | `Alt+S` | Stop |
 | **System Media Keys** | Automatically work via Media Session API |
 
@@ -1217,17 +1217,17 @@ Run the setup script to automatically add keybinds:
 ./scripts/setup-hyprland-keybinds.sh
 ```
 
-This will add Alt+P, Alt+N, Alt+B, Alt+S shortcuts to your `~/.config/hypr/hyprland.conf`.
+This will add Alt+P, Alt+F, Alt+R, Alt+S shortcuts to your `~/.config/hypr/hyprland.conf`.
 
 **Manual Setup:**
 
 Or manually add to `~/.config/hypr/hyprland.conf`:
 
 ```bash
-# Custom keyboard shortcuts (Alt+P, Alt+N, Alt+B, Alt+S)
+# Custom keyboard shortcuts (Alt+P, Alt+F, Alt+R, Alt+S)
 bind = ALT, P, exec, /home/verita84/posterchanai/scripts/hyprland-music-control.sh toggle
-bind = ALT, N, exec, /home/verita84/posterchanai/scripts/hyprland-music-control.sh next
-bind = ALT, B, exec, /home/verita84/posterchanai/scripts/hyprland-music-control.sh prev
+bind = ALT, F, exec, /home/verita84/posterchanai/scripts/hyprland-music-control.sh next
+bind = ALT, R, exec, /home/verita84/posterchanai/scripts/hyprland-music-control.sh prev
 bind = ALT, S, exec, /home/verita84/posterchanai/scripts/hyprland-music-control.sh stop
 ```
 

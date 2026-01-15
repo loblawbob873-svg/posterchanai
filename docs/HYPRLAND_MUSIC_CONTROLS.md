@@ -19,16 +19,16 @@ Posterchanai includes a ready-to-use script at `scripts/hyprland-music-control.s
 Add to `~/.config/hypr/hyprland.conf`:
 
 ```bash
-# Custom keyboard shortcuts (Alt+P, Alt+N, Alt+B, Alt+S)
+# Custom keyboard shortcuts (Alt+P, Alt+F, Alt+R, Alt+S)
 bind = ALT, P, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh toggle
-bind = ALT, N, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh next
-bind = ALT, B, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh prev
+bind = ALT, F, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh next
+bind = ALT, R, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh prev
 bind = ALT, S, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh stop
 
 # Alternative: Use Super key instead of Alt
 # bind = SUPER, P, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh toggle
-# bind = SUPER, N, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh next
-# bind = SUPER, B, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh prev
+# bind = SUPER, F, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh next
+# bind = SUPER, R, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh prev
 
 # Optional: Also bind media keys if your keyboard has them
 # bind = , XF86AudioPlay, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh toggle
@@ -94,12 +94,12 @@ case "$ACTION" in
         xdotool key --window $(xdotool search --class "$BROWSER" | head -1) space
         ;;
     next)
-        # Send Alt+N or Arrow Right
-        xdotool key --window $(xdotool search --class "$BROWSER" | head -1) alt+n
+        # Send Alt+F (next track)
+        xdotool key --window $(xdotool search --class "$BROWSER" | head -1) alt+f
         ;;
     prev|previous)
-        # Send Alt+B or Arrow Left
-        xdotool key --window $(xdotool search --class "$BROWSER" | head -1) alt+b
+        # Send Alt+R (previous track)
+        xdotool key --window $(xdotool search --class "$BROWSER" | head -1) alt+r
         ;;
     stop)
         # Send Alt+S
@@ -155,10 +155,10 @@ case "$ACTION" in
         ydotool key 57:1 57:0  # Space key
         ;;
     next)
-        ydotool key 29:1 49:1 29:0 49:0  # Alt+N
+        ydotool key 29:1 33:1 29:0 33:0  # Alt+F
         ;;
     prev|previous)
-        ydotool key 29:1 48:1 29:0 48:0  # Alt+B
+        ydotool key 29:1 19:1 29:0 19:0  # Alt+R
         ;;
     stop)
         ydotool key 29:1 31:1 29:0 31:0  # Alt+S
