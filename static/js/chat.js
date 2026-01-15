@@ -1743,8 +1743,13 @@ class ChatHandler {
     }
 
     handleCommandResponse(data) {
+        // Always hide typing indicator and reset button first
         this.hideTypingIndicator();
         this.resetSendButton();
+        
+        // Ensure we're not in streaming mode
+        this.isStreaming = false;
+        this.streamingMessage = null;
 
         let html = this.formatMessage(data.content || '');
 
@@ -1810,6 +1815,9 @@ class ChatHandler {
         }
 
         this.addMessage('assistant', html, true);
+        
+        // Ensure UI is updated and scroll to bottom
+        this.scrollToBottom();
 
         // Notify mascot
         if (window.mascotController) {
@@ -1834,11 +1842,19 @@ class ChatHandler {
     }
 
     handleError(message) {
+        // Always hide typing indicator and reset button
         this.hideTypingIndicator();
         this.resetSendButton();
+        
+        // Ensure we're not in streaming mode
+        this.isStreaming = false;
+        this.streamingMessage = null;
 
         // Show error as assistant message
         this.addMessage('assistant', `Error: ${message}`);
+        
+        // Ensure UI is updated
+        this.scrollToBottom();
 
         // Add retry button to the last user message
         if (this.lastUserMessage && this.lastPayload) {

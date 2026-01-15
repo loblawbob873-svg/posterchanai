@@ -1980,8 +1980,19 @@ Return ONLY valid JSON, no other text.""",
         try:
             if subcommand in ("inbox", ""):
                 # List recent messages from all accounts
-                messages = fetch_all_accounts(self.user.id, self.db, limit_per_account=10)
-                return {"type": "text", "content": format_message_list(messages)}
+                # Wrap in asyncio timeout to prevent hanging
+                import asyncio
+                try:
+                    messages = await asyncio.wait_for(
+                        asyncio.to_thread(fetch_all_accounts, self.user.id, self.db, limit_per_account=10),
+                        timeout=20.0  # 20 second total timeout
+                    )
+                    if not messages:
+                        messages = []  # Ensure it's a list
+                    return {"type": "text", "content": format_message_list(messages)}
+                except asyncio.TimeoutError:
+                    logger.warning("Mail fetch timed out after 20 seconds")
+                    return {"type": "text", "content": "Mail fetch timed out. The mail server may be slow or unreachable. Please try again."}
 
             elif subcommand == "unread":
                 # List unread messages only
@@ -2383,6 +2394,15 @@ CRITICAL: If the event is on a SPECIFIC DATE (e.g., "Wednesday Jan 14", "next Fr
 Only use rrule if the email says "every", "recurring", "repeating", or similar recurring language.
 
 IMPORTANT: Today is {today.strftime("%A, %B %d, %Y")}. Use the current year {today.year} for dates.
+
+CRITICAL DATE CALCULATION RULES:
+- If email says "Friday" and today is Thursday, the event is TOMORROW (next day) - calculate the actual date
+- If email says "Friday" and today is Friday, check if it means today or next Friday based on context
+- If email says "Friday" and today is Saturday/Sunday/Monday/Tuesday/Wednesday, it means the UPCOMING Friday (this week or next week)
+- Always calculate the ACTUAL calendar date (YYYY-MM-DD) - never use relative terms like "Friday" in the date field
+- Example: If today is Thursday Jan 16, 2025 and email says "Friday at 9:50 AM", use "2025-01-17T09:50:00"
+- Example: If today is Saturday Jan 18, 2025 and email says "Friday at 9:50 AM", use "2025-01-24T09:50:00" (next Friday)
+
 Times are in local timezone ({local_tz}). Do NOT add Z suffix to times.
 Return ONLY valid JSON, no other text.""",
                     },
@@ -2396,6 +2416,8 @@ Return ONLY valid JSON, no other text.""",
 
                     # Clean up markdown code blocks if present
                     parsed = parsed.strip()
+                    logger.info(f"Mail extract-event: LLM raw response: {parsed[:500]}")
+                    
                     code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", parsed)
                     if code_block_match:
                         parsed = code_block_match.group(1).strip()
@@ -2405,6 +2427,7 @@ Return ONLY valid JSON, no other text.""",
                             parsed = json_match.group(0)
 
                     event_data = json.loads(parsed)
+                    logger.info(f"Mail extract-event: Parsed event_data: {event_data}")
 
                     # Now add to calendar using existing calendar add logic
                     summary = event_data.get("summary", msg.subject)
@@ -2413,6 +2436,8 @@ Return ONLY valid JSON, no other text.""",
                     end_str = event_data.get("end_time", "")
                     location = event_data.get("location")
                     rrule = event_data.get("rrule")
+                    
+                    logger.info(f"Mail extract-event: Extracted - summary={summary}, start_str={start_str}, end_str={end_str}, location={location}")
 
                     # Strip Z suffix if present
                     if start_str and start_str.endswith("Z"):
@@ -2425,8 +2450,16 @@ Return ONLY valid JSON, no other text.""",
                     from dateutil import parser as date_parser
 
                     # Parse start time
-                    start_time = date_parser.parse(start_str) if start_str else datetime.now() + timedelta(hours=1)
-                    logger.info(f"Calendar add (email) - parsed start_time: {start_time} (tzinfo={start_time.tzinfo})")
+                    if start_str:
+                        start_time = date_parser.parse(start_str)
+                        logger.info(f"Calendar add (email) - LLM returned start_time: {start_str}, parsed as: {start_time} (tzinfo={start_time.tzinfo})")
+                    else:
+                        start_time = datetime.now() + timedelta(hours=1)
+                        logger.warning("Calendar add (email) - No start_time from LLM, using default (now + 1 hour)")
+                    
+                    # Validate the parsed date makes sense (not in the past unless explicitly stated)
+                    if start_time < datetime.now() - timedelta(days=1):
+                        logger.warning(f"Calendar add (email) - Parsed date {start_time} is more than 1 day in the past, this may be incorrect")
 
                     # If timezone included, convert to local naive
                     if start_time.tzinfo is not None:

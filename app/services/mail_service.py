@@ -445,8 +445,9 @@ def validate_mail_server(hostname: str, port: int) -> bool:
 
 
 # Connection timeout in seconds
-MAIL_CONNECTION_TIMEOUT = 15  # Reduced from 30 to prevent long hangs
-MAIL_OPERATION_TIMEOUT = 10  # Timeout for individual IMAP operations
+MAIL_CONNECTION_TIMEOUT = 10  # Reduced to prevent long hangs
+MAIL_OPERATION_TIMEOUT = 8  # Timeout for individual IMAP operations
+MAIL_TOTAL_TIMEOUT = 20  # Maximum total time for mail operations
 
 # Thread pool for running blocking IMAP operations with timeout
 _mail_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="mail_worker")
