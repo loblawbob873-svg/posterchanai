@@ -1004,31 +1004,39 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                 if vcard_uid == contact_uid:
                     # Update the vCard fields
                     if 'name' in updates and updates['name']:
-                        vcard.fn.value = updates['name']
-                        # Update N (structured name) if it exists
+                        # Update FN (formatted name)
+                        if hasattr(vcard, 'fn'):
+                            vcard.fn.value = updates['name']
+                        else:
+                            vcard.add('fn')
+                            vcard.fn.value = updates['name']
+                        # Update N (structured name)
+                        parts = updates['name'].split(' ', 1)
                         if hasattr(vcard, 'n'):
-                            parts = updates['name'].split(' ', 1)
                             vcard.n.value = vobject.vcard.Name(family=parts[-1], given=parts[0] if len(parts) > 1 else '')
                         else:
-                            parts = updates['name'].split(' ', 1)
                             vcard.add('n')
                             vcard.n.value = vobject.vcard.Name(family=parts[-1], given=parts[0] if len(parts) > 1 else '')
 
-                    if 'phone' in updates and updates['phone']:
-                        # Remove existing phone and add new one
+                    if 'phone' in updates:
+                        # Remove existing phone
                         if hasattr(vcard, 'tel'):
                             del vcard.tel
-                        vcard.add('tel')
-                        vcard.tel.value = updates['phone']
-                        vcard.tel.type_param = 'CELL'
+                        # Add new phone if not empty
+                        if updates['phone']:
+                            vcard.add('tel')
+                            vcard.tel.value = updates['phone']
+                            vcard.tel.type_param = 'CELL'
 
-                    if 'email' in updates and updates['email']:
-                        # Remove existing email and add new one
+                    if 'email' in updates:
+                        # Remove existing email
                         if hasattr(vcard, 'email'):
                             del vcard.email
-                        vcard.add('email')
-                        vcard.email.value = updates['email']
-                        vcard.email.type_param = 'INTERNET'
+                        # Add new email if not empty
+                        if updates['email']:
+                            vcard.add('email')
+                            vcard.email.value = updates['email']
+                            vcard.email.type_param = 'INTERNET'
 
                     if 'organization' in updates:
                         if updates['organization']:
