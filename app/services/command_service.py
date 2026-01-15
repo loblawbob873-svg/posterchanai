@@ -1456,15 +1456,38 @@ Example: `yt https://youtube.com/watch?v=...`""",
     async def _chan4_command(self, arg: str) -> dict:
         """Browse 4chan board catalog"""
         from plugins import get_command_handler
+        import logging
+        
+        logger = logging.getLogger(__name__)
         
         handler = get_command_handler("chan4")
         if handler:
+            logger.info("4chan command handler found, executing...")
             return await handler(arg, self.user, self.db)
         
-        # Fallback if plugin not loaded
+        # Fallback if plugin not loaded - provide more details
+        logger.error("4chan plugin handler not found - plugin may not be loaded")
         return {
             "type": "text",
-            "content": "4chan plugin not available. Please contact administrator."
+            "content": """4chan plugin not available. 
+
+**Possible causes:**
+1. Plugin not loaded at startup - check application startup logs
+2. Handler function not found - check logs for plugin loading errors
+3. Service needs restart - restart the application to load plugins
+
+**Check application startup logs for:**
+- "=== PLUGIN LOADING START ==="
+- "Loading plugins: ['rss', 'chan4']"
+- "Plugin 'chan4' loaded successfully"
+- "Plugin 'chan4' command handler registered"
+- "Registered command handlers: ['chan4']"
+- Any import errors or exceptions
+
+**To fix:**
+1. Restart the application/service
+2. Check startup logs for plugin loading messages
+3. Verify plugins/chan4/commands.py exists and contains handle_chan4_command function"""
         }
 
     async def _news_command(self, arg: str) -> dict:

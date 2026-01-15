@@ -79,7 +79,7 @@ def load_plugin(plugin_name: str, app: Optional[FastAPI] = None) -> bool:
             
             # List all available handler functions for debugging
             available_funcs = [name for name in dir(commands) if name.startswith("handle") and callable(getattr(commands, name))]
-            logger.debug(f"Plugin '{plugin_name}' available handler functions: {available_funcs}")
+            logger.info(f"Plugin '{plugin_name}' available handler functions: {available_funcs}")
             
             if hasattr(commands, handler_name):
                 _command_handlers[plugin_name] = getattr(commands, handler_name)
@@ -182,14 +182,22 @@ def load_enabled_plugins(app: Optional[FastAPI] = None):
     # List of known plugins - routers are always loaded for API access
     known_plugins = ['rss', 'chan4']
     
+    logger.info(f"=== PLUGIN LOADING START ===")
     logger.info(f"Loading plugins: {known_plugins}")
     for plugin_name in known_plugins:
         # Always load the plugin (router, models, commands)
-        success = load_plugin(plugin_name, app)
-        if success:
-            logger.info(f"Plugin '{plugin_name}' loaded successfully")
-        else:
-            logger.error(f"Failed to load plugin '{plugin_name}'")
+        logger.info(f"Attempting to load plugin: {plugin_name}")
+        try:
+            success = load_plugin(plugin_name, app)
+            if success:
+                logger.info(f"✓ Plugin '{plugin_name}' loaded successfully")
+            else:
+                logger.error(f"✗ Failed to load plugin '{plugin_name}'")
+        except Exception as e:
+            logger.error(f"✗ Exception loading plugin '{plugin_name}': {e}", exc_info=True)
     
+    logger.info(f"=== PLUGIN LOADING COMPLETE ===")
     logger.info(f"Loaded plugins: {list(_loaded_plugins.keys())}")
     logger.info(f"Registered command handlers: {list(_command_handlers.keys())}")
+    if 'chan4' not in _command_handlers:
+        logger.error(f"⚠ WARNING: chan4 plugin handler not registered! Available handlers: {list(_command_handlers.keys())}")
