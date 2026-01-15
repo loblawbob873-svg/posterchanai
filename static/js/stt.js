@@ -120,7 +120,10 @@ const VOICE_COMMANDS = [
 
     // ==================== YOUTUBE ====================
     { patterns: [/^summarize\s+(video\s+)?(.+)$/i], command: 'yt $2' },
-    { patterns: [/^download\s+(video|youtube)\s+(.+)$/i], command: 'ytdl $2' },
+    { patterns: [/^download\s+video\s+(.+)$/i], command: 'ytdl video $1' },
+    { patterns: [/^download\s+(song|music|audio)\s+(.+)$/i], command: 'ytdl $2' },
+    { patterns: [/^download\s+(youtube|youtube\s+video)\s+(.+)$/i], command: 'ytdl video $2' },
+    { patterns: [/^download\s+(.+)$/i], command: 'ytdl $1' }, // Default to audio
 
     // ==================== BUDGET ====================
     { patterns: [/^(my\s+)?budget$/i], command: 'budget' },

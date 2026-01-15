@@ -70,6 +70,7 @@ from app.services.webdav_music_service import (
 from app.services.youtube_service import (
     check_ytdlp_available,
     download_and_upload_to_webdav,
+    download_video_and_upload_to_webdav,
     extract_youtube_urls,
     format_download_result,
     is_youtube_url,
@@ -167,7 +168,7 @@ class CommandService:
         "budget": "Check system budget/usage",
         "firewall": "Toggle network firewall",
         "yt": "YouTube search: yt <query>",
-        "ytdl": "Download YouTube: ytdl <url>",
+        "ytdl": "Download YouTube: ytdl <url> | ytdl video <url>",
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
         "news": "RSS news (alias for rss sync)",
@@ -223,12 +224,19 @@ class CommandService:
             return "budget", f"pay {bill_name}"
 
         # Check for "download song/video <url>" patterns
-        if lower.startswith("download song "):
-            url = message[14:].strip()
-            return "ytdl", url
-        if lower.startswith("download video "):
-            url = message[15:].strip()
-            return "ytdl", url
+        # Audio downloads (song, music, audio)
+        for prefix in ["download song ", "download music ", "download audio "]:
+            if lower.startswith(prefix):
+                url = message[len(prefix):].strip()
+                return "ytdl", url
+        
+        # Video downloads
+        for prefix in ["download this video ", "download video "]:
+            if lower.startswith(prefix):
+                url = message[len(prefix):].strip()
+                return "ytdl", f"video {url}"
+        
+        # Generic download with YouTube URL
         if lower.startswith("download ") and ("youtube" in lower or "youtu.be" in lower):
             url = message[9:].strip()
             return "ytdl", url
@@ -658,8 +666,9 @@ class CommandService:
 **Summarize a video:**
 `yt <url>` - Get AI summary of video transcript
 
-**Download as MP3:**
-`ytdl <url>` - Download video as MP3 to your WebDAV Music folder
+**Download:**
+- `ytdl <url>` - Download as MP3 (audio only) to your WebDAV Music folder
+- `ytdl video <url>` - Download as video (MP4) to your WebDAV folder
 
 Example: `yt https://youtube.com/watch?v=...`""",
             }
@@ -674,17 +683,20 @@ Example: `yt https://youtube.com/watch?v=...`""",
         return {"type": "text", "content": result}
 
     async def _youtube_download_command(self, arg: str) -> dict:
-        """Download a YouTube video as MP3 to WebDAV"""
+        """Download a YouTube video (audio or video) to WebDAV"""
+
         if not arg:
             return {
                 "type": "text",
                 "content": """## YouTube Download
 
-**Usage:** `ytdl <url>`
+**Usage:**
+- `ytdl <url>` - Download as MP3 (audio only)
+- `ytdl video <url>` - Download as video (MP4)
 
-Downloads YouTube video as MP3 and saves to your WebDAV Music folder.
-
-Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
+**Examples:**
+- `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ` - Download audio
+- `ytdl video https://youtube.com/watch?v=dQw4w9WgXcQ` - Download video
 
 **Note:** Requires WebDAV Music to be configured in Settings.""",
             }
@@ -693,15 +705,39 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
         if not check_ytdlp_available():
             return {"type": "text", "content": "❌ yt-dlp not installed. Install with: `pip install yt-dlp`"}
 
+        # Check for "video" subcommand
+        parts = arg.strip().split(maxsplit=1)
+        is_video = parts[0].lower() == "video"
+        url_arg = parts[1] if len(parts) > 1 and is_video else arg
+
+        # If "video" subcommand but no URL provided
+        if is_video and len(parts) == 1:
+            return {
+                "type": "text",
+                "content": "Usage: `ytdl video <url>`\n\nExample: `ytdl video https://youtube.com/watch?v=...`"
+            }
+
         # Extract URL
-        urls = extract_youtube_urls(arg)
+        urls = extract_youtube_urls(url_arg)
         if not urls:
-            return {"type": "text", "content": "Could not find a valid YouTube URL."}
+            return {"type": "text", "content": "Could not find a valid YouTube URL. Please provide a YouTube URL."}
 
         target_url = urls[0]
 
         # Download and upload to WebDAV
-        result = await download_and_upload_to_webdav(url=target_url, user_id=self.user.id, db=self.db)
+        if is_video:
+            result = await download_video_and_upload_to_webdav(
+                url=target_url,
+                user_id=self.user.id,
+                db=self.db,
+                subfolder="YouTube Videos"
+            )
+        else:
+            result = await download_and_upload_to_webdav(
+                url=target_url,
+                user_id=self.user.id,
+                db=self.db
+            )
 
         return {"type": "text", "content": format_download_result(result)}
 
@@ -1514,7 +1550,7 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
 
         # Don't auto-summarize if user wants to download
         lower = message.lower()
-        download_keywords = ["download", "ytdl", "mp3", "save", "get song", "get video", "download song"]
+        download_keywords = ["download", "ytdl", "mp3", "save", "get song", "get video", "download song", "download video"]
         if any(kw in lower for kw in download_keywords):
             return None
 

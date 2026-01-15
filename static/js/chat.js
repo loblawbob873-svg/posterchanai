@@ -2859,7 +2859,9 @@ class ChatHandler {
         // Todo subcommands
         'todo': ['add', 'rm', 'list'],
         // RSS subcommands
-        'rss': ['sync', 'add', 'remove', 'list', 'search']
+        'rss': ['sync', 'add', 'remove', 'list', 'search'],
+        // YouTube download subcommands
+        'ytdl': ['video']
     };
 
     // Tab autocomplete for commands

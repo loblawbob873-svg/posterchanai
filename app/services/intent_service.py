@@ -128,7 +128,11 @@ YOUTUBE:
 "Summarize https://youtube.com/watch?v=abc123" -> yt https://youtube.com/watch?v=abc123
 "Download https://youtu.be/xyz789" -> ytdl https://youtu.be/xyz789
 "Download this song https://youtube.com/watch?v=xyz" -> ytdl https://youtube.com/watch?v=xyz
-"Download this video" -> ytdl
+"Download song https://youtube.com/watch?v=xyz" -> ytdl https://youtube.com/watch?v=xyz
+"Download video https://youtube.com/watch?v=xyz" -> ytdl video https://youtube.com/watch?v=xyz
+"Download this video https://youtube.com/watch?v=xyz" -> ytdl video https://youtube.com/watch?v=xyz
+"Download the video from this link" -> ytdl video
+"Download this video" -> ytdl video
 "Get this song" -> ytdl
 "Download the music from this link" -> ytdl
 
