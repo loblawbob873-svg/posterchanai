@@ -953,6 +953,8 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
     from requests.auth import HTTPBasicAuth
     import re
 
+    logger.info(f"edit_contact called: url={url}, uid={contact_uid}, updates={updates}")
+
     try:
         # Use PROPFIND to list all vCard files
         headers = {
@@ -1078,13 +1080,13 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                         return False
 
             except Exception as e:
-                logger.debug(f"Error processing vCard: {e}")
+                logger.error(f"Error processing vCard: {e}", exc_info=True)
                 continue
 
         logger.warning(f"Contact not found with UID: {contact_uid}")
         return False
     except Exception as e:
-        logger.error(f"Failed to edit contact: {e}")
+        logger.error(f"Failed to edit contact: {e}", exc_info=True)
         return False
 
 
