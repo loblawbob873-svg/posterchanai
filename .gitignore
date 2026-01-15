@@ -61,6 +61,7 @@ htmlcov/
 # Security
 *.pem
 *.key
+test_load_balancing.py
 
 # Claude Code
 .claude/

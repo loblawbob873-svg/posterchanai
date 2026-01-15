@@ -249,12 +249,13 @@ async def v1_chat_completions(
     user_agent = http_request.headers.get("user-agent", "").lower()
     load_balanced_header = http_request.headers.get("x-posterchanai-load-balanced", "").lower()
     
-    # Check if request is from httpx (used by load balancer) or has load-balanced header
-    if "httpx" in user_agent or load_balanced_header == "true":
+    # Only skip load balancing if the request has the load-balanced header (from another posterchanai instance)
+    # Don't skip just because user-agent contains "httpx" - external clients might use httpx too
+    if load_balanced_header == "true":
         skip_lb = True
-        logger.info(f"Detected load-balanced request (httpx={('httpx' in user_agent)}, header={load_balanced_header}), skipping load balancing to prevent loops")
+        logger.info(f"Detected load-balanced request (header=true), skipping load balancing to prevent loops")
     else:
-        logger.debug(f"Request user-agent: {user_agent[:100] if user_agent else 'None'}")
+        logger.debug(f"Request user-agent: {user_agent[:100] if user_agent else 'None'}, load-balanced header: {load_balanced_header}")
     return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
@@ -277,11 +278,10 @@ async def api_chat_completions(
     user: Optional[User] = Depends(verify_api_key)
 ):
     """OpenWebUI-compatible chat completions endpoint"""
-    user_agent = http_request.headers.get("user-agent", "").lower()
     load_balanced_header = http_request.headers.get("x-posterchanai-load-balanced", "").lower()
-    skip_lb = "httpx" in user_agent or load_balanced_header == "true"
+    skip_lb = load_balanced_header == "true"
     if skip_lb:
-        logger.info(f"Detected load-balanced request, skipping load balancing")
+        logger.info(f"Detected load-balanced request (header=true), skipping load balancing")
     return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
@@ -304,11 +304,10 @@ async def root_chat_completions(
     user: Optional[User] = Depends(verify_api_key)
 ):
     """Root-level chat completions endpoint"""
-    user_agent = http_request.headers.get("user-agent", "").lower()
     load_balanced_header = http_request.headers.get("x-posterchanai-load-balanced", "").lower()
-    skip_lb = "httpx" in user_agent or load_balanced_header == "true"
+    skip_lb = load_balanced_header == "true"
     if skip_lb:
-        logger.info(f"Detected load-balanced request, skipping load balancing")
+        logger.info(f"Detected load-balanced request (header=true), skipping load balancing")
     return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
