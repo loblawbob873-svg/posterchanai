@@ -62,9 +62,10 @@ def _run_migrations():
         ("custom_image_enabled", "BOOLEAN DEFAULT 0"),
         ("custom_image_url", "VARCHAR(500)"),
         ("rss_enabled", "BOOLEAN DEFAULT 0"),
+        ("rss_skip_summarization", "BOOLEAN DEFAULT 0"),
     ]
 
-    # Add missing columns
+    # Add missing columns to users table
     with engine.connect() as conn:
         for col_name, col_type in new_user_columns:
             if col_name not in existing_columns:
@@ -74,6 +75,21 @@ def _run_migrations():
                 except Exception:
                     # Column might already exist or other error - ignore
                     pass
+
+    # Add missing columns to rss_entries table (if it exists)
+    if inspector.has_table('rss_entries'):
+        rss_columns = {col['name'] for col in inspector.get_columns('rss_entries')}
+        new_rss_columns = [
+            ("is_posted", "BOOLEAN DEFAULT 0"),
+        ]
+        with engine.connect() as conn:
+            for col_name, col_type in new_rss_columns:
+                if col_name not in rss_columns:
+                    try:
+                        conn.execute(text(f"ALTER TABLE rss_entries ADD COLUMN {col_name} {col_type}"))
+                        conn.commit()
+                    except Exception:
+                        pass
 
 
 def init_db():
