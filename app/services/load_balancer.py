@@ -353,6 +353,9 @@ class LoadBalancer:
                     else:
                         logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={total_time:.2f}s")
 
+            except NoHealthyServersError:
+                # Re-raise to trigger fallback to local
+                raise
             except httpx.HTTPStatusError as e:
                 error_body = ""
                 try:
@@ -361,11 +364,13 @@ class LoadBalancer:
                     pass
                 logger.error(f"STREAM ERROR from {server} | status={e.response.status_code} | body={error_body}")
                 await mark_server_unhealthy_async(server)
-                yield f'data: {{"error": {{"message": "Server {server} returned {e.response.status_code}"}}}}\n\n'
+                # Re-raise to trigger fallback to local instead of yielding error
+                raise NoHealthyServersError(f"Server {server} returned {e.response.status_code}")
             except Exception as e:
                 logger.error(f"STREAM EXCEPTION | server={server} | error={str(e)}")
                 await mark_server_unhealthy_async(server)
-                yield f'data: {{"error": {{"message": "{str(e)}"}}}}\n\n'
+                # Re-raise to trigger fallback to local instead of yielding error
+                raise NoHealthyServersError(f"Stream error from {server}: {str(e)}")
 
     async def chat(
         self,
