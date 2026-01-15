@@ -46,7 +46,6 @@ from app.services.mail_service import (
     search_messages,
     send_email,
 )
-from app.services.miniflux_service import MinifluxService
 from app.services.nyaa_service import NyaaResult, format_nyaa_results, search_nyaa
 from app.services.plugin_service import PluginService
 from app.services.search_service import SearchService
@@ -171,10 +170,9 @@ class CommandService:
         "ytdl": "Download YouTube: ytdl <url>",
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
-        "news": "Miniflux news summary",
+        "news": "RSS news (alias for rss sync)",
         "dailynews": "Web news: dailynews <source>",
         "logs": "View system logs",
-        "miniflux": "Miniflux status",
         "cal": "Calendar: cal | cal today | cal week | cal month | cal nextmonth | cal add <event> <time>",
         "contacts": "Contacts: contacts <query>",
         "mail": "Email: mail <to> [subject] <body>",

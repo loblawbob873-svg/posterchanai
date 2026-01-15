@@ -920,6 +920,7 @@ Type these commands in the chat (or use the mode buttons):
 | `music` | WebDAV music streaming: browse, search, play, queue, mood playlists |
 | `todo` | CalDAV task management: list, add, remove tasks |
 | `news` | Get unread news from Miniflux |
+| `rss` | Native RSS: list feeds, sync, add/remove (plugin) |
 | `logs` | System logs analysis (admin only) |
 
 ## Terminal UI (TUI)
@@ -1328,6 +1329,45 @@ The todo command provides CalDAV-integrated task management (VTODO items).
 **Tab Autocomplete:** Type `todo ` and press Tab for subcommands.
 
 Configure CalDAV calendars in User Settings > Calendar & Contacts tab. Tasks are stored as VTODO items.
+
+### RSS Plugin (Native RSS)
+
+A self-contained RSS feed reader plugin with AI-powered article summarization. Replaces external RSS readers like Miniflux.
+
+**Features:**
+- Subscribe to RSS/Atom feeds per user
+- Automatic fetching every 30 minutes
+- AI-generated summaries stored in "RSS News" conversation
+- OPML import from other RSS readers
+
+**Setup:**
+1. Enable in Admin → Services → Native RSS
+2. Restart the service
+3. Users enable RSS in User Settings → News & RSS
+4. Add feed URLs or import OPML file
+
+**Commands:**
+
+| Subcommand | Description |
+|------------|-------------|
+| `rss` | List your RSS feeds |
+| `rss sync` | Manually fetch and summarize articles |
+| `rss add <url> [name]` | Add a new feed |
+| `rss remove <id>` | Remove a feed by ID |
+
+**Examples:**
+- `rss` - List all feeds with status
+- `rss add https://news.ycombinator.com/rss Hacker News` - Add feed
+- `rss sync` - Fetch articles now
+- `rss remove 3` - Remove feed #3
+
+**OPML Import:**
+1. Export OPML from your current RSS reader (Feedly, Inoreader, etc.)
+2. Go to User Settings → News & RSS
+3. Click "Import OPML" and select your file
+4. Feeds are imported with folder names preserved
+
+The plugin is located in `plugins/rss/` and can be customized independently.
 
 ### Edit Image (img2img) with Face Swap
 
