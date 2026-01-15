@@ -365,6 +365,7 @@ class UserSettingsUpdate(BaseModel):
     news_sources: Optional[str] = None  # Custom sources, one per line: url|name
     # Native RSS settings
     rss_enabled: Optional[bool] = None
+    rss_skip_summarization: Optional[bool] = None  # Skip AI summarization for external bots
     # Calendar & Contacts settings
     schedule_enabled: Optional[bool] = None
     caldav_calendars: Optional[List[dict]] = None  # List of {name, url, username, password}
@@ -397,6 +398,7 @@ class UserSettingsResponse(BaseModel):
     news_sources: str = ""  # Custom sources, one per line: url|name
     # Native RSS settings
     rss_enabled: bool = False
+    rss_skip_summarization: bool = False  # Skip AI summarization for external bots
     # Calendar & Contacts settings
     schedule_enabled: bool = False
     caldav_calendars: List[dict] = []  # List of calendars (passwords masked)

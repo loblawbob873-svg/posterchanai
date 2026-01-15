@@ -47,6 +47,7 @@ class RssEntry(Base):
     published_at = Column(DateTime, nullable=True)
     is_read = Column(Boolean, default=False)
     is_summarized = Column(Boolean, default=False)
+    is_posted = Column(Boolean, default=False)  # Posted to Fediverse/external
     created_at = Column(DateTime, default=datetime.utcnow)
 
     feed = relationship("RssFeed", back_populates="entries")

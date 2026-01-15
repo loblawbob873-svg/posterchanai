@@ -199,6 +199,7 @@ class ChatHandler {
         const addRssFeed = document.getElementById('addRssFeed');
         const newRssFeedUrl = document.getElementById('newRssFeedUrl');
         const newRssFeedName = document.getElementById('newRssFeedName');
+        const rssSkipSummarization = document.getElementById('rssSkipSummarization');
 
         // RSS feed list management
         let rssFeeds = [];
@@ -775,6 +776,9 @@ class ChatHandler {
                             if (rssSettings) rssSettings.style.display = data.rss_enabled ? 'flex' : 'none';
                             if (data.rss_enabled) loadRssFeeds();
                         }
+                        if (rssSkipSummarization) {
+                            rssSkipSummarization.checked = data.rss_skip_summarization || false;
+                        }
 
                         // Load Calendar & Contacts settings
                         if (scheduleEnabled) {
@@ -900,6 +904,9 @@ class ChatHandler {
                 // Add Native RSS settings
                 if (rssEnabled) {
                     settingsData.rss_enabled = rssEnabled.checked;
+                }
+                if (rssSkipSummarization) {
+                    settingsData.rss_skip_summarization = rssSkipSummarization.checked;
                 }
 
                 // Add Calendar & Contacts settings

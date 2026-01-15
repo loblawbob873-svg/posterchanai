@@ -48,6 +48,7 @@ class EntryResponse(BaseModel):
     feed_name: str
     published_at: Optional[str]
     is_read: bool
+    is_posted: bool = False
 
 
 @router.get("/feeds")
@@ -179,6 +180,66 @@ async def mark_entries_read(
     rss_service = RssService(db)
     count = rss_service.mark_entries_read(entry_ids)
     return {"marked_read": count}
+
+
+@router.get("/entries/unposted")
+async def get_unposted_entries(
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> List[EntryResponse]:
+    """
+    Get summarized entries that haven't been posted to external services.
+    
+    Used by bots (like posterchan) to get articles ready for posting to Fediverse.
+    Returns entries that have summaries but is_posted=False.
+    """
+    entries = db.query(RssEntry).join(RssFeed).filter(
+        RssFeed.user_id == current_user.id,
+        RssFeed.enabled == True,
+        RssEntry.is_summarized == True,
+        RssEntry.is_posted == False
+    ).order_by(RssEntry.published_at.desc()).limit(limit).all()
+    
+    return [
+        EntryResponse(
+            id=e.id,
+            title=e.title,
+            url=e.url,
+            summary=e.summary,
+            feed_name=e.feed.display_name,
+            published_at=e.published_at.isoformat() if e.published_at else None,
+            is_read=e.is_read,
+            is_posted=e.is_posted
+        )
+        for e in entries
+    ]
+
+
+@router.post("/entries/{entry_id}/posted")
+async def mark_entry_posted(
+    entry_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Mark an entry as posted to external services.
+    
+    Called by bots after successfully posting to Fediverse to prevent duplicates.
+    """
+    entry = db.query(RssEntry).join(RssFeed).filter(
+        RssEntry.id == entry_id,
+        RssFeed.user_id == current_user.id
+    ).first()
+    
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    
+    entry.is_posted = True
+    entry.is_read = True  # Also mark as read
+    db.commit()
+    
+    return {"status": "ok", "entry_id": entry_id}
 
 
 def parse_opml(content: str) -> List[dict]:

@@ -34,6 +34,7 @@ class User(Base):
 
     # Native RSS settings (per-user)
     rss_enabled = Column(Boolean, default=False)  # Whether native RSS is enabled for this user
+    rss_skip_summarization = Column(Boolean, default=False)  # Skip AI summarization (for bots that do their own)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

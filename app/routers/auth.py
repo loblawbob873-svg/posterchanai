@@ -481,6 +481,7 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         news_sources=current_user.news_sources or "",
         # Native RSS settings
         rss_enabled=current_user.rss_enabled if hasattr(current_user, 'rss_enabled') else False,
+        rss_skip_summarization=current_user.rss_skip_summarization if hasattr(current_user, 'rss_skip_summarization') else False,
         # Calendar & Contacts settings
         schedule_enabled=schedule_enabled,
         caldav_calendars=caldav_calendars,
@@ -552,6 +553,8 @@ def update_user_settings(
     # Update Native RSS settings
     if settings.rss_enabled is not None:
         current_user.rss_enabled = settings.rss_enabled
+    if settings.rss_skip_summarization is not None:
+        current_user.rss_skip_summarization = settings.rss_skip_summarization
 
     # Update Calendar & Contacts settings (stored in UserSetting table)
     import json

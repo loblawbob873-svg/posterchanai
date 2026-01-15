@@ -99,6 +99,19 @@ async def process_rss_for_user(user_id: int):
 
         logger.info(f"Found {total_new} new RSS entries for user {user.username}")
 
+        # Check if user wants to skip summarization (external bot will handle it)
+        skip_summarization = getattr(user, 'rss_skip_summarization', False)
+        if skip_summarization:
+            # Just mark entries as summarized without actually summarizing
+            # External bots will fetch via /api/rss/entries/unposted
+            entries = rss_service.get_unsummarized_entries(user_id)
+            for entry in entries:
+                entry.is_summarized = True  # Mark as processed
+                # Leave is_read=False and is_posted=False for external bot to handle
+            db.commit()
+            logger.info(f"Skipped summarization for {len(entries)} entries (external bot mode)")
+            return
+
         # Get unsummarized entries
         entries = rss_service.get_unsummarized_entries(user_id)
         if not entries:

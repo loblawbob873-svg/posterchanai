@@ -275,6 +275,13 @@ foxnews.com|Fox News"></textarea>
                                 <small class="form-hint">Import/export feeds from an OPML file for portability between RSS readers.</small>
                             </div>
                             <small class="form-hint">Summaries appear in the "RSS News" conversation. Use <code>rss</code> or <code>news</code> command for manual fetch.</small>
+                            <div class="form-group" style="margin-top: 15px;">
+                                <div class="toggle-row">
+                                    <label for="rssSkipSummarization">Skip AI Summarization</label>
+                                    <input type="checkbox" id="rssSkipSummarization">
+                                </div>
+                                <small class="form-hint">Enable if an external bot will summarize articles. Articles will still be fetched but not summarized by the system.</small>
+                            </div>
                         </div>
                     </fieldset>
                 </div>

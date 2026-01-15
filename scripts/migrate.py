@@ -184,6 +184,8 @@ def run_schema_migration(session, verbose=True):
     schema_migrations = [
         # (table, column, type, default)
         ("users", "rss_enabled", "BOOLEAN", "0"),
+        ("users", "rss_skip_summarization", "BOOLEAN", "0"),
+        ("rss_entries", "is_posted", "BOOLEAN", "0"),
     ]
 
     for table, column, col_type, default in schema_migrations:
@@ -245,6 +247,7 @@ def run_table_migration(session, verbose=True):
                 published_at DATETIME,
                 is_read BOOLEAN DEFAULT 0,
                 is_summarized BOOLEAN DEFAULT 0,
+                is_posted BOOLEAN DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (feed_id) REFERENCES rss_feeds(id) ON DELETE CASCADE
             )
