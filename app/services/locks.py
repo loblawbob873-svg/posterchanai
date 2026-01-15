@@ -7,11 +7,13 @@ logger = logging.getLogger(__name__)
 
 # Global lock to ensure only one image is generated at a time
 # Used by both image_api.py and command_service.py
+# Note: Locks are in-memory and automatically reset on app restart
 image_generation_lock = asyncio.Lock()
 
 # Shared GPU lock to ensure only one type (LLM or Image) runs at a time per node
 # This prevents GPU RAM from being maxed out by running both simultaneously
 # Used by both LLM services (ipex, llama, ollama) and image generation
+# Note: Lock is in-memory and automatically reset on app restart (new process = fresh lock)
 _gpu_lock_base = asyncio.Lock()
 _gpu_lock_holder = None  # Track what's currently using the GPU
 
@@ -73,6 +75,15 @@ def get_gpu_lock_status():
         'locked': _gpu_lock_base.locked(),
         'holder': _gpu_lock_holder,
     }
+
+
+def _log_lock_init():
+    """Log lock initialization state (called on module import/startup)"""
+    logger.info(f"[GPU-LOCK] Initialized - locked: {_gpu_lock_base.locked()}, holder: {_gpu_lock_holder}")
+
+
+# Log lock state when module is imported (on app startup)
+_log_lock_init()
 
 
 # Export the class for use in other modules
