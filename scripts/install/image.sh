@@ -160,8 +160,15 @@ setup_xpu_image_instance() {
     source "$SCRIPT_DIR/venv-xpu/bin/activate"
     pip install --upgrade pip -q
 
-    # Install PyTorch XPU (from test channel for Intel Arc support)
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/test/xpu -q
+    # Install PyTorch XPU with Intel Extension for PyTorch
+    # Use the official Intel PyTorch extension index for best compatibility
+    echo "  Installing Intel XPU PyTorch packages..."
+    pip install torch==2.5.1+cxx11.abi torchvision==0.20.1+cxx11.abi torchaudio==2.5.1+cxx11.abi \
+        intel-extension-for-pytorch==2.5.10+xpu oneccl_bind_pt==2.5.0+xpu \
+        --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ -q
+
+    # Fix executable stack issue on hardened kernels (Gentoo, etc.)
+    fix_ipex_execstack
 
     # Install image generation libraries
     pip install diffusers transformers accelerate safetensors -q

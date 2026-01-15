@@ -1840,6 +1840,50 @@ WantedBy=multi-user.target
 
 **Note:** Adjust the oneAPI path (`2025.0`) to match your installed version (`2024.2`, etc.).
 
+**Intel Arc Troubleshooting:**
+
+| Issue | Solution |
+|-------|----------|
+| `cannot enable executable stack` | Run `sudo scanelf -Xe venv-ipex/lib/python*/site-packages/intel_extension_for_pytorch/lib/libintel-ext-pt*.so` |
+| `LIBUR_LOADER version not found` | Reinstall PyTorch XPU packages to match new intel-compute-runtime |
+| XPU not detected | Verify with `clinfo` and ensure intel-compute-runtime is installed |
+| Segfault on model load | Check intel-compute-runtime version matches level-zero version |
+
+**Known Issue - Executable Stack on Hardened Kernels (Gentoo):**
+
+Intel IPEX libraries are built with RWX (read-write-execute) stack requirements, which is blocked by default on systems with strict memory protection (Gentoo, hardened kernels). The error appears as:
+
+```
+ImportError: libintel-ext-pt-cpu.so: cannot enable executable stack as shared object requires: Invalid argument
+```
+
+**Fix:** The installer handles this automatically using `scanelf` (pax-utils) or `patchelf`. If you installed manually:
+
+```bash
+# Method 1: Using scanelf (recommended for Gentoo)
+sudo scanelf -Xe venv-ipex/lib/python3.11/site-packages/intel_extension_for_pytorch/lib/libintel-ext-pt*.so
+
+# Method 2: Using patchelf
+patchelf --clear-execstack venv-ipex/lib/python3.11/site-packages/intel_extension_for_pytorch/lib/libintel-ext-pt-cpu.so
+```
+
+**Upgrading intel-compute-runtime:**
+
+When upgrading `intel-compute-runtime` on Gentoo, you may need to reinstall PyTorch XPU packages:
+
+```bash
+# Unmask newer version if needed
+echo "=dev-libs/intel-compute-runtime-25.40.35563.4 ~amd64" >> /etc/portage/package.accept_keywords
+
+# Reinstall after upgrade
+source venv-ipex/bin/activate
+pip install torch==2.5.1+cxx11.abi torchvision==0.20.1+cxx11.abi intel-extension-for-pytorch==2.5.10+xpu \
+    --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ --force-reinstall
+
+# Fix executable stack again
+sudo scanelf -Xe venv-ipex/lib/python*/site-packages/intel_extension_for_pytorch/lib/libintel-ext-pt*.so
+```
+
 ### Native GPU Setup (No Docker Required)
 
 Native GPU mode runs the LLM directly in the Python process using llama-cpp-python with GPU acceleration.

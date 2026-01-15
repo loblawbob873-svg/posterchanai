@@ -93,6 +93,57 @@ print_summary() {
     echo ""
 }
 
+fix_ipex_execstack() {
+    # Fix executable stack issue on hardened kernels (Gentoo, etc.)
+    # Intel IPEX libraries are built with RWX (executable) stack which is
+    # blocked by default on systems with strict memory protection.
+    # This function clears the executable stack flag using scanelf or patchelf.
+
+    echo "  Fixing IPEX library executable stack flags..."
+
+    # Find the IPEX library directory
+    local IPEX_LIB_DIR
+    IPEX_LIB_DIR=$(python -c "import intel_extension_for_pytorch, os; print(os.path.dirname(intel_extension_for_pytorch.__file__) + '/lib')" 2>/dev/null)
+
+    if [ -z "$IPEX_LIB_DIR" ] || [ ! -d "$IPEX_LIB_DIR" ]; then
+        # Fallback: search in venv
+        IPEX_LIB_DIR=$(find "$VIRTUAL_ENV/lib" -path "*/intel_extension_for_pytorch/lib" -type d 2>/dev/null | head -1)
+    fi
+
+    if [ -z "$IPEX_LIB_DIR" ] || [ ! -d "$IPEX_LIB_DIR" ]; then
+        print_warning "Could not find IPEX library directory"
+        return
+    fi
+
+    local FIXED=0
+
+    # Method 1: Use scanelf from pax-utils (best for Gentoo/hardened systems)
+    if command -v scanelf &>/dev/null; then
+        # scanelf -Xe clears executable stack and shows which files were modified
+        if sudo scanelf -Xe "$IPEX_LIB_DIR"/libintel-ext-pt*.so 2>/dev/null | grep -q '!'; then
+            FIXED=1
+            print_success "Fixed executable stack using scanelf"
+        fi
+    fi
+
+    # Method 2: Use patchelf as fallback
+    if [ "$FIXED" = "0" ] && command -v patchelf &>/dev/null; then
+        for lib in "$IPEX_LIB_DIR"/libintel-ext-pt*.so; do
+            if [ -f "$lib" ]; then
+                patchelf --clear-execstack "$lib" 2>/dev/null && FIXED=1
+            fi
+        done
+        if [ "$FIXED" = "1" ]; then
+            print_success "Fixed executable stack using patchelf"
+        fi
+    fi
+
+    if [ "$FIXED" = "0" ]; then
+        print_warning "Could not fix executable stack - XPU may fail on hardened kernels"
+        echo "    Install pax-utils (scanelf) or patchelf to fix this automatically"
+    fi
+}
+
 show_help() {
     echo "Posterchanai Installer"
     echo ""

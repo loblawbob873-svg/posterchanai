@@ -130,23 +130,9 @@ setup_llama_cpp_intel() {
         print_warning "IPEX-LLM GGML not available - will fall back to llama-cpp-python"
     fi
 
-    # Fix executable stack issue on modern glibc (2.41+)
-    # This is required for systems with strict memory protection
-    if command -v patchelf &>/dev/null; then
-        echo "  Fixing IPEX library executable stack flags..."
-        local IPEX_LIB
-        # Find the library in the current venv
-        IPEX_LIB=$(python -c "import intel_extension_for_pytorch, os; print(os.path.dirname(intel_extension_for_pytorch.__file__) + '/lib/libintel-ext-pt-cpu.so')" 2>/dev/null)
-        if [ -f "$IPEX_LIB" ]; then
-            patchelf --clear-execstack "$IPEX_LIB" 2>/dev/null && print_success "Fixed executable stack on IPEX library" || true
-        else
-            # Fallback: search in venv
-            IPEX_LIB=$(find "$VIRTUAL_ENV/lib" -name "libintel-ext-pt-cpu.so" 2>/dev/null | head -1)
-            if [ -n "$IPEX_LIB" ]; then
-                patchelf --clear-execstack "$IPEX_LIB" 2>/dev/null && print_success "Fixed executable stack on IPEX library" || true
-            fi
-        fi
-    fi
+    # Fix executable stack issue on hardened kernels (Gentoo, etc.)
+    # IPEX libraries are built with RWX stack which is blocked by default
+    fix_ipex_execstack
 
     # Install llama-cpp-python with SYCL support for Intel Arc GPU
     # This is the primary backend for GGUF models on Intel Arc

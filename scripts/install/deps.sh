@@ -56,6 +56,22 @@ check_dependencies() {
     else
         print_success "ffmpeg found (music transcoding available)"
     fi
+
+    # Check for pax-utils (scanelf) - needed for Intel Arc on hardened kernels
+    if [ "$BACKEND" = "intel" ]; then
+        if ! command -v scanelf &>/dev/null; then
+            print_warning "scanelf (pax-utils) not found"
+            echo "  Required to fix IPEX library permissions on hardened kernels (Gentoo)"
+            case "$DISTRO" in
+                gentoo) echo "  Install with: emerge -av app-misc/pax-utils" ;;
+                arch) echo "  Install with: pacman -S pax-utils" ;;
+                debian) echo "  Install with: apt install pax-utils" ;;
+                *) echo "  Install pax-utils for your distribution" ;;
+            esac
+        else
+            print_success "scanelf found (pax-utils)"
+        fi
+    fi
 }
 
 show_install_instructions() {
@@ -99,7 +115,8 @@ show_gentoo_instructions() {
     echo ""
     echo "  # For Intel Arc GPU:"
     echo "  echo 'dev-util/intel-graphics-compiler no-distcc.conf' | sudo tee -a /etc/portage/package.env/intel-graphics-compiler"
-    echo "  emerge -av dev-libs/intel-compute-runtime dev-libs/level-zero"
+    echo "  emerge -av dev-libs/intel-compute-runtime dev-libs/level-zero app-misc/pax-utils"
+    echo "  # pax-utils provides scanelf to fix IPEX library permissions on hardened kernels"
     echo ""
     echo "  # For NVIDIA GPU:"
     echo "  emerge -av x11-drivers/nvidia-drivers dev-util/nvidia-cuda-toolkit"

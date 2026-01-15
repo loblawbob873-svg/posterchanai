@@ -76,6 +76,11 @@ async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) 
             continue
         tried.add(server)
 
+        # Self URLs are always "healthy" - we use local inference directly
+        if is_self_url(server):
+            logger.info(f"Selected self URL (local inference): {server}")
+            return server
+
         # Check cached health status
         async with _health_lock:
             if server in _server_health:
