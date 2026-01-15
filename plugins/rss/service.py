@@ -219,13 +219,13 @@ class RssService:
             RssEntry.is_read == False
         ).order_by(RssEntry.published_at.desc()).limit(limit).all()
 
-    def get_unsummarized_entries(self, user_id: int, limit: int = 10) -> List[RssEntry]:
+    def get_unsummarized_entries(self, user_id: int) -> List[RssEntry]:
         """Get entries that need AI summarization"""
         return self.db.query(RssEntry).join(RssFeed).filter(
             RssFeed.user_id == user_id,
             RssFeed.enabled == True,
             RssEntry.is_summarized == False
-        ).order_by(RssEntry.published_at.desc()).limit(limit).all()
+        ).order_by(RssEntry.published_at.desc()).all()
 
     def mark_entries_read(self, entry_ids: List[int]) -> int:
         """Mark entries as read"""

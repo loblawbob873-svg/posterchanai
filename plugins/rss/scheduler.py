@@ -100,7 +100,7 @@ async def process_rss_for_user(user_id: int):
         logger.info(f"Found {total_new} new RSS entries for user {user.username}")
 
         # Get unsummarized entries
-        entries = rss_service.get_unsummarized_entries(user_id, limit=10)
+        entries = rss_service.get_unsummarized_entries(user_id)
         if not entries:
             return
 
