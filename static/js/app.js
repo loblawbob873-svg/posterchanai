@@ -912,12 +912,21 @@ function initContactsModal() {
         clearContactsForm();
     });
 
+    // Close modal only when clicking the backdrop (not the content)
     contactsModal.addEventListener('click', (e) => {
         if (e.target === contactsModal) {
             contactsModal.style.display = 'none';
             clearContactsForm();
         }
     });
+
+    // Prevent clicks inside modal-content from bubbling to backdrop
+    const modalContent = contactsModal.querySelector('.modal-content');
+    if (modalContent) {
+        modalContent.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+    }
 
     // Save contact handler
     saveBtn?.addEventListener('click', async () => {
