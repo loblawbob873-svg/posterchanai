@@ -479,6 +479,8 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         news_schedule_enabled=current_user.news_schedule_enabled or False,
         news_schedule_time=current_user.news_schedule_time or "12:00",
         news_sources=current_user.news_sources or "",
+        # Native RSS settings
+        rss_enabled=current_user.rss_enabled if hasattr(current_user, 'rss_enabled') else False,
         # Miniflux news plugin settings
         miniflux_enabled=current_user.miniflux_enabled if current_user.miniflux_enabled is not None else True,
         miniflux_url=current_user.miniflux_url,
@@ -551,6 +553,10 @@ def update_user_settings(
             )
     if settings.news_sources is not None:
         current_user.news_sources = settings.news_sources
+
+    # Update Native RSS settings
+    if settings.rss_enabled is not None:
+        current_user.rss_enabled = settings.rss_enabled
 
     # Update Miniflux settings
     if settings.miniflux_enabled is not None:

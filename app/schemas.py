@@ -369,6 +369,8 @@ class UserSettingsUpdate(BaseModel):
     news_schedule_enabled: Optional[bool] = None
     news_schedule_time: Optional[str] = None  # HH:MM format
     news_sources: Optional[str] = None  # Custom sources, one per line: url|name
+    # Native RSS settings
+    rss_enabled: Optional[bool] = None
     # Miniflux news plugin settings
     miniflux_enabled: Optional[bool] = None
     miniflux_url: Optional[str] = None

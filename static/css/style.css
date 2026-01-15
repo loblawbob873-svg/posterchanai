@@ -2090,6 +2090,61 @@ fieldset legend {
     color: var(--text-secondary);
     font-style: italic;
     padding: 12px;
+}
+
+/* RSS Feed List */
+.rss-feed-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+}
+.rss-feed-item .feed-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.rss-feed-item .feed-status {
+    margin-right: 8px;
+}
+.rss-feed-item .feed-url {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+.rss-feed-item .feed-error {
+    color: var(--error-color);
+    font-size: 12px;
+}
+.rss-feed-item .feed-actions {
+    display: flex;
+    gap: 8px;
+}
+.rss-add-form {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.rss-add-form input {
+    flex: 1;
+    min-width: 150px;
+}
+.rss-import-form {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.rss-import-form .test-result {
+    font-size: 13px;
+}
+.rss-import-form .test-result.success {
+    color: var(--success-color);
+}
+.rss-import-form .test-result.error {
+    color: var(--error-color);
     text-align: center;
 }
 

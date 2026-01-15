@@ -43,6 +43,9 @@ sentence-transformers>=2.2.0
 mcp
 youtube-transcript-api
 yt-dlp>=2024.1.0
+# Native RSS support
+feedparser>=6.0.0
+
 # CalDAV/CardDAV support
 caldav>=1.3.0
 vobject>=0.9.6

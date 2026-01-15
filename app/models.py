@@ -38,6 +38,9 @@ class User(Base):
     miniflux_username = Column(String(200), nullable=True)  # User-specific username
     miniflux_password = Column(String(500), nullable=True)  # User-specific password
 
+    # Native RSS settings (per-user)
+    rss_enabled = Column(Boolean, default=False)  # Whether native RSS is enabled for this user
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")

@@ -55,6 +55,10 @@ app.include_router(contacts.router)
 app.include_router(music.router)
 app.include_router(torrent.router)
 
+# Load enabled plugins
+from plugins import load_enabled_plugins
+load_enabled_plugins(app)
+
 
 @app.on_event("startup")
 async def startup():
@@ -96,6 +100,10 @@ async def startup():
         # Start Miniflux news scheduler
         from app.services.miniflux_scheduler import start_miniflux_scheduler
         start_miniflux_scheduler()
+
+        # Start plugin schedulers
+        from plugins import start_plugin_schedulers
+        start_plugin_schedulers()
 
         # Start Logs scheduler
         from app.services.logs_scheduler import start_logs_scheduler
@@ -235,6 +243,10 @@ async def shutdown():
         # Stop Miniflux news scheduler
         from app.services.miniflux_scheduler import stop_miniflux_scheduler
         stop_miniflux_scheduler()
+
+        # Stop plugin schedulers
+        from plugins import stop_plugin_schedulers
+        stop_plugin_schedulers()
 
         # Stop Logs scheduler
         from app.services.logs_scheduler import stop_logs_scheduler

@@ -199,6 +199,175 @@ class ChatHandler {
         const minifluxUsername = document.getElementById('minifluxUsername');
         const minifluxPassword = document.getElementById('minifluxPassword');
 
+        // Native RSS elements
+        const rssEnabled = document.getElementById('rssEnabled');
+        const rssSettings = document.getElementById('rssSettings');
+        const rssFeedList = document.getElementById('rssFeedList');
+        const addRssFeed = document.getElementById('addRssFeed');
+        const newRssFeedUrl = document.getElementById('newRssFeedUrl');
+        const newRssFeedName = document.getElementById('newRssFeedName');
+
+        // RSS feed list management
+        let rssFeeds = [];
+
+        async function loadRssFeeds() {
+            try {
+                const resp = await fetch('/api/rss/feeds', { credentials: 'include' });
+                if (resp.ok) {
+                    rssFeeds = await resp.json();
+                    renderRssFeedList();
+                }
+            } catch (e) {
+                console.error('Failed to load RSS feeds:', e);
+            }
+        }
+
+        function renderRssFeedList() {
+            if (!rssFeedList) return;
+            rssFeedList.innerHTML = rssFeeds.map(feed => `
+                <div class="rss-feed-item" data-id="${feed.id}">
+                    <div class="feed-info">
+                        <span class="feed-status">${feed.enabled ? '✓' : '✗'}</span>
+                        <strong>${feed.display_name}</strong>
+                        <small class="feed-url">${feed.url}</small>
+                        ${feed.last_error ? `<span class="feed-error">⚠️ ${feed.last_error}</span>` : ''}
+                    </div>
+                    <div class="feed-actions">
+                        <button type="button" class="btn-small toggle-feed" data-id="${feed.id}">${feed.enabled ? 'Disable' : 'Enable'}</button>
+                        <button type="button" class="btn-danger btn-small remove-feed" data-id="${feed.id}">Remove</button>
+                    </div>
+                </div>
+            `).join('') || '<p class="empty-list">No RSS feeds configured. Add a feed URL below.</p>';
+
+            // Add toggle handlers
+            rssFeedList.querySelectorAll('.toggle-feed').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const id = parseInt(btn.dataset.id);
+                    try {
+                        const resp = await fetch(`/api/rss/feeds/${id}/toggle`, {
+                            method: 'POST',
+                            credentials: 'include'
+                        });
+                        if (resp.ok) loadRssFeeds();
+                    } catch (e) {
+                        console.error('Failed to toggle feed:', e);
+                    }
+                });
+            });
+
+            // Add remove handlers
+            rssFeedList.querySelectorAll('.remove-feed').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const id = parseInt(btn.dataset.id);
+                    if (!confirm('Remove this RSS feed?')) return;
+                    try {
+                        const resp = await fetch(`/api/rss/feeds/${id}`, {
+                            method: 'DELETE',
+                            credentials: 'include'
+                        });
+                        if (resp.ok) loadRssFeeds();
+                    } catch (e) {
+                        console.error('Failed to remove feed:', e);
+                    }
+                });
+            });
+        }
+
+        if (addRssFeed) {
+            addRssFeed.addEventListener('click', async () => {
+                const url = newRssFeedUrl?.value.trim();
+                const name = newRssFeedName?.value.trim();
+                if (!url) {
+                    alert('Please enter a feed URL');
+                    return;
+                }
+                try {
+                    const resp = await fetch('/api/rss/feeds', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ url, custom_name: name || null })
+                    });
+                    if (resp.ok) {
+                        if (newRssFeedUrl) newRssFeedUrl.value = '';
+                        if (newRssFeedName) newRssFeedName.value = '';
+                        loadRssFeeds();
+                    } else {
+                        alert('Failed to add feed');
+                    }
+                } catch (e) {
+                    console.error('Failed to add feed:', e);
+                    alert('Failed to add feed');
+                }
+            });
+        }
+
+        // Toggle RSS settings visibility
+        if (rssEnabled && rssSettings) {
+            rssEnabled.addEventListener('change', () => {
+                rssSettings.style.display = rssEnabled.checked ? 'flex' : 'none';
+                if (rssEnabled.checked && rssFeeds.length === 0) {
+                    loadRssFeeds();
+                }
+            });
+        }
+
+        // OPML import
+        const opmlFileInput = document.getElementById('opmlFileInput');
+        const importOpmlBtn = document.getElementById('importOpmlBtn');
+        const opmlImportStatus = document.getElementById('opmlImportStatus');
+
+        if (importOpmlBtn && opmlFileInput) {
+            importOpmlBtn.addEventListener('click', () => {
+                opmlFileInput.click();
+            });
+
+            opmlFileInput.addEventListener('change', async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+
+                if (opmlImportStatus) {
+                    opmlImportStatus.textContent = 'Importing...';
+                    opmlImportStatus.className = 'test-result';
+                }
+
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    const resp = await fetch('/api/rss/import/opml', {
+                        method: 'POST',
+                        credentials: 'include',
+                        body: formData
+                    });
+
+                    const result = await resp.json();
+
+                    if (resp.ok) {
+                        if (opmlImportStatus) {
+                            opmlImportStatus.textContent = result.message;
+                            opmlImportStatus.className = 'test-result success';
+                        }
+                        loadRssFeeds();
+                    } else {
+                        if (opmlImportStatus) {
+                            opmlImportStatus.textContent = result.detail || 'Import failed';
+                            opmlImportStatus.className = 'test-result error';
+                        }
+                    }
+                } catch (err) {
+                    console.error('OPML import error:', err);
+                    if (opmlImportStatus) {
+                        opmlImportStatus.textContent = 'Import failed';
+                        opmlImportStatus.className = 'test-result error';
+                    }
+                }
+
+                // Clear file input for re-import
+                opmlFileInput.value = '';
+            });
+        }
+
         // Calendar & Contacts elements
         const scheduleEnabled = document.getElementById('scheduleEnabled');
         const caldavCalendarList = document.getElementById('caldavCalendarList');
@@ -574,6 +743,13 @@ class ChatHandler {
                         if (minifluxUsername) minifluxUsername.value = data.miniflux_username || '';
                         if (minifluxPassword) minifluxPassword.value = data.miniflux_has_password ? '********' : '';
 
+                        // Load Native RSS settings
+                        if (rssEnabled) {
+                            rssEnabled.checked = data.rss_enabled || false;
+                            if (rssSettings) rssSettings.style.display = data.rss_enabled ? 'flex' : 'none';
+                            if (data.rss_enabled) loadRssFeeds();
+                        }
+
                         // Load Calendar & Contacts settings
                         if (scheduleEnabled) {
                             scheduleEnabled.checked = data.schedule_enabled || false;
@@ -708,6 +884,11 @@ class ChatHandler {
                 // Only update password if it's not the placeholder
                 if (minifluxPassword && minifluxPassword.value !== '********') {
                     settingsData.miniflux_password = minifluxPassword.value;
+                }
+
+                // Add Native RSS settings
+                if (rssEnabled) {
+                    settingsData.rss_enabled = rssEnabled.checked;
                 }
 
                 // Add Calendar & Contacts settings

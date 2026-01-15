@@ -229,6 +229,8 @@ When asked to write or modify code or files:
             "imap_sent_folder": "Sent",
             # News sources
             "news_sources": "",
+            # Native RSS settings (default/global)
+            "rss_enabled": "false",
             # Miniflux news plugin settings (default/global)
             "miniflux_enabled": "true",
             "miniflux_url": "",

@@ -153,6 +153,8 @@ REQUIRED_SETTINGS = {
     "mcp_port": "8808",
     "mcp_host": "0.0.0.0",
     "mcp_warmup": "true",
+    # Native RSS settings
+    "rss_enabled": "false",
 }
 
 
@@ -175,6 +177,81 @@ def get_db_path():
 
     # Default
     return "sqlite:///./data/posterchanai.db"
+
+
+def run_schema_migration(session, verbose=True):
+    """Add new columns to existing tables."""
+    schema_migrations = [
+        # (table, column, type, default)
+        ("users", "rss_enabled", "BOOLEAN", "0"),
+    ]
+
+    for table, column, col_type, default in schema_migrations:
+        try:
+            # Check if column exists
+            result = session.execute(text(f"PRAGMA table_info({table})"))
+            columns = [row[1] for row in result.fetchall()]
+            if column not in columns:
+                session.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {col_type} DEFAULT {default}"
+                ))
+                if verbose:
+                    print(f"  + Added column: {table}.{column}")
+        except Exception as e:
+            if verbose:
+                print(f"  ! Could not add {table}.{column}: {e}")
+
+
+def run_table_migration(session, verbose=True):
+    """Create new tables if they don't exist."""
+    # Check if rss_feeds table exists
+    result = session.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='rss_feeds'"
+    ))
+    if not result.fetchone():
+        if verbose:
+            print("  + Creating rss_feeds table")
+        session.execute(text("""
+            CREATE TABLE rss_feeds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                url VARCHAR(500) NOT NULL,
+                title VARCHAR(255),
+                custom_name VARCHAR(255),
+                enabled BOOLEAN DEFAULT 1,
+                last_fetched_at DATETIME,
+                last_error TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """))
+
+    # Check if rss_entries table exists
+    result = session.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='rss_entries'"
+    ))
+    if not result.fetchone():
+        if verbose:
+            print("  + Creating rss_entries table")
+        session.execute(text("""
+            CREATE TABLE rss_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                feed_id INTEGER NOT NULL,
+                guid VARCHAR(500) NOT NULL,
+                title VARCHAR(500) NOT NULL,
+                url VARCHAR(500),
+                content TEXT,
+                summary TEXT,
+                published_at DATETIME,
+                is_read BOOLEAN DEFAULT 0,
+                is_summarized BOOLEAN DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (feed_id) REFERENCES rss_feeds(id) ON DELETE CASCADE
+            )
+        """))
+        session.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_rss_entries_guid ON rss_entries(feed_id, guid)"
+        ))
 
 
 def run_migration(db_url=None, verbose=True):
@@ -210,6 +287,16 @@ def run_migration(db_url=None, verbose=True):
             if verbose:
                 print("Settings table does not exist. Run the app first to create tables.")
             return (0, 0)
+
+        # Run schema migrations (new columns)
+        if verbose:
+            print("Checking schema...")
+        run_schema_migration(session, verbose)
+
+        # Run table migrations (new tables)
+        if verbose:
+            print("Checking tables...")
+        run_table_migration(session, verbose)
 
         # Get existing settings
         result = session.execute(text("SELECT key FROM settings"))

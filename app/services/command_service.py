@@ -295,6 +295,13 @@ class CommandService:
             return await self._logs_command(arg)
         elif command == "miniflux":
             return await self._miniflux_command(arg)
+        elif command == "rss":
+            # Delegate to RSS plugin
+            from plugins import get_command_handler
+            handler = get_command_handler("rss")
+            if handler:
+                return await handler(arg, self.user, self.db)
+            return {"type": "text", "content": "RSS plugin not enabled. Enable it in Admin → Services."}
         elif command == "cal":
             return await self._schedule_command(arg)
         elif command == "contacts":
@@ -316,6 +323,12 @@ class CommandService:
 
         # Built-in commands
         for cmd, desc in self.COMMANDS.items():
+            help_text += f"**{cmd}** - {desc}\n"
+
+        # Plugin commands
+        from plugins import get_plugin_commands
+        plugin_cmds = get_plugin_commands()
+        for cmd, desc in plugin_cmds.items():
             help_text += f"**{cmd}** - {desc}\n"
 
         # Get user's plugins

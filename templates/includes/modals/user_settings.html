@@ -246,7 +246,39 @@ foxnews.com|Fox News"></textarea>
                     </fieldset>
 
                     <fieldset>
-                        <legend>Miniflux RSS Reader</legend>
+                        <legend>Native RSS Feeds</legend>
+                        <p class="fieldset-info">Add RSS feeds directly. Articles are fetched every 30 minutes and summarized by AI.</p>
+                        <div class="form-group">
+                            <div class="toggle-row">
+                                <label for="rssEnabled">Enable Native RSS</label>
+                                <input type="checkbox" id="rssEnabled">
+                            </div>
+                        </div>
+                        <div id="rssSettings" class="conditional-settings" style="display: none;">
+                            <div id="rssFeedList">
+                                <!-- Feeds added here dynamically -->
+                            </div>
+                            <div class="form-group" style="margin-top: 15px;">
+                                <div class="rss-add-form">
+                                    <input type="text" id="newRssFeedUrl" placeholder="https://example.com/feed.xml">
+                                    <input type="text" id="newRssFeedName" placeholder="Feed Name (optional)">
+                                    <button type="button" class="btn-secondary" id="addRssFeed">+ Add Feed</button>
+                                </div>
+                            </div>
+                            <div class="form-group" style="margin-top: 10px;">
+                                <div class="rss-import-form">
+                                    <input type="file" id="opmlFileInput" accept=".opml,.xml" style="display: none;">
+                                    <button type="button" class="btn-secondary" id="importOpmlBtn">Import OPML</button>
+                                    <span id="opmlImportStatus" class="test-result"></span>
+                                </div>
+                                <small class="form-hint">Import feeds from an OPML file exported from another RSS reader.</small>
+                            </div>
+                            <small class="form-hint">Summaries appear in the "RSS News" conversation. Use <code>rss</code> command for manual fetch.</small>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend>Miniflux RSS Reader (Legacy)</legend>
                         <p class="fieldset-info">Connect to your Miniflux instance to get AI-summarized news from your RSS feeds.</p>
                         <div class="form-group">
                             <div class="toggle-row">
