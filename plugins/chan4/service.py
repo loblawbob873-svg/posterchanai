@@ -79,31 +79,12 @@ async def fetch_thread_posts(board: str, thread_id: int, proxy_config: dict) -> 
     
     posts = []
     try:
-        # httpx proxy configuration
-        # Try 'proxies' first (newer versions), fallback to 'proxy' (older versions)
-        client_kwargs = {
-            "timeout": 30,
-            "follow_redirects": True,
-        }
-        if proxy_config:
-            # Use proxies parameter (dict format)
-            try:
-                # Test if proxies parameter is supported
-                import inspect
-                sig = inspect.signature(httpx.AsyncClient.__init__)
-                if "proxies" in sig.parameters:
-                    client_kwargs["proxies"] = proxy_config
-                elif "proxy" in sig.parameters:
-                    # Older httpx versions use 'proxy' (string) instead of 'proxies' (dict)
-                    # Use the http:// proxy URL
-                    client_kwargs["proxy"] = proxy_config.get("http://", proxy_config.get("https://"))
-                else:
-                    logger.warning("httpx doesn't support proxy parameter, requests may not use proxy")
-            except Exception:
-                # Fallback: try proxies parameter anyway
-                client_kwargs["proxies"] = proxy_config
-        
-        async with httpx.AsyncClient(**client_kwargs) as client:
+        # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
+        async with httpx.AsyncClient(
+            timeout=30,
+            follow_redirects=True,
+            proxy=proxy_config
+        ) as client:
             response = await client.get(thread_url, headers=headers)
             response.raise_for_status()
             thread_data = response.json()
