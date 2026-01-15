@@ -29,13 +29,23 @@ async def fetch_headlines_from_url(url: str) -> dict:
 
     # Proxy is required for news fetching
     proxy_config = require_proxy("News fetching")
+    
+    # Validate proxy config
+    if not proxy_config or not isinstance(proxy_config, str):
+        logger.error(f"Invalid proxy config for news: {proxy_config}")
+        raise ValueError(f"Invalid proxy configuration: {proxy_config}")
+    
+    logger.info(f"News fetching via proxy: {proxy_config} for URL: {url}")
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
 
+    # Verify proxy is being used - httpx should use proxy parameter
+    logger.debug(f"Creating httpx client with proxy={proxy_config}")
     async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxy=proxy_config) as client:
+        logger.debug(f"Making request to {url} through proxy {proxy_config}")
         try:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
@@ -275,6 +285,13 @@ async def summarize_article(
     try:
         # Proxy is required for news article fetching
         proxy_config = require_proxy("News article fetching")
+        
+        # Validate proxy config
+        if not proxy_config or not isinstance(proxy_config, str):
+            logger.error(f"Invalid proxy config for article: {proxy_config}")
+            raise ValueError(f"Invalid proxy configuration: {proxy_config}")
+        
+        logger.info(f"News article fetching via proxy: {proxy_config} for URL: {url}")
         
         # Fetch the article with full browser-like headers
         headers = {
