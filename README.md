@@ -1206,39 +1206,59 @@ The web interface supports global shortcuts via the Media Session API and keyboa
 **Automatic (Media Session API):**
 - System media keys (Play/Pause, Next, Previous) work automatically when music is playing
 - Works with most Wayland compositors (Hyprland, Sway, KDE, GNOME)
-- No configuration needed - just use your keyboard/media keys
+- No configuration needed - just use your keyboard/media keys when the browser tab is active
 
-**Custom Wayland Shortcuts (Optional):**
+**Hyprland Configuration:**
 
-For custom global shortcuts that work even when the browser isn't focused, configure your Wayland compositor to send media key events:
+See **[docs/HYPRLAND_MUSIC_CONTROLS.md](docs/HYPRLAND_MUSIC_CONTROLS.md)** for detailed setup instructions.
 
-**Hyprland** (`~/.config/hypr/hyprland.conf`):
-```
-# Send media keys to browser (works with Media Session API)
-bind = , XF86AudioPlay, exec, playerctl play-pause  # or use a script to focus browser
-bind = , XF86AudioNext, exec, playerctl next
-bind = , XF86AudioPrev, exec, playerctl previous
-```
+**Quick Setup (Using Provided Script):**
 
-**Sway** (`~/.config/sway/config`):
-```
-# Send media keys to browser
-bindsym XF86AudioPlay exec playerctl play-pause
-bindsym XF86AudioNext exec playerctl next
-bindsym XF86AudioPrev exec playerctl previous
-```
+Add to `~/.config/hypr/hyprland.conf`:
 
-**Alternative: Use playerctl with browser focus:**
 ```bash
-# Script to control browser music player
-#!/bin/bash
-# Focus browser window and send media key
-hyprctl dispatch focuswindow "class:.*[Bb]rowser.*"
-sleep 0.1
-# Media keys will be handled by Media Session API
+# Use the provided control script (auto-detects ydotool/xdotool)
+bind = SUPER, P, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh toggle
+bind = SUPER, N, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh next
+bind = SUPER, B, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh prev
+
+# Or use with system media keys
+bind = , XF86AudioPlay, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh toggle
+bind = , XF86AudioNext, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh next
+bind = , XF86AudioPrev, exec, /path/to/posterchanai/scripts/hyprland-music-control.sh prev
 ```
 
-**Note:** The Media Session API automatically handles system media keys when the browser tab is active. For true global control, use `playerctl` or configure your compositor to send media key events to the browser window.
+**Simple Setup (Browser Focus Only):**
+
+If you just want to focus the browser and use media keys:
+
+```bash
+# Focus browser and let Media Session API handle media keys
+bind = , XF86AudioPlay, exec, hyprctl dispatch focuswindow "class:.*[Bb]rowser.*"
+bind = , XF86AudioNext, exec, hyprctl dispatch focuswindow "class:.*[Bb]rowser.*"
+bind = , XF86AudioPrev, exec, hyprctl dispatch focuswindow "class:.*[Bb]rowser.*"
+```
+
+**Advanced Setup (Global Control):**
+
+For true global control that works even when browser isn't focused, use `ydotool` or `xdotool` to send keyboard events. See the full guide in `docs/HYPRLAND_MUSIC_CONTROLS.md`.
+
+**Testing Your Setup:**
+
+Use the testing script to verify everything works:
+
+```bash
+# Run all tests
+./scripts/test-music-controls.sh --all
+
+# Interactive menu
+./scripts/test-music-controls.sh
+
+# See help
+./scripts/test-music-controls.sh --help
+```
+
+See `docs/TESTING_MUSIC_CONTROLS.md` for detailed testing instructions.
 
 ### Intelligent Actions
 

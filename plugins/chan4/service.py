@@ -247,17 +247,59 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                         catalog_data = json.loads(json_text)
                         all_threads = {}
                         
-                        if isinstance(catalog_data, dict):
-                            # Iterate through pages
-                            for page_key, page_data in catalog_data.items():
-                                if isinstance(page_data, dict):
-                                    page_threads = page_data.get("threads", {})
-                                    if not page_threads and all(isinstance(k, str) and k.isdigit() for k in list(page_data.keys())[:5]):
-                                        page_threads = page_data
-                                    if isinstance(page_threads, dict):
-                                        all_threads.update(page_threads)
+                        # 4chan catalog.json structure can vary:
+                        # 1. { "page1": { "threads": { "123": {...} } } }
+                        # 2. { "page1": { "123": {...}, "456": {...} } }  (threads at page level)
+                        # 3. { "123": {...}, "456": {...} }  (flat structure)
+                        
+                        def extract_threads(obj, path=""):
+                            """Recursively extract threads from nested structure"""
+                            threads_found = {}
+                            if isinstance(obj, dict):
+                                # Check if this dict contains threads directly (keys are numeric thread IDs)
+                                numeric_keys = [k for k in obj.keys() if isinstance(k, str) and k.isdigit()]
+                                if len(numeric_keys) > 5:  # Likely thread IDs if many numeric keys
+                                    logger.debug(f"Found {len(numeric_keys)} potential thread IDs at {path}")
+                                    threads_found.update({k: obj[k] for k in numeric_keys})
+                                
+                                # Check for "threads" key
+                                if "threads" in obj and isinstance(obj["threads"], dict):
+                                    threads_found.update(obj["threads"])
+                                
+                                # Recursively check nested objects
+                                for key, value in obj.items():
+                                    if isinstance(value, dict) and key != "threads":
+                                        nested = extract_threads(value, f"{path}.{key}")
+                                        threads_found.update(nested)
+                            
+                            return threads_found
+                        
+                        all_threads = extract_threads(catalog_data)
                         
                         logger.info(f"Found {len(all_threads)} threads in catalog JSON for /{board}/")
+                        if len(all_threads) == 0:
+                            # Log structure for debugging
+                            logger.warning(f"JSON structure analysis: type={type(catalog_data)}")
+                            if isinstance(catalog_data, dict):
+                                logger.warning(f"Top-level keys: {list(catalog_data.keys())[:10]}")
+                                # Check first few values
+                                for key, value in list(catalog_data.items())[:3]:
+                                    if isinstance(value, dict):
+                                        logger.warning(f"  {key}: type={type(value)}, keys={list(value.keys())[:10]}")
+                                        # Check if it has a "threads" key
+                                        if "threads" in value:
+                                            threads_val = value["threads"]
+                                            logger.warning(f"    'threads' key found: type={type(threads_val)}, length={len(threads_val) if isinstance(threads_val, dict) else 'N/A'}")
+                                            if isinstance(threads_val, dict):
+                                                logger.warning(f"    First 5 thread IDs: {list(threads_val.keys())[:5]}")
+                                    else:
+                                        logger.warning(f"  {key}: type={type(value)}")
+                            
+                            # Try alternative parsing - maybe it's a list?
+                            if isinstance(catalog_data, list):
+                                logger.warning(f"Catalog is a list with {len(catalog_data)} items")
+                                for i, item in enumerate(catalog_data[:3]):
+                                    logger.warning(f"  Item {i}: type={type(item)}, keys={list(item.keys())[:10] if isinstance(item, dict) else 'N/A'}")
                         
                         # Parse threads from JSON
                         for thread_id_str, thread_data in list(all_threads.items())[:limit]:
