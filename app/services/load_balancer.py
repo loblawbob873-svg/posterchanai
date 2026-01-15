@@ -299,14 +299,15 @@ class LoadBalancer:
 
                     total_time = time.time() - start_time
                     if chunk_count == 0:
-                        # Log details about what we received (or didn't receive)
+                        # Log details about what we received (or didn't receive) at debug level
                         if non_data_lines:
-                            logger.info(f"STREAM COMPLETE from {server} | chunks=0 | Received {len(non_data_lines)} non-data lines: {non_data_lines[:3]}")
+                            logger.debug(f"STREAM COMPLETE from {server} | chunks=0 | Received {len(non_data_lines)} non-data lines: {non_data_lines[:3]}")
                         else:
-                            logger.info(f"STREAM COMPLETE from {server} | chunks=0 | No data lines received (empty response body)")
+                            logger.debug(f"STREAM COMPLETE from {server} | chunks=0 | No data lines received (empty response body), falling back to local")
                         # Don't mark as unhealthy immediately - remote may be processing but stream format issue
                         # Instead, raise exception to trigger fallback to local, but keep server in rotation
-                        raise NoHealthyServersError("Remote server unavailable, using local")
+                        # Use a simple message - this is expected behavior, fallback is automatic
+                        raise NoHealthyServersError("")
                     else:
                         logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={total_time:.2f}s")
                         # Mark as healthy if we got chunks
