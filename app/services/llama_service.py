@@ -165,6 +165,10 @@ class LlamaService:
 
         try:
             from llama_cpp import Llama
+            import llama_cpp.llama_cpp as llama_cpp_lib
+
+            # Initialize CUDA backend before loading model
+            llama_cpp_lib.llama_backend_init()
 
             # Use admin-configured context size
             logger.info(f"  Using context size: {self.num_ctx}")

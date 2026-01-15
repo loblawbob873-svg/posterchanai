@@ -405,6 +405,18 @@ class LoadBalancer:
                     json=request_json
                 )
                 logger.info(f"CHAT RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
+                
+                # If remote returns error status, raise NoHealthyServersError to trigger fallback to local
+                if response.status_code >= 400:
+                    error_body = ""
+                    try:
+                        error_body = response.text[:500]
+                    except Exception:
+                        pass
+                    logger.warning(f"CHAT ERROR from {server} | status={response.status_code} | body={error_body[:200]}, falling back to local")
+                    await mark_server_unhealthy_async(server)
+                    raise NoHealthyServersError(f"Server {server} returned {response.status_code}")
+                
                 response.raise_for_status()
                 result = response.json()
                 logger.info(f"CHAT COMPLETE from {server} | total_time={time.time()-start_time:.2f}s")
@@ -424,7 +436,7 @@ class LoadBalancer:
                     error_body = e.response.text[:500]
                 except Exception:
                     pass
-                logger.error(f"CHAT ERROR from {server} | status={e.response.status_code} | body={error_body}")
+                logger.warning(f"CHAT ERROR from {server} | status={e.response.status_code} | body={error_body[:200]}, falling back to local")
                 await mark_server_unhealthy_async(server)
                 raise NoHealthyServersError(f"Server {server} returned {e.response.status_code}")
             except Exception as e:

@@ -429,10 +429,8 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
                             )
                             if "error" in result:
                                 logger.warning(f"Load balancer returned error, falling back to local: {result.get('error')}")
-                                raise HTTPException(
-                                    status_code=500,
-                                    detail=result["error"].get("message", "Unknown error")
-                                )
+                                # Fall through to local inference instead of raising exception
+                                raise NoHealthyServersError(f"Remote server returned error: {result.get('error')}")
                             # Strip thinking tags from load balancer response
                             if result.get("choices"):
                                 for choice in result["choices"]:
