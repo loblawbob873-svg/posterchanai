@@ -211,34 +211,9 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
         ) as client:
             # Skip connectivity test - go straight to catalog to avoid extra requests that might trigger blocking
             
-            # First, visit the main page to establish session and get cookies (like a browser does)
-            # This helps bypass Cloudflare by establishing a session first
-            try:
-                # Use minimal headers for initial request
-                initial_headers = {
-                    "User-Agent": headers["User-Agent"],
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                }
-                main_page_response = await client.get(f"{CHAN4_BASE_URL}/", headers=initial_headers, timeout=10)
-                logger.debug(f"Main page visit: status={main_page_response.status_code}, length={len(main_page_response.text)}")
-                
-                # Check if we got Cloudflare challenge on main page
-                main_html_lower = main_page_response.text.lower()
-                if "checking your browser" in main_html_lower or "just a moment" in main_html_lower:
-                    logger.warning("Cloudflare challenge detected on main page")
-                    # Wait a moment (simulate browser delay) and try again
-                    import asyncio
-                    await asyncio.sleep(3)
-                    # Try main page again
-                    main_page_response = await client.get(f"{CHAN4_BASE_URL}/", headers=initial_headers, timeout=10)
-                    logger.debug(f"Main page retry: status={main_page_response.status_code}, length={len(main_page_response.text)}")
-                
-                # Update referer for subsequent requests
-                headers["Referer"] = f"{CHAN4_BASE_URL}/"
-                # Cookies should be handled automatically by httpx
-                logger.debug(f"Cookies after main page: {len(client.cookies)} cookies")
-            except Exception as e:
-                logger.warning(f"Could not visit main page first: {e}, continuing anyway")
+            # Skip main page visit - go straight to catalog like browser would
+            # Browsers don't always visit main page first when you navigate directly to /g/catalog
+            headers["Referer"] = f"{CHAN4_BASE_URL}/"
             
             # Try JSON first, fallback to HTML
             json_url = f"{CHAN4_BASE_URL}/{board}/catalog.json"
@@ -326,22 +301,19 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             except Exception as e:
                 logger.debug(f"JSON catalog failed: {e}, falling back to HTML")
             
-            # Fallback to HTML catalog
+            # Fallback to HTML catalog - use exact same approach as browser
             logger.info(f"Using HTML catalog endpoint: {catalog_url}")
+            
+            # Try with full browser headers first
             response = await client.get(catalog_url, headers=headers)
+            logger.info(f"Catalog response: status={response.status_code}, length={len(response.text)}, cookies={len(client.cookies)}")
             
             # Check for blocking
             if response.status_code == 403:
-                logger.error(f"4chan returned 403 Forbidden for {catalog_url}. Response headers: {dict(response.headers)}")
-                # Try with minimal headers
-                logger.info("Retrying HTML catalog with minimal headers...")
-                minimal_headers = {
-                    "User-Agent": headers["User-Agent"],
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                }
-                response = await client.get(catalog_url, headers=minimal_headers)
-                if response.status_code == 403:
-                    raise ValueError(f"4chan is blocking requests (HTTP 403). If you can access 4chan in your browser through the proxy, verify that:\n1. The proxy configuration in Admin Settings matches your browser proxy settings\n2. The proxy is the same one your browser uses\n3. Try accessing {catalog_url} directly in your browser through the proxy to confirm it works")
+                logger.error(f"4chan returned 403 Forbidden for {catalog_url}")
+                logger.error(f"Response headers: {dict(response.headers)}")
+                logger.error(f"Response preview: {response.text[:500]}")
+                raise ValueError(f"4chan returned 403 Forbidden. If this works in your browser with the same proxy, the request headers may be different. Check logs for details.")
             
             response.raise_for_status()
             html = response.text

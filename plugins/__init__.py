@@ -78,13 +78,19 @@ def load_plugin(plugin_name: str, app: Optional[FastAPI] = None) -> bool:
             handler_name = f"handle_{plugin_name}_command"
             if hasattr(commands, handler_name):
                 _command_handlers[plugin_name] = getattr(commands, handler_name)
-                logger.info(f"Plugin '{plugin_name}' command handler registered")
-            # Also check for alternative handler names (e.g., chan4 -> handle_chan4_command)
-            alt_handler_name = handler_name.replace("_", "")
-            if hasattr(commands, alt_handler_name):
-                _command_handlers[plugin_name] = getattr(commands, alt_handler_name)
-                logger.info(f"Plugin '{plugin_name}' command handler registered (alt name)")
-        except ImportError:
+                logger.info(f"Plugin '{plugin_name}' command handler registered as '{handler_name}'")
+            else:
+                # Try alternative handler names
+                alt_handler_name = handler_name.replace("_", "")
+                if hasattr(commands, alt_handler_name):
+                    _command_handlers[plugin_name] = getattr(commands, alt_handler_name)
+                    logger.info(f"Plugin '{plugin_name}' command handler registered (alt name: '{alt_handler_name}')")
+                else:
+                    # List available functions for debugging
+                    available_funcs = [name for name in dir(commands) if name.startswith("handle") and callable(getattr(commands, name))]
+                    logger.warning(f"Plugin '{plugin_name}' has no handler '{handler_name}' or '{alt_handler_name}'. Available handlers: {available_funcs}")
+        except ImportError as e:
+            logger.warning(f"Could not import commands for plugin '{plugin_name}': {e}")
             pass
             
         _loaded_plugins[plugin_name] = plugin_module
@@ -131,9 +137,14 @@ def get_command_handler(command: str) -> Optional[Callable]:
     # Map command names to plugin names
     command_to_plugin = {
         "chan4": "chan4",  # 4chan/4chang commands use chan4 plugin
+        "4chan": "chan4",  # Explicit mapping for 4chan command
+        "4chang": "chan4",  # Explicit mapping for 4chang command
     }
     plugin_name = command_to_plugin.get(command, command)
-    return _command_handlers.get(plugin_name)
+    handler = _command_handlers.get(plugin_name)
+    if not handler:
+        logger.warning(f"No handler found for command '{command}' (mapped to plugin '{plugin_name}'). Loaded plugins: {list(_command_handlers.keys())}")
+    return handler
 
 
 def get_plugin_commands() -> Dict[str, str]:
@@ -159,6 +170,14 @@ def load_enabled_plugins(app: Optional[FastAPI] = None):
     # List of known plugins - routers are always loaded for API access
     known_plugins = ['rss', 'chan4']
     
+    logger.info(f"Loading plugins: {known_plugins}")
     for plugin_name in known_plugins:
         # Always load the plugin (router, models, commands)
-        load_plugin(plugin_name, app)
+        success = load_plugin(plugin_name, app)
+        if success:
+            logger.info(f"Plugin '{plugin_name}' loaded successfully")
+        else:
+            logger.error(f"Failed to load plugin '{plugin_name}'")
+    
+    logger.info(f"Loaded plugins: {list(_loaded_plugins.keys())}")
+    logger.info(f"Registered command handlers: {list(_command_handlers.keys())}")
