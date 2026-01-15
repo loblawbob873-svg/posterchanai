@@ -327,12 +327,14 @@ class LoadBalancer:
 
                     chunk_count = 0
                     first_chunk_time = None
+                    empty_stream = True
                     async for line in response.aiter_lines():
                         line = line.strip()
                         if not line:
                             continue
                         if line.startswith("data: "):
                             chunk_count += 1
+                            empty_stream = False
                             if first_chunk_time is None:
                                 first_chunk_time = time.time()
                                 logger.debug(f"STREAM first chunk from {server} after {first_chunk_time - start_time:.2f}s")
@@ -342,10 +344,14 @@ class LoadBalancer:
                             # Log non-data lines for debugging
                             logger.debug(f"STREAM non-data line from {server}: {line[:100]}")
 
+                    total_time = time.time() - start_time
                     if chunk_count == 0:
-                        logger.warning(f"STREAM COMPLETE from {server} | chunks=0 | total_time={time.time()-start_time:.2f}s | WARNING: No chunks received!")
+                        logger.warning(f"STREAM COMPLETE from {server} | chunks=0 | total_time={total_time:.2f}s | WARNING: No chunks received! This may indicate a load balancing loop or the remote server doesn't have updated code.")
+                        # Mark server as unhealthy and raise exception to trigger fallback to local
+                        await mark_server_unhealthy_async(server)
+                        raise NoHealthyServersError(f"Remote server {server} returned empty stream (likely load balancing loop or missing code update)")
                     else:
-                        logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={time.time()-start_time:.2f}s")
+                        logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={total_time:.2f}s")
 
             except httpx.HTTPStatusError as e:
                 error_body = ""
