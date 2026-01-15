@@ -168,8 +168,13 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
     # Proxy is REQUIRED for 4chan (privacy/security)
     proxy_config = require_proxy("4chan access")
     
+    # Verify proxy_config is a string (httpx 0.28.1 uses 'proxy' parameter with string URL)
+    if not isinstance(proxy_config, str):
+        logger.error(f"Invalid proxy_config type: {type(proxy_config)}, expected str. Value: {proxy_config}")
+        raise ValueError(f"Proxy configuration must be a string URL, got {type(proxy_config)}")
+    
     try:
-        logger.info(f"Fetching 4chan /{board}/catalog via proxy")
+        logger.info(f"Fetching 4chan /{board}/catalog via proxy: {proxy_config}")
         # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
         async with httpx.AsyncClient(
             timeout=30,
