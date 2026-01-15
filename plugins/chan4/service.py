@@ -198,6 +198,18 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             response = await client.get(catalog_url, headers=headers)
             response.raise_for_status()
             html = response.text
+            content_type = response.headers.get("content-type", "").lower()
+            logger.info(f"Catalog response: status={response.status_code}, content-type={content_type}, length={len(html)}")
+            
+            # Check if we got HTML instead of JSON (might be an error page or redirect)
+            if "text/html" in content_type or html.strip().startswith("<"):
+                logger.warning(f"Received HTML instead of JSON from catalog.json. Response preview: {html[:300]}")
+                # Fall through to HTML parsing
+                raise json.JSONDecodeError("HTML response instead of JSON", html, 0)
+            
+            # Log first 500 chars to see what we're getting
+            if len(html) > 0:
+                logger.debug(f"Response preview (first 500 chars): {html[:500]}")
         
         # Parse the catalog JSON (4chan catalog is a JSON endpoint)
         try:
@@ -215,14 +227,43 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                 # Iterate through pages
                 for page_key, page_data in catalog_data.items():
                     if isinstance(page_data, dict):
+                        # Try to get threads from the page
                         page_threads = page_data.get("threads", {})
+                        
+                        # If no "threads" key, maybe the page_data itself IS the threads dict?
+                        # (Some 4chan API versions might structure it differently)
+                        if not page_threads and all(isinstance(k, str) and k.isdigit() for k in list(page_data.keys())[:5]):
+                            # Looks like page_data might be the threads dict directly
+                            logger.debug(f"Page {page_key} appears to be threads dict directly")
+                            page_threads = page_data
+                        
                         if isinstance(page_threads, dict):
                             all_threads.update(page_threads)
             
             logger.info(f"Found {len(all_threads)} threads in catalog JSON for /{board}/")
             
             if not all_threads:
-                logger.warning(f"No threads found in catalog JSON structure. Catalog data keys: {list(catalog_data.keys())[:10] if isinstance(catalog_data, dict) else 'not a dict'}")
+                logger.warning(f"No threads found in catalog JSON structure.")
+                if isinstance(catalog_data, dict):
+                    logger.warning(f"Catalog data keys: {list(catalog_data.keys())[:10]}")
+                    # Check if first page has threads
+                    if catalog_data:
+                        first_page_key = list(catalog_data.keys())[0]
+                        first_page = catalog_data[first_page_key]
+                        logger.warning(f"First page ({first_page_key}) type: {type(first_page)}")
+                        if isinstance(first_page, dict):
+                            logger.warning(f"First page keys: {list(first_page.keys())}")
+                            # Maybe threads are directly in the page, not in a "threads" key?
+                            if "threads" not in first_page:
+                                logger.warning(f"No 'threads' key in first page. Trying direct iteration...")
+                                # Try treating the page itself as threads dict
+                                for key, value in list(first_page.items())[:5]:
+                                    logger.warning(f"  Page item: {key} -> {type(value)}")
+                else:
+                    logger.warning(f"Catalog data is not a dict, type: {type(catalog_data)}")
+                    # Maybe it's a list?
+                    if isinstance(catalog_data, list):
+                        logger.warning(f"Catalog data is a list with {len(catalog_data)} items")
             
             # Extract threads from all pages
             for thread_id_str, thread_data in list(all_threads.items())[:limit]:
@@ -270,11 +311,15 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                     continue
             
             logger.info(f"Successfully parsed {len(threads)} threads from catalog JSON for /{board}/")
+            
+            # If we parsed JSON but got no threads, try HTML fallback
+            if not threads:
+                logger.warning(f"JSON parsing succeeded but no threads found. Trying HTML catalog as fallback...")
+                raise json.JSONDecodeError("No threads in JSON", html, 0)
         
         except json.JSONDecodeError as e:
             # Fallback to HTML parsing if JSON fails (try HTML catalog endpoint)
-            logger.warning(f"Failed to parse catalog as JSON: {e}. Response preview: {html[:200]}")
-            logger.info("Trying HTML catalog endpoint as fallback")
+            logger.warning(f"Failed to parse catalog as JSON or no threads found: {e}. Trying HTML catalog endpoint...")
             # Try HTML catalog endpoint
             html_catalog_url = f"{CHAN4_BASE_URL}/{board}/catalog"
             try:
@@ -287,6 +332,7 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                     html_response = await html_client.get(html_catalog_url, headers=headers)
                     html_response.raise_for_status()
                     html = html_response.text
+                    logger.info(f"HTML catalog response: status={html_response.status_code}, length={len(html)}")
             except Exception as e:
                 logger.error(f"Failed to fetch HTML catalog: {e}")
                 raise ValueError(f"Failed to fetch /{board}/ catalog. The board may not exist or be unavailable.")
@@ -360,6 +406,8 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                 except Exception as e:
                     logger.debug(f"Error parsing thread div: {e}")
                     continue
+            
+            logger.info(f"Successfully parsed {len(threads)} threads from HTML catalog for /{board}/")
     
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error fetching 4chan catalog: {e.response.status_code}")
@@ -375,6 +423,7 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
         logger.error(f"Error fetching 4chan catalog: {e}")
         raise
     
+    logger.info(f"Returning {len(threads[:limit])} threads from fetch_board_catalog for /{board}/")
     return threads[:limit]
 
 
