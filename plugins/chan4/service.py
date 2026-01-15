@@ -68,7 +68,7 @@ class Chan4Post:
 from app.services.proxy_utils import require_proxy
 
 
-async def fetch_thread_posts(board: str, thread_id: int, proxy_config: dict) -> List[Chan4Post]:
+async def fetch_thread_posts(board: str, thread_id: int, proxy_config: str) -> List[Chan4Post]:
     """Fetch all posts from a specific thread"""
     thread_url = f"{CHAN4_BASE_URL}/{board}/thread/{thread_id}.json"
     headers = {
