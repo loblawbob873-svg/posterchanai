@@ -967,6 +967,7 @@ function initContactsModal() {
             const origOrganization = contactsModal.dataset.origOrganization || '';
             const origNote = contactsModal.dataset.origNote || '';
 
+            // Only include fields that changed
             if (name !== origName) updates.name = name;
             if (phone !== origPhone) updates.phone = phone;
             if (email !== origEmail) updates.email = email;

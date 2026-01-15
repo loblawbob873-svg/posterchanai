@@ -98,11 +98,12 @@ async def update_contact(
     import logging
     logger = logging.getLogger(__name__)
     
-    # Convert Pydantic model to dict, excluding None values
+    # Convert Pydantic model to dict, excluding unset values
     # Use dict() for Pydantic v1 compatibility, model_dump() for v2
     try:
-        updates_dict = updates.model_dump(exclude_none=True)
+        updates_dict = updates.model_dump(exclude_unset=True)
     except AttributeError:
+        # Pydantic v1 fallback - just use dict and exclude None
         updates_dict = {k: v for k, v in updates.dict().items() if v is not None}
     logger.info(f"Update contact request: uid={uid}, updates={updates_dict}")
     
