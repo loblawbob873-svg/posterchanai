@@ -5,7 +5,6 @@
 # Global variables set by selection
 INSTALL_LLM=0
 INSTALL_IMAGE=0
-INSTALL_TUI=0
 LLM_BACKEND=""
 IMAGE_BACKEND=""
 BACKEND=""  # Alias for LLM_BACKEND for backward compatibility
@@ -25,11 +24,8 @@ select_components() {
     echo -e "  4) ${BOLD}Lightweight${NC}"
     echo "     Web UI only (use external Ollama + ComfyUI)"
     echo ""
-    echo -e "  5) ${BOLD}TUI Only${NC}"
-    echo "     Terminal UI client only (connects to existing server)"
-    echo ""
 
-    read -p "Select installation type [1-5, default=1]: " INSTALL_TYPE
+    read -p "Select installation type [1-4, default=1]: " INSTALL_TYPE
     INSTALL_TYPE=${INSTALL_TYPE:-1}
 
     case "$INSTALL_TYPE" in
@@ -53,26 +49,11 @@ select_components() {
             INSTALL_IMAGE=0
             echo -e "  ${GREEN}✓ Lightweight (external services)${NC}"
             ;;
-        5)
-            INSTALL_LLM=0
-            INSTALL_IMAGE=0
-            INSTALL_TUI=1
-            echo -e "  ${GREEN}✓ TUI Only (Terminal Client)${NC}"
-            return  # Skip other component questions
-            ;;
         *)
             INSTALL_LLM=1
             INSTALL_IMAGE=1
             ;;
     esac
-
-    # Ask about TUI for non-TUI-only installations
-    echo ""
-    read -p "Also install Terminal UI client? [y/N]: " INSTALL_TUI_CHOICE
-    if [[ "$INSTALL_TUI_CHOICE" =~ ^[Yy] ]]; then
-        INSTALL_TUI=1
-        echo -e "  ${GREEN}✓ TUI will be installed${NC}"
-    fi
 }
 
 select_llm_backend() {

@@ -889,10 +889,174 @@ function initCalendarModal() {
     };
 }
 
+// Initialize contacts modal
+function initContactsModal() {
+    const contactsModal = document.getElementById('contactsModal');
+    const closeBtn = document.getElementById('closeContactsModal');
+    const saveBtn = document.getElementById('saveContactBtn');
+    const cancelBtn = document.getElementById('cancelContactBtn');
+
+    if (!contactsModal) {
+        console.log('Contacts modal not found');
+        return;
+    }
+
+    // Close modal handlers
+    closeBtn?.addEventListener('click', () => {
+        contactsModal.style.display = 'none';
+        clearContactsForm();
+    });
+
+    cancelBtn?.addEventListener('click', () => {
+        contactsModal.style.display = 'none';
+        clearContactsForm();
+    });
+
+    contactsModal.addEventListener('click', (e) => {
+        if (e.target === contactsModal) {
+            contactsModal.style.display = 'none';
+            clearContactsForm();
+        }
+    });
+
+    // Save contact handler
+    saveBtn?.addEventListener('click', async () => {
+        const name = document.getElementById('contactName').value.trim();
+        const phone = document.getElementById('contactPhone').value.trim();
+        const email = document.getElementById('contactEmail').value.trim();
+        const organization = document.getElementById('contactOrganization').value.trim();
+        const note = document.getElementById('contactNote').value.trim();
+        const uid = document.getElementById('contactUid').value;
+
+        if (!name) {
+            alert('Name is required');
+            return;
+        }
+
+        if (!uid) {
+            // Adding new contact via command
+            let command = `contacts add "${name}" ${phone}`;
+            contactsModal.style.display = 'none';
+            clearContactsForm();
+
+            if (window.chatHandler && window.chatHandler.ws) {
+                window.chatHandler.addMessage('user', command);
+                window.chatHandler.ws.send(JSON.stringify({
+                    type: 'message',
+                    content: command
+                }));
+            }
+            return;
+        }
+
+        // Editing existing contact - use API
+        try {
+            const updates = {};
+            const origName = contactsModal.dataset.origName || '';
+            const origPhone = contactsModal.dataset.origPhone || '';
+            const origEmail = contactsModal.dataset.origEmail || '';
+            const origOrganization = contactsModal.dataset.origOrganization || '';
+            const origNote = contactsModal.dataset.origNote || '';
+
+            if (name !== origName) updates.name = name;
+            if (phone !== origPhone) updates.phone = phone;
+            if (email !== origEmail) updates.email = email;
+            if (organization !== origOrganization) updates.organization = organization;
+            if (note !== origNote) updates.note = note;
+
+            if (Object.keys(updates).length === 0) {
+                // No changes
+                contactsModal.style.display = 'none';
+                clearContactsForm();
+                return;
+            }
+
+            const response = await fetch(`/api/mail/contacts/${uid}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updates)
+            });
+
+            if (response.ok) {
+                contactsModal.style.display = 'none';
+                clearContactsForm();
+                // Refresh contacts list
+                if (window.chatHandler && window.chatHandler.ws) {
+                    window.chatHandler.ws.send(JSON.stringify({
+                        type: 'message',
+                        content: 'contacts all'
+                    }));
+                }
+            } else {
+                const error = await response.json();
+                alert('Failed to update contact: ' + (error.detail || 'Unknown error'));
+            }
+        } catch (e) {
+            console.error('Error updating contact:', e);
+            alert('Failed to update contact');
+        }
+    });
+
+    function clearContactsForm() {
+        document.getElementById('contactName').value = '';
+        document.getElementById('contactPhone').value = '';
+        document.getElementById('contactEmail').value = '';
+        document.getElementById('contactOrganization').value = '';
+        document.getElementById('contactNote').value = '';
+        document.getElementById('contactUid').value = '';
+        document.getElementById('contactsModalTitle').textContent = 'Add Contact';
+        // Clear original values
+        contactsModal.dataset.origName = '';
+        contactsModal.dataset.origPhone = '';
+        contactsModal.dataset.origEmail = '';
+        contactsModal.dataset.origOrganization = '';
+        contactsModal.dataset.origNote = '';
+    }
+
+    // Expose function to open modal
+    window.openContactsModal = async function(contactUid = null) {
+        if (contactUid) {
+            // Edit mode - fetch contact data
+            try {
+                const response = await fetch(`/api/mail/contacts/${contactUid}`);
+                if (response.ok) {
+                    const contact = await response.json();
+                    document.getElementById('contactsModalTitle').textContent = 'Edit Contact';
+                    document.getElementById('contactName').value = contact.name || '';
+                    document.getElementById('contactPhone').value = contact.phone || '';
+                    document.getElementById('contactEmail').value = contact.email || '';
+                    document.getElementById('contactOrganization').value = contact.organization || '';
+                    document.getElementById('contactNote').value = contact.note || '';
+                    document.getElementById('contactUid').value = contact.uid;
+                    // Store original values for change detection
+                    contactsModal.dataset.origName = contact.name || '';
+                    contactsModal.dataset.origPhone = contact.phone || '';
+                    contactsModal.dataset.origEmail = contact.email || '';
+                    contactsModal.dataset.origOrganization = contact.organization || '';
+                    contactsModal.dataset.origNote = contact.note || '';
+                } else {
+                    alert('Failed to load contact');
+                    return;
+                }
+            } catch (e) {
+                console.error('Error loading contact:', e);
+                alert('Failed to load contact');
+                return;
+            }
+        } else {
+            // Add mode
+            clearContactsForm();
+        }
+        contactsModal.style.display = 'flex';
+        document.getElementById('contactName').focus();
+    };
+}
+
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new App();
     initTranslateModal();
     initNewsModal();
     initCalendarModal();
+    initContactsModal();
 });

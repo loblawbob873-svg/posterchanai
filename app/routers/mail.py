@@ -10,7 +10,12 @@ from app.database import get_db
 from app.auth import get_current_user
 from app.models import User
 from app.services.mail_service import get_attachment, get_user_mail_accounts, sanitize_filename
-from app.services.caldav_service import get_user_contacts, get_user_contacts_config
+from app.services.caldav_service import (
+    get_user_contacts,
+    get_user_contacts_config,
+    get_user_contact_by_uid,
+    edit_user_contact,
+)
 
 router = APIRouter(prefix="/api/mail", tags=["mail"])
 
@@ -45,6 +50,63 @@ async def get_contact_emails(
     # Sort by name
     emails.sort(key=lambda x: x["name"].lower())
     return emails
+
+
+@router.get("/contacts/{uid}")
+async def get_contact(
+    uid: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> dict:
+    """Get a single contact by UID."""
+    config = get_user_contacts_config(current_user.id, db)
+    if not config:
+        raise HTTPException(status_code=404, detail="CardDAV not configured")
+
+    contact = get_user_contact_by_uid(current_user.id, db, uid)
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    return {
+        "uid": contact.uid,
+        "name": contact.name,
+        "phone": contact.phone,
+        "email": contact.emails[0] if contact.emails else "",
+        "emails": contact.emails,
+        "organization": contact.organization,
+        "note": contact.note,
+    }
+
+
+@router.put("/contacts/{uid}")
+async def update_contact(
+    uid: str,
+    updates: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> dict:
+    """Update a contact by UID."""
+    config = get_user_contacts_config(current_user.id, db)
+    if not config:
+        raise HTTPException(status_code=404, detail="CardDAV not configured")
+
+    # Validate that contact exists
+    contact = get_user_contact_by_uid(current_user.id, db, uid)
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    # Filter to only allowed fields
+    allowed_fields = {"name", "phone", "email", "organization", "note"}
+    filtered_updates = {k: v for k, v in updates.items() if k in allowed_fields}
+
+    if not filtered_updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    success = edit_user_contact(current_user.id, db, uid, filtered_updates)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update contact")
+
+    return {"success": True, "message": "Contact updated"}
 
 
 @router.get("/attachment/{account_hint}/{uid}/{index}")

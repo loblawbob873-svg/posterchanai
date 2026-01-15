@@ -1295,6 +1295,14 @@ class ChatHandler {
             return;  // Don't send to server
         }
 
+        // Intercept contacts edit commands to open edit modal in WebUI
+        const contactsEditMatch = decodedCmd.match(/^contacts\s+edit\s+(\S+)/i);
+        if (contactsEditMatch && window.openContactsModal) {
+            const uid = contactsEditMatch[1];
+            window.openContactsModal(uid);
+            return;  // Don't send to server
+        }
+
         // Track mail read commands for "this email" voice support
         // Format: "mail read <id>" or "mail read <account> <id>"
         const mailReadMatch = decodedCmd.match(/^mail\s+read\s+(\S+)(?:\s+(\S+))?/i);
@@ -2539,7 +2547,7 @@ class ChatHandler {
         'firewall': ['search', 'analyze'],
         'news': ['refresh'],
         'cal': ['today', 'week', 'add'],
-        'contacts': ['all', 'add'],
+        'contacts': ['all', 'add', 'search'],
         'mail': ['inbox', 'unread', 'folders', 'folder', 'sum', 'search', 'read', 'summary', 'translate', 'reply', 'forward', 'delete', 'deleteall', 'archive', 'send'],
         // Mail subcommands - will be populated with account names dynamically
         'mail folders': [],

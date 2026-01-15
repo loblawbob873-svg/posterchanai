@@ -62,17 +62,6 @@ main() {
     # Step 3: Select what to install
     select_components
 
-    # TUI-only mode - just install TUI and exit
-    if [ "$INSTALL_TUI" = "1" ] && [ "$INSTALL_LLM" = "0" ] && [ "$INSTALL_IMAGE" = "0" ]; then
-        setup_tui
-        echo ""
-        print_success "TUI installation complete!"
-        echo ""
-        echo "  Run with: ./run-tui.sh --server http://your-server:3051"
-        echo ""
-        return
-    fi
-
     # Step 4: Select LLM backend
     select_llm_backend
 
@@ -102,10 +91,7 @@ main() {
     # Step 12: Show MCP server info
     setup_mcp_server
 
-    # Step 13: Setup TUI (if selected)
-    setup_tui
-
-    # Step 14: Offer model download (if local LLM)
+    # Step 13: Offer model download (if local LLM)
     if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "ollama" ]; then
         download_model
     fi
