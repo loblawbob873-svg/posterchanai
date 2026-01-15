@@ -57,8 +57,10 @@ async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) 
         return None
 
     async with _cycle_lock:
-        # Reset cycle if server list changed
-        if _server_cycle is None or _server_list != servers:
+        # Reset cycle if server list changed (compare as tuples to ensure content comparison, preserve order)
+        servers_tuple = tuple(servers)
+        current_list_tuple = tuple(_server_list) if _server_list else ()
+        if _server_cycle is None or current_list_tuple != servers_tuple:
             _server_list = servers.copy()
             _server_cycle = cycle(servers)
             logger.info(f"Load balancer initialized with {len(servers)} server(s): {servers}")
