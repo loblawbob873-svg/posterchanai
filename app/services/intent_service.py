@@ -136,6 +136,7 @@ MUSIC:
 "Play music" -> music
 "Play happy music" -> music mood happy
 "Skip song" -> music skip
+"play song name" -> music search name
 
 TRANSLATION:
 "Translate to Spanish" -> translate Spanish
