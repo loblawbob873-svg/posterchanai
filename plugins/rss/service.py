@@ -58,8 +58,16 @@ class RssService:
             # Proxy is required for RSS feed fetching
             proxy_config = require_proxy("RSS feed fetching")
             
+            # Validate proxy config
+            if not proxy_config or not isinstance(proxy_config, str):
+                logger.error(f"Invalid proxy config for RSS feed: {proxy_config}")
+                raise ValueError(f"Invalid proxy configuration: {proxy_config}")
+            
+            logger.info(f"RSS feed fetching via proxy: {proxy_config} for URL: {url}")
+            
             # aiohttp uses connector for proxy
             connector = aiohttp.ProxyConnector.from_url(proxy_config)
+            logger.debug(f"Created aiohttp ProxyConnector with proxy: {proxy_config}")
             async with aiohttp.ClientSession(connector=connector) as session:
                 headers = {"User-Agent": "Mozilla/5.0 (compatible; Posterchanai/1.0)"}
                 async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
@@ -255,8 +263,16 @@ class RssService:
             # Proxy is required for RSS article fetching
             proxy_config = require_proxy("RSS article fetching")
             
+            # Validate proxy config
+            if not proxy_config or not isinstance(proxy_config, str):
+                logger.error(f"Invalid proxy config for RSS article: {proxy_config}")
+                raise ValueError(f"Invalid proxy configuration: {proxy_config}")
+            
+            logger.info(f"RSS article fetching via proxy: {proxy_config} for URL: {url}")
+            
             # aiohttp uses connector for proxy
             connector = aiohttp.ProxyConnector.from_url(proxy_config)
+            logger.debug(f"Created aiohttp ProxyConnector with proxy: {proxy_config}")
             async with aiohttp.ClientSession(connector=connector) as session:
                 headers = {"User-Agent": "Mozilla/5.0 (compatible; Posterchanai/1.0)"}
                 async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
