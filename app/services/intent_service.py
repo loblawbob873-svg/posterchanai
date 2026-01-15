@@ -136,9 +136,12 @@ MUSIC:
 "Play music" -> music
 "Play happy music" -> music mood happy
 "Skip song" -> music skip
-"Play song Imagine Dragons" -> music search Imagine Dragons
-"Play the song Sweet Home Alabama" -> music search Sweet Home Alabama
-"I want to listen to Take On Me" -> music search Take On Me
+"play song nugget" -> music search nugget
+"play song Yesterday" -> music search Yesterday
+"Play song Bohemian Rhapsody" -> music search Bohemian Rhapsody
+"play the song Hotel California" -> music search Hotel California
+"I want to listen to Stairway to Heaven" -> music search Stairway to Heaven
+"put on some Beatles" -> music search Beatles
 
 TRANSLATION:
 "Translate to Spanish" -> translate Spanish
@@ -206,11 +209,34 @@ RESPOND WITH THE COMMAND ONLY!"""
 
             # Clean up response
             command = response.strip()
+            
+            # Log raw response for debugging
+            logger.debug(f"Raw intent response: {command[:200]}")
 
             # Remove common formatting artifacts
             if command.startswith("```"):
-                # Remove markdown code blocks
-                command = command.replace("```", "").strip()
+                # Remove markdown code blocks - extract content between ```
+                lines = command.split("\n")
+                clean_lines = []
+                for line in lines:
+                    if line.startswith("```"):
+                        continue
+                    clean_lines.append(line)
+                command = "\n".join(clean_lines).strip()
+            
+            # Take only the first non-empty line (command should be single line)
+            for line in command.split("\n"):
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    command = line
+                    break
+            
+            # Remove common prefixes LLMs might add
+            prefixes_to_remove = ["command:", "output:", "result:", "answer:"]
+            for prefix in prefixes_to_remove:
+                if command.lower().startswith(prefix):
+                    command = command[len(prefix):].strip()
+            
             if command.startswith('"') and command.endswith('"'):
                 command = command[1:-1].strip()
             if command.startswith("'") and command.endswith("'"):
