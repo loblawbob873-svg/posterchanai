@@ -1430,7 +1430,7 @@ Example: `yt https://youtube.com/watch?v=...`""",
         query = arg.strip()
 
         try:
-            results = await search_nyaa(query, limit=15)
+            results = await search_nyaa(query, limit=20)
 
             if not results:
                 return {"type": "text", "content": f"No results found for '{query}' on nyaa.si"}

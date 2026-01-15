@@ -24,7 +24,7 @@ class NyaaResult:
     url: str = ""
 
 
-async def search_nyaa(query: str, limit: int = 15) -> list[NyaaResult]:
+async def search_nyaa(query: str, limit: int = 20) -> list[NyaaResult]:
     """
     Search nyaa.si for torrents.
 
