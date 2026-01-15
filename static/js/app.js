@@ -980,12 +980,14 @@ function initContactsModal() {
                 return;
             }
 
+            console.log('Updating contact:', uid, 'with:', updates);
             const response = await fetch(`/api/mail/contacts/${uid}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updates)
             });
 
+            console.log('Response status:', response.status);
             if (response.ok) {
                 contactsModal.style.display = 'none';
                 clearContactsForm();
@@ -997,12 +999,18 @@ function initContactsModal() {
                     }));
                 }
             } else {
-                const error = await response.json();
-                alert('Failed to update contact: ' + (error.detail || 'Unknown error'));
+                const errorText = await response.text();
+                console.error('Update failed:', response.status, errorText);
+                try {
+                    const error = JSON.parse(errorText);
+                    alert('Failed to update contact: ' + (error.detail || 'Unknown error'));
+                } catch {
+                    alert('Failed to update contact: ' + errorText);
+                }
             }
         } catch (e) {
             console.error('Error updating contact:', e);
-            alert('Failed to update contact');
+            alert('Failed to update contact: ' + e.message);
         }
     });
 

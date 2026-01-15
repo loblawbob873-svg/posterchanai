@@ -1,7 +1,7 @@
 """
 Mail Router - API endpoints for email functionality.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from typing import List
@@ -81,7 +81,7 @@ async def get_contact(
 @router.put("/contacts/{uid}")
 async def update_contact(
     uid: str,
-    updates: dict,
+    updates: dict = Body(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ) -> dict:
