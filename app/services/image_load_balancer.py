@@ -56,17 +56,24 @@ async def get_healthy_image_server(servers: List[str]) -> Optional[str]:
         return None
 
     async with _image_cycle_lock:
-        # Reset cycle if server list changed (compare as tuples to ensure content comparison, preserve order)
+        # Reset cycle only if server list actually changed (compare as tuples to ensure content comparison, preserve order)
         servers_tuple = tuple(servers)
         current_list_tuple = tuple(_image_server_list) if _image_server_list else ()
-        if _image_server_cycle is None or current_list_tuple != servers_tuple:
+        
+        # Only reset if cycle is None OR if the server list has actually changed
+        if _image_server_cycle is None:
             _image_server_list = servers.copy()
             _image_server_cycle = cycle(servers)
             logger.info(f"Image load balancer initialized with {len(servers)} server(s): {servers}")
+        elif current_list_tuple != servers_tuple:
+            # Server list changed - reset cycle
+            _image_server_list = servers.copy()
+            _image_server_cycle = cycle(servers)
+            logger.info(f"Image load balancer reinitialized with {len(servers)} server(s): {servers} (list changed)")
 
         # Simple round-robin - get next server
         server = next(_image_server_cycle)
-        logger.info(f"Selected image server (round-robin): {server}")
+        logger.info(f"Selected image server (round-robin): {server} (from {len(_image_server_list)} servers)")
         return server
 
 

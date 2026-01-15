@@ -93,22 +93,52 @@ async def generate_image_with_load_balancing(
                 logger.info(f"Image load balancer: selected {selected_server} -> LOCAL inference (self detected)")
                 # Fall through to local inference below (with GPU lock)
             else:
-                # Remote server - make HTTP request
+                # Remote server - make HTTP request directly (don't create new ImageLoadBalancer to avoid cycle issues)
                 logger.info(f"Image load balancer: selected {selected_server} -> REMOTE")
-                load_balancer = ImageLoadBalancer([selected_server], timeout=timeout)
+                # Make direct HTTP request instead of using ImageLoadBalancer to avoid creating a new cycle
+                timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
+                import httpx
+                payload = {
+                    "prompt": prompt,
+                    "negative_prompt": negative_prompt,
+                }
+                if width is not None:
+                    payload["width"] = width
+                if height is not None:
+                    payload["height"] = height
+                if steps is not None:
+                    payload["steps"] = steps
+                if cfg is not None:
+                    payload["cfg"] = cfg
+                
                 try:
-                    result = await load_balancer.generate_image(
-                        prompt=prompt,
-                        negative_prompt=negative_prompt,
-                        width=width,
-                        height=height,
-                        steps=steps,
-                        cfg=cfg,
-                    )
-                    return result  # Return even if None - don't fall back to local
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        response = await client.post(
+                            f"{selected_server}/api/generate-image",
+                            json=payload
+                        )
+                        response.raise_for_status()
+                        result = response.json()
+                        
+                        if result.get("error"):
+                            logger.error(f"IMAGE ERROR from {selected_server} | error={result['error']}")
+                            return None
+                        
+                        image_data = result.get("image")
+                        if image_data:
+                            logger.info(f"IMAGE COMPLETE from {selected_server}")
+                            return image_data
+                        else:
+                            logger.error(f"IMAGE ERROR from {selected_server} | no image in response")
+                            return None
                 except Exception as e:
                     logger.error(f"Remote image generation failed: {e}")
-                    return None  # Return None instead of falling back to local
+                    return None
+                
+                # OLD CODE - creates new cycle, causing issues
+                # load_balancer = ImageLoadBalancer([selected_server], timeout=timeout)
+                # try:
+                #     result = await load_balancer.generate_image(
 
     # Use local backend with GPU LOCK to prevent GPU overload
     # This handles both: no remote servers configured, and when "self" is selected by load balancer
