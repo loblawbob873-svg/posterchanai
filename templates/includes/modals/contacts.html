@@ -1,0 +1,34 @@
+<!-- Contacts Modal -->
+<div class="modal" id="contactsModal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="contactsModalTitle">Edit Contact</h2>
+            <button class="btn-icon modal-close" id="closeContactsModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="settings-form">
+                <label for="contactName">Name *</label>
+                <input type="text" id="contactName" placeholder="Full name" required>
+
+                <label for="contactPhone">Phone</label>
+                <input type="tel" id="contactPhone" placeholder="Phone number">
+
+                <label for="contactEmail">Email</label>
+                <input type="email" id="contactEmail" placeholder="Email address">
+
+                <label for="contactOrganization">Organization</label>
+                <input type="text" id="contactOrganization" placeholder="Company or organization">
+
+                <label for="contactNote">Note</label>
+                <textarea id="contactNote" rows="3" placeholder="Notes about this contact"></textarea>
+
+                <input type="hidden" id="contactUid" value="">
+
+                <div class="modal-buttons">
+                    <button class="btn-primary" id="saveContactBtn">Save Contact</button>
+                    <button class="btn-secondary" id="cancelContactBtn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
