@@ -107,11 +107,37 @@ All requests are routed through Tor proxy for privacy."""
             }
     
     except ValueError as e:
+        error_str = str(e)
         # Proxy requirement error
-        if "proxy" in str(e).lower():
+        if "proxy" in error_str.lower() and "require" in error_str.lower():
             return {
                 "type": "text",
-                "content": f"{str(e)}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
+                "content": f"{error_str}\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host"
+            }
+        # Cloudflare protection error
+        elif "cloudflare" in error_str.lower() or "protection" in error_str.lower():
+            return {
+                "type": "text",
+                "content": f"""{error_str}
+
+**Cloudflare Bypass Tips:**
+
+1. **Access 4chan in your browser first** (through the same proxy) to establish a session
+   - Open Brave browser
+   - Visit https://boards.4chan.org/ through your proxy
+   - Wait for the page to load completely
+   - Then try the 4chan command again
+
+2. **Wait a few minutes** - Cloudflare may have rate-limited your IP
+
+3. **Verify proxy is working:**
+   ```bash
+   curl -x http://192.168.0.1:8118 https://boards.4chan.org/
+   ```
+
+4. **Check proxy configuration** matches what your browser uses
+
+**Note:** Some Cloudflare challenges require JavaScript execution, which automated tools cannot solve. If this persists, 4chan may be actively blocking automated access."""
             }
         raise
     except Exception as e:

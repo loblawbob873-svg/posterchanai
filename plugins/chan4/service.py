@@ -207,34 +207,56 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
     
     try:
         # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
+        # Enable cookies to maintain session (critical for Cloudflare bypass)
         async with httpx.AsyncClient(
             timeout=30,
             follow_redirects=True,
-            proxy=proxy_config
+            proxy=proxy_config,
+            cookies={}  # Enable cookie jar
         ) as client:
-            # Skip connectivity test - go straight to catalog to avoid extra requests that might trigger blocking
-            
-            # Skip main page visit - go straight to catalog like browser would
-            # Browsers don't always visit main page first when you navigate directly to /g/catalog
-            headers["Referer"] = f"{CHAN4_BASE_URL}/"
+            # Strategy: Visit main page first to establish session (like a real browser)
+            # This helps bypass Cloudflare by establishing a legitimate session
+            logger.info("Establishing session by visiting main page first...")
+            try:
+                main_page_headers = headers.copy()
+                main_page_headers["Referer"] = ""  # No referer for initial visit
+                main_response = await client.get(CHAN4_BASE_URL, headers=main_page_headers)
+                logger.info(f"Main page visit: status={main_response.status_code}, cookies={len(client.cookies)}")
+                
+                # Small delay to mimic human behavior
+                import asyncio
+                await asyncio.sleep(0.5)
+                
+                # Update referer for subsequent requests
+                headers["Referer"] = CHAN4_BASE_URL
+            except Exception as e:
+                logger.warning(f"Main page visit failed (non-critical): {e}")
+                # Continue anyway - some setups might not need this
             
             # Try JSON first, fallback to HTML
             json_url = f"{CHAN4_BASE_URL}/{board}/catalog.json"
             try:
+                # Use cookies from main page visit
                 json_response = await client.get(json_url, headers=headers)
                 
                 # Check for blocking
                 if json_response.status_code == 403:
                     logger.error(f"4chan returned 403 Forbidden for {json_url}. Response headers: {dict(json_response.headers)}")
-                    # Try without some headers that might trigger detection
-                    logger.info("Retrying with minimal headers...")
-                    minimal_headers = {
+                    logger.info(f"Cookies at time of 403: {dict(client.cookies)}")
+                    
+                    # Try with session cookies but simpler headers
+                    logger.info("Retrying with simplified headers but keeping cookies...")
+                    simplified_headers = {
                         "User-Agent": headers["User-Agent"],
-                        "Accept": "application/json, text/html, */*",
+                        "Accept": "application/json, */*",
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Referer": headers.get("Referer", ""),
                     }
-                    json_response = await client.get(json_url, headers=minimal_headers)
+                    json_response = await client.get(json_url, headers=simplified_headers)
                     if json_response.status_code == 403:
-                        raise ValueError(f"4chan is blocking requests (HTTP 403). The site may be blocking proxy/Tor connections. If you can access 4chan in your browser through the proxy, check that the proxy configuration matches.")
+                        # Last attempt: try HTML catalog instead (sometimes works when JSON doesn't)
+                        logger.warning("JSON endpoint blocked, will try HTML catalog instead")
+                        raise Exception("JSON blocked, trying HTML")
                 
                 json_response.raise_for_status()
                 json_text = json_response.text
@@ -349,9 +371,17 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             # Fallback to HTML catalog - use exact same approach as browser
             logger.info(f"Using HTML catalog endpoint: {catalog_url}")
             
-            # Try with full browser headers first
+            # Use cookies from previous requests (main page + any JSON attempt)
+            logger.info(f"Requesting catalog with {len(client.cookies)} cookies in session")
+            
+            # Try with full browser headers first (with session cookies)
             response = await client.get(catalog_url, headers=headers)
             logger.info(f"Catalog response: status={response.status_code}, length={len(response.text)}, cookies={len(client.cookies)}")
+            
+            # Log cookie names for debugging
+            if client.cookies:
+                cookie_names = list(client.cookies.keys())
+                logger.info(f"Session cookies: {cookie_names}")
             
             # Check for blocking
             if response.status_code == 403:
@@ -459,9 +489,40 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             logger.info(f"HTML sample (last 1000 chars): {html[-1000:]}")
             
             # Check for Cloudflare or blocking indicators
-            if "cf-browser-verification" in html.lower() or "challenge-platform" in html.lower() or "just a moment" in html.lower():
-                logger.error("Cloudflare protection detected in HTML")
-                raise ValueError("Cloudflare protection detected. The site may be blocking proxy/Tor connections.")
+            cloudflare_indicators = [
+                "cf-browser-verification",
+                "challenge-platform", 
+                "just a moment",
+                "checking your browser",
+                "cf-ray",  # Cloudflare ray ID
+                "cf_clearance",  # Cloudflare clearance cookie (if missing, we're blocked)
+            ]
+            
+            found_indicators = [ind for ind in cloudflare_indicators if ind in html.lower()]
+            if found_indicators:
+                logger.error(f"Cloudflare protection detected in HTML. Indicators: {found_indicators}")
+                
+                # Check if we have cf_clearance cookie (means we passed challenge)
+                if "cf_clearance" in [c.lower() for c in client.cookies.keys()]:
+                    logger.info("Have cf_clearance cookie - may have passed challenge, retrying...")
+                    # Wait a bit and retry
+                    await asyncio.sleep(1)
+                    response = await client.get(catalog_url, headers=headers)
+                    html = response.text
+                    # Check again
+                    found_indicators = [ind for ind in cloudflare_indicators if ind in html.lower()]
+                    if found_indicators:
+                        raise ValueError("Cloudflare protection detected. The site may be blocking proxy/Tor connections. Try accessing 4chan in your browser first to establish a session, then try again.")
+                else:
+                    error_msg = (
+                        "Cloudflare protection detected. The site may be blocking automated requests.\n\n"
+                        "Workarounds:\n"
+                        "1. Access 4chan in your browser first (through the same proxy) to establish a session\n"
+                        "2. Wait a few minutes and try again (Cloudflare may have rate-limited)\n"
+                        "3. Check that your proxy is working: curl -x http://192.168.0.1:8118 https://boards.4chan.org/\n"
+                        "4. Some Cloudflare challenges require JavaScript - if this persists, 4chan may be blocking automated access"
+                    )
+                    raise ValueError(error_msg)
             
             # PRIMARY METHOD: Search raw HTML with regex FIRST (most reliable - works regardless of HTML structure)
             logger.info(f"Searching raw HTML ({len(html)} chars) with regex for thread URLs...")
