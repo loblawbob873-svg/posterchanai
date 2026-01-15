@@ -63,7 +63,7 @@ CONTACTS: contacts all, contacts <name>, contacts add <name> <phone>
 
 TODO: todo, todo add <task>, todo rm <number>
 
-MUSIC: music, music search <query>, music mood <vibe>, music random, music skip
+MUSIC: music, music search <query>, music mood <vibe>, music random, music skip, play music <query>
 
 NEWS: news, dailynews
 
