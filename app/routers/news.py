@@ -92,14 +92,18 @@ async def fetch_headlines_from_url(url: str) -> dict:
 
 async def summarize_with_ai(links: list, db: Session) -> str:
     """Use native inference service to create clickable summaries"""
+    def log(msg):
+        with open("/tmp/news_debug.log", "a") as f:
+            f.write(f"{msg}\n")
+    
     try:
-        print(f"[NEWS] Starting AI summarization for {len(links)} headlines")
+        log(f"Starting AI summarization for {len(links)} headlines")
         prepare_vram_for_llm(db)
         service = get_inference_service(db)
-        print(f"[NEWS] Got inference service: {type(service).__name__ if service else 'None'}")
+        log(f"Got inference service: {type(service).__name__ if service else 'None'}")
         
         if service is None:
-            print("[NEWS] ERROR: No inference service available")
+            log("ERROR: No inference service available")
             return None
 
         messages = [
@@ -112,49 +116,53 @@ No extra text or commentary."""},
             {"role": "user", "content": "\n".join(links)}
         ]
 
-        print(f"[NEWS] Calling chat_completion...")
+        log("Calling chat_completion...")
         result = await service.chat_completion(
             messages=messages,
             temperature=0.3,
             max_tokens=2048
         )
-        print(f"[NEWS] chat_completion returned: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+        log(f"chat_completion returned: {list(result.keys()) if isinstance(result, dict) else type(result)}")
 
         if "error" in result:
-            print(f"[NEWS] ERROR from AI: {result['error']}")
+            log(f"ERROR from AI: {result['error']}")
             return None
 
         content = result["choices"][0]["message"]["content"]
         if content:
             from app.services.text_utils import strip_thinking_tags
             summary = strip_thinking_tags(content.strip())
-            print(f"[NEWS] AI summarization successful, {len(summary)} chars")
+            log(f"AI summarization successful, {len(summary)} chars")
             return summary
         else:
-            print("[NEWS] WARNING: AI returned empty content")
+            log("WARNING: AI returned empty content")
 
     except Exception as e:
-        print(f"[NEWS] EXCEPTION: {e}")
+        log(f"EXCEPTION: {e}")
         import traceback
-        traceback.print_exc()
+        log(traceback.format_exc())
 
     return None
 
 
 async def fetch_news_from_source(source_url: str, source_name: str, db: Session) -> str:
     """Fetch news with AI summaries - max 10"""
-    print(f"[NEWS] Fetching from: {source_url}")
+    def log(msg):
+        with open("/tmp/news_debug.log", "a") as f:
+            f.write(f"{msg}\n")
+    
+    log(f"Fetching from: {source_url}")
     result = await fetch_headlines_from_url(source_url)
     links = result["links"][:10]
-    print(f"[NEWS] Got {len(links)} headlines from {source_name}")
+    log(f"Got {len(links)} headlines from {source_name}")
 
     if not links:
         return f"**{source_name}:** Could not fetch headlines. {result.get('error', '')}"
 
     # Use AI to summarize
-    print(f"[NEWS] Calling summarize_with_ai...")
+    log("Calling summarize_with_ai...")
     ai_result = await summarize_with_ai(links, db)
-    print(f"[NEWS] summarize_with_ai returned: {'Success' if ai_result else 'None'}")
+    log(f"summarize_with_ai returned: {'Success' if ai_result else 'None'}")
     
     if ai_result:
         # Add extra spacing between articles for better TUI readability
@@ -162,7 +170,7 @@ async def fetch_news_from_source(source_url: str, source_name: str, db: Session)
         return f"**{source_name}:**\n\n{spaced_result}"
 
     # Fallback: raw links with spacing
-    print(f"[NEWS] Using raw links fallback for {source_name}")
+    log(f"Using raw links fallback for {source_name}")
     return f"**{source_name}:**\n\n" + "\n\n".join(links)
 
 
