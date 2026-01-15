@@ -500,6 +500,13 @@ class LlamaService:
                 logger.warning(f"Error during model cleanup (ignored): {e}")
             self._model = None
             self._model_path = None
+            
+            # Reset VRAM mode if unloaded outside of VRAM manager (e.g., idle timeout)
+            try:
+                from app.services.vram_manager import reset_vram_mode
+                reset_vram_mode()
+            except Exception:
+                pass  # Don't fail if VRAM manager not available
 
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the loaded model"""

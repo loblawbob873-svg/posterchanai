@@ -261,39 +261,23 @@ class DiffusersService:
                             logger.warning(f"CPU offload failed: {e}, loading to GPU")
                             self._pipe = self._pipe.to(self._device)
                     elif self._device == "xpu":
-                        # Intel Arc: Use model CPU offload for better performance (like ROCm)
-                        # This keeps model in CPU, moves components to GPU only when needed
+                        # Intel Arc: Load directly to XPU (CPU offload adds overhead)
+                        # Disable VAE upcast for better performance
                         try:
                             # Disable VAE upcast to fp32 (saves VRAM and improves speed)
                             if hasattr(self._pipe, 'vae') and hasattr(self._pipe.vae, 'config'):
                                 self._pipe.vae.config.force_upcast = False
                             if hasattr(self._pipe, 'upcast_vae'):
                                 self._pipe.upcast_vae = False
-                            
-                            # Use model CPU offload for Intel Arc (better memory management)
-                            self._pipe.enable_model_cpu_offload()
-                            logger.info("Intel Arc: enabled model CPU offload + disabled VAE upcast")
+                            logger.info("Intel Arc: disabled VAE upcast for better performance")
                         except Exception as e:
-                            logger.warning(f"CPU offload failed: {e}, loading to GPU directly")
-                            self._pipe = self._pipe.to(self._device)
-                            logger.info("Intel Arc: model loaded to XPU (direct)")
+                            logger.warning(f"Failed to disable VAE upcast: {e}")
+                        
+                        # Load directly to XPU (faster than CPU offload on Intel Arc)
+                        self._pipe = self._pipe.to(self._device)
+                        logger.info("Intel Arc: model loaded to XPU (direct, no CPU offload)")
                     else:
                         self._pipe = self._pipe.to(self._device)
-
-                    try:
-                        self._pipe.enable_attention_slicing()
-                    except Exception:
-                        pass
-
-                    try:
-                        self._pipe.enable_vae_slicing()
-                    except Exception:
-                        pass
-
-                    try:
-                        self._pipe.enable_vae_tiling()
-                    except Exception:
-                        pass
 
                     # xformers only works on CUDA, not Intel XPU or ROCm
                     if self._device == "cuda":
@@ -302,27 +286,40 @@ class DiffusersService:
                             logger.info("Enabled xformers memory efficient attention (CUDA only)")
                         except Exception:
                             pass
-                    elif self._device == "xpu":
-                        # Intel Arc: Use attention slicing instead (xformers not available)
+                        
+                        # CUDA: Enable standard optimizations
                         try:
-                            # Use more aggressive slicing for Intel Arc
+                            self._pipe.enable_attention_slicing()
+                        except Exception:
+                            pass
+                    elif self._device == "xpu":
+                        # Intel Arc: Use max attention slicing (xformers not available)
+                        try:
                             self._pipe.enable_attention_slicing("max")
                             logger.info("Intel Arc: enabled max attention slicing (xformers not available)")
                         except Exception as e:
                             logger.warning(f"Failed to enable attention slicing: {e}")
-                        
-                        # Intel Arc: Enable VAE slicing and tiling for better performance
+                    else:
+                        # ROCm and other devices: standard optimizations
                         try:
-                            self._pipe.enable_vae_slicing()
+                            self._pipe.enable_attention_slicing()
+                        except Exception:
+                            pass
+
+                    # VAE optimizations for all devices
+                    try:
+                        self._pipe.enable_vae_slicing()
+                        if self._device == "xpu":
                             logger.info("Intel Arc: enabled VAE slicing")
-                        except Exception as e:
-                            logger.warning(f"Failed to enable VAE slicing: {e}")
-                        
-                        try:
-                            self._pipe.enable_vae_tiling()
+                    except Exception:
+                        pass
+
+                    try:
+                        self._pipe.enable_vae_tiling()
+                        if self._device == "xpu":
                             logger.info("Intel Arc: enabled VAE tiling")
-                        except Exception as e:
-                            logger.warning(f"Failed to enable VAE tiling: {e}")
+                    except Exception:
+                        pass
                 else:
                     self._pipe = self._pipe.to(self._device)
 
@@ -341,6 +338,13 @@ class DiffusersService:
             del self._pipe
             self._pipe = None
             self._model_path = None
+            
+            # Reset VRAM mode if unloaded outside of VRAM manager (e.g., idle timeout)
+            try:
+                from app.services.vram_manager import reset_vram_mode
+                reset_vram_mode()
+            except Exception:
+                pass  # Don't fail if VRAM manager not available
 
             # Force garbage collection - run twice for thorough cleanup
             gc.collect()
