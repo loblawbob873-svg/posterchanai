@@ -321,59 +321,65 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
         from app.services.load_balancer import get_healthy_server, is_self_url, NoHealthyServersError
 
         api_key = settings.get("chat_server_api_key", "")
-        selected_server = await get_healthy_server(servers, api_key if api_key else None)
+        try:
+            selected_server = await get_healthy_server(servers, api_key if api_key else None)
 
-        if selected_server:
-            # Check if selected server is THIS instance
-            if is_self_url(selected_server):
-                logger.info(f"Load balancer: selected {selected_server} -> LOCAL inference")
-                # Fall through to local inference below
-            else:
-                # Remote server - make HTTP request
-                logger.info(f"Load balancer: selected {selected_server} -> REMOTE")
-                timeout = int(settings.get("ollama_timeout", "120000")) / 1000
-                model = settings.get("ollama_model", "default")
-                load_balancer = LoadBalancer([selected_server], timeout=timeout, model=model, api_key=api_key if api_key else None)
+            if selected_server:
+                # Check if selected server is THIS instance
+                if is_self_url(selected_server):
+                    logger.info(f"Load balancer: selected {selected_server} -> LOCAL inference (self detected)")
+                    # Fall through to local inference below
+                else:
+                    # Remote server - make HTTP request
+                    logger.info(f"Load balancer: selected {selected_server} -> REMOTE")
+                    timeout = int(settings.get("ollama_timeout", "120000")) / 1000
+                    model = settings.get("ollama_model", "default")
+                    load_balancer = LoadBalancer([selected_server], timeout=timeout, model=model, api_key=api_key if api_key else None)
 
-                try:
-                    if request.stream:
-                        lb_stream = load_balancer.chat_stream(
-                            messages=messages,
-                            temperature=temperature,
-                            top_p=top_p,
-                            max_tokens=max_tokens
-                        )
-                        return StreamingResponse(
-                            filter_thinking_stream(lb_stream),
-                            media_type="text/event-stream",
-                            headers={
-                                "Cache-Control": "no-cache",
-                                "Connection": "keep-alive",
-                                "X-Accel-Buffering": "no",
-                            }
-                        )
-                    else:
-                        result = await load_balancer.chat(
-                            messages=messages,
-                            temperature=temperature,
-                            top_p=top_p,
-                            max_tokens=max_tokens
-                        )
-                        if "error" in result:
-                            raise HTTPException(
-                                status_code=500,
-                                detail=result["error"].get("message", "Unknown error")
+                    try:
+                        if request.stream:
+                            lb_stream = load_balancer.chat_stream(
+                                messages=messages,
+                                temperature=temperature,
+                                top_p=top_p,
+                                max_tokens=max_tokens
                             )
-                        # Strip thinking tags from load balancer response
-                        if result.get("choices"):
-                            for choice in result["choices"]:
-                                if choice.get("message", {}).get("content"):
-                                    choice["message"]["content"] = strip_thinking_tags(choice["message"]["content"])
-                        return result
-                except NoHealthyServersError:
-                    logger.info("Remote server failed, falling back to local")
-        else:
-            logger.info("No healthy servers, using local inference")
+                            return StreamingResponse(
+                                filter_thinking_stream(lb_stream),
+                                media_type="text/event-stream",
+                                headers={
+                                    "Cache-Control": "no-cache",
+                                    "Connection": "keep-alive",
+                                    "X-Accel-Buffering": "no",
+                                }
+                            )
+                        else:
+                            result = await load_balancer.chat(
+                                messages=messages,
+                                temperature=temperature,
+                                top_p=top_p,
+                                max_tokens=max_tokens
+                            )
+                            if "error" in result:
+                                logger.warning(f"Load balancer returned error, falling back to local: {result.get('error')}")
+                                raise HTTPException(
+                                    status_code=500,
+                                    detail=result["error"].get("message", "Unknown error")
+                                )
+                            # Strip thinking tags from load balancer response
+                            if result.get("choices"):
+                                for choice in result["choices"]:
+                                    if choice.get("message", {}).get("content"):
+                                        choice["message"]["content"] = strip_thinking_tags(choice["message"]["content"])
+                            return result
+                    except (NoHealthyServersError, Exception) as e:
+                        logger.warning(f"Load balancer request failed ({type(e).__name__}: {e}), falling back to local inference")
+                        # Fall through to local inference
+            else:
+                logger.info("No healthy servers from load balancer, using local inference")
+        except Exception as e:
+            logger.error(f"Load balancer error: {e}, falling back to local inference", exc_info=True)
+            # Fall through to local inference
 
     # Fall back to local inference service
     logger.info("Processing with local inference service")

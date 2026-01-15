@@ -131,14 +131,17 @@ def is_self_url(url: str, current_port: int = 3051) -> bool:
 
     current_port = int(os.environ.get("POSTERCHANAI_PORT", str(current_port)))
 
-    # Get local IPs
+    # Get local IPs - include all network interfaces
     local_ips = {'127.0.0.1', 'localhost', '0.0.0.0'}
     try:
         hostname = socket.gethostname()
         local_ips.add(hostname)
         local_ips.add(socket.gethostbyname(hostname))
+        # Get all IP addresses for this host (including router IPs, VLAN IPs, etc.)
         for info in socket.getaddrinfo(hostname, None):
-            local_ips.add(info[4][0])
+            ip = info[4][0]
+            if ip and not ip.startswith('::'):  # Skip IPv6 for now
+                local_ips.add(ip)
     except Exception:
         pass
 
@@ -146,8 +149,19 @@ def is_self_url(url: str, current_port: int = 3051) -> bool:
         parsed = urlparse(url)
         host = parsed.hostname
         port = parsed.port or (443 if parsed.scheme == 'https' else 80)
-        return host in local_ips and port == current_port
-    except Exception:
+        
+        # Check if host matches any local IP
+        is_local = host in local_ips
+        port_match = port == current_port
+        
+        if is_local and port_match:
+            logger.debug(f"Detected self URL: {url} (host={host}, port={port}, current_port={current_port}, local_ips={local_ips})")
+            return True
+        
+        logger.debug(f"Not self URL: {url} (host={host}, port={port}, current_port={current_port}, is_local={is_local}, port_match={port_match})")
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking if URL is self: {url}, error: {e}")
         return False
 
 
