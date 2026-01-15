@@ -451,6 +451,11 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
 
     # Fall back to local inference service
     logger.info("Processing with local inference service")
+    
+    # Prepare VRAM for LLM (unload image model if needed in shared mode)
+    from app.services.inference_factory import prepare_vram_for_llm
+    prepare_vram_for_llm(db)
+    
     service = get_inference_service(db)
 
     # Build kwargs from request
