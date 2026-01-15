@@ -148,9 +148,6 @@ def get_command_handler(command: str) -> Optional[Callable]:
     """Get command handler for a plugin command."""
     # Map command names to plugin names
     command_to_plugin = {
-        "chan4": "chan4",  # 4chan/4chang commands use chan4 plugin
-        "4chan": "chan4",  # Explicit mapping for 4chan command
-        "4chang": "chan4",  # Explicit mapping for 4chang command
     }
     plugin_name = command_to_plugin.get(command, command)
     handler = _command_handlers.get(plugin_name)
@@ -180,7 +177,7 @@ def get_plugin_commands() -> Dict[str, str]:
 def load_enabled_plugins(app: Optional[FastAPI] = None):
     """Load all plugins (routers always loaded, schedulers only if enabled)."""
     # List of known plugins - routers are always loaded for API access
-    known_plugins = ['rss', 'chan4']
+    known_plugins = ['rss']
     
     logger.info(f"=== PLUGIN LOADING START ===")
     logger.info(f"Loading plugins: {known_plugins}")
@@ -199,5 +196,3 @@ def load_enabled_plugins(app: Optional[FastAPI] = None):
     logger.info(f"=== PLUGIN LOADING COMPLETE ===")
     logger.info(f"Loaded plugins: {list(_loaded_plugins.keys())}")
     logger.info(f"Registered command handlers: {list(_command_handlers.keys())}")
-    if 'chan4' not in _command_handlers:
-        logger.error(f"⚠ WARNING: chan4 plugin handler not registered! Available handlers: {list(_command_handlers.keys())}")

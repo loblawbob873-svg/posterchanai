@@ -63,7 +63,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'rss', 'cal', 'contacts', 'mail', 'music', 'todo', '4chan', '4chang'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'rss', 'cal', 'contacts', 'mail', 'music', 'todo'];
         this.pluginActions = []; // Will be populated with plugin action hints
 
         // Load plugins and mail accounts for autocomplete
@@ -2832,8 +2832,6 @@ class ChatHandler {
         'torrents': ['download', 'list', 'add', 'start', 'stop', 'delete', 'movies', 'tv', 'music', 'anime'],
         'torrents download': ['movies', 'tv', 'music', 'anime'],
         'nyaa': ['download'],
-        '4chan': ['g', 'pol', 'b', 'a', 'v', 'mu', 'tv', 'fit', 'sci', 'lit', 'his', 'x', 'sp', 'news', 'int', 'out'],
-        '4chang': ['g', 'pol', 'b', 'a', 'v', 'mu', 'tv', 'fit', 'sci', 'lit', 'his', 'x', 'sp', 'news', 'int', 'out'],
         'budget': ['bills', 'add', 'pay'],
         'firewall': ['search', 'analyze'],
         'news': ['refresh'],

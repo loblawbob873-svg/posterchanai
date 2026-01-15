@@ -168,8 +168,6 @@ TORRENT:
 "Show torrents" -> torrents
 "Search for Ubuntu torrents" -> torrents search Ubuntu
 "Pause torrent 3" -> torrents pause 3
-"Show me 4chan g" -> 4chan g
-"Browse 4chan pol" -> 4chan pol
 
 FIREWALL & LOGS:
 "Check firewall" -> firewall

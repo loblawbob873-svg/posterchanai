@@ -118,11 +118,6 @@ const VOICE_COMMANDS = [
     { patterns: [/^(search\s+)?anime\s+(.+)$/i], command: 'nyaa $2' },
     { patterns: [/^nyaa\s+(.+)$/i], command: 'nyaa $1' },
     
-    // ==================== 4CHAN ====================
-    { patterns: [/^(show\s+me\s+)?(the\s+)?4chan\s+(.+)$/i], command: '4chan $3' },
-    { patterns: [/^4chan\s+(.+)$/i], command: '4chan $1' },
-    { patterns: [/^4chang\s+(.+)$/i], command: '4chang $1' },
-    { patterns: [/^(show\s+me\s+)?(the\s+)?(board|chan)\s+(.+)$/i], command: '4chan $4' },
 
     // ==================== YOUTUBE ====================
     { patterns: [/^summarize\s+(video\s+)?(.+)$/i], command: 'yt $2' },
