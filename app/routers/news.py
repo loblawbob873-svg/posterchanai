@@ -272,7 +272,7 @@ async def summarize_article(
     import re
     from bs4 import BeautifulSoup
 
-        try:
+    try:
         # Proxy is required for news article fetching
         proxy_config = require_proxy("News article fetching")
         
