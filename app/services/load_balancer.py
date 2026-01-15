@@ -305,6 +305,14 @@ class LoadBalancer:
             except NoHealthyServersError:
                 # Re-raise to trigger fallback to local
                 raise
+            except httpx.ConnectError as e:
+                logger.info(f"STREAM CONNECTION ERROR from {server} | Server unreachable (may be down or network issue), falling back to local")
+                await mark_server_unhealthy_async(server)
+                raise NoHealthyServersError(f"Server {server} is unreachable (falling back to local)")
+            except httpx.TimeoutException as e:
+                logger.info(f"STREAM TIMEOUT from {server} | Request timed out, falling back to local")
+                await mark_server_unhealthy_async(server)
+                raise NoHealthyServersError(f"Server {server} timed out (falling back to local)")
             except httpx.HTTPStatusError as e:
                 error_body = ""
                 try:
@@ -316,10 +324,10 @@ class LoadBalancer:
                 # Re-raise to trigger fallback to local instead of yielding error
                 raise NoHealthyServersError(f"Server {server} returned {e.response.status_code}")
             except Exception as e:
-                logger.error(f"STREAM EXCEPTION | server={server} | error={str(e)}")
+                logger.info(f"STREAM EXCEPTION from {server} | {type(e).__name__}: {str(e)[:100]} | falling back to local")
                 await mark_server_unhealthy_async(server)
                 # Re-raise to trigger fallback to local instead of yielding error
-                raise NoHealthyServersError(f"Stream error from {server}: {str(e)}")
+                raise NoHealthyServersError(f"Stream error from {server}: {str(e)[:100]}")
 
     async def chat(
         self,
@@ -368,6 +376,14 @@ class LoadBalancer:
                 logger.info(f"CHAT COMPLETE from {server} | total_time={time.time()-start_time:.2f}s")
                 return result
 
+            except httpx.ConnectError as e:
+                logger.info(f"CHAT CONNECTION ERROR from {server} | Server unreachable (may be down or network issue), falling back to local")
+                await mark_server_unhealthy_async(server)
+                raise NoHealthyServersError(f"Server {server} is unreachable (falling back to local)")
+            except httpx.TimeoutException as e:
+                logger.info(f"CHAT TIMEOUT from {server} | Request timed out, falling back to local")
+                await mark_server_unhealthy_async(server)
+                raise NoHealthyServersError(f"Server {server} timed out (falling back to local)")
             except httpx.HTTPStatusError as e:
                 error_body = ""
                 try:
@@ -376,8 +392,8 @@ class LoadBalancer:
                     pass
                 logger.error(f"CHAT ERROR from {server} | status={e.response.status_code} | body={error_body}")
                 await mark_server_unhealthy_async(server)
-                return {"error": {"message": f"Server {server} returned {e.response.status_code}"}}
+                raise NoHealthyServersError(f"Server {server} returned {e.response.status_code}")
             except Exception as e:
-                logger.error(f"CHAT EXCEPTION | server={server} | error={str(e)}")
+                logger.info(f"CHAT EXCEPTION from {server} | {type(e).__name__}: {str(e)[:100]} | falling back to local")
                 await mark_server_unhealthy_async(server)
-                return {"error": {"message": str(e)}}
+                raise NoHealthyServersError(f"Chat error from {server}: {str(e)[:100]}")
