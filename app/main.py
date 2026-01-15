@@ -62,166 +62,192 @@ load_enabled_plugins(app)
 
 @app.on_event("startup")
 async def startup():
-    init_db()
-
-    # Check LLM backend configuration
-    from app.database import SessionLocal
-    from app.models import Setting
-    db = SessionLocal()
     try:
-        backend = db.query(Setting).filter(Setting.key == "llm_backend").first()
-        backend_type = backend.value if backend else "ollama"
+        init_db()
 
-        if backend_type == "ipex":
-            # Verify IPEX environment is properly configured
-            from app.services.ipex_service import check_xpu_available
-            xpu_ok, xpu_msg = check_xpu_available()
-            if xpu_ok:
-                logging.info(f"IPEX backend: {xpu_msg}")
-            else:
-                logging.warning("=" * 60)
-                logging.warning(f"IPEX BACKEND WARNING: {xpu_msg}")
-                logging.warning("GPU acceleration may not work. Start with ./run-ipex.sh")
-                logging.warning("=" * 60)
-    finally:
-        db.close()
+        # Check LLM backend configuration
+        from app.database import SessionLocal
+        from app.models import Setting
+        db = SessionLocal()
+        try:
+            backend = db.query(Setting).filter(Setting.key == "llm_backend").first()
+            backend_type = backend.value if backend else "ollama"
 
-    # Start health check if enabled
-    from app.services.health_check import start_health_check
-    start_health_check()
+            if backend_type == "ipex":
+                # Verify IPEX environment is properly configured
+                from app.services.ipex_service import check_xpu_available
+                xpu_ok, xpu_msg = check_xpu_available()
+                if xpu_ok:
+                    logging.info(f"IPEX backend: {xpu_msg}")
+                else:
+                    logging.warning("=" * 60)
+                    logging.warning(f"IPEX BACKEND WARNING: {xpu_msg}")
+                    logging.warning("GPU acceleration may not work. Start with ./run-ipex.sh")
+                    logging.warning("=" * 60)
+        except Exception as e:
+            logging.error(f"Error checking LLM backend configuration: {e}", exc_info=True)
+        finally:
+            db.close()
 
-    # Only start schedulers on main instance (port 3051) to avoid database locks
-    app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
-    if app_port == 3051:
-        # Start news scheduler
-        from app.services.news_scheduler import start_scheduler
-        start_scheduler()
+        # Start health check if enabled
+        try:
+            from app.services.health_check import start_health_check
+            start_health_check()
+        except Exception as e:
+            logging.error(f"Error starting health check: {e}", exc_info=True)
 
-        # Start plugin schedulers
-        from plugins import start_plugin_schedulers
-        start_plugin_schedulers()
+        # Only start schedulers on main instance (port 3051) to avoid database locks
+        app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
+        if app_port == 3051:
+            try:
+                # Start news scheduler
+                from app.services.news_scheduler import start_scheduler
+                start_scheduler()
+            except Exception as e:
+                logging.error(f"Error starting news scheduler: {e}", exc_info=True)
 
-        # Start Logs scheduler
-        from app.services.logs_scheduler import start_logs_scheduler
-        start_logs_scheduler()
+            try:
+                # Start plugin schedulers
+                from plugins import start_plugin_schedulers
+                start_plugin_schedulers()
+            except Exception as e:
+                logging.error(f"Error starting plugin schedulers: {e}", exc_info=True)
 
-        # Start Schedule (daily calendar summary) scheduler
-        from app.services.schedule_scheduler import start_schedule_scheduler
-        start_schedule_scheduler()
-    else:
-        logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
+            try:
+                # Start Logs scheduler
+                from app.services.logs_scheduler import start_logs_scheduler
+                start_logs_scheduler()
+            except Exception as e:
+                logging.error(f"Error starting logs scheduler: {e}", exc_info=True)
 
-    # Auto-warmup RAG cache if enabled (only if MCP server is not handling it)
-    db2 = SessionLocal()
-    try:
-        rag_enabled = db2.query(Setting).filter(Setting.key == "rag_enabled").first()
-        rag_auto_warmup = db2.query(Setting).filter(Setting.key == "rag_auto_warmup").first()
-        mcp_enabled = db2.query(Setting).filter(Setting.key == "mcp_enabled").first()
+            try:
+                # Start Schedule (daily calendar summary) scheduler
+                from app.services.schedule_scheduler import start_schedule_scheduler
+                start_schedule_scheduler()
+            except Exception as e:
+                logging.error(f"Error starting schedule scheduler: {e}", exc_info=True)
+        else:
+            logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 
-        # Only run standalone RAG warmup if MCP is disabled (MCP handles its own warmup)
-        if (rag_enabled and rag_enabled.value == "true" and
-            (not rag_auto_warmup or rag_auto_warmup.value == "true") and
-            (not mcp_enabled or mcp_enabled.value != "true")):
-            import threading
-            from app.services.rag_warmup import warmup_rag_cache
-            logging.info("Starting RAG cache warmup in background...")
-            warmup_thread = threading.Thread(target=warmup_rag_cache, daemon=True)
-            warmup_thread.start()
-    finally:
-        db2.close()
+        # Auto-warmup RAG cache if enabled (only if MCP server is not handling it)
+        db2 = SessionLocal()
+        try:
+            rag_enabled = db2.query(Setting).filter(Setting.key == "rag_enabled").first()
+            rag_auto_warmup = db2.query(Setting).filter(Setting.key == "rag_auto_warmup").first()
+            mcp_enabled = db2.query(Setting).filter(Setting.key == "mcp_enabled").first()
 
-    # Start integrated MCP server if enabled
-    from app.services.mcp_service import start_mcp_server
-    start_mcp_server()
+            # Only run standalone RAG warmup if MCP is disabled (MCP handles its own warmup)
+            if (rag_enabled and rag_enabled.value == "true" and
+                (not rag_auto_warmup or rag_auto_warmup.value == "true") and
+                (not mcp_enabled or mcp_enabled.value != "true")):
+                import threading
+                from app.services.rag_warmup import warmup_rag_cache
+                logging.info("Starting RAG cache warmup in background...")
+                warmup_thread = threading.Thread(target=warmup_rag_cache, daemon=True)
+                warmup_thread.start()
+        except Exception as e:
+            logging.error(f"Error starting RAG warmup: {e}", exc_info=True)
+        finally:
+            db2.close()
 
-    # Auto-start built-in Tor if enabled
-    db_tor = SessionLocal()
-    try:
-        tor_enabled = db_tor.query(Setting).filter(Setting.key == "tor_enabled").first()
-        if tor_enabled and tor_enabled.value.lower() == "true":
-            def get_tor_setting(key, default=""):
-                s = db_tor.query(Setting).filter(Setting.key == key).first()
-                return s.value if s and s.value else default
+        # Start integrated MCP server if enabled
+        try:
+            from app.services.mcp_service import start_mcp_server
+            start_mcp_server()
+        except Exception as e:
+            logging.error(f"Error starting MCP server: {e}", exc_info=True)
 
-            from app.services.tor_service import start_tor_service
-            listen_host = get_tor_setting("tor_listen_host", "127.0.0.1")
-            socks_port = get_tor_setting("tor_socks_port", "9052")
-            tor_service = start_tor_service(
-                listen_host=listen_host,
-                socks_port=int(socks_port),
-                control_port=int(get_tor_setting("tor_control_port", "9053")),
-                exit_nodes=get_tor_setting("tor_exit_nodes", "{us}"),
-                data_dir=get_tor_setting("tor_data_dir", "/var/lib/posterchanai/tor"),
-            )
-            if tor_service:
-                logging.info(f"Built-in Tor started (SOCKS5 on {listen_host}:{socks_port})")
-            else:
-                logging.error("Failed to start built-in Tor")
-    except Exception as e:
-        logging.error(f"Failed to start built-in Tor: {e}")
-    finally:
-        db_tor.close()
+        # Auto-start built-in Tor if enabled
+        db_tor = SessionLocal()
+        try:
+            tor_enabled = db_tor.query(Setting).filter(Setting.key == "tor_enabled").first()
+            if tor_enabled and tor_enabled.value.lower() == "true":
+                def get_tor_setting(key, default=""):
+                    s = db_tor.query(Setting).filter(Setting.key == key).first()
+                    return s.value if s and s.value else default
 
-    # Auto-start built-in HTTP proxy if enabled
-    db_proxy = SessionLocal()
-    try:
-        proxy_enabled = db_proxy.query(Setting).filter(Setting.key == "proxy_enabled").first()
-        if proxy_enabled and proxy_enabled.value.lower() == "true":
-            def get_proxy_setting(key, default=""):
-                s = db_proxy.query(Setting).filter(Setting.key == key).first()
-                return s.value if s and s.value else default
-
-            socks_host = get_proxy_setting("proxy_socks_host")
-            if socks_host:
-                from app.services.http_proxy_service import start_http_proxy
-                start_http_proxy(
-                    listen_host=get_proxy_setting("proxy_listen_host", "127.0.0.1"),
-                    listen_port=int(get_proxy_setting("proxy_listen_port", "8118")),
-                    socks_host=socks_host,
-                    socks_port=int(get_proxy_setting("proxy_socks_port", "9052")),
+                from app.services.tor_service import start_tor_service
+                listen_host = get_tor_setting("tor_listen_host", "127.0.0.1")
+                socks_port = get_tor_setting("tor_socks_port", "9052")
+                tor_service = start_tor_service(
+                    listen_host=listen_host,
+                    socks_port=int(socks_port),
+                    control_port=int(get_tor_setting("tor_control_port", "9053")),
+                    exit_nodes=get_tor_setting("tor_exit_nodes", "{us}"),
+                    data_dir=get_tor_setting("tor_data_dir", "/var/lib/posterchanai/tor"),
                 )
-                logging.info(f"Built-in HTTP proxy started on port {get_proxy_setting('proxy_listen_port', '8118')}")
-            else:
-                logging.warning("HTTP proxy enabled but no SOCKS5 target host configured")
+                if tor_service:
+                    logging.info(f"Built-in Tor started (SOCKS5 on {listen_host}:{socks_port})")
+                else:
+                    logging.error("Failed to start built-in Tor")
+        except Exception as e:
+            logging.error(f"Failed to start built-in Tor: {e}", exc_info=True)
+        finally:
+            db_tor.close()
+
+        # Auto-start built-in HTTP proxy if enabled
+        db_proxy = SessionLocal()
+        try:
+            proxy_enabled = db_proxy.query(Setting).filter(Setting.key == "proxy_enabled").first()
+            if proxy_enabled and proxy_enabled.value.lower() == "true":
+                def get_proxy_setting(key, default=""):
+                    s = db_proxy.query(Setting).filter(Setting.key == key).first()
+                    return s.value if s and s.value else default
+
+                socks_host = get_proxy_setting("proxy_socks_host")
+                if socks_host:
+                    from app.services.http_proxy_service import start_http_proxy
+                    start_http_proxy(
+                        listen_host=get_proxy_setting("proxy_listen_host", "127.0.0.1"),
+                        listen_port=int(get_proxy_setting("proxy_listen_port", "8118")),
+                        socks_host=socks_host,
+                        socks_port=int(get_proxy_setting("proxy_socks_port", "9052")),
+                    )
+                    logging.info(f"Built-in HTTP proxy started on port {get_proxy_setting('proxy_listen_port', '8118')}")
+                else:
+                    logging.warning("HTTP proxy enabled but no SOCKS5 target host configured")
+        except Exception as e:
+            logging.error(f"Failed to start built-in HTTP proxy: {e}", exc_info=True)
+        finally:
+            db_proxy.close()
+
+        # Auto-start built-in torrent client if enabled (skip if using remote server)
+        db3 = SessionLocal()
+        try:
+            bt_enabled = db3.query(Setting).filter(Setting.key == "bt_enabled").first()
+            bt_server_url = db3.query(Setting).filter(Setting.key == "bt_server_url").first()
+
+            # Skip local torrent client if forwarding to remote server
+            if bt_server_url and bt_server_url.value:
+                logging.info(f"Torrent requests will be forwarded to: {bt_server_url.value}")
+            elif bt_enabled and bt_enabled.value.lower() == "true":
+                bt_proxy_host = db3.query(Setting).filter(Setting.key == "bt_proxy_host").first()
+                if bt_proxy_host and bt_proxy_host.value:
+                    def get_bt_setting(key):
+                        s = db3.query(Setting).filter(Setting.key == key).first()
+                        return s.value if s else None
+
+                    download_dir = get_bt_setting("bt_download_dir") or "/var/lib/posterchanai/torrents"
+                    proxy_port = int(get_bt_setting("bt_proxy_port") or "8118")
+                    listen_port = int(get_bt_setting("bt_listen_port") or "6881")
+
+                    from app.services.libtorrent_service import LibtorrentService
+                    service = LibtorrentService.get_instance(
+                        download_dir=download_dir,
+                        proxy_host=bt_proxy_host.value,
+                        proxy_port=proxy_port,
+                        listen_port=listen_port
+                    )
+                    logging.info(f"Built-in torrent client started")
+                else:
+                    logging.warning("Built-in torrent client enabled but no proxy host configured")
+        except Exception as e:
+            logging.error(f"Failed to start built-in torrent client: {e}", exc_info=True)
+        finally:
+            db3.close()
     except Exception as e:
-        logging.error(f"Failed to start built-in HTTP proxy: {e}")
-    finally:
-        db_proxy.close()
-
-    # Auto-start built-in torrent client if enabled (skip if using remote server)
-    db3 = SessionLocal()
-    try:
-        bt_enabled = db3.query(Setting).filter(Setting.key == "bt_enabled").first()
-        bt_server_url = db3.query(Setting).filter(Setting.key == "bt_server_url").first()
-
-        # Skip local torrent client if forwarding to remote server
-        if bt_server_url and bt_server_url.value:
-            logging.info(f"Torrent requests will be forwarded to: {bt_server_url.value}")
-        elif bt_enabled and bt_enabled.value.lower() == "true":
-            bt_proxy_host = db3.query(Setting).filter(Setting.key == "bt_proxy_host").first()
-            if bt_proxy_host and bt_proxy_host.value:
-                def get_bt_setting(key):
-                    s = db3.query(Setting).filter(Setting.key == key).first()
-                    return s.value if s else None
-
-                download_dir = get_bt_setting("bt_download_dir") or "/var/lib/posterchanai/torrents"
-                proxy_port = int(get_bt_setting("bt_proxy_port") or "8118")
-                listen_port = int(get_bt_setting("bt_listen_port") or "6881")
-
-                from app.services.libtorrent_service import LibtorrentService
-                service = LibtorrentService.get_instance(
-                    download_dir=download_dir,
-                    proxy_host=bt_proxy_host.value,
-                    proxy_port=proxy_port,
-                    listen_port=listen_port
-                )
-                logging.info(f"Built-in torrent client started")
-            else:
-                logging.warning("Built-in torrent client enabled but no proxy host configured")
-    except Exception as e:
-        logging.error(f"Failed to start built-in torrent client: {e}")
-    finally:
-        db3.close()
+        logging.error(f"CRITICAL: Startup failed with exception: {e}", exc_info=True)
+        raise  # Re-raise to let FastAPI handle it properly
 
 
 @app.on_event("shutdown")
