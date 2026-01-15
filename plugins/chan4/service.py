@@ -273,27 +273,65 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             html = response.text
             logger.info(f"HTML catalog response: status={response.status_code}, length={len(html)}")
         
+            # Check if we got an error page
+            if "404" in html or "not found" in html.lower() or "error" in html.lower()[:500]:
+                logger.warning(f"Possible error page received. HTML preview: {html[:500]}")
+            
             # Parse HTML catalog
             soup = BeautifulSoup(html, "lxml")
             
-            logger.info(f"Parsing HTML catalog for /{board}/")
+            logger.info(f"Parsing HTML catalog for /{board}/, HTML length: {len(html)}")
+            
+            # Log a sample of the HTML to see structure
+            if len(html) > 0:
+                logger.debug(f"HTML preview (first 1000 chars): {html[:1000]}")
+            
+            # Check if page title indicates an error
+            title = soup.find("title")
+            if title:
+                title_text = title.get_text()
+                logger.info(f"Page title: {title_text}")
+                if "404" in title_text or "not found" in title_text.lower() or "error" in title_text.lower():
+                    raise ValueError(f"Board /{board}/ not found or unavailable (404 error)")
             
             # Find thread containers - 4chan uses various class names
             # Try multiple selectors to find threads
-            thread_divs = (
-                soup.find_all("div", class_="thread") or
-                soup.find_all("div", class_="boardThread") or
-                soup.find_all("div", {"data-thread-id": True}) or
-                soup.find_all("div", id=lambda x: x and x.startswith("thread"))
-            )
+            thread_divs = []
             
-            # Also try finding by links to threads
+            # Method 1: Standard thread divs
+            divs1 = soup.find_all("div", class_="thread")
+            if divs1:
+                logger.info(f"Found {len(divs1)} threads via 'div.thread'")
+                thread_divs.extend(divs1)
+            
+            # Method 2: Board thread class
+            if not thread_divs:
+                divs2 = soup.find_all("div", class_="boardThread")
+                if divs2:
+                    logger.info(f"Found {len(divs2)} threads via 'div.boardThread'")
+                    thread_divs.extend(divs2)
+            
+            # Method 3: Data attribute
+            if not thread_divs:
+                divs3 = soup.find_all("div", {"data-thread-id": True})
+                if divs3:
+                    logger.info(f"Found {len(divs3)} threads via 'data-thread-id'")
+                    thread_divs.extend(divs3)
+            
+            # Method 4: ID pattern
+            if not thread_divs:
+                divs4 = soup.find_all("div", id=re.compile(r'thread'))
+                if divs4:
+                    logger.info(f"Found {len(divs4)} threads via 'id=thread*'")
+                    thread_divs.extend(divs4)
+            
+            # Method 5: Find by links to threads (most reliable fallback)
             if not thread_divs:
                 thread_links = soup.find_all("a", href=re.compile(r'/\w+/thread/\d+'))
                 logger.info(f"Found {len(thread_links)} thread links in HTML")
-                # Extract thread info from links
+                
                 seen_thread_ids = set()
-                for link in thread_links[:limit]:
+                for link in thread_links:
                     href = link.get("href", "")
                     match = re.search(r'/(\w+)/thread/(\d+)', href)
                     if match:
@@ -306,11 +344,56 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                         parent = link.find_parent("div", class_=re.compile("thread|post"))
                         if not parent:
                             parent = link.find_parent("div")
+                        if not parent:
+                            parent = link.find_parent("article")
+                        if not parent:
+                            parent = link.find_parent("li")
                         
                         if parent:
                             thread_divs.append(parent)
+                        else:
+                            # Create a minimal container from the link itself
+                            thread_divs.append(link)
             
-            logger.info(f"Found {len(thread_divs)} thread containers in HTML")
+            logger.info(f"Total found: {len(thread_divs)} thread containers in HTML")
+            
+            # If we still have no thread divs, try extracting directly from links
+            if not thread_divs:
+                logger.warning("No thread containers found, trying direct link extraction")
+                thread_links = soup.find_all("a", href=re.compile(r'/\w+/thread/\d+'))
+                logger.info(f"Found {len(thread_links)} thread links for direct extraction")
+                
+                seen_thread_ids = set()
+                for link in thread_links[:limit]:
+                    href = link.get("href", "")
+                    match = re.search(r'/(\w+)/thread/(\d+)', href)
+                    if match:
+                        thread_id = int(match.group(2))
+                        if thread_id in seen_thread_ids:
+                            continue
+                        seen_thread_ids.add(thread_id)
+                        
+                        # Extract basic info from link text
+                        link_text = link.get_text(strip=True)
+                        subject = link_text[:100] if link_text else f"Thread {thread_id}"
+                        
+                        thread_url = f"{CHAN4_BASE_URL}/{board}/thread/{thread_id}"
+                        
+                        threads.append(Chan4Thread(
+                            thread_id=thread_id,
+                            board=board,
+                            subject=subject,
+                            comment="",
+                            image_url=None,
+                            thumbnail_url=None,
+                            replies=0,
+                            images=0,
+                            thread_url=thread_url
+                        ))
+                
+                if threads:
+                    logger.info(f"Extracted {len(threads)} threads directly from links")
+                    return threads[:limit]
             
             for div in thread_divs[:limit]:
                 try:
@@ -340,19 +423,38 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                         logger.debug(f"Could not extract thread ID from div")
                         continue
                     
-                    # Get subject
-                    subject_elem = div.find("span", class_="subject")
-                    subject = subject_elem.get_text(strip=True) if subject_elem else ""
+                    # Get subject - try multiple selectors
+                    subject = ""
+                    for selector in ["span.subject", "span.fileText", ".subject", "h3", "h4"]:
+                        subject_elem = div.select_one(selector) if hasattr(div, 'select_one') else div.find(selector.split('.')[-1] if '.' in selector else selector)
+                        if subject_elem:
+                            subject = subject_elem.get_text(strip=True)
+                            break
                     
-                    # Get comment/preview
-                    comment_elem = div.find("blockquote") or div.find("div", class_="postMessage")
-                    comment = comment_elem.get_text(strip=True)[:200] if comment_elem else ""
+                    # Get comment/preview - try multiple selectors
+                    comment = ""
+                    for selector in ["blockquote", "div.postMessage", ".postMessage", ".comment", "p"]:
+                        comment_elem = div.select_one(selector) if hasattr(div, 'select_one') else div.find(selector.split('.')[-1] if '.' in selector else selector)
+                        if comment_elem:
+                            comment = comment_elem.get_text(strip=True)[:200]
+                            break
                     
-                    # Get thumbnail
-                    thumbnail = div.find("img", class_="thumb")
-                    thumbnail_url = thumbnail.get("src", "") if thumbnail else None
-                    if thumbnail_url and not thumbnail_url.startswith("http"):
-                        thumbnail_url = f"{CHAN4_BASE_URL}{thumbnail_url}"
+                    # Get thumbnail - try multiple selectors
+                    thumbnail = None
+                    for selector in ["img.thumb", "img[src*='thumb']", "img"]:
+                        thumb_elem = div.select_one(selector) if hasattr(div, 'select_one') else div.find("img")
+                        if thumb_elem:
+                            thumbnail = thumb_elem
+                            break
+                    
+                    thumbnail_url = None
+                    if thumbnail:
+                        thumbnail_url = thumbnail.get("src", "") or thumbnail.get("data-src", "")
+                        if thumbnail_url and not thumbnail_url.startswith("http"):
+                            if thumbnail_url.startswith("//"):
+                                thumbnail_url = f"https:{thumbnail_url}"
+                            elif thumbnail_url.startswith("/"):
+                                thumbnail_url = f"{CHAN4_BASE_URL}{thumbnail_url}"
                     
                     # Get image URL from thumbnail
                     image_url = None
@@ -361,7 +463,12 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                         if parent_link:
                             img_href = parent_link.get("href", "")
                             if img_href:
-                                image_url = f"{CHAN4_BASE_URL}{img_href}"
+                                if img_href.startswith("//"):
+                                    image_url = f"https:{img_href}"
+                                elif img_href.startswith("/"):
+                                    image_url = f"{CHAN4_BASE_URL}{img_href}"
+                                else:
+                                    image_url = img_href
                     
                     # Get reply/image counts
                     replies = 0
