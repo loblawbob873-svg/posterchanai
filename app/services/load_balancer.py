@@ -324,16 +324,26 @@ class LoadBalancer:
                     response.raise_for_status()
 
                     chunk_count = 0
+                    first_chunk_time = None
                     async for line in response.aiter_lines():
                         line = line.strip()
                         if not line:
                             continue
                         if line.startswith("data: "):
                             chunk_count += 1
+                            if first_chunk_time is None:
+                                first_chunk_time = time.time()
+                                logger.debug(f"STREAM first chunk from {server} after {first_chunk_time - start_time:.2f}s")
                             # Ensure proper SSE format with \n\n
                             yield line + "\n\n" if not line.endswith("\n\n") else line
+                        else:
+                            # Log non-data lines for debugging
+                            logger.debug(f"STREAM non-data line from {server}: {line[:100]}")
 
-                    logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={time.time()-start_time:.2f}s")
+                    if chunk_count == 0:
+                        logger.warning(f"STREAM COMPLETE from {server} | chunks=0 | total_time={time.time()-start_time:.2f}s | WARNING: No chunks received!")
+                    else:
+                        logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={time.time()-start_time:.2f}s")
 
             except httpx.HTTPStatusError as e:
                 error_body = ""

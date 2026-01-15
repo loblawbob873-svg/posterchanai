@@ -8,7 +8,7 @@ import logging
 import re
 from datetime import datetime
 from typing import Optional, AsyncGenerator
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -238,11 +238,20 @@ def verify_api_key(
 @router.post("/v1/chat/completions")
 async def v1_chat_completions(
     request: ChatCompletionRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
     user: Optional[User] = Depends(verify_api_key)
 ):
     """OpenAI-compatible chat completions endpoint"""
-    return await _handle_chat_completions(request, db)
+    # Check if request is from another posterchanai instance (via load balancer)
+    # If so, skip load balancing to prevent loops
+    skip_lb = False
+    user_agent = http_request.headers.get("user-agent", "").lower()
+    # Check if request is from httpx (used by load balancer) or another posterchanai instance
+    if "httpx" in user_agent:
+        skip_lb = True
+        logger.debug("Detected request from httpx (load balancer), skipping load balancing to prevent loops")
+    return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
 @router.get("/v1/models")
@@ -259,11 +268,15 @@ async def v1_list_models(
 @router.post("/api/chat/completions")
 async def api_chat_completions(
     request: ChatCompletionRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
     user: Optional[User] = Depends(verify_api_key)
 ):
     """OpenWebUI-compatible chat completions endpoint"""
-    return await _handle_chat_completions(request, db)
+    skip_lb = "httpx" in http_request.headers.get("user-agent", "").lower()
+    if skip_lb:
+        logger.debug("Detected httpx request, skipping load balancing")
+    return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
 @router.get("/api/models")
@@ -280,11 +293,15 @@ async def api_list_models(
 @router.post("/chat/completions")
 async def root_chat_completions(
     request: ChatCompletionRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
     user: Optional[User] = Depends(verify_api_key)
 ):
     """Root-level chat completions endpoint"""
-    return await _handle_chat_completions(request, db)
+    skip_lb = "httpx" in http_request.headers.get("user-agent", "").lower()
+    if skip_lb:
+        logger.debug("Detected httpx request, skipping load balancing")
+    return await _handle_chat_completions(request, db, skip_load_balancer=skip_lb)
 
 
 @router.get("/models")
@@ -298,15 +315,21 @@ async def root_list_models(
 
 # ============== Shared Handlers ==============
 
-async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
-    """Handle chat completions request"""
+async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, skip_load_balancer: bool = False):
+    """Handle chat completions request
+    
+    Args:
+        request: Chat completion request
+        db: Database session
+        skip_load_balancer: If True, skip load balancing (used to prevent loops when called from another instance)
+    """
     from app.models import Setting
     from app.services.load_balancer import LoadBalancer, parse_server_urls
 
-    # Check for load balancer first
+    # Check for load balancer first (unless explicitly skipped to prevent loops)
     settings = {s.key: s.value for s in db.query(Setting).all()}
     chat_server_urls = settings.get("chat_server_urls", "")
-    servers = parse_server_urls(chat_server_urls)
+    servers = parse_server_urls(chat_server_urls) if not skip_load_balancer else []
 
     # Convert messages to dict format
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
@@ -336,7 +359,8 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session):
     max_tokens = request.max_tokens if request.max_tokens is not None else int(settings.get("ollama_num_predict", "2048"))
 
     # Use load balancer if configured - picks server round-robin, uses local inference for "self" URLs
-    if servers:
+    # Skip if explicitly requested (to prevent loops when called from another posterchanai instance)
+    if servers and not skip_load_balancer:
         from app.services.load_balancer import get_healthy_server, is_self_url, NoHealthyServersError
 
         api_key = settings.get("chat_server_api_key", "")
