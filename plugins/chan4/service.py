@@ -382,18 +382,32 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                     logger.info(f"Found {len(divs4)} threads via 'id=thread*'")
                     thread_divs.extend(divs4)
             
-            # PRIMARY METHOD: Find by links to threads (most reliable - works regardless of HTML structure)
-            # Search for any links matching the thread pattern
-            thread_links = soup.find_all("a", href=re.compile(r'/\w+/thread/\d+'))
-            logger.info(f"Found {len(thread_links)} thread links in HTML via BeautifulSoup")
+            # PRIMARY METHOD: Search raw HTML with regex FIRST (most reliable - works regardless of HTML structure)
+            logger.info("Searching raw HTML with regex for thread URLs...")
             
-            # Also try searching in raw HTML with regex as fallback (more reliable)
-            logger.info("Also searching raw HTML with regex for thread URLs...")
-            thread_url_pattern = re.compile(r'/(\w+)/thread/(\d+)')
-            regex_matches = thread_url_pattern.findall(html)
-            logger.info(f"Found {len(regex_matches)} thread URLs via regex in raw HTML")
+            # Try multiple regex patterns to find thread URLs
+            patterns = [
+                (r'/(\w+)/thread/(\d+)', 'standard'),  # /g/thread/12345678
+                (r'/thread/(\d+)', 'no-board'),  # /thread/12345678 (if board is in URL already)
+                (r'thread[_-]?(\d+)', 'underscore'),  # thread_12345678 or thread-12345678
+            ]
             
-            # Use regex matches if we found any (more reliable than BeautifulSoup parsing)
+            regex_matches = []
+            for pattern, name in patterns:
+                matches = re.findall(pattern, html, re.IGNORECASE)
+                if matches:
+                    logger.info(f"Pattern '{name}' ({pattern}) found {len(matches)} matches")
+                    if name == 'standard':
+                        regex_matches = matches
+                        break
+                    elif name == 'no-board' and not regex_matches:
+                        # Convert to (board, thread_id) format
+                        regex_matches = [(board, tid) for tid in matches]
+                        break
+            
+            logger.info(f"Total found: {len(regex_matches)} thread URLs via regex in raw HTML")
+            
+            # Use regex matches if we found any (most reliable method)
             if regex_matches:
                 logger.info(f"Using {len(regex_matches)} thread URLs found via regex")
                 # Create minimal thread objects from regex matches
@@ -423,6 +437,10 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                 if threads:
                     logger.info(f"Extracted {len(threads)} threads from regex pattern matching")
                     return threads[:limit]
+            
+            # Fallback: Find by links to threads using BeautifulSoup
+            thread_links = soup.find_all("a", href=re.compile(r'/\w+/thread/\d+'))
+            logger.info(f"Found {len(thread_links)} thread links in HTML via BeautifulSoup")
             
             # Always try extracting from links as primary method (most reliable)
             seen_thread_ids = set()
@@ -464,9 +482,26 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             logger.info(f"Total found: {len(thread_divs)} thread containers in HTML")
             
             # If we found no containers and no links, log the HTML structure for debugging
-            if not thread_divs and not link_threads and not regex_matches:
+            if not thread_divs and not link_threads and not regex_matches and not threads:
                 logger.error(f"No thread containers, links, or regex matches found. HTML structure analysis:")
                 logger.error(f"HTML length: {len(html)}")
+                
+                # Check if HTML contains thread-related content
+                html_lower = html.lower()
+                if "/thread/" in html:
+                    logger.warning("HTML contains '/thread/' but regex didn't match - checking pattern...")
+                    # Try different regex patterns
+                    patterns = [
+                        r'/thread/(\d+)',
+                        r'thread[_-]?(\d+)',
+                        r'/(\w+)/thread/(\d+)',
+                        r'threads?[_-]?(\d+)',
+                    ]
+                    for pattern in patterns:
+                        matches = re.findall(pattern, html, re.IGNORECASE)
+                        if matches:
+                            logger.warning(f"Pattern '{pattern}' found {len(matches)} matches: {matches[:5]}")
+                
                 # Check for common HTML elements
                 body = soup.find("body")
                 if body:
@@ -475,20 +510,28 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                     all_divs = soup.find_all("div")
                     logger.error(f"Total divs in page: {len(all_divs)}")
                     if all_divs:
-                        # Show classes of first 10 divs
-                        div_classes = [div.get("class") for div in all_divs[:10]]
-                        logger.error(f"First 10 div classes: {div_classes}")
+                        # Show classes of first 20 divs
+                        div_classes = [div.get("class") for div in all_divs[:20]]
+                        logger.error(f"First 20 div classes: {div_classes}")
                     # Check for any links at all
                     all_links = soup.find_all("a", href=True)
                     logger.error(f"Total links in page: {len(all_links)}")
                     if all_links:
-                        # Show first 5 link hrefs
-                        link_hrefs = [link.get("href", "")[:50] for link in all_links[:5]]
-                        logger.error(f"First 5 link hrefs: {link_hrefs}")
+                        # Show first 10 link hrefs that might be threads
+                        thread_related = [link.get("href", "") for link in all_links if "thread" in link.get("href", "").lower()][:10]
+                        logger.error(f"Thread-related links (first 10): {thread_related}")
+                        # Show first 10 link hrefs overall
+                        link_hrefs = [link.get("href", "")[:50] for link in all_links[:10]]
+                        logger.error(f"First 10 link hrefs: {link_hrefs}")
                 else:
                     logger.error("No body tag found in HTML")
+                
                 # Log a sample of the HTML to see what we got
-                logger.error(f"HTML sample (first 2000 chars): {html[:2000]}")
+                logger.error(f"HTML sample (first 3000 chars): {html[:3000]}")
+                # Also check middle and end
+                if len(html) > 6000:
+                    logger.error(f"HTML sample (middle 3000 chars): {html[len(html)//2-1500:len(html)//2+1500]}")
+                    logger.error(f"HTML sample (last 3000 chars): {html[-3000:]}")
             
             # If we still have no thread divs but have link_threads, extract minimal info
             if not thread_divs and link_threads:
