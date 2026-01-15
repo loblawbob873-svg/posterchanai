@@ -67,14 +67,8 @@ async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) 
             _server_cycle = cycle(servers)
             logger.info(f"Load balancer initialized with {len(servers)} server(s): {servers}")
 
-    # Prefer self URLs first to avoid unnecessary remote calls when local is available
-    # Check self servers first (before round-robin)
-    for server in servers:
-        if is_self_url(server):
-            logger.info(f"Selected self URL (local inference): {server}")
-            return server
-    
-    # Then try remote servers in round-robin order (one full cycle through all servers)
+    # Try each server in round-robin order (one full cycle through all servers)
+    # This ensures 50/50 distribution between local and remote servers
     tried = set()
     start_server = None
     
@@ -86,16 +80,17 @@ async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) 
             if start_server is None:
                 start_server = server
 
-        # Skip self URLs (already tried above)
-        if is_self_url(server):
-            continue
-
         # If we've tried all servers, break
         if server in tried:
             # We've completed a full cycle without finding a healthy server
             break
         
         tried.add(server)
+
+        # Self URLs are always "healthy" - we use local inference directly
+        if is_self_url(server):
+            logger.info(f"Selected self URL (local inference): {server}")
+            return server
 
         # Check cached health status
         async with _health_lock:
@@ -353,11 +348,14 @@ class LoadBalancer:
                     total_time = time.time() - start_time
                     if chunk_count == 0:
                         logger.warning(f"STREAM COMPLETE from {server} | chunks=0 | total_time={total_time:.2f}s | WARNING: No chunks received! This may indicate a load balancing loop or the remote server doesn't have updated code.")
-                        # Mark server as unhealthy and raise exception to trigger fallback to local
-                        await mark_server_unhealthy_async(server)
+                        # Don't mark as unhealthy immediately - might just need code update
+                        # Instead, raise exception to trigger fallback to local, but keep server in rotation
                         raise NoHealthyServersError(f"Remote server {server} returned empty stream (likely load balancing loop or missing code update)")
                     else:
                         logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={total_time:.2f}s")
+                        # Mark as healthy if we got chunks
+                        async with _health_lock:
+                            _server_health[server] = (True, time.time())
 
             except NoHealthyServersError:
                 # Re-raise to trigger fallback to local
