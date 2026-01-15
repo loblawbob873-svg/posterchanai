@@ -205,15 +205,27 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
             # 4chan returns JSON with content-type application/json
             catalog_data = json.loads(html)
             
-            # Extract threads from catalog
-            if isinstance(catalog_data, dict):
-                # New format: {"threads": {...}}
-                threads_dict = catalog_data.get("threads", {})
-            else:
-                # Old format: array of threads
-                threads_dict = catalog_data if isinstance(catalog_data, dict) else {}
+            logger.debug(f"Catalog JSON structure: {type(catalog_data)}, keys: {list(catalog_data.keys())[:5] if isinstance(catalog_data, dict) else 'not a dict'}")
             
-            for thread_id_str, thread_data in list(threads_dict.items())[:limit]:
+            # 4chan catalog.json format: {"0": {"threads": {...}}, "1": {"threads": {...}}, ...}
+            # Each page number is a key, and each page contains a "threads" dict
+            all_threads = {}
+            
+            if isinstance(catalog_data, dict):
+                # Iterate through pages
+                for page_key, page_data in catalog_data.items():
+                    if isinstance(page_data, dict):
+                        page_threads = page_data.get("threads", {})
+                        if isinstance(page_threads, dict):
+                            all_threads.update(page_threads)
+            
+            logger.info(f"Found {len(all_threads)} threads in catalog JSON for /{board}/")
+            
+            if not all_threads:
+                logger.warning(f"No threads found in catalog JSON structure. Catalog data keys: {list(catalog_data.keys())[:10] if isinstance(catalog_data, dict) else 'not a dict'}")
+            
+            # Extract threads from all pages
+            for thread_id_str, thread_data in list(all_threads.items())[:limit]:
                 try:
                     thread_id = int(thread_id_str)
                     
@@ -253,13 +265,16 @@ async def fetch_board_catalog(board: str, limit: int = 20) -> List[Chan4Thread]:
                         images=images,
                         thread_url=thread_url
                     ))
-                except (ValueError, KeyError) as e:
+                except (ValueError, KeyError, TypeError) as e:
                     logger.debug(f"Error parsing thread {thread_id_str}: {e}")
                     continue
+            
+            logger.info(f"Successfully parsed {len(threads)} threads from catalog JSON for /{board}/")
         
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             # Fallback to HTML parsing if JSON fails (try HTML catalog endpoint)
-            logger.info("Catalog response is not JSON, trying HTML catalog endpoint")
+            logger.warning(f"Failed to parse catalog as JSON: {e}. Response preview: {html[:200]}")
+            logger.info("Trying HTML catalog endpoint as fallback")
             # Try HTML catalog endpoint
             html_catalog_url = f"{CHAN4_BASE_URL}/{board}/catalog"
             try:
