@@ -3,6 +3,7 @@ RSS Plugin Commands
 
 Command handlers for the `rss` command.
 """
+import asyncio
 import logging
 from sqlalchemy.orm import Session
 
@@ -38,9 +39,12 @@ async def handle_rss_command(arg: str, user: User, db: Session) -> dict:
                     new_count = await rss_service.sync_feed(feed)
                     total_new += new_count
 
-            await process_rss_for_user(user.id)
-
-            return {"type": "text", "content": f"RSS sync complete. {total_new} new articles found. Check your 'RSS News' conversation for summaries."}
+            # Run summarization in background (don't block)
+            if total_new > 0:
+                asyncio.create_task(process_rss_for_user(user.id))
+                return {"type": "text", "content": f"RSS sync complete. {total_new} new articles found. Summaries are being generated in the background - check 'RSS News' conversation shortly."}
+            else:
+                return {"type": "text", "content": "RSS sync complete. No new articles found."}
 
         elif subcommand == "add":
             if not subarg:
