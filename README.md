@@ -919,7 +919,7 @@ Type these commands in the chat (or use the mode buttons):
 | `mail` | Email: inbox, folders, folder, read, reply, forward, archive, delete, send to contacts |
 | `music` | WebDAV music streaming: browse, search, play, queue, mood playlists |
 | `todo` | CalDAV task management: list, add, remove tasks |
-| `news` | Get unread news from Miniflux |
+| `news` | Fetch and summarize RSS feeds (alias for rss sync) |
 | `rss` | Native RSS: list feeds, sync, add/remove (plugin) |
 | `logs` | System logs analysis (admin only) |
 
@@ -1332,7 +1332,7 @@ Configure CalDAV calendars in User Settings > Calendar & Contacts tab. Tasks are
 
 ### RSS Plugin (Native RSS)
 
-A self-contained RSS feed reader plugin with AI-powered article summarization. Replaces external RSS readers like Miniflux.
+A self-contained RSS feed reader plugin with AI-powered article summarization.
 
 **Features:**
 - Subscribe to RSS/Atom feeds per user
@@ -1361,11 +1361,12 @@ A self-contained RSS feed reader plugin with AI-powered article summarization. R
 - `rss sync` - Fetch articles now
 - `rss remove 3` - Remove feed #3
 
-**OPML Import:**
+**OPML Import/Export:**
 1. Export OPML from your current RSS reader (Feedly, Inoreader, etc.)
 2. Go to User Settings → News & RSS
 3. Click "Import OPML" and select your file
 4. Feeds are imported with folder names preserved
+5. Click "Export OPML" to download your feeds for backup or migration
 
 The plugin is located in `plugins/rss/` and can be customized independently.
 

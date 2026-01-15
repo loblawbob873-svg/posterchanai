@@ -61,6 +61,7 @@ def _run_migrations():
         ("custom_ai_api_key", "VARCHAR(500)"),
         ("custom_image_enabled", "BOOLEAN DEFAULT 0"),
         ("custom_image_url", "VARCHAR(500)"),
+        ("rss_enabled", "BOOLEAN DEFAULT 0"),
     ]
 
     # Add missing columns

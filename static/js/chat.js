@@ -63,7 +63,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'miniflux', 'cal', 'contacts', 'mail', 'music', 'todo'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'rss', 'cal', 'contacts', 'mail', 'music', 'todo'];
         this.pluginActions = []; // Will be populated with plugin action hints
 
         // Load plugins and mail accounts for autocomplete
@@ -192,13 +192,6 @@ class ChatHandler {
         const newsScheduleTime = document.getElementById('newsScheduleTime');
         const newsSources = document.getElementById('newsSources');
 
-        // Miniflux elements
-        const minifluxEnabled = document.getElementById('minifluxEnabled');
-        const minifluxSettings = document.getElementById('minifluxSettings');
-        const minifluxUrl = document.getElementById('minifluxUrl');
-        const minifluxUsername = document.getElementById('minifluxUsername');
-        const minifluxPassword = document.getElementById('minifluxPassword');
-
         // Native RSS elements
         const rssEnabled = document.getElementById('rssEnabled');
         const rssSettings = document.getElementById('rssSettings');
@@ -243,10 +236,13 @@ class ChatHandler {
             rssFeedList.querySelectorAll('.toggle-feed').forEach(btn => {
                 btn.addEventListener('click', async () => {
                     const id = parseInt(btn.dataset.id);
+                    const csrfToken = document.cookie.split('; ')
+                        .find(row => row.startsWith('csrf_token='))?.split('=')[1];
                     try {
                         const resp = await fetch(`/api/rss/feeds/${id}/toggle`, {
                             method: 'POST',
-                            credentials: 'include'
+                            credentials: 'include',
+                            headers: { 'X-CSRF-Token': csrfToken || '' }
                         });
                         if (resp.ok) loadRssFeeds();
                     } catch (e) {
@@ -260,10 +256,13 @@ class ChatHandler {
                 btn.addEventListener('click', async () => {
                     const id = parseInt(btn.dataset.id);
                     if (!confirm('Remove this RSS feed?')) return;
+                    const csrfToken = document.cookie.split('; ')
+                        .find(row => row.startsWith('csrf_token='))?.split('=')[1];
                     try {
                         const resp = await fetch(`/api/rss/feeds/${id}`, {
                             method: 'DELETE',
-                            credentials: 'include'
+                            credentials: 'include',
+                            headers: { 'X-CSRF-Token': csrfToken || '' }
                         });
                         if (resp.ok) loadRssFeeds();
                     } catch (e) {
@@ -281,10 +280,15 @@ class ChatHandler {
                     alert('Please enter a feed URL');
                     return;
                 }
+                const csrfToken = document.cookie.split('; ')
+                    .find(row => row.startsWith('csrf_token='))?.split('=')[1];
                 try {
                     const resp = await fetch('/api/rss/feeds', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'X-CSRF-Token': csrfToken || ''
+                        },
                         credentials: 'include',
                         body: JSON.stringify({ url, custom_name: name || null })
                     });
@@ -335,9 +339,16 @@ class ChatHandler {
                     const formData = new FormData();
                     formData.append('file', file);
 
+                    // Get CSRF token
+                    const csrfToken = document.cookie.split('; ')
+                        .find(row => row.startsWith('csrf_token='))?.split('=')[1];
+
                     const resp = await fetch('/api/rss/import/opml', {
                         method: 'POST',
                         credentials: 'include',
+                        headers: {
+                            'X-CSRF-Token': csrfToken || ''
+                        },
                         body: formData
                     });
 
@@ -365,6 +376,37 @@ class ChatHandler {
 
                 // Clear file input for re-import
                 opmlFileInput.value = '';
+            });
+        }
+
+        // OPML export
+        const exportOpmlBtn = document.getElementById('exportOpmlBtn');
+        if (exportOpmlBtn) {
+            exportOpmlBtn.addEventListener('click', async () => {
+                try {
+                    const resp = await fetch('/api/rss/export/opml', {
+                        method: 'GET',
+                        credentials: 'include'
+                    });
+
+                    if (resp.ok) {
+                        const blob = await resp.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'feeds.opml';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+                    } else {
+                        const result = await resp.json();
+                        alert(result.detail || 'Export failed');
+                    }
+                } catch (err) {
+                    console.error('OPML export error:', err);
+                    alert('Export failed');
+                }
             });
         }
 
@@ -612,13 +654,6 @@ class ChatHandler {
             });
         }
 
-        // Toggle Miniflux settings visibility
-        if (minifluxEnabled && minifluxSettings) {
-            minifluxEnabled.addEventListener('change', () => {
-                minifluxSettings.style.display = minifluxEnabled.checked ? 'flex' : 'none';
-            });
-        }
-
         // Test custom AI connection
         if (testCustomAi) {
             testCustomAi.addEventListener('click', async () => {
@@ -733,15 +768,6 @@ class ChatHandler {
                         }
                         if (newsScheduleTime) newsScheduleTime.value = data.news_schedule_time || '12:00';
                         if (newsSources) newsSources.value = data.news_sources || '';
-
-                        // Load Miniflux settings
-                        if (minifluxEnabled) {
-                            minifluxEnabled.checked = data.miniflux_enabled !== false;
-                            if (minifluxSettings) minifluxSettings.style.display = data.miniflux_enabled !== false ? 'flex' : 'none';
-                        }
-                        if (minifluxUrl) minifluxUrl.value = data.miniflux_url || '';
-                        if (minifluxUsername) minifluxUsername.value = data.miniflux_username || '';
-                        if (minifluxPassword) minifluxPassword.value = data.miniflux_has_password ? '********' : '';
 
                         // Load Native RSS settings
                         if (rssEnabled) {
@@ -869,21 +895,6 @@ class ChatHandler {
                 }
                 if (newsSources) {
                     settingsData.news_sources = newsSources.value;
-                }
-
-                // Add Miniflux settings
-                if (minifluxEnabled) {
-                    settingsData.miniflux_enabled = minifluxEnabled.checked;
-                }
-                if (minifluxUrl) {
-                    settingsData.miniflux_url = minifluxUrl.value.trim();
-                }
-                if (minifluxUsername) {
-                    settingsData.miniflux_username = minifluxUsername.value.trim();
-                }
-                // Only update password if it's not the placeholder
-                if (minifluxPassword && minifluxPassword.value !== '********') {
-                    settingsData.miniflux_password = minifluxPassword.value;
                 }
 
                 // Add Native RSS settings

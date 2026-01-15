@@ -1368,10 +1368,6 @@ Example: `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ`
             "content": "RSS plugin not enabled. Enable it in Admin → Services, then add feeds in User Settings.\n\nTip: Use `dailynews` to get news from web sources instead.",
         }
 
-        except Exception as e:
-            logger.error(f"News command error: {e}")
-            return {"type": "text", "content": f"Error fetching news: {str(e)}"}
-
     def _add_copy_buttons_to_news(self, markdown: str) -> str:
         """Add copy buttons to news article links in markdown."""
         import re

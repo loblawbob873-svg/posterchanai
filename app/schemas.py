@@ -395,6 +395,8 @@ class UserSettingsResponse(BaseModel):
     news_schedule_enabled: bool = False
     news_schedule_time: str = "12:00"
     news_sources: str = ""  # Custom sources, one per line: url|name
+    # Native RSS settings
+    rss_enabled: bool = False
     # Calendar & Contacts settings
     schedule_enabled: bool = False
     caldav_calendars: List[dict] = []  # List of calendars (passwords masked)

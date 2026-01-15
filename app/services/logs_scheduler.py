@@ -35,7 +35,7 @@ DEFAULT_EXCLUDE_PATTERNS = (
     "HTTP Error when pushing to|aibot|misskey|python|python-firewall|searx|"
     "Ran out of input|vaultwarden::api::icons|nats|webui.sh|ssl:default|reqwest|"
     "Unable to download icon|Invalid claim|Token has expired|is not a global IP!|"
-    "kf.bluezqt|SDL|ToolTip|miniflux|gameoverlayrenderer|i915|steam|kdecoectd|"
+    "kf.bluezqt|SDL|ToolTip|gameoverlayrenderer|i915|steam|kdecoectd|"
     "sr0|proxy|traceid|Vulkan|xkbcommon|kwin_wayland_wrapper|PipeWire|shpchp|"
     "logwatcher-ai|usb-backup|machine-snapshot|handshake|certbot|clam|cuda|llama|"
     "open-webui|synapse|synctl|fail2ban|php|nextcloud|relay|bundle|mastodon|"

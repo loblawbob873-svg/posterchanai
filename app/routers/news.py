@@ -256,66 +256,6 @@ async def get_all_headlines(
     return {"markdown": "\n\n---\n\n".join(results)}
 
 
-@router.post("/miniflux/sync")
-async def sync_miniflux_news(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Manually trigger Miniflux news sync for current user"""
-    from app.services.miniflux_scheduler import process_miniflux_news_for_user
-    from app.services.miniflux_service import MinifluxService
-
-    # Check if user has Miniflux enabled and configured
-    if not current_user.miniflux_enabled:
-        return {"success": False, "error": "Miniflux is not enabled for your account"}
-
-    miniflux = MinifluxService.from_settings(db, current_user)
-    if not miniflux:
-        return {"success": False, "error": "Miniflux credentials not configured"}
-
-    try:
-        # Test connection first
-        entries = await miniflux.get_unread_entries(limit=1)
-        if entries is None:
-            return {"success": False, "error": "Failed to connect to Miniflux - check your credentials"}
-
-        # Run the sync
-        await process_miniflux_news_for_user(current_user.id)
-        return {"success": True, "message": "Miniflux sync completed"}
-    except Exception as e:
-        logger.error(f"Manual Miniflux sync failed: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@router.get("/miniflux/status")
-async def get_miniflux_status(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get Miniflux configuration status for current user"""
-    from app.services.miniflux_service import MinifluxService
-
-    # Check global setting
-    global_enabled = db.query(Setting).filter(Setting.key == "miniflux_enabled").first()
-    global_enabled = global_enabled and global_enabled.value.lower() == "true"
-
-    # Check user setting
-    user_enabled = current_user.miniflux_enabled
-    has_credentials = bool(
-        current_user.miniflux_url and
-        current_user.miniflux_username and
-        current_user.miniflux_password
-    )
-
-    return {
-        "global_enabled": global_enabled,
-        "user_enabled": user_enabled,
-        "has_credentials": has_credentials,
-        "miniflux_url": current_user.miniflux_url or "",
-        "configured": global_enabled and user_enabled and has_credentials
-    }
-
-
 @router.get("/summarize")
 async def summarize_article(
     url: str,

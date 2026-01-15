@@ -1716,21 +1716,15 @@ fieldset legend {
     color: white;
 }
 /* All news buttons have consistent styling */
-.news-source-all,
-.news-source-miniflux {
+.news-source-all {
     background: var(--bg-tertiary);
     color: var(--text-primary);
     font-weight: 500;
 }
-.news-source-all:hover,
-.news-source-miniflux:hover {
+.news-source-all:hover {
     background: var(--accent);
     border-color: var(--accent);
     color: white;
-}
-.news-source-miniflux:disabled {
-    opacity: 0.7;
-    cursor: wait;
 }
 
 /* User Settings Styles */
@@ -1825,8 +1819,7 @@ fieldset legend {
 /* Custom AI Settings inner containers */
 #customAiSettings,
 #customImageSettings,
-#newsScheduleSettings,
-#minifluxSettings {
+#newsScheduleSettings {
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -1834,8 +1827,7 @@ fieldset legend {
 }
 #customAiSettings label,
 #customImageSettings label,
-#newsScheduleSettings label,
-#minifluxSettings label {
+#newsScheduleSettings label {
     font-size: 14px;
     color: var(--text-secondary);
     margin-bottom: 4px;
@@ -1844,7 +1836,6 @@ fieldset legend {
 #customAiSettings select,
 #customImageSettings input,
 #newsScheduleSettings input,
-#minifluxSettings input,
 #newsSources {
     padding: 12px 16px;
     border-radius: 8px;
@@ -1862,8 +1853,7 @@ fieldset legend {
 #customAiSettings input:focus,
 #customAiSettings select:focus,
 #customImageSettings input:focus,
-#newsScheduleSettings input:focus,
-#minifluxSettings input:focus {
+#newsScheduleSettings input:focus {
     outline: none;
     border-color: var(--accent);
 }

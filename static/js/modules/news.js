@@ -41,58 +41,6 @@ function initNewsModal() {
         // Render buttons
         sourcesContainer.innerHTML = '';
 
-        // Check Miniflux status and add sync button if configured
-        try {
-            const minifluxResponse = await fetch('/api/news/miniflux/status');
-            if (minifluxResponse.ok) {
-                const minifluxStatus = await minifluxResponse.json();
-                if (minifluxStatus.configured) {
-                    const syncBtn = document.createElement('button');
-                    syncBtn.className = 'news-source-btn news-source-miniflux';
-                    syncBtn.innerHTML = '📰 Sync Miniflux';
-                    syncBtn.title = `Sync from ${minifluxStatus.miniflux_url}`;
-                    syncBtn.addEventListener('click', async () => {
-                        syncBtn.disabled = true;
-                        syncBtn.innerHTML = '⏳ Syncing...';
-                        try {
-                            const csrfToken = document.cookie.split('; ')
-                                .find(row => row.startsWith('csrf_token='))?.split('=')[1];
-                            const syncResponse = await fetch('/api/news/miniflux/sync', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'X-CSRF-Token': csrfToken || ''
-                                }
-                            });
-                            const result = await syncResponse.json();
-                            if (result.success) {
-                                syncBtn.innerHTML = '✅ Synced!';
-                                setTimeout(() => {
-                                    newsModal.style.display = 'none';
-                                }, 1000);
-                            } else {
-                                syncBtn.innerHTML = '❌ ' + (result.error || 'Sync failed');
-                                setTimeout(() => {
-                                    syncBtn.innerHTML = '📰 Sync Miniflux';
-                                    syncBtn.disabled = false;
-                                }, 3000);
-                            }
-                        } catch (err) {
-                            console.error('Miniflux sync error:', err);
-                            syncBtn.innerHTML = '❌ Error';
-                            setTimeout(() => {
-                                syncBtn.innerHTML = '📰 Sync Miniflux';
-                                syncBtn.disabled = false;
-                            }, 3000);
-                        }
-                    });
-                    sourcesContainer.appendChild(syncBtn);
-                }
-            }
-        } catch (err) {
-            console.log('Miniflux status check failed:', err);
-        }
-
         // Add "All" button first
         if (allSources.length > 1) {
             const allBtn = document.createElement('button');
