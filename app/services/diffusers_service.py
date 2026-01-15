@@ -261,19 +261,22 @@ class DiffusersService:
                             logger.warning(f"CPU offload failed: {e}, loading to GPU")
                             self._pipe = self._pipe.to(self._device)
                     elif self._device == "xpu":
-                        # Intel Arc: Load directly to XPU, disable VAE upcast for performance
+                        # Intel Arc: Use model CPU offload for better performance (like ROCm)
+                        # This keeps model in CPU, moves components to GPU only when needed
                         try:
                             # Disable VAE upcast to fp32 (saves VRAM and improves speed)
                             if hasattr(self._pipe, 'vae') and hasattr(self._pipe.vae, 'config'):
                                 self._pipe.vae.config.force_upcast = False
                             if hasattr(self._pipe, 'upcast_vae'):
                                 self._pipe.upcast_vae = False
-                            logger.info("Intel Arc: disabled VAE upcast for better performance")
+                            
+                            # Use model CPU offload for Intel Arc (better memory management)
+                            self._pipe.enable_model_cpu_offload()
+                            logger.info("Intel Arc: enabled model CPU offload + disabled VAE upcast")
                         except Exception as e:
-                            logger.warning(f"Failed to disable VAE upcast: {e}")
-                        
-                        self._pipe = self._pipe.to(self._device)
-                        logger.info("Intel Arc: model loaded to XPU")
+                            logger.warning(f"CPU offload failed: {e}, loading to GPU directly")
+                            self._pipe = self._pipe.to(self._device)
+                            logger.info("Intel Arc: model loaded to XPU (direct)")
                     else:
                         self._pipe = self._pipe.to(self._device)
 
@@ -307,6 +310,19 @@ class DiffusersService:
                             logger.info("Intel Arc: enabled max attention slicing (xformers not available)")
                         except Exception as e:
                             logger.warning(f"Failed to enable attention slicing: {e}")
+                        
+                        # Intel Arc: Enable VAE slicing and tiling for better performance
+                        try:
+                            self._pipe.enable_vae_slicing()
+                            logger.info("Intel Arc: enabled VAE slicing")
+                        except Exception as e:
+                            logger.warning(f"Failed to enable VAE slicing: {e}")
+                        
+                        try:
+                            self._pipe.enable_vae_tiling()
+                            logger.info("Intel Arc: enabled VAE tiling")
+                        except Exception as e:
+                            logger.warning(f"Failed to enable VAE tiling: {e}")
                 else:
                     self._pipe = self._pipe.to(self._device)
 
