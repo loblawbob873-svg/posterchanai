@@ -164,7 +164,7 @@ When asked to write or modify code or files:
 - Output the COMPLETE file content from start to finish
 - Never abbreviate, truncate, or use "..." placeholders
 - Never say "rest of file remains the same"
-- Write every single line of the file /no_think""",
+- Write every single line of the file""",
             # Advanced model settings
             "ollama_temperature": "0.2",
             "ollama_top_p": "0.9",

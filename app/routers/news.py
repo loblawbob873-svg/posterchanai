@@ -92,18 +92,12 @@ async def fetch_headlines_from_url(url: str) -> dict:
 
 async def summarize_with_ai(links: list, db: Session) -> str:
     """Use native inference service to create clickable summaries"""
-    def log(msg):
-        with open("/tmp/news_debug.log", "a") as f:
-            f.write(f"{msg}\n")
-    
     try:
-        log(f"Starting AI summarization for {len(links)} headlines")
         prepare_vram_for_llm(db)
         service = get_inference_service(db)
-        log(f"Got inference service: {type(service).__name__ if service else 'None'}")
         
         if service is None:
-            log("ERROR: No inference service available")
+            logger.warning("No inference service available for news summarization")
             return None
 
         messages = [
@@ -121,61 +115,44 @@ Provide informative summaries that give readers context about each story."""},
             {"role": "user", "content": "\n".join(links)}
         ]
 
-        log("Calling chat_completion...")
         result = await service.chat_completion(
             messages=messages,
             temperature=0.3,
             max_tokens=4096
         )
-        log(f"chat_completion returned: {list(result.keys()) if isinstance(result, dict) else type(result)}")
 
         if "error" in result:
-            log(f"ERROR from AI: {result['error']}")
+            logger.warning(f"AI summarization error: {result['error']}")
             return None
 
         content = result["choices"][0]["message"]["content"]
         if content:
             from app.services.text_utils import strip_thinking_tags
-            summary = strip_thinking_tags(content.strip())
-            log(f"AI summarization successful, {len(summary)} chars")
-            return summary
-        else:
-            log("WARNING: AI returned empty content")
+            return strip_thinking_tags(content.strip())
 
     except Exception as e:
-        log(f"EXCEPTION: {e}")
-        import traceback
-        log(traceback.format_exc())
+        logger.warning(f"AI summarization failed: {e}")
 
     return None
 
 
 async def fetch_news_from_source(source_url: str, source_name: str, db: Session) -> str:
     """Fetch news with AI summaries - max 10"""
-    def log(msg):
-        with open("/tmp/news_debug.log", "a") as f:
-            f.write(f"{msg}\n")
-    
-    log(f"Fetching from: {source_url}")
     result = await fetch_headlines_from_url(source_url)
     links = result["links"][:10]
-    log(f"Got {len(links)} headlines from {source_name}")
 
     if not links:
         return f"**{source_name}:** Could not fetch headlines. {result.get('error', '')}"
 
     # Use AI to summarize
-    log("Calling summarize_with_ai...")
     ai_result = await summarize_with_ai(links, db)
-    log(f"summarize_with_ai returned: {'Success' if ai_result else 'None'}")
     
     if ai_result:
-        # Add extra spacing between articles for better TUI readability
+        # Add extra spacing between articles for better readability
         spaced_result = ai_result.replace("\n- ", "\n\n- ")
         return f"**{source_name}:**\n\n{spaced_result}"
 
     # Fallback: raw links with spacing
-    log(f"Using raw links fallback for {source_name}")
     return f"**{source_name}:**\n\n" + "\n\n".join(links)
 
 
@@ -232,22 +209,9 @@ async def get_headlines(
     current_user: User = Depends(get_current_user)
 ):
     """Get news headlines from a source with AI summaries"""
-    # Multiple ways to ensure we see the log
-    logger.warning(f"[NEWS] === get_headlines called for: {source_url} ===")
-    print(f"[NEWS] === get_headlines called for: {source_url} ===", flush=True)
-    
-    # Also write to a file for debugging
-    def log(msg):
-        with open("/tmp/news_debug.log", "a") as f:
-            f.write(f"{msg}\n")
-    
-    log(f"get_headlines called for: {source_url}")
-    
     from app.models import Conversation, Message
 
-    log("Getting user news sources...")
     sources = get_user_news_sources(current_user, db)
-    log(f"Got {len(sources)} sources")
 
     source_name = source_url
     for s in sources:
@@ -255,9 +219,7 @@ async def get_headlines(
             source_name = s["name"]
             break
 
-    log(f"Calling fetch_news_from_source for {source_name}")
     markdown = await fetch_news_from_source(source_url, source_name, db)
-    log(f"Got markdown: {len(markdown)} chars")
     print(f"[NEWS] Got markdown response: {len(markdown)} chars")
 
     # Save to conversation if provided
