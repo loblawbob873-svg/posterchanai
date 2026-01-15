@@ -198,9 +198,6 @@ def start_rss_scheduler():
     finally:
         db.close()
 
-    # Mark any existing old entries as read before starting
-    mark_old_entries_as_read()
-
     rss_scheduler = AsyncIOScheduler()
     rss_scheduler.add_job(
         check_and_run_rss,
