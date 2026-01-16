@@ -5,7 +5,7 @@
             <h2>📁 File Manager</h2>
             <div class="file-manager-actions">
                 <button class="btn-secondary" id="fileManagerUploadBtn">📤 Upload</button>
-                <button class="btn-secondary" id="fileManagerNewFolderBtn">📂 New Folder</button>
+                <button class="btn-secondary" id="fileManagerNewFolderBtn" onclick="if(window.fileManager){window.fileManager.createNewFolder();}else{console.error('FileManager not initialized');}">📂 New Folder</button>
                 <button class="btn-icon" id="fileManagerCloseBtn">&times;</button>
             </div>
         </div>

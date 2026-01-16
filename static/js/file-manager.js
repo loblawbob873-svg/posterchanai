@@ -45,7 +45,12 @@ class FileManager {
         attachButtonListener('fileManagerUploadBtn', () => this.showUploadDialog());
         
         // New folder button
-        attachButtonListener('fileManagerNewFolderBtn', () => this.createNewFolder());
+        attachButtonListener('fileManagerNewFolderBtn', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('FileManager: New Folder button clicked (via listener)');
+            this.createNewFolder();
+        });
         
         // Selection controls
         attachButtonListener('fileManagerSelectAllBtn', () => this.selectAll());
@@ -670,26 +675,37 @@ class FileManager {
     }
     
     async createNewFolder() {
+        console.log('FileManager: createNewFolder() called');
         const folderName = prompt('Enter folder name:');
-        if (!folderName || !folderName.trim()) return;
+        if (!folderName || !folderName.trim()) {
+            console.log('FileManager: Folder name cancelled or empty');
+            return;
+        }
         
         try {
             const safeName = folderName.trim();
             const targetPath = this.currentPath ? `${this.currentPath}/${safeName}` : safeName;
+            console.log(`FileManager: Creating folder at path: ${targetPath}`);
             
             const formData = new FormData();
             formData.append('path', targetPath);
             
+            console.log('FileManager: Sending mkdir request...');
             const response = await csrfFetch('/api/files/mkdir', {
                 method: 'POST',
                 body: formData
             });
             
+            console.log(`FileManager: mkdir response status: ${response.status}`);
+            
             if (response.ok) {
+                const data = await response.json();
+                console.log('FileManager: Folder created successfully:', data);
                 // Reload files to show new folder
                 await this.loadFiles(this.currentPath);
             } else {
                 const error = await response.json();
+                console.error('FileManager: mkdir error:', error);
                 throw new Error(error.detail || 'Failed to create folder');
             }
         } catch (error) {

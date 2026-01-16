@@ -224,7 +224,9 @@ def verify_api_key(
         # Update last used timestamp
         api_key.last_used_at = datetime.utcnow()
         db.commit()
-        return api_key.user
+        # Query user directly since APIKey doesn't have a relationship
+        user = db.query(User).filter(User.id == api_key.user_id).first()
+        return user
 
     # If global key is not set and user key not found, reject
     if not setting or not setting.value:
