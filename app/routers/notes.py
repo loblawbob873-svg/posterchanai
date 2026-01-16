@@ -389,7 +389,7 @@ async def delete_note(
     return {"success": True, "message": "Note deleted"}
 
 
-@router.get("/files/{username}/{note_id}/{filename}")
+@router.api_route("/files/{username}/{note_id}/{filename}", methods=["GET", "HEAD"])
 async def serve_note_file(
     username: str,
     note_id: int,
@@ -419,11 +419,13 @@ async def serve_note_file(
     if storage_server_url and storage_server_url.value:
         # Proxy to storage server (stream file response)
         from app.services.storage_proxy import proxy_storage_request
+        # Use the actual request method (GET or HEAD)
+        method = request.method
         return await proxy_storage_request(
             db=db,
             request=request,
             endpoint=f"/api/notes/files/{username}/{note_id}/{filename}",
-            method="GET",
+            method=method,
             stream=True
         )
     
@@ -508,5 +510,14 @@ async def serve_note_file(
         ".sh": "application/x-sh",
     }
     media_type = media_types.get(suffix, "application/octet-stream")
+    
+    # For HEAD requests, return headers only (no body)
+    if request.method == "HEAD":
+        from fastapi.responses import Response
+        headers = {
+            "Content-Type": media_type,
+            "Content-Length": str(file_path.stat().st_size),
+        }
+        return Response(headers=headers, status_code=200)
     
     return FileResponse(file_path, media_type=media_type)

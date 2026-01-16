@@ -194,9 +194,10 @@ async def save_note_attachment(
     original_name = file.filename or "attachment"
     
     # Run blocking file I/O - handle both async and sync contexts
+    # Bypass proxy since we're already on the storage server endpoint
     def _save_attachment_sync():
         storage = StorageService(db)
-        return storage.save_note_attachment(username, note_id, content, original_name)
+        return storage.save_note_attachment(username, note_id, content, original_name, bypass_proxy=True)
     
     # Try to get running event loop
     try:

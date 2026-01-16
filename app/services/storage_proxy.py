@@ -48,12 +48,18 @@ async def proxy_storage_request(
     # Also try to forward the user's cookie (fallback)
     access_token = request.cookies.get("access_token", "")
     
+    # Forward Authorization header from original request (for API key auth)
+    auth_header = request.headers.get("Authorization", "")
+    
     url = f"{storage_server_url.value.rstrip('/')}{endpoint}"
     headers = {}
     
     # Prefer server token for server-to-server auth
     if storage_server_token and storage_server_token.value:
         headers["Authorization"] = f"Bearer {storage_server_token.value}"
+    elif auth_header:
+        # Forward the Authorization header from the original request
+        headers["Authorization"] = auth_header
     elif access_token:
         headers["Cookie"] = f"access_token={access_token}"
     
@@ -65,7 +71,15 @@ async def proxy_storage_request(
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            auth_method = 'token' if storage_server_token and storage_server_token.value else 'cookie' if access_token else 'none'
+            # Determine auth method for logging
+            if storage_server_token and storage_server_token.value:
+                auth_method = 'server-token'
+            elif auth_header:
+                auth_method = 'forwarded-api-key'
+            elif access_token:
+                auth_method = 'cookie'
+            else:
+                auth_method = 'none'
             logger.info(f"[STORAGE] Proxying {method} {url} (auth: {auth_method})")
             
             if method == "GET":
@@ -105,11 +119,6 @@ async def proxy_storage_request(
                 # Get content type from response
                 content_type = response.headers.get("content-type", "application/octet-stream")
                 
-                # Create streaming response
-                async def generate():
-                    async for chunk in response.aiter_bytes():
-                        yield chunk
-                
                 response_headers = {}
                 if "content-length" in response.headers:
                     response_headers["Content-Length"] = response.headers["content-length"]
@@ -117,6 +126,19 @@ async def proxy_storage_request(
                     response_headers["Content-Disposition"] = response.headers["content-disposition"]
                 if "content-type" in response.headers:
                     response_headers["Content-Type"] = response.headers["content-type"]
+                
+                # For HEAD requests, return headers only (no body)
+                if method == "HEAD":
+                    from fastapi.responses import Response
+                    return Response(
+                        status_code=response.status_code,
+                        headers=response_headers
+                    )
+                
+                # Create streaming response for GET requests
+                async def generate():
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
                 
                 return StreamingResponse(
                     generate(),
