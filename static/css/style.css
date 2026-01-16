@@ -2705,13 +2705,16 @@ fieldset legend {
 }
 
 .file-actions {
-    display: flex;
+    display: flex !important;
     gap: 8px;
     flex-wrap: wrap;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #2a2a3e;
 }
 
 .file-action-btn {
-    padding: 6px 12px;
+    padding: 8px 14px;
     background: #2a2a3e;
     border: 1px solid #3a3a4e;
     border-radius: 6px;
@@ -2719,9 +2722,10 @@ fieldset legend {
     cursor: pointer;
     font-size: 0.9em;
     transition: all 0.2s ease;
-    display: flex;
+    display: inline-flex !important;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
+    white-space: nowrap;
 }
 
 .file-action-btn:hover {

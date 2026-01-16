@@ -1,24 +1,25 @@
 <!-- File Manager Full-Screen View -->
-<div class="file-manager-overlay" id="fileManagerOverlay" style="display: none;">
-    <div class="file-manager-container">
-        <div class="file-manager-header">
+<div class="modal" id="fileManagerOverlay" style="display: none;">
+    <div class="modal-content modal-fullscreen">
+        <div class="modal-header">
             <h2>📁 File Manager</h2>
-            <div class="file-manager-actions">
+            <div class="file-manager-header-actions">
                 <button class="btn-secondary" id="fileManagerUploadBtn">📤 Upload</button>
                 <button class="btn-secondary" id="fileManagerNewFolderBtn">📂 New Folder</button>
-                <button class="btn-icon" id="fileManagerCloseBtn">&times;</button>
             </div>
+            <button class="btn-icon modal-close" id="fileManagerCloseBtn">&times;</button>
         </div>
-        <div class="file-manager-body">
-            <div class="file-manager-sidebar">
-                <div class="file-manager-breadcrumb" id="fileManagerBreadcrumb">
-                    <button class="breadcrumb-item" data-path="">Home</button>
+        <div class="modal-body" style="padding: 0; display: flex; flex-direction: column; overflow: hidden;">
+            <div class="file-manager-body" style="display: flex; flex: 1; overflow: hidden;">
+                <div class="file-manager-sidebar">
+                    <div class="file-manager-breadcrumb" id="fileManagerBreadcrumb">
+                        <button class="breadcrumb-item" data-path="">Home</button>
+                    </div>
+                    <div class="file-manager-storage" id="fileManagerStorage">
+                        <div class="storage-info">Loading storage info...</div>
+                    </div>
                 </div>
-                <div class="file-manager-storage" id="fileManagerStorage">
-                    <div class="storage-info">Loading storage info...</div>
-                </div>
-            </div>
-            <div class="file-manager-content">
+                <div class="file-manager-content">
                 <div class="file-manager-toolbar">
                     <div class="file-manager-tabs">
                         <button class="tab-btn active" id="fileManagerFilesTab" data-tab="files">📁 Files</button>

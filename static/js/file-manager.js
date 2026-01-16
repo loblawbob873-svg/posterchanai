@@ -253,8 +253,7 @@ class FileManager {
         const overlay = document.getElementById('fileManagerOverlay');
         if (overlay) {
             console.log('FileManager: Overlay found, displaying...');
-            overlay.style.display = 'block';
-            overlay.style.zIndex = '10000';
+            overlay.style.display = 'flex'; // Use flex for modal
             await this.loadFiles('');
             console.log('FileManager: Overlay displayed and files loaded');
         } else {

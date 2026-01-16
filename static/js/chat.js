@@ -1979,8 +1979,9 @@ class ChatHandler {
                             </div>
                         </div>
                         <div class="file-actions">
+                            <button class="file-action-btn" onclick="window.chatHandler.openFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Open">👁️ Open</button>
                             <button class="file-action-btn" onclick="window.chatHandler.downloadFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Download">⬇️ Download</button>
-                            <button class="file-action-btn" onclick="window.chatHandler.shareFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Share">🔗 Share</button>
+                            <button class="file-action-btn" onclick="window.chatHandler.shareFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Share Public URL">🔗 Share</button>
                             <button class="file-action-btn" onclick="window.chatHandler.emailFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Email">✉️ Email</button>
                             <button class="file-action-btn file-action-delete" onclick="window.chatHandler.deleteFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Delete">🗑️ Delete</button>
                         </div>
@@ -2442,6 +2443,13 @@ class ChatHandler {
         link.click();
     }
 
+    async openFile(filePath, fileName) {
+        // Open file in new tab/window
+        const url = `/api/files/view/${encodeURIComponent(filePath)}`;
+        window.open(url, '_blank');
+        this.showToast(`Opening ${fileName}...`);
+    }
+    
     async downloadFile(filePath, fileName) {
         try {
             const response = await fetch(`/api/files/view/${encodeURIComponent(filePath)}`);
@@ -2465,24 +2473,30 @@ class ChatHandler {
     }
 
     async shareFile(filePath, fileName) {
-        try {
-            const response = await csrfFetch('/api/files/share', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ file_path: filePath })
-            });
-            if (!response.ok) {
-                throw new Error('Failed to create share');
+        // Use file manager's share modal if available, otherwise create share directly
+        if (window.fileManager && typeof window.fileManager.shareFile === 'function') {
+            window.fileManager.shareFile(filePath, fileName);
+        } else {
+            // Fallback: create share directly
+            try {
+                const response = await csrfFetch('/api/files/share', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_path: filePath })
+                });
+                if (!response.ok) {
+                    throw new Error('Failed to create share');
+                }
+                const data = await response.json();
+                const shareUrl = window.location.origin + data.share_url;
+                
+                // Copy to clipboard
+                await navigator.clipboard.writeText(shareUrl);
+                this.showToast(`Share URL copied to clipboard: ${shareUrl}`);
+            } catch (error) {
+                console.error('Error sharing file:', error);
+                this.showToast('Error sharing file', 'error');
             }
-            const data = await response.json();
-            const shareUrl = window.location.origin + data.share_url;
-            
-            // Copy to clipboard
-            await navigator.clipboard.writeText(shareUrl);
-            this.showToast(`Share URL copied to clipboard: ${shareUrl}`);
-        } catch (error) {
-            console.error('Error sharing file:', error);
-            this.showToast('Error sharing file', 'error');
         }
     }
 
@@ -3171,6 +3185,17 @@ class ChatHandler {
             // Special case: mail forward <account> <id> <email> -> recipient filled, show message hint
             if (/^mail\s+forward\s+\S+\s+\d+\s+\S+@\S+$/i.test(cmdPrefix)) {
                 this.showToast('Type your message (optional), press Enter to forward');
+                return;
+            }
+            
+            // Special case: files - show search hint
+            if (/^files$/i.test(cmdPrefix)) {
+                if (lastPart === '') {
+                    this.showToast('Type a search query to find files (e.g., "files document" or "files .pdf")');
+                } else {
+                    // User is typing a search query, let them continue
+                    this.showToast('Press Enter to search for files');
+                }
                 return;
             }
             
