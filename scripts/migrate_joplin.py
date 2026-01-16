@@ -229,6 +229,19 @@ def migrate_joplin(joplin_db_path, user_id, dry_run=False):
         joplin_resources_dir = find_joplin_resources_dir(joplin_db_path)
         if joplin_resources_dir:
             print(f"  Found resources directory: {joplin_resources_dir}")
+            # Verify it exists and is readable
+            if not os.path.exists(joplin_resources_dir):
+                print(f"  WARNING: Resources directory does not exist: {joplin_resources_dir}")
+                joplin_resources_dir = None
+            elif not os.access(joplin_resources_dir, os.R_OK):
+                print(f"  WARNING: Resources directory is not readable: {joplin_resources_dir}")
+                joplin_resources_dir = None
+            else:
+                # Count files in resources directory
+                resource_count = len(list(Path(joplin_resources_dir).iterdir())) if Path(joplin_resources_dir).exists() else 0
+                print(f"  Resources directory contains {resource_count} files")
+        else:
+            print(f"  WARNING: Could not find Joplin resources directory")
         else:
             print(f"  WARNING: Resources directory not found. Attachments may not be migrated.")
         
@@ -306,6 +319,11 @@ def migrate_joplin(joplin_db_path, user_id, dry_run=False):
                 
                 if resource_ids:
                     print(f"  Note '{clean_title}': Found {len(resource_ids)} attachment(s)")
+                    print(f"    Resource IDs: {resource_ids[:5]}{'...' if len(resource_ids) > 5 else ''}")
+                else:
+                    print(f"  Note '{clean_title}': No attachments found in content")
+            elif not joplin_resources_dir:
+                print(f"  Note '{clean_title}': WARNING - Joplin resources directory not found, skipping attachments")
                     
                     updated_content = note_content
                     for resource_id in resource_ids:
@@ -431,22 +449,36 @@ def migrate_joplin(joplin_db_path, user_id, dry_run=False):
                                                 original_name = f"{original_name}{file_ext}"
                                         
                                         # Save attachment
-                                        filename = storage_service.save_note_attachment(
-                                            user.username, note.id, file_data, original_name
-                                        )
-                                        attachment_filenames.append(filename)
-                                        attachments_migrated += 1
-                                        
-                                        # Update note content to reference new file
-                                        # Replace ](:/resource_id) with ](/api/notes/files/username/note_id/filename)
-                                        old_ref = f"](:/{resource_id})"
-                                        new_ref = f"](/api/notes/files/{user.username}/{note.id}/{filename})"
-                                        updated_content = updated_content.replace(old_ref, new_ref)
-                                        
-                                        # Get file size for display
-                                        file_size = len(file_data)
-                                        size_str = f"{file_size / 1024:.1f} KB" if file_size < 1024 * 1024 else f"{file_size / (1024 * 1024):.1f} MB"
-                                        print(f"    ✓ Migrated: {original_name} ({size_str})")
+                                        print(f"    Saving attachment to: {user.username}/notes/{note.id}/")
+                                        try:
+                                            filename = storage_service.save_note_attachment(
+                                                user.username, note.id, file_data, original_name
+                                            )
+                                            attachment_filenames.append(filename)
+                                            attachments_migrated += 1
+                                            
+                                            # Update note content to reference new file
+                                            # Replace ](:/resource_id) with ](/api/notes/files/username/note_id/filename)
+                                            old_ref = f"](:/{resource_id})"
+                                            new_ref = f"](/api/notes/files/{user.username}/{note.id}/{filename})"
+                                            updated_content = updated_content.replace(old_ref, new_ref)
+                                            
+                                            # Get file size for display
+                                            file_size = len(file_data)
+                                            size_str = f"{file_size / 1024:.1f} KB" if file_size < 1024 * 1024 else f"{file_size / (1024 * 1024):.1f} MB"
+                                            
+                                            # Verify file was actually written
+                                            note_path = storage_service.get_note_path(user.username, note.id)
+                                            saved_file = note_path / filename
+                                            if saved_file.exists():
+                                                print(f"    ✓ Migrated: {original_name} ({size_str}) -> {saved_file}")
+                                            else:
+                                                print(f"    ⚠ WARNING: File saved but not found at {saved_file}")
+                                        except Exception as save_error:
+                                            print(f"    ERROR saving attachment: {save_error}")
+                                            import traceback
+                                            traceback.print_exc()
+                                            raise
                                     except Exception as e:
                                         print(f"    ERROR migrating attachment {resource_id}: {e}")
                                         # Keep original reference if migration fails

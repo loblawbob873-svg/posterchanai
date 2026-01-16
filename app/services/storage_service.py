@@ -468,7 +468,14 @@ class StorageService:
         return note_path
 
     def save_note_attachment(self, username: str, note_id: int, file_data: bytes, original_name: str) -> str:
-        """Save an attachment file for a note and return the filename"""
+        """Save an attachment file for a note and return the filename. Proxies to storage server if configured."""
+        # Check if storage server is configured - proxy request if so
+        storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        if storage_server_url and storage_server_url.value:
+            # Proxy to storage server
+            return self._proxy_save_note_attachment(storage_server_url.value, username, note_id, file_data, original_name)
+        
+        # Local file saving (storage server node)
         note_path = self.get_note_path(username, note_id)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         ext = Path(original_name).suffix or ""
@@ -480,6 +487,50 @@ class StorageService:
             f.write(file_data)
 
         return filename
+    
+    def _proxy_save_note_attachment(self, storage_server_url: str, username: str, note_id: int, file_data: bytes, original_name: str) -> str:
+        """Proxy note attachment save to storage server"""
+        import asyncio
+        try:
+            # Get server-to-server API token
+            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
+            
+            url = f"{storage_server_url.rstrip('/')}/api/storage/save-note-attachment"
+            headers = {}
+            if storage_server_token and storage_server_token.value:
+                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            
+            files = {
+                "file": (original_name, file_data, "application/octet-stream")
+            }
+            data = {
+                "username": username,
+                "note_id": str(note_id)
+            }
+            
+            # Run async HTTP request in sync context
+            async def _async_proxy():
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(url, headers=headers, files=files, data=data)
+                    if response.status_code == 200:
+                        result = response.json()
+                        return result.get("filename", original_name)
+                    else:
+                        logger.error(f"[STORAGE] Failed to proxy save_note_attachment: {response.status_code} - {response.text}")
+                        raise Exception(f"Storage server error: {response.status_code}")
+            
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're in an async context, we need to use a thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, _async_proxy())
+                    return future.result()
+            else:
+                return loop.run_until_complete(_async_proxy())
+        except Exception as e:
+            logger.error(f"[STORAGE] Error proxying note attachment: {e}", exc_info=True)
+            raise
 
     def delete_note_attachments(self, username: str, note_id: int) -> bool:
         """Delete all attachments for a note"""

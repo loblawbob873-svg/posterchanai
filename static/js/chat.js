@@ -1009,24 +1009,31 @@ class ChatHandler {
                     formData.append('file', file);
 
                     try {
+                        console.log('Uploading avatar...', file.name, file.type, file.size);
                         const response = await csrfFetch('/api/auth/avatar', {
                             method: 'POST',
                             body: formData
+                            // Don't set Content-Type header - browser will set it with boundary for FormData
                         });
 
+                        console.log('Avatar upload response status:', response.status);
+                        
                         if (response.ok) {
                             const data = await response.json();
+                            console.log('Avatar upload success:', data);
                             this.updateAvatarPreview(data.avatar);
                             avatarStatus.textContent = 'Avatar uploaded!';
                             avatarStatus.className = 'settings-status success';
                             setTimeout(() => { avatarStatus.textContent = ''; }, 2000);
                         } else {
-                            const data = await response.json();
-                            avatarStatus.textContent = data.detail || 'Upload failed';
+                            const data = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+                            console.error('Avatar upload failed:', data);
+                            avatarStatus.textContent = data.detail || `Upload failed (${response.status})`;
                             avatarStatus.className = 'settings-status error';
                         }
                     } catch (e) {
-                        avatarStatus.textContent = 'Upload failed';
+                        console.error('Avatar upload error:', e);
+                        avatarStatus.textContent = `Upload failed: ${e.message || 'Unknown error'}`;
                         avatarStatus.className = 'settings-status error';
                     }
                     avatarInput.value = '';
@@ -1055,9 +1062,13 @@ class ChatHandler {
     
     async loadStorageAddresses() {
         try {
+            console.log('Loading storage addresses...');
             const response = await fetch('/api/auth/storage-addresses');
+            console.log('Storage addresses response status:', response.status);
+            
             if (response.ok) {
                 const data = await response.json();
+                console.log('Storage addresses data:', data);
                 
                 // Get base URL from current location
                 const protocol = window.location.protocol;
@@ -1066,36 +1077,66 @@ class ChatHandler {
                 // Update WebDAV address
                 const webdavInput = document.getElementById('webdavAddress');
                 const webdavUsername = document.getElementById('webdavUsername');
-                if (webdavInput && data.webdav_url) {
-                    // Replace localhost with actual hostname
-                    const webdavUrl = data.webdav_url.replace('localhost', hostname).replace('http://', `${protocol}//`);
-                    webdavInput.value = webdavUrl;
+                console.log('WebDAV elements:', { input: !!webdavInput, username: !!webdavUsername, url: data.webdav_url });
+                
+                if (webdavInput) {
+                    if (data.webdav_url) {
+                        // Replace localhost with actual hostname
+                        const webdavUrl = data.webdav_url.replace('localhost', hostname).replace('http://', `${protocol}//`);
+                        webdavInput.value = webdavUrl;
+                        console.log('Set WebDAV URL:', webdavUrl);
+                    } else {
+                        webdavInput.value = '';
+                        console.log('WebDAV URL is empty (server not enabled?)');
+                    }
                 }
                 if (webdavUsername && data.username) {
                     webdavUsername.textContent = data.username;
+                    console.log('Set WebDAV username:', data.username);
                 }
                 
                 // Update CalDAV address
                 const caldavInput = document.getElementById('caldavAddress');
                 const caldavUsername = document.getElementById('caldavUsername');
-                if (caldavInput && data.caldav_url) {
-                    const caldavUrl = data.caldav_url.replace('localhost', hostname).replace('http://', `${protocol}//`);
-                    caldavInput.value = caldavUrl;
+                console.log('CalDAV elements:', { input: !!caldavInput, username: !!caldavUsername, url: data.caldav_url });
+                
+                if (caldavInput) {
+                    if (data.caldav_url) {
+                        const caldavUrl = data.caldav_url.replace('localhost', hostname).replace('http://', `${protocol}//`);
+                        caldavInput.value = caldavUrl;
+                        console.log('Set CalDAV URL:', caldavUrl);
+                    } else {
+                        caldavInput.value = '';
+                        console.log('CalDAV URL is empty (server not enabled?)');
+                    }
                 }
                 if (caldavUsername && data.username) {
                     caldavUsername.textContent = data.username;
+                    console.log('Set CalDAV username:', data.username);
                 }
                 
                 // Update CardDAV address
                 const carddavInput = document.getElementById('carddavAddress');
                 const carddavUsername = document.getElementById('carddavUsername');
-                if (carddavInput && data.carddav_url) {
-                    const carddavUrl = data.carddav_url.replace('localhost', hostname).replace('http://', `${protocol}//`);
-                    carddavInput.value = carddavUrl;
+                console.log('CardDAV elements:', { input: !!carddavInput, username: !!carddavUsername, url: data.carddav_url });
+                
+                if (carddavInput) {
+                    if (data.carddav_url) {
+                        const carddavUrl = data.carddav_url.replace('localhost', hostname).replace('http://', `${protocol}//`);
+                        carddavInput.value = carddavUrl;
+                        console.log('Set CardDAV URL:', carddavUrl);
+                    } else {
+                        carddavInput.value = '';
+                        console.log('CardDAV URL is empty (server not enabled?)');
+                    }
                 }
                 if (carddavUsername && data.username) {
                     carddavUsername.textContent = data.username;
+                    console.log('Set CardDAV username:', data.username);
                 }
+            } else {
+                const errorText = await response.text();
+                console.error('Failed to load storage addresses:', response.status, errorText);
             }
         } catch (e) {
             console.error('Failed to load storage addresses:', e);

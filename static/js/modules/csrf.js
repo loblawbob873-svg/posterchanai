@@ -35,10 +35,16 @@ async function csrfFetch(url, options = {}) {
     if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
         const token = getCSRFToken();
         if (token) {
-            options.headers = {
-                ...options.headers,
-                [CSRF_HEADER_NAME]: token
-            };
+            // Ensure headers object exists
+            if (!options.headers) {
+                options.headers = {};
+            }
+            options.headers[CSRF_HEADER_NAME] = token;
+        } else {
+            console.warn(`CSRF token not found in cookies for ${method} request to ${url}`);
+            console.warn('Available cookies:', document.cookie);
+            // Still make the request - let the server handle the error
+            // This allows for better error messages from the server
         }
     }
 

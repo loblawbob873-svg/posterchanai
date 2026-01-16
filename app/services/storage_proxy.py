@@ -4,8 +4,9 @@ Similar to torrent proxy, but for file storage operations.
 """
 import logging
 import httpx
-from fastapi import Request, HTTPException
+from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse
+from starlette.requests import Request
 from typing import Union
 from sqlalchemy.orm import Session
 from app.models import Setting

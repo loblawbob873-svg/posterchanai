@@ -160,3 +160,53 @@ async def save_file(
         logger.warning(f"Failed to invalidate cache: {e}")
     
     return {"file_path": file_path}
+
+
+@router.post("/save-note-attachment")
+async def save_note_attachment(
+    file: UploadFile = File(...),
+    username: str = Form(...),
+    note_id: int = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Save a note attachment file. Called by client nodes when proxying note attachment uploads.
+    Only accessible on storage server node.
+    """
+    # Verify username matches
+    if current_user.username != username:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Verify note belongs to user
+    from app.models import Note
+    note = db.query(Note).filter(
+        Note.id == note_id,
+        Note.user_id == current_user.id
+    ).first()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    
+    # Read file content
+    content = await file.read()
+    
+    # Get original filename
+    original_name = file.filename or "attachment"
+    
+    # Run blocking file I/O in thread pool to prevent blocking other requests
+    def _save_attachment_sync():
+        storage = StorageService(db)
+        return storage.save_note_attachment(username, note_id, content, original_name)
+    
+    filename = await asyncio.to_thread(_save_attachment_sync)
+    
+    # Invalidate file cache for notes directory (non-blocking)
+    try:
+        from app.routers.files import get_file_cache
+        cache = get_file_cache(db)
+        cache.invalidate(f"{username}:")
+        cache.invalidate(f"{username}:notes")
+    except Exception as e:
+        logger.warning(f"Failed to invalidate cache: {e}")
+    
+    return {"filename": filename}

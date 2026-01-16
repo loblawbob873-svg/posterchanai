@@ -657,22 +657,44 @@ class NotesManager {
         const name = prompt('Enter folder name:');
         if (!name) return;
         
+        // Ensure csrfFetch is available
+        if (typeof csrfFetch === 'undefined') {
+            console.error('csrfFetch is not available, falling back to fetch');
+            alert('Error: CSRF protection not loaded. Please refresh the page.');
+            return;
+        }
+        
         try {
+            console.log('Creating folder:', name.trim());
             const response = await csrfFetch('/api/notes/folders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: name.trim() })
             });
             
+            console.log('Folder creation response status:', response.status);
+            
             if (response.ok) {
                 this.loadFolders();
             } else {
-                const error = await response.json();
-                alert(`Error creating folder: ${error.detail || 'Unknown error'}`);
+                let errorDetail = 'Unknown error';
+                try {
+                    const errorText = await response.text();
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        errorDetail = errorJson.detail || errorJson.message || errorText;
+                    } catch {
+                        errorDetail = errorText || `HTTP ${response.status}`;
+                    }
+                } catch (e) {
+                    errorDetail = `HTTP ${response.status}: ${response.statusText}`;
+                }
+                console.error('Error creating folder:', errorDetail);
+                alert(`Error creating folder: ${errorDetail}`);
             }
         } catch (error) {
             console.error('Error creating folder:', error);
-            alert('Error creating folder');
+            alert(`Error creating folder: ${error.message || 'Network error'}`);
         }
     }
     

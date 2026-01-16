@@ -685,7 +685,7 @@ def update_user_settings(
 
 @router.post("/avatar")
 async def upload_avatar(
-    request: Request,
+    request: StarletteRequest,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -705,6 +705,7 @@ async def upload_avatar(
     # Check if storage server is configured - proxy request if so
     storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
     if storage_server_url and storage_server_url.value:
+        logger.debug(f"Proxying avatar upload to storage server: {storage_server_url.value}")
         # Proxy to storage server - use the storage endpoint, not auth endpoint
         from app.services.storage_proxy import proxy_storage_request
         files = {
@@ -723,6 +724,8 @@ async def upload_avatar(
                 files=files,
                 json_body=form_data  # This becomes form data when files are present
             )
+            
+            logger.debug(f"Proxy result type: {type(result)}, value: {result}")
             
             # Handle response - proxy_storage_request returns dict for JSON responses
             if isinstance(result, dict):
@@ -748,29 +751,39 @@ async def upload_avatar(
                 "filename": filename
             }
         except HTTPException as e:
-            # Re-raise HTTP exceptions
-            raise
+            # If proxy fails, fall back to local save (might be on storage server itself)
+            logger.warning(f"Proxy failed ({e.status_code}): {e.detail}, falling back to local save")
+            # Fall through to local save
         except Exception as e:
-            logger.error(f"Error proxying avatar upload: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Failed to upload avatar: {str(e)}")
+            # If proxy fails, fall back to local save (might be on storage server itself)
+            logger.warning(f"Error proxying avatar upload: {e}, falling back to local save")
+            # Fall through to local save
     
-    # Local file saving (storage server node)
+    # Local file saving (storage server node or fallback from proxy failure)
+    logger.debug(f"Saving avatar locally for user: {current_user.username}")
     try:
         # Get file extension
         ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}
         ext = ext_map.get(file.content_type, ".png")
+        logger.debug(f"File extension: {ext}, content_type: {file.content_type}, size: {len(content)} bytes")
 
         # Save avatar (run in thread pool since save_avatar is blocking I/O)
         storage = StorageService(db)
         
         def _save_avatar_sync():
-            return storage.save_avatar(current_user.username, content, ext)
+            try:
+                return storage.save_avatar(current_user.username, content, ext)
+            except Exception as e:
+                logger.error(f"Error in _save_avatar_sync: {e}", exc_info=True)
+                raise
         
         filename = await asyncio.to_thread(_save_avatar_sync)
+        logger.debug(f"Avatar saved with filename: {filename}")
 
         # Update user record
         current_user.avatar = filename
         db.commit()
+        logger.debug(f"User record updated with avatar: {filename}")
 
         return {
             "message": "Avatar uploaded",
@@ -802,7 +815,7 @@ def delete_avatar(
 
 @router.get("/storage-addresses")
 async def get_storage_addresses(
-    request: Request,
+    request: StarletteRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -819,6 +832,11 @@ async def get_storage_addresses(
     cardav_enabled = db.query(Setting).filter(Setting.key == "cardav_enabled").first()
     cardav_port = db.query(Setting).filter(Setting.key == "cardav_port").first()
     cardav_base_url = db.query(Setting).filter(Setting.key == "cardav_base_url").first()
+    
+    logger.debug(f"Storage addresses request for {current_user.username}: "
+                 f"webdav_enabled={webdav_enabled.value if webdav_enabled else None}, "
+                 f"caldav_enabled={caldav_enabled.value if caldav_enabled else None}, "
+                 f"cardav_enabled={cardav_enabled.value if cardav_enabled else None}")
     
     # Helper to build URL - use base_url if set, otherwise use request hostname
     def build_dav_url(base_url_setting, port_setting, default_port, path_suffix):
@@ -838,21 +856,26 @@ async def get_storage_addresses(
     webdav_url = ""
     if webdav_enabled and webdav_enabled.value.lower() == "true":
         webdav_url = build_dav_url(webdav_base_url, webdav_port, "8080", f"/{current_user.username}")
+        logger.debug(f"Built WebDAV URL: {webdav_url}")
     
     caldav_url = ""
     if caldav_enabled and caldav_enabled.value.lower() == "true":
         caldav_url = build_dav_url(caldav_base_url, caldav_port, "8081", f"/caldav/{current_user.username}/")
+        logger.debug(f"Built CalDAV URL: {caldav_url}")
     
     cardav_url = ""
     if cardav_enabled and cardav_enabled.value.lower() == "true":
         cardav_url = build_dav_url(cardav_base_url, cardav_port, "8082", f"/carddav/{current_user.username}/")
+        logger.debug(f"Built CardDAV URL: {cardav_url}")
     
-    return {
+    result = {
         "username": current_user.username,
         "webdav_url": webdav_url,
         "caldav_url": caldav_url,
         "cardav_url": cardav_url
     }
+    logger.debug(f"Returning storage addresses: {result}")
+    return result
 
 
 @router.get("/avatar/{username}")
