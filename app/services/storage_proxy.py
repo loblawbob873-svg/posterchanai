@@ -65,10 +65,12 @@ async def proxy_storage_request(
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            logger.info(f"[STORAGE] Proxying {method} {url} (auth: {'token' if storage_server_token and storage_server_token.value else 'cookie' if access_token else 'none'})")
+            auth_method = 'token' if storage_server_token and storage_server_token.value else 'cookie' if access_token else 'none'
+            logger.info(f"[STORAGE] Proxying {method} {url} (auth: {auth_method})")
             
             if method == "GET":
                 response = await client.get(url, headers=headers, follow_redirects=True)
+                logger.debug(f"[STORAGE] GET response status: {response.status_code} for {url}")
             elif method == "POST":
                 if files:
                     # Handle file uploads (multipart/form-data)

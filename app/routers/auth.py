@@ -1,6 +1,7 @@
 import secrets
 import logging
 import asyncio
+import time
 from pathlib import Path
 from typing import List
 from datetime import datetime, timedelta
@@ -745,9 +746,11 @@ async def upload_avatar(
             current_user.avatar = filename
             db.commit()
             
+            # Add cache busting to avatar URL
+            avatar_url = f"/api/auth/avatar/{current_user.username}?t={int(time.time())}"
             return {
                 "message": "Avatar uploaded",
-                "avatar": f"/api/auth/avatar/{current_user.username}",
+                "avatar": avatar_url,
                 "filename": filename
             }
         except HTTPException as e:
@@ -785,9 +788,11 @@ async def upload_avatar(
         db.commit()
         logger.debug(f"User record updated with avatar: {filename}")
 
+        # Add cache busting to avatar URL
+        avatar_url = f"/api/auth/avatar/{current_user.username}?t={int(time.time())}"
         return {
             "message": "Avatar uploaded",
-            "avatar": f"/api/auth/avatar/{current_user.username}",
+            "avatar": avatar_url,
             "filename": filename
         }
     except Exception as e:
@@ -888,45 +893,51 @@ async def get_avatar(
     # Check if storage server is configured - proxy request if so
     storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
     if storage_server_url and storage_server_url.value:
-        # Try to get avatar from storage server via files API
-        # Avatars are stored at the root of user's storage as "avatar.*"
+        logger.debug(f"Proxying avatar request for {username} to storage server: {storage_server_url.value}")
+        # Try to get avatar from storage server via auth API (same endpoint)
+        # This will proxy to the storage server's /api/auth/avatar endpoint
         try:
             from app.services.storage_proxy import proxy_storage_request
-            # Try common avatar extensions
-            for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
-                try:
-                    return await proxy_storage_request(
-                        db=db,
-                        request=request,
-                        endpoint=f"/api/files/view/avatar{ext}",
-                        method="GET",
-                        stream=True
-                    )
-                except HTTPException as e:
-                    if e.status_code == 404:
-                        continue  # Try next extension
-                    raise
-            # If no avatar found, return 404
-            raise HTTPException(status_code=404, detail="Avatar not found")
-        except HTTPException:
+            # Proxy to the storage server's avatar endpoint
+            result = await proxy_storage_request(
+                db=db,
+                request=request,
+                endpoint=f"/api/auth/avatar/{username}",
+                method="GET",
+                stream=True
+            )
+            logger.debug(f"Successfully proxied avatar for {username} from storage server")
+            return result
+        except HTTPException as e:
+            logger.warning(f"HTTPException proxying avatar for {username}: {e.status_code} - {e.detail}")
+            if e.status_code == 404:
+                raise HTTPException(status_code=404, detail="Avatar not found")
             raise
         except Exception as e:
-            logger.warning(f"Error proxying avatar get, falling back to local: {e}")
+            logger.warning(f"Error proxying avatar get for {username}, falling back to local: {e}", exc_info=True)
             # Fall through to local serving
+    else:
+        logger.debug(f"Serving avatar for {username} from local storage (no storage_server_url configured)")
     
     # Serve avatar from local storage
+    logger.debug(f"Serving avatar for {username} from local storage")
     
     # Local file serving
     storage = StorageService(db)
     avatar_path = storage.get_avatar_path(username)
+    
+    logger.debug(f"Avatar path for {username}: {avatar_path} (exists: {avatar_path.exists() if avatar_path else False})")
 
     if not avatar_path or not avatar_path.exists():
+        logger.warning(f"Avatar not found for {username} at {avatar_path}")
         raise HTTPException(status_code=404, detail="Avatar not found")
 
     # Determine content type
     ext = avatar_path.suffix.lower()
     content_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}
     content_type = content_types.get(ext, "image/png")
+    
+    logger.debug(f"Serving avatar file: {avatar_path} (type: {content_type})")
 
     return FileResponse(avatar_path, media_type=content_type)
 

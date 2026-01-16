@@ -21,17 +21,19 @@ CSRF_EXEMPT_PATHS: Set[str] = {
     "/v1/",      # OpenAI-compatible API uses API key auth
     "/api/tts",  # API key authenticated
     "/api/generate-image",  # Image API for load balancing (API key/JWT auth)
+    "/api/storage/",  # Storage server endpoints (server-to-server auth)
     "/mcp/",     # MCP server endpoints
     "/ws/",      # WebSocket connections
 }
 
-# Paths that are always exempt (login, public resources)
+# Paths that are always exempt (login, public resources, read-only endpoints)
 ALWAYS_EXEMPT_PATHS: Set[str] = {
     "/login",
     "/auth/login",
     "/auth/register",
     "/api/auth/login",
     "/api/auth/register",
+    "/api/auth/avatar/",  # Avatar serving (read-only, may be proxied from storage server)
     "/static/",
     "/sw.js",
     "/manifest.json",
@@ -79,8 +81,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if request.method in ("POST", "PUT", "DELETE", "PATCH"):
             # Skip validation for exempt paths
             if not is_path_exempt(request.url.path):
-                # Skip if request has API key header (API auth)
-                if not request.headers.get("Authorization"):
+                # Skip if request has Authorization header (API key or Bearer token for server-to-server)
+                auth_header = request.headers.get("Authorization")
+                if not auth_header:
                     # Validate CSRF token
                     csrf_header = request.headers.get(CSRF_HEADER_NAME)
 

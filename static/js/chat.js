@@ -1021,7 +1021,11 @@ class ChatHandler {
                         if (response.ok) {
                             const data = await response.json();
                             console.log('Avatar upload success:', data);
-                            this.updateAvatarPreview(data.avatar);
+                            console.log('Avatar URL:', data.avatar);
+                            // Force reload by adding cache bust
+                            const avatarUrl = data.avatar + (data.avatar.includes('?') ? '&' : '?') + 't=' + Date.now();
+                            console.log('Avatar URL with cache bust:', avatarUrl);
+                            this.updateAvatarPreview(avatarUrl);
                             avatarStatus.textContent = 'Avatar uploaded!';
                             avatarStatus.className = 'settings-status success';
                             setTimeout(() => { avatarStatus.textContent = ''; }, 2000);
