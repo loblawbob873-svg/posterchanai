@@ -20,7 +20,11 @@
             </div>
             <div class="file-manager-content">
                 <div class="file-manager-toolbar">
-                    <div class="file-view-toggle">
+                    <div class="file-manager-tabs">
+                        <button class="tab-btn active" id="fileManagerFilesTab" data-tab="files">📁 Files</button>
+                        <button class="tab-btn" id="fileManagerSharesTab" data-tab="shares">🔗 Shared Files</button>
+                    </div>
+                    <div class="file-view-toggle" id="fileViewToggle" style="display: none;">
                         <button class="view-btn active" data-view="grid" title="Grid View">⊞</button>
                         <button class="view-btn" data-view="list" title="List View">☰</button>
                     </div>
@@ -34,6 +38,9 @@
                 </div>
                 <div class="file-manager-grid" id="fileManagerGrid">
                     <div class="file-manager-loading">Loading files...</div>
+                </div>
+                <div class="file-manager-shares" id="fileManagerShares" style="display: none;">
+                    <div class="file-manager-loading">Loading shared files...</div>
                 </div>
             </div>
         </div>

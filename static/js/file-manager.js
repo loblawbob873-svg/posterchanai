@@ -7,6 +7,7 @@ class FileManager {
         this.imageFiles = [];
         this.currentImageIndex = 0;
         this.selectedFiles = new Set(); // Track selected file paths
+        this.currentTab = 'files'; // 'files' or 'shares'
         this.init();
     }
     
@@ -52,6 +53,10 @@ class FileManager {
         attachButtonListener('fileManagerDeleteBtn', () => this.deleteSelected());
         attachButtonListener('fileManagerMoveBtn', () => this.showMoveDialog());
         
+        // Tab switching
+        document.getElementById('fileManagerFilesTab')?.addEventListener('click', () => this.switchTab('files'));
+        document.getElementById('fileManagerSharesTab')?.addEventListener('click', () => this.switchTab('shares'));
+        
         // View toggle
         document.querySelectorAll('.view-btn').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -66,6 +71,162 @@ class FileManager {
         document.getElementById('imageViewerClose')?.addEventListener('click', () => this.closeImageViewer());
         document.getElementById('imageViewerPrev')?.addEventListener('click', () => this.prevImage());
         document.getElementById('imageViewerNext')?.addEventListener('click', () => this.nextImage());
+    }
+    
+    switchTab(tab) {
+        this.currentTab = tab;
+        
+        // Update tab buttons
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        if (tab === 'files') {
+            document.getElementById('fileManagerFilesTab')?.classList.add('active');
+        } else {
+            document.getElementById('fileManagerSharesTab')?.classList.add('active');
+        }
+        
+        // Show/hide content areas
+        const grid = document.getElementById('fileManagerGrid');
+        const shares = document.getElementById('fileManagerShares');
+        const viewToggle = document.getElementById('fileViewToggle');
+        const selectionControls = document.getElementById('fileSelectionControls');
+        
+        if (tab === 'files') {
+            if (grid) grid.style.display = 'block';
+            if (shares) shares.style.display = 'none';
+            if (viewToggle) viewToggle.style.display = 'flex';
+            if (selectionControls) selectionControls.style.display = this.selectedFiles.size > 0 ? 'flex' : 'none';
+        } else {
+            if (grid) grid.style.display = 'none';
+            if (shares) shares.style.display = 'block';
+            if (viewToggle) viewToggle.style.display = 'none';
+            if (selectionControls) selectionControls.style.display = 'none';
+            this.loadSharedFiles();
+        }
+    }
+    
+    async loadSharedFiles() {
+        const sharesDiv = document.getElementById('fileManagerShares');
+        if (!sharesDiv) return;
+        
+        sharesDiv.innerHTML = '<div class="file-manager-loading">Loading shared files...</div>';
+        
+        try {
+            const response = await fetch('/api/files/shares');
+            if (response.ok) {
+                const data = await response.json();
+                this.renderSharedFiles(data.shares);
+            } else {
+                const error = await response.json();
+                sharesDiv.innerHTML = `<div class="file-manager-error">Error: ${this.escapeHtml(error.detail || 'Failed to load shared files')}</div>`;
+            }
+        } catch (error) {
+            console.error('Error loading shared files:', error);
+            sharesDiv.innerHTML = '<div class="file-manager-error">Error loading shared files</div>';
+        }
+    }
+    
+    renderSharedFiles(shares) {
+        const sharesDiv = document.getElementById('fileManagerShares');
+        if (!sharesDiv) return;
+        
+        if (shares.length === 0) {
+            sharesDiv.innerHTML = '<div class="file-manager-empty">No shared files</div>';
+            return;
+        }
+        
+        const baseUrl = window.location.origin;
+        
+        sharesDiv.innerHTML = `
+            <table class="shares-table">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Share URL</th>
+                        <th>Created</th>
+                        <th>Expires</th>
+                        <th>Access Count</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${shares.map(share => {
+                        const createdDate = new Date(share.created_at);
+                        const expiresDate = share.expires_at ? new Date(share.expires_at) : null;
+                        const fullUrl = baseUrl + share.share_url;
+                        const status = share.is_expired ? 'Expired' : (share.is_limit_reached ? 'Limit Reached' : 'Active');
+                        const statusClass = share.is_expired || share.is_limit_reached ? 'share-status-inactive' : 'share-status-active';
+                        
+                        return `
+                            <tr>
+                                <td>
+                                    <div class="share-file-info">
+                                        <span class="share-file-icon">${this.getFileIcon(share.filename)}</span>
+                                        <div>
+                                            <div class="share-file-name">${this.escapeHtml(share.filename)}</div>
+                                            <div class="share-file-path">${this.escapeHtml(share.file_path)}</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="share-url-container">
+                                        <input type="text" class="share-url-input" value="${this.escapeHtml(fullUrl)}" readonly>
+                                        <button class="btn-secondary btn-small" onclick="fileManager.copyShareUrl('${this.escapeHtml(fullUrl)}')" title="Copy URL">📋</button>
+                                    </div>
+                                </td>
+                                <td>${createdDate.toLocaleString()}</td>
+                                <td>${expiresDate ? expiresDate.toLocaleString() : 'Never'}</td>
+                                <td>${share.access_count || 0}${share.max_accesses ? ` / ${share.max_accesses}` : ''}</td>
+                                <td><span class="share-status ${statusClass}">${status}</span></td>
+                                <td>
+                                    <button class="btn-danger btn-small" onclick="fileManager.unshareFile(${share.id}, '${this.escapeHtml(share.filename)}')" title="Unshare">🗑️ Unshare</button>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        `;
+    }
+    
+    copyShareUrl(url) {
+        navigator.clipboard.writeText(url).then(() => {
+            alert('Share URL copied to clipboard!');
+        }).catch(() => {
+            // Fallback
+            const input = document.createElement('input');
+            input.value = url;
+            document.body.appendChild(input);
+            input.select();
+            document.execCommand('copy');
+            document.body.removeChild(input);
+            alert('Share URL copied to clipboard!');
+        });
+    }
+    
+    async unshareFile(shareId, filename) {
+        if (!confirm(`Are you sure you want to unshare "${filename}"? This will make the share URL inaccessible.`)) {
+            return;
+        }
+        
+        try {
+            const response = await csrfFetch(`/api/files/shares/${shareId}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                alert('Share revoked successfully');
+                await this.loadSharedFiles(); // Reload the list
+            } else {
+                const error = await response.json();
+                alert('Error: ' + (error.detail || 'Failed to revoke share'));
+            }
+        } catch (error) {
+            console.error('Error revoking share:', error);
+            alert('Error revoking share. Please try again.');
+        }
     }
     
     async open() {
