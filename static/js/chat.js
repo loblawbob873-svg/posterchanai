@@ -2015,6 +2015,10 @@ class ChatHandler {
                     const modifiedDate = file.modified ? new Date(file.modified * 1000).toLocaleString() : '';
                     const fileId = 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
                     
+                    // Escape file path and name for use in onclick handlers
+                    const escapedPath = this.escapeHtml(file.path).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                    const escapedName = safeName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                    
                     html += `<div class="file-result-item" data-file-path="${this.escapeHtml(file.path)}" data-file-name="${safeName}">
                         <div class="file-result-header">
                             ${file.thumbnail ? `<img src="${file.thumbnail}" alt="${safeName}" class="file-thumbnail">` : '<div class="file-icon">📄</div>'}
@@ -2024,11 +2028,11 @@ class ChatHandler {
                             </div>
                         </div>
                         <div class="file-actions">
-                            <button class="file-action-btn" onclick="window.chatHandler.openFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Open">👁️ Open</button>
-                            <button class="file-action-btn" onclick="window.chatHandler.downloadFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Download">⬇️ Download</button>
-                            <button class="file-action-btn" onclick="window.chatHandler.shareFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Share Public URL">🔗 Share</button>
-                            <button class="file-action-btn" onclick="window.chatHandler.emailFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Email">✉️ Email</button>
-                            <button class="file-action-btn file-action-delete" onclick="window.chatHandler.deleteFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Delete">🗑️ Delete</button>
+                            <button class="file-action-btn" data-action="open" data-path="${escapedPath}" data-name="${escapedName}" title="Open">👁️ Open</button>
+                            <button class="file-action-btn" data-action="download" data-path="${escapedPath}" data-name="${escapedName}" title="Download">⬇️ Download</button>
+                            <button class="file-action-btn" data-action="share" data-path="${escapedPath}" data-name="${escapedName}" title="Share Public URL">🔗 Share</button>
+                            <button class="file-action-btn" data-action="email" data-path="${escapedPath}" data-name="${escapedName}" title="Email">✉️ Email</button>
+                            <button class="file-action-btn file-action-delete" data-action="delete" data-path="${escapedPath}" data-name="${escapedName}" title="Delete">🗑️ Delete</button>
                         </div>
                     </div>`;
                 }
@@ -2055,7 +2059,54 @@ class ChatHandler {
             window.musicPlayer.stop();
         }
 
-        this.addMessage('assistant', html, true);
+        const messageEl = this.addMessage('assistant', html, true);
+        
+        // Attach event listeners to file action buttons (using event delegation for dynamically added content)
+        if (messageEl) {
+            // Use setTimeout to ensure DOM is fully updated
+            setTimeout(() => {
+                const fileActions = messageEl.querySelectorAll('.file-action-btn[data-action]');
+                console.log(`Found ${fileActions.length} file action buttons to attach listeners to`);
+                fileActions.forEach(btn => {
+                    // Remove any existing listeners
+                    const newBtn = btn.cloneNode(true);
+                    btn.parentNode.replaceChild(newBtn, btn);
+                    
+                    newBtn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const action = newBtn.dataset.action;
+                        const filePath = newBtn.dataset.path;
+                        const fileName = newBtn.dataset.name;
+                        console.log('File action clicked:', action, filePath, fileName);
+                        
+                        if (!window.chatHandler) {
+                            console.error('chatHandler not available');
+                            return;
+                        }
+                        
+                        switch(action) {
+                            case 'open':
+                                window.chatHandler.openFile(filePath, fileName);
+                                break;
+                            case 'download':
+                                window.chatHandler.downloadFile(filePath, fileName);
+                                break;
+                            case 'share':
+                                window.chatHandler.shareFile(filePath, fileName);
+                                break;
+                            case 'email':
+                                window.chatHandler.emailFile(filePath, fileName);
+                                break;
+                            case 'delete':
+                                window.chatHandler.deleteFile(filePath, fileName);
+                                break;
+                        }
+                    });
+                });
+                console.log(`Attached event listeners to ${fileActions.length} file action buttons`);
+            }, 100);
+        }
         
         // Ensure UI is updated and scroll to bottom
         this.scrollToBottom();
