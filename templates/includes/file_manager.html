@@ -5,7 +5,7 @@
             <h2>📁 File Manager</h2>
             <div class="file-manager-actions">
                 <button class="btn-secondary" id="fileManagerUploadBtn">📤 Upload</button>
-                <button class="btn-secondary" id="fileManagerNewFolderBtn" onclick="if(window.fileManager){window.fileManager.createNewFolder();}else{console.error('FileManager not initialized');}">📂 New Folder</button>
+                <button class="btn-secondary" id="fileManagerNewFolderBtn">📂 New Folder</button>
                 <button class="btn-icon" id="fileManagerCloseBtn">&times;</button>
             </div>
         </div>
@@ -25,7 +25,7 @@
                         <button class="tab-btn" id="fileManagerSharesTab" data-tab="shares">🔗 Shared Files</button>
                     </div>
                     <div class="file-toolbar-actions">
-                        <button class="btn-icon" id="fileManagerRefreshBtn" title="Refresh" onclick="if(window.fileManager){window.fileManager.refresh();}else{console.error('FileManager not initialized');}">🔄</button>
+                        <button class="btn-icon" id="fileManagerRefreshBtn" title="Refresh">🔄</button>
                         <div class="file-view-toggle" id="fileViewToggle" style="display: none;">
                             <button class="view-btn active" data-view="grid" title="Grid View">⊞</button>
                             <button class="view-btn" data-view="list" title="List View">☰</button>

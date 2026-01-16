@@ -3256,6 +3256,13 @@ class ChatHandler {
                     return;
                 }
             }
+            
+            // Special case: files command - show helpful hint
+            if (cmd === 'files' && afterCmd === '') {
+                this.showToast('Type a search query to find files (e.g., "files document" or "files .pdf")');
+                return;
+            }
+            
             return;
         }
 

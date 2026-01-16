@@ -16,7 +16,13 @@ class FileManager {
         const attachButtonListener = (buttonId, handler, retries = 3) => {
             const button = document.getElementById(buttonId);
             if (button) {
+                // Check if listener is already attached
+                if (button.dataset.listenerAttached === 'true') {
+                    console.log(`FileManager: Listener already attached to ${buttonId}`);
+                    return true;
+                }
                 button.addEventListener('click', handler);
+                button.dataset.listenerAttached = 'true';
                 return true;
             } else if (retries > 0) {
                 // Retry after a short delay if button doesn't exist yet
@@ -293,6 +299,27 @@ class FileManager {
             if (grid) {
                 grid.innerHTML = `<div class="file-manager-error">Error loading files</div>`;
             }
+        }
+    }
+    
+    async refresh() {
+        console.log('FileManager: Refreshing current directory...');
+        // Invalidate cache first if we're on the files tab
+        if (this.currentTab === 'files') {
+            try {
+                // Invalidate cache for current path
+                const cachePath = this.currentPath || '';
+                await fetch(`/api/files/invalidate-cache${cachePath ? '?path=' + encodeURIComponent(cachePath) : ''}`, {
+                    method: 'POST'
+                });
+            } catch (error) {
+                console.warn('FileManager: Failed to invalidate cache:', error);
+            }
+            // Reload current directory
+            await this.loadFiles(this.currentPath);
+        } else if (this.currentTab === 'shares') {
+            // Reload shared files
+            await this.loadSharedFiles();
         }
     }
     
@@ -684,13 +711,21 @@ class FileManager {
     
     async createNewFolder() {
         console.log('FileManager: createNewFolder() called');
-        const folderName = prompt('Enter folder name:');
-        if (!folderName || !folderName.trim()) {
-            console.log('FileManager: Folder name cancelled or empty');
+        
+        // Prevent multiple simultaneous prompts
+        if (this._creatingFolder) {
+            console.log('FileManager: Folder creation already in progress');
             return;
         }
         
+        this._creatingFolder = true;
         try {
+            const folderName = prompt('Enter folder name:');
+            if (!folderName || !folderName.trim()) {
+                console.log('FileManager: Folder name cancelled or empty');
+                return;
+            }
+            
             const safeName = folderName.trim();
             const targetPath = this.currentPath ? `${this.currentPath}/${safeName}` : safeName;
             console.log(`FileManager: Creating folder at path: ${targetPath}`);
@@ -719,6 +754,8 @@ class FileManager {
         } catch (error) {
             console.error('Error creating folder:', error);
             alert(`Error creating folder: ${error.message || 'Unknown error'}`);
+        } finally {
+            this._creatingFolder = false;
         }
     }
     
@@ -947,25 +984,48 @@ function ensureFileManagerButtonHandler() {
 }
 
 // Initialize immediately if DOM is ready, otherwise wait for DOMContentLoaded
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
+function initializeFileManager() {
+    if (!window.fileManager) {
         fileManager = new FileManager();
         window.fileManager = fileManager;
-        console.log('FileManager: Initialized (DOMContentLoaded)');
-        ensureFileManagerButtonHandler();
+        console.log('FileManager: Initialized');
+        
+        // Verify methods are available
+        if (typeof window.fileManager.refresh === 'function') {
+            console.log('FileManager: refresh method available');
+        } else {
+            console.error('FileManager: refresh method NOT available');
+        }
+        if (typeof window.fileManager.createNewFolder === 'function') {
+            console.log('FileManager: createNewFolder method available');
+        } else {
+            console.error('FileManager: createNewFolder method NOT available');
+        }
+    }
+    ensureFileManagerButtonHandler();
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        initializeFileManager();
     });
 } else {
     // DOM is already ready
-    fileManager = new FileManager();
-    window.fileManager = fileManager;
-    console.log('FileManager: Initialized (DOM ready)');
-    ensureFileManagerButtonHandler();
+    initializeFileManager();
 }
 
 // Also try to attach handler after delays as fallbacks (in case DOM loads late)
 setTimeout(() => {
+    if (!window.fileManager) {
+        initializeFileManager();
+    }
     if (!ensureFileManagerButtonHandler()) {
-        setTimeout(ensureFileManagerButtonHandler, 1000);
+        setTimeout(() => {
+            if (!window.fileManager) {
+                initializeFileManager();
+            }
+            ensureFileManagerButtonHandler();
+        }, 1000);
     }
 }, 500);
 

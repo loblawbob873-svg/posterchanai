@@ -1,5 +1,6 @@
 import secrets
 import logging
+import asyncio
 from pathlib import Path
 from typing import List
 from datetime import datetime, timedelta
@@ -723,8 +724,21 @@ async def upload_avatar(
                 json_body=form_data  # This becomes form data when files are present
             )
             
+            # Handle response - proxy_storage_request returns dict for JSON responses
+            if isinstance(result, dict):
+                filename = result.get("filename", "avatar.png")
+            else:
+                # If it's a Response object, try to parse JSON
+                try:
+                    import json
+                    result_json = await result.json() if hasattr(result, 'json') else {}
+                    filename = result_json.get("filename", "avatar.png")
+                except:
+                    # Fallback: use default filename
+                    logger.warning("Could not parse avatar upload response, using default filename")
+                    filename = "avatar.png"
+            
             # Update user record with avatar filename
-            filename = result.get("filename", "avatar.png")
             current_user.avatar = filename
             db.commit()
             
@@ -741,23 +755,31 @@ async def upload_avatar(
             raise HTTPException(status_code=500, detail=f"Failed to upload avatar: {str(e)}")
     
     # Local file saving (storage server node)
-    # Get file extension
-    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}
-    ext = ext_map.get(file.content_type, ".png")
+    try:
+        # Get file extension
+        ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}
+        ext = ext_map.get(file.content_type, ".png")
 
-    # Save avatar
-    storage = StorageService(db)
-    filename = storage.save_avatar(current_user.username, content, ext)
+        # Save avatar (run in thread pool since save_avatar is blocking I/O)
+        storage = StorageService(db)
+        
+        def _save_avatar_sync():
+            return storage.save_avatar(current_user.username, content, ext)
+        
+        filename = await asyncio.to_thread(_save_avatar_sync)
 
-    # Update user record
-    current_user.avatar = filename
-    db.commit()
+        # Update user record
+        current_user.avatar = filename
+        db.commit()
 
-    return {
-        "message": "Avatar uploaded",
-        "avatar": f"/api/auth/avatar/{current_user.username}",
-        "filename": filename
-    }
+        return {
+            "message": "Avatar uploaded",
+            "avatar": f"/api/auth/avatar/{current_user.username}",
+            "filename": filename
+        }
+    except Exception as e:
+        logger.error(f"Error saving avatar locally: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save avatar: {str(e)}")
 
 
 @router.delete("/avatar")
