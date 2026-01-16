@@ -27,6 +27,9 @@ class NotesManager {
             this.loadNotes();
         });
         
+        // Edit/Preview mode toggle buttons - attach in separate method for re-initialization
+        this.attachModeButtons();
+        
         // Auto-save on content change (debounced)
         let saveTimeout;
         const contentInput = document.getElementById('noteContentInput');
@@ -302,11 +305,27 @@ class NotesManager {
         const images = [];
         processed = processed.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, src) => {
             let imageSrc = src;
-            // If it's a relative path or just a filename, convert to note attachment URL
-            if (!src.startsWith('http://') && !src.startsWith('https://') && !src.startsWith('/api/')) {
+            console.log('Processing image reference:', { alt, src, noteId, username, match });
+            
+            // If it's already an /api/ URL, use it as-is (might be from migration)
+            if (src.startsWith('/api/notes/files/')) {
+                // Already a proper URL, use it
+                imageSrc = src;
+                console.log('Using existing /api/ URL:', imageSrc);
+            } else if (src.startsWith('http://') || src.startsWith('https://')) {
+                // External URL, use as-is
+                imageSrc = src;
+                console.log('Using external URL:', imageSrc);
+            } else {
+                // Relative path or filename - convert to note attachment URL
                 const filename = src.replace(/^\.\//, '').split('/').pop();
                 if (noteId) {
                     imageSrc = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
+                    console.log('Converted relative path to URL:', { original: src, filename, imageSrc });
+                } else {
+                    console.warn('Cannot convert image URL - noteId is missing', { src, username });
+                    // Try to extract noteId from existing /api/ URLs in the content as fallback
+                    imageSrc = src; // Keep original, might work if it's already a valid path
                 }
             }
             const index = images.length;
@@ -323,29 +342,9 @@ class NotesManager {
             return `\x00LINK${index}\x00`;
         });
         
-        // Escape HTML
-        let html = processed
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-        
-        // Restore images as HTML img tags (before other formatting)
-        html = html.replace(/\x00IMAGE(\d+)\x00/g, (match, index) => {
-            const img = images[parseInt(index)];
-            const safeAlt = this.escapeHtml(img.alt);
-            const safeSrc = this.escapeHtml(img.src);
-            return `<img src="${safeSrc}" alt="${safeAlt}" style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);">`;
-        });
-        
-        // Restore links
-        html = html.replace(/\x00LINK(\d+)\x00/g, (match, index) => {
-            const link = links[parseInt(index)];
-            const target = link.external ? ' target="_blank" rel="noopener"' : '';
-            return `<a href="${this.escapeHtml(link.url)}"${target}>${this.escapeHtml(link.text)}</a>`;
-        });
-        
+        // Process markdown formatting BEFORE escaping HTML
         // Headers (process before other formatting)
-        html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+        let html = processed.replace(/^### (.*$)/gim, '<h3>$1</h3>');
         html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
         html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
         
@@ -417,6 +416,50 @@ class NotesManager {
         
         // Convert remaining single newlines to <br> (but not inside HTML tags)
         html = html.replace(/\n/g, '<br>');
+        
+        // NOW escape HTML for text content (but preserve placeholders and already-inserted HTML tags)
+        // We need to escape text but not the HTML tags we've already inserted
+        // Strategy: temporarily replace HTML tags, escape, then restore
+        const htmlTagPlaceholders = [];
+        let htmlTagIndex = 0;
+        
+        // Replace HTML tags with placeholders
+        html = html.replace(/<[^>]+>/g, (match) => {
+            const placeholder = `\x00HTMLTAG${htmlTagIndex}\x00`;
+            htmlTagPlaceholders.push(match);
+            htmlTagIndex++;
+            return placeholder;
+        });
+        
+        // Escape HTML in text content
+        html = html
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        
+        // Restore HTML tags
+        html = html.replace(/\x00HTMLTAG(\d+)\x00/g, (match, index) => {
+            return htmlTagPlaceholders[parseInt(index)];
+        });
+        
+        // Restore images as HTML img tags (after escaping, so they're not escaped)
+        html = html.replace(/\x00IMAGE(\d+)\x00/g, (match, index) => {
+            const img = images[parseInt(index)];
+            const safeAlt = this.escapeHtml(img.alt);
+            const safeSrc = this.escapeHtml(img.src);
+            console.log('Rendering image:', { alt: safeAlt, src: safeSrc });
+            // Add cache busting and error handling
+            const cacheBust = safeSrc.includes('?') ? '&' : '?';
+            const imgSrc = `${safeSrc}${cacheBust}t=${Date.now()}`;
+            return `<img src="${imgSrc}" alt="${safeAlt}" style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);" onerror="console.error('Failed to load image:', this.src); this.style.display='none';" onload="console.log('Image loaded:', this.src);">`;
+        });
+        
+        // Restore links (after escaping, so they're not escaped)
+        html = html.replace(/\x00LINK(\d+)\x00/g, (match, index) => {
+            const link = links[parseInt(index)];
+            const target = link.external ? ' target="_blank" rel="noopener"' : '';
+            return `<a href="${this.escapeHtml(link.url)}"${target}>${this.escapeHtml(link.text)}</a>`;
+        });
         
         // Restore code blocks with syntax highlighting
         html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (match, index) => {
@@ -698,6 +741,33 @@ class NotesManager {
         }
     }
     
+    attachModeButtons() {
+        // Attach event listeners to Edit/Preview mode buttons
+        // This is called separately because buttons might not be available during init()
+        const editBtn = document.getElementById('noteEditModeBtn');
+        const previewBtn = document.getElementById('notePreviewModeBtn');
+        
+        if (editBtn && !editBtn.dataset.listenerAttached) {
+            editBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Edit button clicked');
+                this.setEditorMode('edit');
+            });
+            editBtn.dataset.listenerAttached = 'true';
+        }
+        
+        if (previewBtn && !previewBtn.dataset.listenerAttached) {
+            previewBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Preview button clicked');
+                this.setEditorMode('preview');
+            });
+            previewBtn.dataset.listenerAttached = 'true';
+        }
+    }
+    
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
@@ -746,6 +816,8 @@ function initNotesModal() {
                     const manager = ensureNotesManager();
                     manager.loadFolders();
                     manager.loadNotes();
+                    // Ensure Edit/Preview buttons are wired up (in case they weren't available during init)
+                    manager.attachModeButtons();
                 }
             }
         });
@@ -755,7 +827,8 @@ function initNotesModal() {
     window.openNotesModal = function() {
         notesModal.style.display = 'flex';
         // Ensure manager is ready immediately
-        ensureNotesManager();
+        const manager = ensureNotesManager();
+        manager.attachModeButtons();
     };
 }
 
