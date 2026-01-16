@@ -2,6 +2,7 @@ import os
 import shutil
 import base64
 import logging
+import httpx
 from pathlib import Path
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -82,7 +83,14 @@ class StorageService:
         return conv_path
 
     def save_image(self, username: str, conversation_id: int, image_base64: str, prefix: str = "img") -> str:
-        """Save a base64 image to disk and return the file path"""
+        """Save a base64 image to disk and return the file path. Proxies to storage server if configured."""
+        # Check if storage server is configured - proxy request if so
+        storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        if storage_server_url and storage_server_url.value:
+            # Proxy to storage server
+            return self._proxy_save_image(storage_server_url.value, username, conversation_id, image_base64, prefix)
+        
+        # Local file saving (storage server node)
         conv_path = self.get_conversation_path(username, conversation_id)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         filename = f"{prefix}_{timestamp}.png"
@@ -93,9 +101,75 @@ class StorageService:
             f.write(image_data)
 
         return str(filepath)
+    
+    def _proxy_save_image(self, storage_server_url: str, username: str, conversation_id: int, image_base64: str, prefix: str) -> str:
+        """Proxy image save to storage server"""
+        import asyncio
+        try:
+            # Get server-to-server API token
+            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
+            
+            url = f"{storage_server_url.rstrip('/')}/api/storage/save-image"
+            headers = {}
+            if storage_server_token and storage_server_token.value:
+                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            
+            image_data = base64.b64decode(image_base64)
+            files = {
+                "file": (f"{prefix}.png", image_data, "image/png")
+            }
+            data = {
+                "username": username,
+                "conversation_id": conversation_id,
+                "prefix": prefix
+            }
+            
+            # Run async HTTP request in sync context
+            async def _async_proxy():
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(url, headers=headers, files=files, data=data)
+                    if response.status_code == 200:
+                        result = response.json()
+                        return result.get("file_path", "")
+                    else:
+                        logger.error(f"[STORAGE] Failed to proxy save_image: {response.status_code} - {response.text}")
+                        raise Exception(f"Storage server error: {response.status_code}")
+            
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're in an async context, we need to handle this differently
+                # For now, fall back to local save
+                logger.warning("[STORAGE] Cannot proxy save_image in async context, saving locally")
+                conv_path = self.get_conversation_path(username, conversation_id)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                filename = f"{prefix}_{timestamp}.png"
+                filepath = conv_path / filename
+                with open(filepath, "wb") as f:
+                    f.write(image_data)
+                return str(filepath)
+            else:
+                return loop.run_until_complete(_async_proxy())
+        except Exception as e:
+            logger.error(f"[STORAGE] Error proxying save_image: {e}", exc_info=True)
+            # Fall back to local save
+            conv_path = self.get_conversation_path(username, conversation_id)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            filename = f"{prefix}_{timestamp}.png"
+            filepath = conv_path / filename
+            image_data = base64.b64decode(image_base64)
+            with open(filepath, "wb") as f:
+                f.write(image_data)
+            return str(filepath)
 
     def save_avatar(self, username: str, image_data: bytes, ext: str = ".png") -> str:
-        """Save user avatar image and return the filename"""
+        """Save user avatar image and return the filename. Proxies to storage server if configured."""
+        # Check if storage server is configured - proxy request if so
+        storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        if storage_server_url and storage_server_url.value:
+            # Proxy to storage server
+            return self._proxy_save_avatar(storage_server_url.value, username, image_data, ext)
+        
+        # Local file saving (storage server node)
         user_path = self.get_user_path(username)
         filename = f"avatar{ext}"
         filepath = user_path / filename
@@ -108,6 +182,62 @@ class StorageService:
             f.write(image_data)
 
         return filename
+    
+    def _proxy_save_avatar(self, storage_server_url: str, username: str, image_data: bytes, ext: str) -> str:
+        """Proxy avatar save to storage server"""
+        import asyncio
+        try:
+            # Get server-to-server API token
+            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
+            
+            url = f"{storage_server_url.rstrip('/')}/api/storage/save-avatar"
+            headers = {}
+            if storage_server_token and storage_server_token.value:
+                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            
+            files = {
+                "file": (f"avatar{ext}", image_data, f"image/{ext[1:]}")
+            }
+            data = {
+                "username": username
+            }
+            
+            # Run async HTTP request in sync context
+            async def _async_proxy():
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(url, headers=headers, files=files, data=data)
+                    if response.status_code == 200:
+                        result = response.json()
+                        return result.get("filename", f"avatar{ext}")
+                    else:
+                        logger.error(f"[STORAGE] Failed to proxy save_avatar: {response.status_code} - {response.text}")
+                        raise Exception(f"Storage server error: {response.status_code}")
+            
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're in an async context, fall back to local save
+                logger.warning("[STORAGE] Cannot proxy save_avatar in async context, saving locally")
+                user_path = self.get_user_path(username)
+                filename = f"avatar{ext}"
+                filepath = user_path / filename
+                for old_file in user_path.glob("avatar.*"):
+                    old_file.unlink()
+                with open(filepath, "wb") as f:
+                    f.write(image_data)
+                return filename
+            else:
+                return loop.run_until_complete(_async_proxy())
+        except Exception as e:
+            logger.error(f"[STORAGE] Error proxying save_avatar: {e}", exc_info=True)
+            # Fall back to local save
+            user_path = self.get_user_path(username)
+            filename = f"avatar{ext}"
+            filepath = user_path / filename
+            for old_file in user_path.glob("avatar.*"):
+                old_file.unlink()
+            with open(filepath, "wb") as f:
+                f.write(image_data)
+            return filename
 
     def get_avatar_path(self, username: str) -> Path | None:
         """Get path to user's avatar if it exists"""
@@ -124,7 +254,14 @@ class StorageService:
         return None
 
     def save_file(self, username: str, conversation_id: int, content: str, original_name: str = "file.txt") -> str:
-        """Save a text file to disk and return the file path"""
+        """Save a text file to disk and return the file path. Proxies to storage server if configured."""
+        # Check if storage server is configured - proxy request if so
+        storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        if storage_server_url and storage_server_url.value:
+            # Proxy to storage server
+            return self._proxy_save_file(storage_server_url.value, username, conversation_id, content, original_name)
+        
+        # Local file saving (storage server node)
         conv_path = self.get_conversation_path(username, conversation_id)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         # Keep extension from original name
@@ -136,6 +273,64 @@ class StorageService:
             f.write(content)
 
         return str(filepath)
+    
+    def _proxy_save_file(self, storage_server_url: str, username: str, conversation_id: int, content: str, original_name: str) -> str:
+        """Proxy file save to storage server"""
+        import asyncio
+        try:
+            # Get server-to-server API token
+            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
+            
+            url = f"{storage_server_url.rstrip('/')}/api/storage/save-file"
+            headers = {}
+            if storage_server_token and storage_server_token.value:
+                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            
+            files = {
+                "file": (original_name, content.encode('utf-8'), "text/plain")
+            }
+            data = {
+                "username": username,
+                "conversation_id": conversation_id,
+                "original_name": original_name
+            }
+            
+            # Run async HTTP request in sync context
+            async def _async_proxy():
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(url, headers=headers, files=files, data=data)
+                    if response.status_code == 200:
+                        result = response.json()
+                        return result.get("file_path", "")
+                    else:
+                        logger.error(f"[STORAGE] Failed to proxy save_file: {response.status_code} - {response.text}")
+                        raise Exception(f"Storage server error: {response.status_code}")
+            
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're in an async context, fall back to local save
+                logger.warning("[STORAGE] Cannot proxy save_file in async context, saving locally")
+                conv_path = self.get_conversation_path(username, conversation_id)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                ext = Path(original_name).suffix or ".txt"
+                filename = f"file_{timestamp}{ext}"
+                filepath = conv_path / filename
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(content)
+                return str(filepath)
+            else:
+                return loop.run_until_complete(_async_proxy())
+        except Exception as e:
+            logger.error(f"[STORAGE] Error proxying save_file: {e}", exc_info=True)
+            # Fall back to local save
+            conv_path = self.get_conversation_path(username, conversation_id)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            ext = Path(original_name).suffix or ".txt"
+            filename = f"file_{timestamp}{ext}"
+            filepath = conv_path / filename
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+            return str(filepath)
 
     def save_raw_file(self, username: str, conversation_id: int, data: bytes, original_name: str) -> str:
         """Save raw file bytes to disk and return the file path"""
@@ -252,6 +447,58 @@ class StorageService:
         except Exception as e:
             logger.error(f"Failed to load image: {e}")
         return None
+
+    def get_note_path(self, username: str, note_id: int) -> Path:
+        """
+        Get the upload directory for a specific note's attachments.
+        Uses the same user storage structure as chat files: {upload_path}/{username}/notes/{note_id}/
+        
+        Note: In load-balanced setups, use storage_server_url to proxy requests to storage node.
+        """
+        safe_username = _sanitize_path_component(username)
+        safe_note_id = _sanitize_path_component(str(note_id))
+        # Use same user storage structure as chat files
+        note_path = self.get_user_path(username) / "notes" / safe_note_id
+
+        # Verify path is within upload directory
+        if not _validate_path_within_base(note_path, Path(self.upload_path)):
+            raise ValueError(f"Invalid note path: {note_id}")
+
+        note_path.mkdir(parents=True, exist_ok=True)
+        return note_path
+
+    def save_note_attachment(self, username: str, note_id: int, file_data: bytes, original_name: str) -> str:
+        """Save an attachment file for a note and return the filename"""
+        note_path = self.get_note_path(username, note_id)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        ext = Path(original_name).suffix or ""
+        safe_name = "".join(c for c in Path(original_name).stem if c.isalnum() or c in "-_")[:50]
+        filename = f"{safe_name}_{timestamp}{ext}"
+        filepath = note_path / filename
+
+        with open(filepath, "wb") as f:
+            f.write(file_data)
+
+        return filename
+
+    def delete_note_attachments(self, username: str, note_id: int) -> bool:
+        """Delete all attachments for a note"""
+        try:
+            safe_username = _sanitize_path_component(username)
+            safe_note_id = _sanitize_path_component(str(note_id))
+            note_path = Path(self.upload_path) / safe_username / "notes" / safe_note_id
+
+            # Verify path is within upload directory
+            if not _validate_path_within_base(note_path, Path(self.upload_path)):
+                logger.warning(f"Path traversal attempt blocked in delete_note_attachments: {username}/{note_id}")
+                return False
+
+            if note_path.exists():
+                shutil.rmtree(note_path)
+                return True
+        except ValueError as e:
+            logger.warning(f"Invalid path component in delete_note_attachments: {e}")
+        return False
 
 
 def get_storage_service(db: Session) -> StorageService:

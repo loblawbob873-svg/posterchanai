@@ -1,0 +1,37 @@
+<!-- Notes Browser UI -->
+<div class="notes-browser" id="notesBrowser" style="display: none;">
+    <header class="notes-browser-header">
+        <div class="notes-browser-title">
+            <h2>📝 Notes</h2>
+            <button class="btn-icon" id="closeNotesBrowser" title="Close Notes">✕</button>
+        </div>
+        <div class="notes-browser-toolbar">
+            <button class="btn-primary" id="notesBrowserNewNoteBtn">
+                <span style="margin-right: 6px;">✨</span> New Note
+            </button>
+            <button class="btn-secondary" id="notesBrowserNewFolderBtn">
+                <span style="margin-right: 6px;">📂</span> New Folder
+            </button>
+        </div>
+    </header>
+    
+    <div class="notes-browser-content">
+        <aside class="notes-browser-sidebar">
+            <div class="notes-browser-search">
+                <input type="text" id="notesBrowserSearchInput" placeholder="🔍 Search notes...">
+            </div>
+            <div class="notes-browser-folders" id="notesBrowserFoldersList">
+                <div class="notes-browser-folder-item active" data-folder-id="0">
+                    <span class="folder-icon">📁</span>
+                    <span class="folder-name">All Notes</span>
+                </div>
+            </div>
+        </aside>
+        
+        <main class="notes-browser-main">
+            <div class="notes-browser-list" id="notesBrowserList">
+                <div class="notes-loading">Loading notes...</div>
+            </div>
+        </main>
+    </div>
+</div>

@@ -1,0 +1,114 @@
+<!-- File Manager Full-Screen View -->
+<div class="file-manager-overlay" id="fileManagerOverlay" style="display: none;">
+    <div class="file-manager-container">
+        <div class="file-manager-header">
+            <h2>📁 File Manager</h2>
+            <div class="file-manager-actions">
+                <button class="btn-secondary" id="fileManagerUploadBtn">📤 Upload</button>
+                <button class="btn-secondary" id="fileManagerNewFolderBtn">📂 New Folder</button>
+                <button class="btn-icon" id="fileManagerCloseBtn">&times;</button>
+            </div>
+        </div>
+        <div class="file-manager-body">
+            <div class="file-manager-sidebar">
+                <div class="file-manager-breadcrumb" id="fileManagerBreadcrumb">
+                    <button class="breadcrumb-item" data-path="">Home</button>
+                </div>
+                <div class="file-manager-storage" id="fileManagerStorage">
+                    <div class="storage-info">Loading storage info...</div>
+                </div>
+            </div>
+            <div class="file-manager-content">
+                <div class="file-manager-toolbar">
+                    <div class="file-view-toggle">
+                        <button class="view-btn active" data-view="grid" title="Grid View">⊞</button>
+                        <button class="view-btn" data-view="list" title="List View">☰</button>
+                    </div>
+                </div>
+                <div class="file-manager-grid" id="fileManagerGrid">
+                    <div class="file-manager-loading">Loading files...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Image Viewer Modal -->
+<div class="image-viewer-modal" id="imageViewerModal" style="display: none;">
+    <div class="image-viewer-container">
+        <button class="image-viewer-close" id="imageViewerClose">&times;</button>
+        <button class="image-viewer-nav image-viewer-prev" id="imageViewerPrev">‹</button>
+        <div class="image-viewer-content">
+            <img id="imageViewerImage" src="" alt="">
+            <div class="image-viewer-info" id="imageViewerInfo"></div>
+        </div>
+        <button class="image-viewer-nav image-viewer-next" id="imageViewerNext">›</button>
+    </div>
+</div>
+
+<!-- Email File Modal -->
+<div class="file-modal" id="fileEmailModal" style="display: none;">
+    <div class="file-modal-content">
+        <div class="file-modal-header">
+            <h3>📧 Email File</h3>
+            <button class="file-modal-close" onclick="document.getElementById('fileEmailModal').style.display='none'">&times;</button>
+        </div>
+        <div class="file-modal-body">
+            <input type="hidden" id="emailFilePath">
+            <p><strong>File:</strong> <span id="emailFileName"></span></p>
+            <div class="form-group">
+                <label for="emailTo">To:</label>
+                <input type="email" id="emailTo" placeholder="recipient@example.com" required>
+            </div>
+            <div class="form-group">
+                <label for="emailSubject">Subject:</label>
+                <input type="text" id="emailSubject" placeholder="Shared file">
+            </div>
+            <div class="form-group">
+                <label for="emailBody">Message:</label>
+                <textarea id="emailBody" rows="4" placeholder="Please find the attached file."></textarea>
+            </div>
+        </div>
+        <div class="file-modal-footer">
+            <button class="btn-secondary" onclick="document.getElementById('fileEmailModal').style.display='none'">Cancel</button>
+            <button class="btn-primary" onclick="fileManager.sendEmail()">Send Email</button>
+        </div>
+    </div>
+</div>
+
+<!-- Share File Modal -->
+<div class="file-modal" id="fileShareModal" style="display: none;">
+    <div class="file-modal-content">
+        <div class="file-modal-header">
+            <h3>🔗 Share File</h3>
+            <button class="file-modal-close" onclick="document.getElementById('fileShareModal').style.display='none'">&times;</button>
+        </div>
+        <div class="file-modal-body">
+            <input type="hidden" id="shareFilePath">
+            <p><strong>File:</strong> <span id="shareFileName"></span></p>
+            <div class="form-group">
+                <label for="shareExpiresHours">Expires in (hours, optional):</label>
+                <input type="number" id="shareExpiresHours" placeholder="24" min="1">
+                <small>Leave empty for no expiration</small>
+            </div>
+            <div class="form-group">
+                <label for="shareMaxAccesses">Max accesses (optional):</label>
+                <input type="number" id="shareMaxAccesses" placeholder="10" min="1">
+                <small>Leave empty for unlimited</small>
+            </div>
+            <div class="form-group" id="shareUrlDisplay" style="display: none;">
+                <label for="shareUrl">Share URL:</label>
+                <input type="text" id="shareUrl" readonly>
+                <button class="btn-secondary" onclick="
+                    document.getElementById('shareUrl').select();
+                    document.execCommand('copy');
+                    alert('Copied to clipboard!');
+                ">Copy</button>
+            </div>
+        </div>
+        <div class="file-modal-footer">
+            <button class="btn-secondary" onclick="document.getElementById('fileShareModal').style.display='none'">Close</button>
+            <button class="btn-primary" onclick="fileManager.createShare()">Create Share Link</button>
+        </div>
+    </div>
+</div>

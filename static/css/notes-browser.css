@@ -1,0 +1,319 @@
+/* Notes Browser UI Styles */
+.notes-browser {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-primary);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.notes-browser-header {
+    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+    border-bottom: 2px solid var(--border-color);
+    padding: 20px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.notes-browser-title {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.notes-browser-title h2 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.notes-browser-toolbar {
+    display: flex;
+    gap: 12px;
+}
+
+.notes-browser-toolbar button {
+    padding: 10px 18px;
+    font-weight: 600;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+.notes-browser-toolbar .btn-primary {
+    box-shadow: 0 2px 8px rgba(var(--accent-color-rgb, 74, 158, 255), 0.3);
+}
+
+.notes-browser-toolbar .btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(var(--accent-color-rgb, 74, 158, 255), 0.4);
+}
+
+.notes-browser-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.notes-browser-sidebar {
+    width: 280px;
+    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+    border-right: 1px solid var(--border-color);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.notes-browser-search {
+    position: relative;
+}
+
+.notes-browser-search::before {
+    content: "🔍";
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 16px;
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.notes-browser-search input {
+    width: 100%;
+    padding: 12px 12px 12px 40px;
+    background: var(--bg-primary);
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.notes-browser-search input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(var(--accent-color-rgb, 74, 158, 255), 0.1);
+}
+
+.notes-browser-folders {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.notes-browser-folder-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-weight: 500;
+    position: relative;
+}
+
+.notes-browser-folder-item::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 0;
+    background: var(--accent-color);
+    border-radius: 0 3px 3px 0;
+    transition: height 0.2s ease;
+}
+
+.notes-browser-folder-item:hover {
+    background: var(--bg-primary);
+    transform: translateX(4px);
+}
+
+.notes-browser-folder-item:hover::before {
+    height: 60%;
+}
+
+.notes-browser-folder-item.active {
+    background: var(--accent-color);
+    color: var(--accent-text, white);
+    box-shadow: 0 2px 8px rgba(var(--accent-color-rgb, 74, 158, 255), 0.3);
+}
+
+.notes-browser-folder-item.active::before {
+    height: 100%;
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.notes-browser-folder-item .folder-icon {
+    font-size: 18px;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
+}
+
+.notes-browser-folder-item .folder-name {
+    flex: 1;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.notes-browser-folder-item .folder-count {
+    font-size: 12px;
+    opacity: 0.8;
+    background: rgba(0, 0, 0, 0.1);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: 600;
+}
+
+.notes-browser-folder-item.active .folder-count {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.notes-browser-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg-primary);
+}
+
+.notes-browser-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 20px;
+    padding: 24px;
+    overflow-y: auto;
+    height: 100%;
+    background: var(--bg-primary);
+}
+
+/* Reuse notes-item styles from notes.css */
+.notes-browser-list .notes-item {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 20px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.notes-browser-list .notes-item::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 4px;
+    background: linear-gradient(90deg, var(--accent-color), transparent);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.3s ease;
+}
+
+.notes-browser-list .notes-item:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    border-color: var(--accent-color);
+}
+
+.notes-browser-list .notes-item:hover::before {
+    transform: scaleX(1);
+}
+
+.notes-browser-list .notes-item.pinned {
+    border-color: var(--accent-color);
+    border-width: 2px;
+    background: linear-gradient(135deg, var(--bg-secondary) 0%, rgba(var(--accent-color-rgb, 74, 158, 255), 0.05) 100%);
+}
+
+.notes-browser-list .notes-item.pinned::before {
+    transform: scaleX(1);
+    height: 4px;
+}
+
+.notes-browser-list .notes-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--text-secondary);
+}
+
+.notes-browser-list .notes-empty::before {
+    content: "📝";
+    font-size: 64px;
+    display: block;
+    margin-bottom: 20px;
+    opacity: 0.5;
+}
+
+/* Scrollbar Styling */
+.notes-browser-sidebar::-webkit-scrollbar,
+.notes-browser-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.notes-browser-sidebar::-webkit-scrollbar-track,
+.notes-browser-list::-webkit-scrollbar-track {
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+}
+
+.notes-browser-sidebar::-webkit-scrollbar-thumb,
+.notes-browser-list::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.notes-browser-sidebar::-webkit-scrollbar-thumb:hover,
+.notes-browser-list::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-color);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .notes-browser-sidebar {
+        width: 100%;
+        max-height: 200px;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .notes-browser-content {
+        flex-direction: column;
+    }
+    
+    .notes-browser-list {
+        grid-template-columns: 1fr;
+        padding: 16px;
+        gap: 12px;
+    }
+    
+    .notes-browser-header {
+        flex-direction: column;
+        gap: 16px;
+        align-items: stretch;
+    }
+    
+    .notes-browser-toolbar {
+        width: 100%;
+    }
+    
+    .notes-browser-toolbar button {
+        flex: 1;
+    }
+}

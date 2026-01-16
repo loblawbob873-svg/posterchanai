@@ -49,9 +49,7 @@ async def transcribe(
     if len(audio_data) < 100:
         raise HTTPException(status_code=400, detail="Audio file too small")
 
-    # Limit file size (10MB max)
-    if len(audio_data) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Audio file too large (max 10MB)")
+    # No file size limit
 
     # Transcribe
     text = await stt_service.transcribe_audio(audio_data)

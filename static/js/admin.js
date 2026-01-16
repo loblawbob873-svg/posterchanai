@@ -107,17 +107,32 @@ async function loadUsers() {
         if (response.ok) {
             const users = await response.json();
             const list = document.getElementById('userList');
-            list.innerHTML = users.map(u => `
+            list.innerHTML = users.map(u => {
+                const quota_mb = u.storage_quota > 0 ? (u.storage_quota / (1024 * 1024)).toFixed(1) : '∞';
+                return `
                 <div class="user-item">
                     <span class="username">${escapeHtml(u.username)}</span>
                     <span class="badge ${u.is_admin ? 'admin' : ''}">${u.is_admin ? 'Admin' : 'User'}</span>
                     <label class="user-toggle" title="Skip AI summarization for RSS (for bot users)">
                         <input type="checkbox" ${u.rss_skip_summarization ? 'checked' : ''} onchange="toggleRssSkip(${u.id})"> Bot
                     </label>
+                    <div class="storage-quota-control" style="display: inline-flex; align-items: center; gap: 8px;">
+                        <label style="font-size: 0.9em;">Quota:</label>
+                        <input type="number" 
+                               id="quota_${u.id}" 
+                               value="${quota_mb === '∞' ? '0' : quota_mb}" 
+                               step="0.1" 
+                               min="0" 
+                               style="width: 80px; padding: 4px;"
+                               placeholder="MB (0=unlimited)">
+                        <button class="btn-secondary btn-small" onclick="updateStorageQuota(${u.id}, '${escapeHtml(u.username)}')">Set</button>
+                        <button class="btn-secondary btn-small" onclick="rescanUserStorage(${u.id}, '${escapeHtml(u.username)}')" title="Rescan this user's file storage">🔄 Rescan</button>
+                    </div>
                     <button class="btn-secondary btn-small" onclick="resetPassword(${u.id}, '${escapeHtml(u.username)}')">Reset Password</button>
                     <button class="btn-danger btn-small" onclick="deleteUser(${u.id})">Delete</button>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
     } catch (err) {
         console.error('Failed to load users:', err);
@@ -180,6 +195,176 @@ async function toggleRssSkip(id) {
     } catch (err) {
         alert('Error toggling setting');
         loadUsers();
+    }
+}
+
+// Update storage quota
+// Storage rescan functionality
+document.getElementById('rescanAllStorageBtn')?.addEventListener('click', async () => {
+    if (!confirm('Rescan file storage for all users? This will invalidate file cache and may take a moment.')) {
+        return;
+    }
+    
+    const statusDiv = document.getElementById('storageRescanStatus');
+    statusDiv.style.display = 'block';
+    statusDiv.innerHTML = '<div style="color: #4a9eff;">⏳ Rescanning storage for all users...</div>';
+    
+    try {
+        const response = await csrfFetch('/api/admin/storage/rescan', {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            let html = `<div style="color: #4ade80; margin-bottom: 12px;">✅ ${data.message}</div>`;
+            
+            if (data.summary) {
+                html += `<div style="background: #1a1a2e; padding: 12px; border-radius: 6px; margin-top: 8px;">
+                    <strong>Summary:</strong><br>
+                    • Total users: ${data.summary.total_users}<br>
+                    • Successful: ${data.summary.successful}<br>
+                    • Failed: ${data.summary.failed}<br>
+                    • Total files found: ${data.summary.total_files.toLocaleString()}<br>
+                    • Total directories: ${data.summary.total_directories.toLocaleString()}
+                </div>`;
+            }
+            
+            if (data.results && data.results.length > 0) {
+                html += `<details style="margin-top: 12px;">
+                    <summary style="cursor: pointer; color: #888; user-select: none;">View detailed results</summary>
+                    <div style="margin-top: 8px; max-height: 300px; overflow-y: auto; background: #1a1a2e; padding: 12px; border-radius: 6px;">
+                `;
+                for (const result of data.results) {
+                    if (result.status === 'success') {
+                        html += `<div style="color: #4ade80; margin-bottom: 4px;">
+                            ${result.username}: ${result.files} files, ${result.directories} directories
+                        </div>`;
+                    } else {
+                        html += `<div style="color: #ff6b6b; margin-bottom: 4px;">
+                            ${result.username}: Error - ${result.error || 'Unknown error'}
+                        </div>`;
+                    }
+                }
+                html += `</div></details>`;
+            }
+            
+            statusDiv.innerHTML = html;
+        } else {
+            const error = await response.json();
+            statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${error.detail || 'Failed to rescan storage'}</div>`;
+        }
+    } catch (err) {
+        console.error('Storage rescan error:', err);
+        statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${err.message}</div>`;
+    }
+});
+
+// Rescan for specific user (will be shown when a user is selected)
+document.getElementById('rescanUserStorageBtn')?.addEventListener('click', async () => {
+    const selectedUserId = window.selectedUserIdForRescan;
+    if (!selectedUserId) {
+        alert('Please select a user first');
+        return;
+    }
+    
+    if (!confirm(`Rescan file storage for selected user? This will invalidate file cache.`)) {
+        return;
+    }
+    
+    const statusDiv = document.getElementById('storageRescanStatus');
+    statusDiv.style.display = 'block';
+    statusDiv.innerHTML = '<div style="color: #4a9eff;">⏳ Rescanning storage...</div>';
+    
+    try {
+        const response = await csrfFetch(`/api/admin/storage/rescan?user_id=${selectedUserId}`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            let html = `<div style="color: #4ade80; margin-bottom: 12px;">✅ ${data.message}</div>`;
+            
+            if (data.results && data.results.length > 0) {
+                const result = data.results[0];
+                if (result.status === 'success') {
+                    html += `<div style="background: #1a1a2e; padding: 12px; border-radius: 6px; margin-top: 8px;">
+                        <strong>Results for ${result.username}:</strong><br>
+                        • Files: ${result.files.toLocaleString()}<br>
+                        • Directories: ${result.directories.toLocaleString()}
+                    </div>`;
+                } else {
+                    html += `<div style="color: #ff6b6b; margin-top: 8px;">Error: ${result.error || 'Unknown error'}</div>`;
+                }
+            }
+            
+            statusDiv.innerHTML = html;
+        } else {
+            const error = await response.json();
+            statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${error.detail || 'Failed to rescan storage'}</div>`;
+        }
+    } catch (err) {
+        console.error('Storage rescan error:', err);
+        statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${err.message}</div>`;
+    }
+});
+
+async function updateStorageQuota(userId, username) {
+    const quotaInput = document.getElementById(`quota_${userId}`);
+    const quota_mb = parseFloat(quotaInput.value);
+    
+    if (isNaN(quota_mb) || quota_mb < 0) {
+        alert('Please enter a valid quota (MB, 0 for unlimited)');
+        return;
+    }
+    
+    try {
+        const response = await csrfFetch(`/api/admin/users/${userId}/storage-quota?quota_mb=${quota_mb}`, {
+            method: 'PUT'
+        });
+        if (response.ok) {
+            alert(`Storage quota updated for ${username}: ${quota_mb === 0 ? 'Unlimited' : quota_mb + 'MB'}`);
+            loadUsers();
+        } else {
+            const data = await response.json();
+            alert(data.detail || 'Failed to update quota');
+            loadUsers(); // Reload to reset
+        }
+    } catch (err) {
+        alert('Error updating quota');
+        loadUsers();
+    }
+}
+
+// Rescan storage for a specific user
+async function rescanUserStorage(userId, username) {
+    if (!confirm(`Rescan file storage for user "${username}"? This will invalidate file cache.`)) {
+        return;
+    }
+    
+    try {
+        const response = await csrfFetch(`/api/admin/storage/rescan?user_id=${userId}`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.results && data.results.length > 0) {
+                const result = data.results[0];
+                if (result.status === 'success') {
+                    alert(`Storage rescanned for ${username}:\n• ${result.files.toLocaleString()} files\n• ${result.directories.toLocaleString()} directories`);
+                } else {
+                    alert(`Error rescanning storage for ${username}: ${result.error || 'Unknown error'}`);
+                }
+            } else {
+                alert(data.message || 'Storage rescanned');
+            }
+        } else {
+            const error = await response.json();
+            alert(`Error: ${error.detail || 'Failed to rescan storage'}`);
+        }
+    } catch (err) {
+        console.error('Storage rescan error:', err);
+        alert(`Error: ${err.message}`);
     }
 }
 

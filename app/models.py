@@ -36,6 +36,9 @@ class User(Base):
     rss_enabled = Column(Boolean, default=False)  # Whether native RSS is enabled for this user
     rss_skip_summarization = Column(Boolean, default=False)  # Skip AI summarization (for bots that do their own)
 
+    # Storage quota (in bytes, 0 = unlimited)
+    storage_quota = Column(Integer, default=0)  # 0 means unlimited
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
@@ -94,6 +97,22 @@ class APIKey(Base):
     name = Column(String(100), default="Default")
     created_at = Column(DateTime, default=datetime.utcnow)
     last_used_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True)
+
+
+class SharedFile(Base):
+    """Public sharing for files via token-based URLs."""
+    __tablename__ = "shared_files"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token = Column(String(64), unique=True, nullable=False, index=True)
+    file_path = Column(String(1000), nullable=False)  # Relative to user root
+    filename = Column(String(500), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)  # None = never expires
+    access_count = Column(Integer, default=0)
+    max_accesses = Column(Integer, nullable=True)  # None = unlimited
     is_active = Column(Boolean, default=True)
 
     user = relationship("User", backref="api_keys")
@@ -185,3 +204,40 @@ class Plugin(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", backref="plugins")
+
+
+# Notes System
+
+class NoteFolder(Base):
+    """Folders/notebooks for organizing notes"""
+    __tablename__ = "note_folders"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    parent_id = Column(Integer, ForeignKey("note_folders.id", ondelete="CASCADE"), nullable=True)  # For nested folders
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", backref="note_folders")
+    parent = relationship("NoteFolder", remote_side=[id], backref="children")
+    notes = relationship("Note", back_populates="folder", cascade="all, delete-orphan")
+
+
+class Note(Base):
+    """User notes (markdown supported)"""
+    __tablename__ = "notes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    folder_id = Column(Integer, ForeignKey("note_folders.id", ondelete="SET NULL"), nullable=True)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False, default="")
+    tags = Column(Text, nullable=True)  # Comma-separated tags
+    attachments = Column(Text, nullable=True)  # JSON array of attachment filenames
+    is_pinned = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", backref="notes")
+    folder = relationship("NoteFolder", back_populates="notes")

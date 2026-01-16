@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 import logging
 from app.database import get_db
@@ -9,6 +10,8 @@ from app.models import User, Setting
 from app.schemas import UserCreate, UserResponse, SettingsUpdate, SettingsResponse
 from app.auth import get_admin_user, get_password_hash
 from app.services.email_service import get_email_service
+from pathlib import Path
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +33,41 @@ def update_settings(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
+    # Track if cache settings changed
+    cache_settings_changed = False
+    cache_keys = {"file_cache_enabled", "file_cache_ttl", "file_cache_max_size"}
+    
     for key, value in data.settings.items():
         setting = db.query(Setting).filter(Setting.key == key).first()
         if setting:
             setting.value = value
         else:
             db.add(Setting(key=key, value=value))
+        
+        if key in cache_keys:
+            cache_settings_changed = True
+    
     db.commit()
+    
+    # Reload file cache if cache settings changed
+    if cache_settings_changed:
+        try:
+            from app.routers.files import get_file_cache
+            get_file_cache(db, force_reload=True)
+            logger.info("[Admin] File cache settings updated, cache reloaded")
+        except Exception as e:
+            logger.warning(f"[Admin] Failed to reload file cache: {e}")
+    
+    # Reload SQLite cache settings if changed
+    sqlite_cache_keys = {"sqlite_cache_mb", "sqlite_mmap_size_mb"}
+    if any(key in data.settings for key in sqlite_cache_keys):
+        try:
+            from app.database import reload_sqlite_settings
+            reload_sqlite_settings()
+            logger.info("[Admin] SQLite cache settings updated (will apply on next connection)")
+        except Exception as e:
+            logger.warning(f"[Admin] Failed to reload SQLite cache settings: {e}")
+    
     return {"message": "Settings updated"}
 
 
@@ -193,6 +224,130 @@ def update_user_password(
     user.password_hash = get_password_hash(data.password)
     db.commit()
     return {"message": "Password updated"}
+
+
+@router.put("/users/{user_id}/storage-quota")
+def update_user_storage_quota(
+    user_id: int,
+    quota_mb: float = Query(..., description="Storage quota in MB (0 = unlimited)"),
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Update user storage quota."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Convert MB to bytes (0 = unlimited)
+    quota_bytes = int(quota_mb * 1024 * 1024) if quota_mb > 0 else 0
+    user.storage_quota = quota_bytes
+    db.commit()
+    
+    return {"message": "Storage quota updated", "quota_mb": quota_mb, "quota_bytes": quota_bytes}
+
+
+@router.post("/storage/rescan")
+async def rescan_storage(
+    user_id: Optional[int] = Query(None, description="User ID to rescan (None = all users)"),
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Rescan file storage for a user or all users to ensure database consistency."""
+    from app.services.storage_service import get_storage_service
+    from app.routers.files import get_file_cache
+    
+    def _rescan_user_files(user: User):
+        """Rescan files for a single user."""
+        try:
+            storage = get_storage_service(db)
+            user_path = storage.get_user_path(user.username)
+            
+            # Invalidate file cache for this user
+            cache = get_file_cache(db)
+            cache.invalidate(f"{user.username}:")
+            
+            # Walk through all files to ensure they exist and cache is updated
+            file_count = 0
+            dir_count = 0
+            
+            if user_path.exists():
+                for item in user_path.rglob('*'):
+                    try:
+                        if item.is_file():
+                            file_count += 1
+                        elif item.is_dir():
+                            dir_count += 1
+                    except Exception as e:
+                        logger.warning(f"Error processing {item} for user {user.username}: {e}")
+                        continue
+            
+            logger.info(f"[Storage Rescan] User {user.username}: {file_count} files, {dir_count} directories")
+            return {
+                "user_id": user.id,
+                "username": user.username,
+                "files": file_count,
+                "directories": dir_count,
+                "status": "success"
+            }
+        except Exception as e:
+            logger.error(f"[Storage Rescan] Error rescanning user {user.username}: {e}", exc_info=True)
+            return {
+                "user_id": user.id,
+                "username": user.username,
+                "status": "error",
+                "error": str(e)
+            }
+    
+    # Run rescan in thread pool to avoid blocking
+    if user_id:
+        # Rescan specific user
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        result = await asyncio.to_thread(_rescan_user_files, user)
+        return {
+            "message": f"Storage rescanned for user {user.username}",
+            "results": [result]
+        }
+    else:
+        # Rescan all users
+        users = db.query(User).all()
+        results = []
+        
+        # Rescan all users in parallel (but in thread pool)
+        tasks = [asyncio.to_thread(_rescan_user_files, user) for user in users]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle any exceptions
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"[Storage Rescan] Exception for user {users[i].username}: {result}")
+                processed_results.append({
+                    "user_id": users[i].id,
+                    "username": users[i].username,
+                    "status": "error",
+                    "error": str(result)
+                })
+            else:
+                processed_results.append(result)
+        
+        total_files = sum(r.get("files", 0) for r in processed_results if r.get("status") == "success")
+        total_dirs = sum(r.get("directories", 0) for r in processed_results if r.get("status") == "success")
+        success_count = sum(1 for r in processed_results if r.get("status") == "success")
+        
+        return {
+            "message": f"Storage rescanned for {len(users)} user(s)",
+            "summary": {
+                "total_users": len(users),
+                "successful": success_count,
+                "failed": len(users) - success_count,
+                "total_files": total_files,
+                "total_directories": total_dirs
+            },
+            "results": processed_results
+        }
 
 
 @router.post("/users/{user_id}/toggle-rss-skip")

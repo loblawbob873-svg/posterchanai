@@ -92,6 +92,15 @@ TODO:
 "Remind me to buy groceries" -> todo add buy groceries
 "Show my todos" -> todo
 
+NOTES:
+"note find memes" -> notes search memes
+"find note about groceries" -> notes search groceries
+"show my notes" -> notes
+"open notes" -> notes
+"search notes for recipes" -> notes search recipes
+"note about project" -> notes search project
+"notes in work folder" -> notes folder work
+
 EMAIL:
 "Send email to john@example.com saying Hello" -> mail send john@example.com Hello
 "Check my email" -> mail
@@ -146,6 +155,18 @@ MUSIC:
 "play the song Hotel California" -> music search Hotel California
 "I want to listen to Stairway to Heaven" -> music search Stairway to Heaven
 "put on some Beatles" -> music search Beatles
+
+NOTES:
+"note find memes" -> notes search memes
+"find note about groceries" -> notes search groceries
+"note about project" -> notes search project
+"search notes for recipes" -> notes search recipes
+"show my notes" -> notes
+"open notes" -> notes
+"notes in work folder" -> notes folder work
+"find note memes" -> notes search memes
+"note memes" -> notes search memes
+"search note memes" -> notes search memes
 
 TRANSLATION:
 "Translate to Spanish" -> translate Spanish

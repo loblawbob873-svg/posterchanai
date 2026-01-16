@@ -20,7 +20,7 @@ logging.basicConfig(
 from app.database import init_db, get_db
 from app.auth import get_current_user_optional, create_access_token
 from app.models import User, VerificationToken
-from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, news, rag, plugins, mail, music, torrent, contacts
+from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, news, rag, plugins, mail, music, torrent, contacts, notes, storage, files
 from app.services.load_balancer import NoHealthyServersError
 from fastapi.responses import JSONResponse
 
@@ -41,6 +41,49 @@ async def no_healthy_servers_handler(request: FastAPIRequest, exc: NoHealthyServ
     return JSONResponse(
         status_code=500,
         content={"error": {"message": "Service temporarily unavailable"}}
+    )
+
+# Global exception handler to ensure all errors return JSON (not HTML)
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: FastAPIRequest, exc: StarletteHTTPException):
+    """Ensure HTTP exceptions return JSON instead of HTML"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: FastAPIRequest, exc: RequestValidationError):
+    """Ensure validation errors return JSON"""
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()}
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: FastAPIRequest, exc: Exception):
+    """Catch-all exception handler to ensure JSON responses for API routes"""
+    logger = logging.getLogger(__name__)
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    
+    error_detail = str(exc)
+    
+    # Check if this is an API request (starts with /api/)
+    if request.url.path.startswith("/api/"):
+        # Return JSON error response for API routes
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Internal server error: {error_detail}"}
+        )
+    # For non-API requests, re-raise to let FastAPI's default handler deal with it
+    # This allows HTML error pages for web pages
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(
+        status_code=500,
+        content=f"<html><body><h1>Internal Server Error</h1><p>{error_detail}</p></body></html>"
     )
 
 # Add CSRF protection middleware
@@ -69,6 +112,9 @@ app.include_router(mail.router)
 app.include_router(contacts.router)
 app.include_router(music.router)
 app.include_router(torrent.router)
+app.include_router(notes.router)
+app.include_router(storage.router)
+app.include_router(files.router)
 
 # Load enabled plugins
 from plugins import load_enabled_plugins
@@ -104,12 +150,23 @@ async def startup():
         finally:
             db.close()
 
-        # Start health check if enabled
+        # Start health check if enabled (in background, don't block startup)
         try:
             from app.services.health_check import start_health_check
-            start_health_check()
+            # Start health check in background thread to avoid blocking startup
+            import threading
+            def start_health_check_background():
+                import time
+                time.sleep(2)  # Wait a moment for server to be ready
+                try:
+                    start_health_check()
+                except Exception as e:
+                    logging.error(f"Error starting health check in background: {e}", exc_info=True)
+            thread = threading.Thread(target=start_health_check_background, daemon=True)
+            thread.start()
+            logging.info("Health check scheduled to start in background")
         except Exception as e:
-            logging.error(f"Error starting health check: {e}", exc_info=True)
+            logging.error(f"Error scheduling health check: {e}", exc_info=True)
 
         # Only start schedulers on main instance (port 3051) to avoid database locks
         app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
@@ -165,12 +222,16 @@ async def startup():
         finally:
             db2.close()
 
-        # Start integrated MCP server if enabled
-        try:
-            from app.services.mcp_service import start_mcp_server
-            start_mcp_server()
-        except Exception as e:
-            logging.error(f"Error starting MCP server: {e}", exc_info=True)
+        # Start integrated MCP server if enabled (only on main instance to avoid port conflicts)
+        app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
+        if app_port == 3051:
+            try:
+                from app.services.mcp_service import start_mcp_server
+                start_mcp_server()
+            except Exception as e:
+                logging.error(f"Error starting MCP server: {e}", exc_info=True)
+        else:
+            logging.info(f"MCP server disabled on port {app_port} (only run on port 3051)")
 
         # Auto-start built-in Tor if enabled
         db_tor = SessionLocal()
@@ -260,6 +321,60 @@ async def startup():
             logging.error(f"Failed to start built-in torrent client: {e}", exc_info=True)
         finally:
             db3.close()
+
+        # Auto-start WebDAV/CalDAV/CardDAV servers if enabled
+        db_dav = SessionLocal()
+        try:
+            try:
+                from app.services.webdav_server import start_webdav_server
+            except ImportError as e:
+                logging.warning(f"WebDAV server not available (missing wsgidav?): {e}")
+                start_webdav_server = None
+            try:
+                from app.services.caldav_server import start_caldav_server
+                from app.services.cardav_server import start_cardav_server
+            except ImportError as e:
+                logging.warning(f"CalDAV/CardDAV servers not available: {e}")
+                start_caldav_server = None
+                start_cardav_server = None
+            
+            def get_dav_setting(key, default=""):
+                s = db_dav.query(Setting).filter(Setting.key == key).first()
+                return s.value if s and s.value else default
+            
+            # Start WebDAV server
+            if start_webdav_server:
+                webdav_enabled = get_dav_setting("webdav_enabled", "false")
+                if webdav_enabled.lower() == "true":
+                    webdav_port = int(get_dav_setting("webdav_port", "8080"))
+                    if start_webdav_server(db_dav, webdav_port):
+                        logging.info(f"Built-in WebDAV server started on port {webdav_port}")
+                    else:
+                        logging.error("Failed to start WebDAV server")
+            
+            # Start CalDAV server
+            if start_caldav_server:
+                caldav_enabled = get_dav_setting("caldav_enabled", "false")
+                if caldav_enabled.lower() == "true":
+                    caldav_port = int(get_dav_setting("caldav_port", "8081"))
+                    if start_caldav_server(db_dav, caldav_port):
+                        logging.info(f"Built-in CalDAV server started on port {caldav_port}")
+                    else:
+                        logging.error("Failed to start CalDAV server")
+            
+            # Start CardDAV server
+            if start_cardav_server:
+                cardav_enabled = get_dav_setting("cardav_enabled", "false")
+                if cardav_enabled.lower() == "true":
+                    cardav_port = int(get_dav_setting("cardav_port", "8082"))
+                    if start_cardav_server(db_dav, cardav_port):
+                        logging.info(f"Built-in CardDAV server started on port {cardav_port}")
+                    else:
+                        logging.error("Failed to start CardDAV server")
+        except Exception as e:
+            logging.error(f"Failed to start DAV servers: {e}", exc_info=True)
+        finally:
+            db_dav.close()
     except Exception as e:
         logging.error(f"CRITICAL: Startup failed with exception: {e}", exc_info=True)
         raise  # Re-raise to let FastAPI handle it properly
@@ -267,6 +382,22 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    # Stop WebDAV/CalDAV/CardDAV servers
+    try:
+        try:
+            from app.services.webdav_server import stop_webdav_server
+            stop_webdav_server()
+        except ImportError:
+            pass  # wsgidav not installed
+        try:
+            from app.services.caldav_server import stop_caldav_server
+            from app.services.cardav_server import stop_cardav_server
+            stop_caldav_server()
+            stop_cardav_server()
+        except ImportError:
+            pass  # Servers not available
+    except Exception as e:
+        logging.error(f"Error stopping DAV servers: {e}", exc_info=True)
     # Stop health check
     from app.services.health_check import stop_health_check
     stop_health_check()

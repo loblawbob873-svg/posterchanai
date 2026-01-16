@@ -161,6 +161,7 @@ _cache_lock = threading.Lock()
 
 class CommandService:
     COMMANDS = {
+        "files": "Search for files in your storage",
         "help": "Show this help message",
         "search": "Web search: search <query>",
         "images": "Image search: images <query>",
@@ -181,6 +182,7 @@ class CommandService:
         "todo": "Todo list: todo | todo add <task>",
         "music": "Music player: music <play|stop|next>",
         "translate": "Translate: translate <text> to <lang>",
+        "notes": "Notes: notes | notes search <query> | notes folder <name>",
     }
     # Command aliases (alias -> canonical command)
     COMMAND_ALIASES = {
@@ -222,6 +224,29 @@ class CommandService:
         if lower.startswith("pay bill "):
             bill_name = message[9:].strip()  # Extract bill name preserving case
             return "budget", f"pay {bill_name}"
+        
+        # Check for natural language note commands (before canonical commands)
+        note_patterns = [
+            ("note find ", "notes search "),
+            ("find note ", "notes search "),
+            ("note about ", "notes search "),
+            ("search note ", "notes search "),
+            ("search notes ", "notes search "),
+            ("find note", "notes search "),  # Without space - might be followed by query
+        ]
+        for pattern, replacement in note_patterns:
+            if lower.startswith(pattern):
+                query = message[len(pattern):].strip()
+                if query:
+                    return "notes", f"search {query}"
+                else:
+                    return "notes", ""
+        
+        # Handle "note <query>" pattern (must come after other patterns)
+        if lower.startswith("note ") and len(lower) > 5:
+            query = message[5:].strip()  # "note " is 5 chars
+            if query:
+                return "notes", f"search {query}"
 
         # Check for "download song/video <url>" patterns
         # Audio downloads (song, music, audio)
@@ -280,6 +305,8 @@ class CommandService:
             return await self._search_command(arg)
         elif command == "images":
             return await self._images_command(arg)
+        elif command == "files":
+            return await self._files_command(arg)
         elif command == "geni":
             return await self._geni_command(arg, stop_check)
         elif command == "budget":
@@ -397,6 +424,59 @@ class CommandService:
             return {"type": "text", "content": f"No images found for: {query}"}
 
         return {"type": "images", "content": f"Found {len(results)} images for: {query}", "images": results}
+
+    async def _files_command(self, query: str) -> dict:
+        """Search for files in user's storage."""
+        if not query:
+            return {"type": "text", "content": "Please provide a search query. Example: `files image` or `files document.pdf`"}
+        
+        return await self._search_files_internal(query)
+    
+    async def _search_files_internal(self, query: str) -> dict:
+        """Internal file search function."""
+        from pathlib import Path
+        from app.services.storage_service import get_storage_service
+        
+        storage = get_storage_service(self.db)
+        user_path = storage.get_user_path(self.user.username)
+        
+        results = []
+        query_lower = query.lower()
+        
+        try:
+            # Recursively search through user's files
+            for item in user_path.rglob('*'):
+                try:
+                    if item.is_dir():
+                        continue
+                    
+                    filename = item.name.lower()
+                    relative_path = str(item.relative_to(user_path)).lower()
+                    
+                    if query_lower in filename or query_lower in relative_path:
+                        stat = item.stat()
+                        results.append({
+                            "name": item.name,
+                            "path": str(item.relative_to(user_path)),
+                            "size": stat.st_size,
+                            "modified": stat.st_mtime,
+                        })
+                except Exception as e:
+                    logger.warning(f"Error processing file {item}: {e}")
+                    continue
+            
+            # Sort by modified time (newest first)
+            results.sort(key=lambda x: x.get('modified', 0), reverse=True)
+            
+            return {
+                "type": "files",
+                "content": f"Found {len(results)} file(s) matching '{query}'",
+                "files": results[:50],  # Limit to 50 results
+                "query": query
+            }
+        except Exception as e:
+            logger.error(f"Error searching files: {e}", exc_info=True)
+            return {"type": "text", "content": f"Error searching files: {str(e)}"}
 
     async def _geni_command(self, prompt: str, stop_check: Optional[callable] = None) -> dict:
         if not prompt:

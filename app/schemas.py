@@ -27,6 +27,7 @@ class UserResponse(BaseModel):
     email: Optional[str] = None
     is_admin: bool
     rss_skip_summarization: bool = False
+    storage_quota: int = 0  # 0 = unlimited
     created_at: datetime
 
     class Config:
@@ -223,6 +224,20 @@ class SettingsResponse(BaseModel):
     bt_server_url: str = ""  # Remote torrent server URL (empty = local)
     bt_server_token: str = ""  # API token for remote torrent server auth
     bt_download_dir: str = "/var/lib/posterchanai/torrents"
+    storage_server_url: str = ""  # Remote storage server URL (empty = local)
+    storage_server_token: str = ""  # API token for remote storage server auth
+    # WebDAV/CalDAV/CardDAV server settings
+    webdav_enabled: str = "false"  # Enable built-in WebDAV server
+    webdav_port: str = "8080"  # WebDAV server port
+    caldav_enabled: str = "false"  # Enable built-in CalDAV server
+    caldav_port: str = "8081"  # CalDAV server port
+    cardav_enabled: str = "false"  # Enable built-in CardDAV server
+    cardav_port: str = "8082"  # CardDAV server port
+    file_cache_enabled: str = "true"  # Enable file listing cache
+    file_cache_ttl: str = "300"  # File cache TTL in seconds (default: 5 minutes)
+    file_cache_max_size: str = "1000"  # Maximum number of cached directory listings
+    sqlite_cache_mb: str = "500"  # SQLite page cache size in MB (default: 500MB)
+    sqlite_mmap_size_mb: str = "500"  # SQLite memory-mapped I/O size in MB (0 = disabled, default: 500MB)
     bt_proxy_host: str = ""
     bt_proxy_port: str = "8118"
     bt_listen_port: str = "6881"
@@ -513,3 +528,59 @@ class RAGStatusResponse(BaseModel):
     embedding_model: str
     collections_count: int
     total_documents: int
+
+
+# Notes schemas
+
+class NoteFolderCreate(BaseModel):
+    name: str
+    parent_id: Optional[int] = None
+
+
+class NoteFolderUpdate(BaseModel):
+    name: Optional[str] = None
+    parent_id: Optional[int] = None
+
+
+class NoteFolderResponse(BaseModel):
+    id: int
+    name: str
+    parent_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    notes_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class NoteCreate(BaseModel):
+    title: str
+    content: str = ""
+    folder_id: Optional[int] = None
+    tags: Optional[str] = None
+    is_pinned: bool = False
+
+
+class NoteUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    folder_id: Optional[int] = None
+    tags: Optional[str] = None
+    is_pinned: Optional[bool] = None
+
+
+class NoteResponse(BaseModel):
+    id: int
+    title: str
+    content: str
+    folder_id: Optional[int] = None
+    folder_name: Optional[str] = None
+    tags: Optional[str] = None
+    attachments: Optional[str] = None  # JSON array of filenames
+    is_pinned: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True

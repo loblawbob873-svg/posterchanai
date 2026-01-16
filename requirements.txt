@@ -52,6 +52,10 @@ vobject>=0.9.6
 icalendar>=5.0.0
 python-dateutil>=2.8.0
 
+# WebDAV server support
+wsgidav>=4.3.0
+cheroot>=10.0.0
+
 # Speech-to-text (Whisper) for voice input
 faster-whisper>=1.0.0
 

@@ -3,7 +3,8 @@ import logging
 from pathlib import Path
 from typing import List
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File
+from starlette.requests import Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -685,9 +686,10 @@ def update_user_settings(
 async def upload_avatar(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    request: Request = None
 ):
-    """Upload user avatar image"""
+    """Upload user avatar image. Proxies to storage server if configured."""
     # Validate file type
     allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp"}
     if file.content_type not in allowed_types:
@@ -696,14 +698,26 @@ async def upload_avatar(
             detail="Invalid file type. Allowed: JPEG, PNG, GIF, WebP"
         )
 
-    # Read file content
+    # Read file content (no size limit)
     content = await file.read()
-    if len(content) > 5 * 1024 * 1024:  # 5MB limit
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File too large. Maximum size is 5MB"
-        )
 
+    # Check if storage server is configured - proxy request if so
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        # Proxy to storage server
+        from app.services.storage_proxy import proxy_storage_request
+        files = {
+            "file": (file.filename or "avatar", content, file.content_type)
+        }
+        return await proxy_storage_request(
+            db=db,
+            request=request,
+            endpoint=f"/api/auth/avatar",
+            method="POST",
+            files=files
+        )
+    
+    # Local file saving (storage server node)
     # Get file extension
     ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}
     ext = ext_map.get(file.content_type, ".png")
@@ -718,7 +732,8 @@ async def upload_avatar(
 
     return {
         "message": "Avatar uploaded",
-        "avatar": f"/api/auth/avatar/{current_user.username}"
+        "avatar": f"/api/auth/avatar/{current_user.username}",
+        "filename": filename
     }
 
 
@@ -740,9 +755,64 @@ def delete_avatar(
     return {"message": "Avatar deleted"}
 
 
+@router.get("/storage-addresses")
+async def get_storage_addresses(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get WebDAV/CalDAV/CardDAV server addresses for current user."""
+    # Get server settings
+    webdav_enabled = db.query(Setting).filter(Setting.key == "webdav_enabled").first()
+    webdav_port = db.query(Setting).filter(Setting.key == "webdav_port").first()
+    caldav_enabled = db.query(Setting).filter(Setting.key == "caldav_enabled").first()
+    caldav_port = db.query(Setting).filter(Setting.key == "caldav_port").first()
+    cardav_enabled = db.query(Setting).filter(Setting.key == "cardav_enabled").first()
+    cardav_port = db.query(Setting).filter(Setting.key == "cardav_port").first()
+    
+    webdav_url = ""
+    if webdav_enabled and webdav_enabled.value.lower() == "true":
+        port = webdav_port.value if webdav_port and webdav_port.value else "8080"
+        webdav_url = f"http://localhost:{port}/{current_user.username}"
+    
+    caldav_url = ""
+    if caldav_enabled and caldav_enabled.value.lower() == "true":
+        port = caldav_port.value if caldav_port and caldav_port.value else "8081"
+        caldav_url = f"http://localhost:{port}/caldav/{current_user.username}/"
+    
+    cardav_url = ""
+    if cardav_enabled and cardav_enabled.value.lower() == "true":
+        port = cardav_port.value if cardav_port and cardav_port.value else "8082"
+        cardav_url = f"http://localhost:{port}/carddav/{current_user.username}/"
+    
+    return {
+        "username": current_user.username,
+        "webdav_url": webdav_url,
+        "caldav_url": caldav_url,
+        "cardav_url": cardav_url
+    }
+
+
 @router.get("/avatar/{username}")
-def get_avatar(username: str, db: Session = Depends(get_db)):
-    """Get user avatar image"""
+async def get_avatar(
+    username: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get user avatar image. Proxies to storage server if configured."""
+    # Check if storage server is configured - proxy request if so
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        # Proxy to storage server (stream file response)
+        from app.services.storage_proxy import proxy_storage_request
+        return await proxy_storage_request(
+            db=db,
+            request=request,
+            endpoint=f"/api/auth/avatar/{username}",
+            method="GET",
+            stream=True
+        )
+    
+    # Local file serving
     storage = StorageService(db)
     avatar_path = storage.get_avatar_path(username)
 

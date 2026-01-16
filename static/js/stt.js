@@ -65,6 +65,15 @@ const VOICE_COMMANDS = [
     { patterns: [/^remind\s+me\s+to\s+(.+)$/i], command: 'todo add $1' },
     { patterns: [/^(delete|remove|done)\s+to-?\s?do\s+(\d+)$/i], command: 'todo rm $2' },
     { patterns: [/^(complete|finish)\s+task\s+(\d+)$/i], command: 'todo rm $2' },
+    // ==================== NOTES ====================
+    { patterns: [/^(show\s+)?(my\s+)?notes$/i], command: 'notes' },
+    { patterns: [/^(open|show)\s+notes$/i], command: 'notes' },
+    { patterns: [/^search\s+notes\s+(.+)$/i], command: 'notes search $1' },
+    { patterns: [/^find\s+note\s+(.+)$/i], command: 'notes search $1' },
+    { patterns: [/^note\s+find\s+(.+)$/i], command: 'notes search $1' },
+    { patterns: [/^note\s+(.+)$/i], command: 'notes search $1' },
+    { patterns: [/^notes\s+in\s+(.+)$/i], command: 'notes folder $1' },
+    { patterns: [/^notes\s+folder\s+(.+)$/i], command: 'notes folder $1' },
 
     // ==================== MUSIC ====================
     { patterns: [/^play\s+music$/i], command: 'music shuffle' },

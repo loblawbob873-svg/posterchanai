@@ -1,6 +1,6 @@
 # Poster-chan AI
 
-AI Chat Application with OpenAI-compatible API, image generation, web search, and text-to-speech capabilities.
+AI Chat Application with OpenAI-compatible API, image generation, web search, text-to-speech, and notes management capabilities.
 
 ## Quick Start
 
@@ -23,6 +23,7 @@ The installer will:
 - Set up a Python virtual environment
 - Configure and start a systemd service
 - Optionally download a starter model
+- Initialize database with notes support
 
 To see required packages for your distro before installing:
 ```bash
@@ -52,6 +53,8 @@ sudo systemctl restart posterchanai
 
 New settings are automatically added to the database when the app starts. No manual migration needed.
 
+**Notes Feature**: The notes system is automatically initialized on first startup. To migrate from Joplin, see [Joplin Migration Guide](docs/JOPLIN_MIGRATION.md).
+
 ## Features
 
 ### AI & Chat
@@ -70,6 +73,7 @@ New settings are automatically added to the database when the app starts. No man
   - Calendar: Add events from natural language or pasted email invites
   - Contacts: Save contact info from business cards or text
   - Todo: Create tasks from reminders or meeting notes
+  - Notes: Search and browse notes with natural language ("note find memes")
   - Email: Send, check, and reply to emails
   - Music: Play by mood, search, or specific requests
   - Search: Web search and news lookup
@@ -106,6 +110,22 @@ New settings are automatically added to the database when the app starts. No man
 - Git repository, zip file, or VS Code integration
 - Auto-context injection
 
+### Notes
+- Full-featured note-taking system
+- Search and browse notes with folders and tags
+- Markdown support with attachment handling
+- Natural language commands: "note find memes", "search notes for recipes"
+- Autocomplete with note title suggestions
+- Migrate from Joplin with full attachment support
+
+### File Manager & Storage
+- Built-in file manager with image thumbnails and viewer
+- WebDAV server for cloud storage access
+- CalDAV/CardDAV servers for calendar and contact sync
+- Configurable memory cache for fast file browsing
+- Storage quotas per user (admin-configurable)
+- Access via User Settings → Storage & Cloud tab
+
 ## Basic Configuration
 
 Access the admin panel at `http://localhost:3051/admin`
@@ -125,6 +145,8 @@ Access the admin panel at `http://localhost:3051/admin`
 - **SearXNG URL**: For web search
 - **SMTP/IMAP**: For email functionality
 - **Upload Path**: Where to store uploads
+- **WebDAV/CalDAV/CardDAV**: Enable built-in servers for cloud storage and calendar sync
+- **File Cache**: Configure memory cache for file listings (TTL, max entries)
 
 See [Advanced Configuration](docs/ADVANCED.md#configuration) for detailed settings.
 
@@ -144,6 +166,7 @@ Type these commands in the chat:
 | `mail` | Email: inbox, folders, read, reply, forward, send |
 | `music` | WebDAV music streaming: browse, search, play, queue |
 | `todo` | CalDAV task management: list, add, remove tasks |
+| `notes` | Notes: browse, search, create, edit notes with folders and tags |
 | `torrents` | Built-in torrent client: browse, download, manage |
 | `budget` | Budget manager (summary, bills, add, pay) |
 | `news` | Fetch and summarize RSS feeds |
@@ -205,6 +228,33 @@ Users can generate their own API keys from the user menu.
 
 See [API Documentation](docs/ADVANCED.md#openai-compatible-api) for complete endpoint reference.
 
+## Notes Feature
+
+Posterchanai includes a full-featured notes system with:
+
+- **Search & Browse**: Full-text search with folder and tag filtering
+- **Organization**: Folders, tags, and pinning for easy organization
+- **Markdown Support**: Full markdown formatting in notes
+- **Attachments**: Support for all file types (images, PDFs, documents, etc.)
+- **Natural Language**: Use commands like "note find memes" or "search notes for recipes"
+- **Autocomplete**: Tab autocomplete suggests note titles as you type
+- **Joplin Migration**: Migrate all your Joplin notes with attachments
+
+### Accessing Notes
+
+- **UI Button**: Click "📝 Notes" button (under PIM button)
+- **Command**: Type `notes` in chat
+- **Voice**: Say "show my notes" or "note find <query>"
+
+### Natural Language Commands
+
+- `note find memes` → Searches notes for "memes"
+- `find note about groceries` → Searches for notes about groceries
+- `search notes for recipes` → Searches notes for recipes
+- `notes in work folder` → Filters notes by folder
+
+See [Notes Features](docs/NOTES_FEATURES.md) for complete documentation.
+
 ## Supported File Types
 
 | Type | Extensions | Description |
@@ -219,10 +269,14 @@ See [API Documentation](docs/ADVANCED.md#openai-compatible-api) for complete end
 ## Requirements
 
 - Python 3.11+
+- SQLite (included with Python)
 - For GPU acceleration: See [GPU Setup](docs/ADVANCED.md#gpu-acceleration)
 - For OCR: Tesseract OCR (`apt install tesseract-ocr` or `emerge app-text/tesseract`)
 - Optional: ComfyUI instance (for image generation)
 - Optional: SearXNG instance (for web search)
+- Optional: Joplin (for migrating existing notes)
+
+**Notes Feature**: No additional dependencies required - uses built-in SQLite database and existing FastAPI/SQLAlchemy stack.
 
 See [Requirements](docs/ADVANCED.md#requirements) for complete dependency list.
 
@@ -243,3 +297,5 @@ For detailed technical documentation, see:
 - **[IPEX-LLM Setup](docs/IPEX-LLM-SETUP.md)** - Intel Arc GPU optimization
 - **[API Reference](docs/ADVANCED.md#api-endpoints)** - Complete API endpoint documentation
 - **[Architecture](docs/ADVANCED.md#architecture)** - System architecture and design
+- **[Notes Features](docs/NOTES_FEATURES.md)** - Complete notes system documentation
+- **[Joplin Migration](docs/JOPLIN_MIGRATION.md)** - Migrate your Joplin notes to Posterchanai

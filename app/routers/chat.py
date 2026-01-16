@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from starlette.requests import Request
 from pydantic import BaseModel
 import asyncio
 from sqlalchemy.orm import Session, joinedload
@@ -159,14 +160,15 @@ def get_messages(
 
 
 @router.get("/files/{username}/{conversation_id}/{filename}")
-def serve_file(
+async def serve_file(
     username: str,
     conversation_id: int,
     filename: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Serve a stored file (image, document, etc.)"""
+    """Serve a stored file (image, document, etc.). Proxies to storage server if configured."""
     # Verify user owns this file (username must match)
     if current_user.username != username:
         raise HTTPException(status_code=403, detail="Access denied")
@@ -179,6 +181,20 @@ def serve_file(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
+    # Check if storage server is configured - proxy request if so
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        # Proxy to storage server
+        from app.services.storage_proxy import proxy_storage_request
+        return await proxy_storage_request(
+            db=db,
+            request=request,
+            endpoint=f"/api/chat/files/{username}/{conversation_id}/{filename}",
+            method="GET",
+            stream=True
+        )
+
+    # Local file serving
     # Get file path
     storage = StorageService(db)
     file_path = Path(storage.upload_path) / username / str(conversation_id) / filename

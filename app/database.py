@@ -11,6 +11,54 @@ logger = logging.getLogger(__name__)
 _db_file = os.getenv("POSTERCHANAI_DB", "posterchanai.db")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///./{_db_file}")
 
+# Cache for SQLite settings (to avoid querying on every connection)
+_sqlite_cache_mb = 500
+_sqlite_mmap_mb = 500
+_sqlite_settings_loaded = False
+_sqlite_loading_in_progress = False  # Prevent recursive calls
+
+
+def _load_sqlite_settings():
+    """Load SQLite cache settings from database (called once at startup)."""
+    global _sqlite_cache_mb, _sqlite_mmap_mb, _sqlite_settings_loaded
+    if _sqlite_settings_loaded:
+        return
+    
+    try:
+        from app.models import Setting
+        # Use a separate connection to avoid deadlocks during init_db
+        db = SessionLocal()
+        try:
+            # Check if settings table exists first
+            from sqlalchemy import inspect
+            inspector = inspect(engine)
+            if not inspector.has_table('settings'):
+                # Settings table doesn't exist yet, use defaults
+                logger.debug("[SQLite] Settings table not found, using default cache settings")
+                return
+            
+            cache_setting = db.query(Setting).filter(Setting.key == "sqlite_cache_mb").first()
+            if cache_setting and cache_setting.value:
+                _sqlite_cache_mb = int(cache_setting.value)
+            
+            mmap_setting = db.query(Setting).filter(Setting.key == "sqlite_mmap_size_mb").first()
+            if mmap_setting and mmap_setting.value:
+                _sqlite_mmap_mb = int(mmap_setting.value)
+            
+            _sqlite_settings_loaded = True
+            logger.info(f"[SQLite] Cache settings loaded: cache={_sqlite_cache_mb}MB, mmap={_sqlite_mmap_mb}MB")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug(f"[SQLite] Using default cache settings: {e}")
+
+
+def reload_sqlite_settings():
+    """Reload SQLite cache settings (call after updating settings)."""
+    global _sqlite_settings_loaded
+    _sqlite_settings_loaded = False
+    _load_sqlite_settings()
+
 # Connection pool configuration
 if "sqlite" in DATABASE_URL:
     # SQLite: use StaticPool for better concurrency with check_same_thread=False
@@ -24,11 +72,29 @@ if "sqlite" in DATABASE_URL:
         pool_pre_ping=True,    # Verify connection health
     )
     
-    # Enable foreign key constraints for SQLite (required for CASCADE deletes to work)
+    # Enable foreign key constraints and configure cache for SQLite
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_conn, connection_record):
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA foreign_keys = ON")
+        
+        # Don't load settings during connection event to avoid circular dependencies
+        # Settings will be loaded during init_db() after tables are created
+        # Just use the cached values (defaults if not loaded yet)
+        
+        # Configure SQLite cache size using cached values
+        # Using negative value: -N means N KB (works regardless of page size)
+        cache_kb = _sqlite_cache_mb * 1024
+        cursor.execute(f"PRAGMA cache_size = -{cache_kb}")
+        
+        # Configure memory-mapped I/O
+        if _sqlite_mmap_mb > 0:
+            mmap_bytes = _sqlite_mmap_mb * 1024 * 1024
+            cursor.execute(f"PRAGMA mmap_size = {mmap_bytes}")
+        else:
+            cursor.execute("PRAGMA mmap_size = 0")  # Disable mmap
+        
+        logger.debug(f"[SQLite] Configured cache: {_sqlite_cache_mb}MB, mmap: {_sqlite_mmap_mb}MB")
         cursor.close()
 else:
     # PostgreSQL/MySQL: use QueuePool with connection recycling
@@ -73,6 +139,7 @@ def _run_migrations():
         ("custom_image_url", "VARCHAR(500)"),
         ("rss_enabled", "BOOLEAN DEFAULT 0"),
         ("rss_skip_summarization", "BOOLEAN DEFAULT 0"),
+        ("storage_quota", "INTEGER DEFAULT 0"),  # Storage quota in bytes (0 = unlimited)
     ]
 
     # Add missing columns to users table
@@ -101,6 +168,23 @@ def _run_migrations():
                     except Exception:
                         pass
 
+    # Add missing columns to notes table (if it exists)
+    if inspector.has_table('notes'):
+        notes_columns = {col['name'] for col in inspector.get_columns('notes')}
+        new_notes_columns = [
+            ("attachments", "TEXT"),
+        ]
+        with engine.connect() as conn:
+            for col_name, col_type in new_notes_columns:
+                if col_name not in notes_columns:
+                    try:
+                        conn.execute(text(f"ALTER TABLE notes ADD COLUMN {col_name} {col_type}"))
+                        conn.commit()
+                        logger.info(f"[MIGRATE] Added column {col_name} to notes table")
+                    except Exception as e:
+                        logger.warning(f"[MIGRATE] Failed to add column {col_name} to notes: {e}")
+                        pass
+
 
 def init_db():
     from app.models import User, Conversation, Message, Setting
@@ -109,6 +193,14 @@ def init_db():
 
     # Run migrations for new columns on existing databases
     _run_migrations()
+    
+    # Load SQLite cache settings after database is initialized
+    # Skip during initial setup to avoid circular dependencies
+    if "sqlite" in DATABASE_URL:
+        try:
+            _load_sqlite_settings()
+        except Exception as e:
+            logger.debug(f"[SQLite] Could not load cache settings during init: {e}")
 
     # Create default settings if not exist
     db = SessionLocal()
@@ -288,6 +380,21 @@ When asked to write or modify code or files:
             "bt_enabled": "false",
             "bt_server_url": "",              # Remote torrent server URL (empty = local)
             "bt_server_token": "",            # API token for remote torrent server auth
+            "storage_server_url": "",         # Remote storage server URL (empty = local)
+            "storage_server_token": "",       # API token for remote storage server auth
+            # WebDAV/CalDAV/CardDAV server settings
+            "webdav_enabled": "false",       # Enable built-in WebDAV server
+            "webdav_port": "8080",            # WebDAV server port
+            "caldav_enabled": "false",         # Enable built-in CalDAV server
+            "caldav_port": "8081",            # CalDAV server port
+            "cardav_enabled": "false",        # Enable built-in CardDAV server
+            "cardav_port": "8082",            # CardDAV server port
+            "file_cache_enabled": "true",     # Enable file listing cache
+            "file_cache_ttl": "300",          # File cache TTL in seconds (5 minutes)
+            "file_cache_max_size": "1000",    # Maximum cached directory listings
+            # SQLite performance settings
+            "sqlite_cache_mb": "500",          # SQLite page cache size in MB (default: 500MB)
+            "sqlite_mmap_size_mb": "500",     # SQLite memory-mapped I/O size in MB (0 = disabled, default: 500MB)
             "bt_download_dir": "/var/lib/posterchanai/torrents",
             "bt_proxy_host": "",              # HTTP proxy host (required for torrenting)
             "bt_proxy_port": "8118",          # HTTP proxy port (e.g. Privoxy for Tor)

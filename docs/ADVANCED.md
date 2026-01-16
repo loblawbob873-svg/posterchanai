@@ -360,6 +360,85 @@ Response:
 
 ### Continue.dev Configuration
 
+## Notes System
+
+Posterchanai includes a full-featured notes system for organizing and searching your notes.
+
+### Features
+
+- **Full-text search** - Search notes by title or content
+- **Folders** - Organize notes into folders/notebooks
+- **Tags** - Tag notes for cross-cutting organization
+- **Pinning** - Pin important notes to the top
+- **Markdown support** - Full markdown formatting
+- **Attachments** - Support for all file types (images, PDFs, documents, etc.)
+- **Natural language** - LLM-trained commands like "note find memes"
+- **Autocomplete** - Tab autocomplete with note title suggestions
+
+### Accessing Notes
+
+**Via UI:**
+- Click "📝 Notes" button in quick actions (under PIM button)
+- Opens full-screen notes browser
+
+**Via Command:**
+- Type `notes` in chat
+- Type `notes search <query>` to search
+- Type `notes folder <name>` to filter by folder
+
+**Via Voice:**
+- Say "show my notes" or "note find <query>"
+
+### Natural Language Commands
+
+The system understands natural language queries:
+
+- `note find memes` → Searches notes for "memes"
+- `find note about groceries` → Searches for notes about groceries
+- `note about project` → Searches for "project"
+- `search notes for recipes` → Searches for recipes
+- `notes in work folder` → Filters by folder
+
+### Autocomplete
+
+Press **Tab** while typing note commands for autocomplete:
+
+- `notes ` + Tab → Shows: `search | folder | new | list`
+- `notes search ` + Tab → Shows matching note titles
+- `note find m` + Tab → Shows notes starting with "m"
+
+### API Endpoints
+
+- `GET /api/notes` - List notes (with search/folder filters)
+- `GET /api/notes/{id}` - Get single note
+- `POST /api/notes` - Create note
+- `PUT /api/notes/{id}` - Update note
+- `DELETE /api/notes/{id}` - Delete note
+- `GET /api/notes/folders` - List folders
+- `POST /api/notes/folders` - Create folder
+- `GET /api/notes/files/{username}/{note_id}/{filename}` - Download attachment
+
+### Storage
+
+Notes are stored in SQLite database. Attachments are stored at:
+```
+{upload_path}/{username}/notes/{note_id}/{filename}
+```
+
+Default `upload_path`: `/var/lib/posterchanai`
+
+### Joplin Migration
+
+Migrate your Joplin notes with full attachment support:
+
+```bash
+python scripts/migrate_joplin.py --user-id 1
+```
+
+See [Joplin Migration Guide](JOPLIN_MIGRATION.md) for complete instructions.
+
+### Continue.dev Configuration
+
 Continue.dev is an AI coding assistant that integrates with VS Code. Here's an optimized configuration for use with Posterchanai.
 
 **Copy `docs/continue-config.yaml` to `~/.continue/config.yaml`** and update the API settings.
@@ -679,6 +758,62 @@ Image Server URLs: http://192.168.0.1:3052,http://192.168.0.85:3051
 With 2 servers: 50% local (uses local GPU), 50% remote (HTTP to other server).
 With 3 servers: ~33% each, with local URLs using direct GPU inference.
 
+**⚠️ IMPORTANT: Storage Configuration for Load Balancing**
+
+For load-balanced setups, you have two options for handling file storage:
+
+### Option 1: Storage Server Proxying (Recommended)
+
+Proxy file requests to a designated storage node. This avoids requiring shared filesystem:
+
+- **Storage Node**: Leave `storage_server_url` empty, configure `upload_path` to local directory
+- **Client Nodes**: Set `storage_server_url` to storage node URL (e.g., `http://192.168.0.10:3051`)
+- **Optional**: Set `storage_server_token` on both nodes for server-to-server authentication
+
+**Setup:**
+1. Designate one node as the storage server
+2. On storage node: Leave `storage_server_url` empty, set `upload_path` to local path
+3. On client nodes: Set `storage_server_url` to storage node URL
+4. All file requests from client nodes will be proxied to the storage node
+
+**Benefits:**
+- No shared filesystem required (NFS, etc.)
+- Simpler setup - just configure URLs
+- Centralized storage management
+
+### Option 2: Shared Storage (Alternative)
+
+All nodes share the same storage location via network filesystem:
+
+- **Upload Path**: Configure `upload_path` in Admin > Site Settings to point to a **shared storage location**
+- **Shared Storage Options**:
+  - **NFS mount**: Mount NFS share to same path on all nodes (e.g., `/var/lib/posterchanai`)
+  - **Network filesystem**: CIFS/SMB, GlusterFS, or similar
+  - **Distributed filesystem**: Any shared filesystem accessible by all nodes
+
+**Setup Example (NFS):**
+```bash
+# On all nodes, mount the same NFS share
+sudo mount -t nfs nfs-server:/export/posterchanai /var/lib/posterchanai
+
+# Or add to /etc/fstab for persistence:
+nfs-server:/export/posterchanai  /var/lib/posterchanai  nfs  defaults  0  0
+
+# Ensure all nodes have same upload_path setting in Admin Panel
+```
+
+**Why storage configuration is required:**
+- User uploads (chat images, documents) are stored in `{upload_path}/{username}/`
+- Notes attachments are stored in `{upload_path}/{username}/notes/{note_id}/`
+- If each node uses local storage without proxying, files created on Node A won't be accessible from Node B
+- Database is shared (SQLite file or PostgreSQL), but files must also be accessible by all nodes
+
+**Verification:**
+- Create a note with attachment on Node A
+- Access the note from Node B - attachment should be accessible
+- If using proxying: Check that `storage_server_url` is configured correctly
+- If using shared storage: Check that `upload_path` points to shared storage on all nodes
+
 #### Intel Arc Dual-Instance Setup
 
 Intel Arc GPUs can run both LLM (via IPEX-LLM) and image generation (via PyTorch XPU), but they require different Python environments. The solution is to run two instances:
@@ -831,6 +966,7 @@ Type these commands in the chat (or use the mode buttons):
 | `mail` | Email: inbox, folders, folder, read, reply, forward, archive, delete, send to contacts |
 | `music` | WebDAV music streaming: browse, search, play, queue, mood playlists |
 | `todo` | CalDAV task management: list, add, remove tasks |
+| `notes` | Notes: browse, search, create, edit notes with folders and tags |
 | `news` | Fetch and summarize RSS feeds (alias for rss sync) |
 | `rss` | Native RSS: list feeds, sync, add/remove (plugin) |
 | `logs` | System logs analysis (admin only) |
@@ -857,7 +993,12 @@ Click the microphone button to speak commands naturally. Voice input works in Ch
 - "add event dinner tomorrow at 7pm"
 - "my todos" / "todo list"
 - "add todo buy groceries"
-- "remind me to call mom"
+
+**Notes:**
+- "notes" / "show notes" / "my notes" / "open notes"
+- "note find <query>" / "find note <query>" / "search notes <query>"
+- "note about <query>" / "note <query>"
+- "notes in <folder>" / "notes folder <name>"
 
 **Music:**
 - "play music" - Shuffle play
@@ -1442,9 +1583,163 @@ Images containing text are automatically processed with Tesseract OCR:
 
 ## File Storage
 
+Posterchanai includes a built-in file manager with WebDAV, CalDAV, and CardDAV server support.
+
+### File Manager
+
+Access the file manager from **User Settings → Storage & Cloud** tab:
+- Browse files and directories with image thumbnails
+- View images in full-screen viewer
+- Upload files and create folders
+- Monitor storage usage and quotas
+
+### Memory Cache
+
+The file manager uses a configurable memory cache for faster directory browsing:
+
+**Configuration (Admin → Site Settings → File Manager Cache):**
+- **Enable File Listing Cache**: Enable/disable caching (default: enabled)
+- **Cache TTL**: How long to cache directory listings (default: 300 seconds = 5 minutes)
+- **Max Cache Entries**: Maximum number of cached directory listings (default: 1000)
+
+**Cache Behavior:**
+- Cache automatically invalidates when files are uploaded, deleted, or modified
+- Cache expires naturally via TTL for static content
+- LRU (Least Recently Used) eviction when cache reaches max size
+- Thread-safe implementation for multi-user environments
+
+**Performance Tips:**
+- Lower TTL (60-120s) for frequently changing directories
+- Higher TTL (300-600s) for static content
+- Increase max entries for users with many directories
+- Disable cache if memory is constrained
+
+### WebDAV Server
+
+Built-in WebDAV server for cloud storage access:
+
+**Configuration (Admin → Site Settings):**
+- **Enable WebDAV Server**: Enable/disable the server
+- **WebDAV Port**: Server port (default: 8080)
+
+**Access:**
+- URL format: `http://your-server:8080/username`
+- Authentication: Use your Posterchanai username and password
+- Compatible with: Nextcloud, ownCloud, rclone, and other WebDAV clients
+
+**Features:**
+- Respects user storage quotas
+- Automatic cache invalidation on file operations
+- Full read/write/delete support
+
+### CalDAV/CardDAV Servers
+
+Built-in CalDAV and CardDAV servers for calendar and contact synchronization:
+
+**Configuration (Admin → Site Settings):**
+- **Enable CalDAV Server**: Enable/disable (default port: 8081)
+- **Enable CardDAV Server**: Enable/disable (default port: 8082)
+
+**Access:**
+- CalDAV URL: `http://your-server:8081/caldav/username/`
+- CardDAV URL: `http://your-server:8082/carddav/username/`
+- Authentication: Use your Posterchanai username and password
+
+**Compatible Clients:**
+- Thunderbird (Lightning extension)
+- Evolution
+- Apple Calendar/Contacts
+- Android DAVx⁵
+- Any CalDAV/CardDAV client
+
+### Storage Quotas
+
+Admins can set storage quotas per user (Admin → Users → Quota):
+- Quota in MB (0 = unlimited)
+- Enforced for WebDAV uploads and file manager
+- Displayed in user's Storage & Cloud tab
+
+### File Storage
+
+### Upload Path
+
 Uploads and generated images are stored at the configured `upload_path`:
 - `/var/lib/posterchanai/<username>/<conversation_id>/`
 - Files are automatically deleted when conversations are deleted
+
+### File Manager
+
+Access the file manager from **User Settings → Storage & Cloud** tab:
+- Browse files and directories with image thumbnails
+- View images in full-screen viewer
+- Upload files and create folders
+- Monitor storage usage and quotas
+
+### Memory Cache
+
+The file manager uses a configurable memory cache for faster directory browsing:
+
+**Configuration (Admin → Site Settings → File Manager Cache):**
+- **Enable File Listing Cache**: Enable/disable caching (default: enabled)
+- **Cache TTL**: How long to cache directory listings (default: 300 seconds = 5 minutes)
+- **Max Cache Entries**: Maximum number of cached directory listings (default: 1000)
+
+**Cache Behavior:**
+- Cache automatically invalidates when files are uploaded, deleted, or modified
+- Cache expires naturally via TTL for static content
+- LRU (Least Recently Used) eviction when cache reaches max size
+- Thread-safe implementation for multi-user environments
+
+**Performance Tips:**
+- Lower TTL (60-120s) for frequently changing directories
+- Higher TTL (300-600s) for static content
+- Increase max entries for users with many directories
+- Disable cache if memory is constrained
+
+### WebDAV Server
+
+Built-in WebDAV server for cloud storage access:
+
+**Configuration (Admin → Site Settings):**
+- **Enable WebDAV Server**: Enable/disable the server
+- **WebDAV Port**: Server port (default: 8080)
+
+**Access:**
+- URL format: `http://your-server:8080/username`
+- Authentication: Use your Posterchanai username and password
+- Compatible with: Nextcloud, ownCloud, rclone, and other WebDAV clients
+
+**Features:**
+- Respects user storage quotas
+- Automatic cache invalidation on file operations
+- Full read/write/delete support
+
+### CalDAV/CardDAV Servers
+
+Built-in CalDAV and CardDAV servers for calendar and contact synchronization:
+
+**Configuration (Admin → Site Settings):**
+- **Enable CalDAV Server**: Enable/disable (default port: 8081)
+- **Enable CardDAV Server**: Enable/disable (default port: 8082)
+
+**Access:**
+- CalDAV URL: `http://your-server:8081/caldav/username/`
+- CardDAV URL: `http://your-server:8082/carddav/username/`
+- Authentication: Use your Posterchanai username and password
+
+**Compatible Clients:**
+- Thunderbird (Lightning extension)
+- Evolution
+- Apple Calendar/Contacts
+- Android DAVx⁵
+- Any CalDAV/CardDAV client
+
+### Storage Quotas
+
+Admins can set storage quotas per user (Admin → Users → Quota):
+- Quota in MB (0 = unlimited)
+- Enforced for WebDAV uploads and file manager
+- Displayed in user's Storage & Cloud tab
 
 ## API Endpoints
 
@@ -2059,6 +2354,11 @@ Key packages:
 - `edge-tts` - Text-to-speech
 - `python-docx`, `openpyxl`, `python-pptx` - Office document support
 - `PyMuPDF` - PDF text extraction
+- `sqlalchemy` - Database ORM (for notes, chat, etc.)
+- `pydantic` - Data validation (for API schemas)
+- `fastapi` - Web framework
+
+**Notes Feature**: Uses built-in SQLite (no additional dependencies required)
 
 ### Built-in Torrent Client (Optional)
 

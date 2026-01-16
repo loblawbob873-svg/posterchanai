@@ -1,0 +1,59 @@
+<!-- Notes Modal -->
+<div class="modal" id="notesModal" style="display: none;">
+    <div class="modal-content notes-modal-content">
+        <div class="modal-header">
+            <h2 id="notesModalTitle">📝 Notes</h2>
+            <button class="btn-icon modal-close" id="closeNotesModal">&times;</button>
+        </div>
+        <div class="modal-body notes-modal-body">
+            <div class="notes-sidebar">
+                <div class="notes-toolbar">
+                    <button class="btn-primary btn-small" id="newNoteBtn">
+                        <span style="margin-right: 6px;">✨</span> New Note
+                    </button>
+                    <button class="btn-secondary btn-small" id="newFolderBtn">
+                        <span style="margin-right: 6px;">📂</span> New Folder
+                    </button>
+                </div>
+                <div class="notes-search">
+                    <input type="text" id="notesSearchInput" placeholder="Search notes...">
+                </div>
+                <div class="notes-folders" id="notesFoldersList">
+                    <div class="notes-folder-item active" data-folder-id="0">
+                        <span class="folder-icon">📁</span>
+                        <span class="folder-name">All Notes</span>
+                    </div>
+                </div>
+            </div>
+            <div class="notes-main">
+                <div class="notes-list" id="notesList">
+                    <div class="notes-loading">Loading notes...</div>
+                </div>
+                <div class="notes-editor" id="notesEditor" style="display: none;">
+                    <div class="notes-editor-header">
+                        <input type="text" id="noteTitleInput" placeholder="Untitled Note" class="note-title-input">
+                        <div class="notes-editor-actions">
+                            <button class="btn-icon" id="pinNoteBtn" title="Pin/Unpin Note">📌</button>
+                            <button class="btn-icon" id="deleteNoteBtn" title="Delete Note">🗑️</button>
+                        </div>
+                    </div>
+                    <div class="notes-editor-tags">
+                        <input type="text" id="noteTagsInput" placeholder="Add tags (comma-separated)">
+                    </div>
+                    <div class="notes-editor-mode-toggle">
+                        <button class="btn-secondary btn-small" id="noteEditModeBtn" data-mode="edit">✏️ Edit</button>
+                        <button class="btn-secondary btn-small" id="notePreviewModeBtn" data-mode="preview">👁️ Preview</button>
+                    </div>
+                    <div class="notes-editor-content">
+                        <textarea id="noteContentInput" placeholder="Start writing your note here...&#10;&#10;Supports Markdown formatting! Use ![alt](filename.jpg) to embed images from attachments."></textarea>
+                        <div id="noteContentPreview" class="notes-content-preview" style="display: none;"></div>
+                    </div>
+                    <div class="notes-editor-footer">
+                        <button class="btn-primary" id="saveNoteBtn">💾 Save</button>
+                        <button class="btn-secondary" id="cancelNoteBtn">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,532 @@
+/* File Manager Styles */
+.file-manager-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.9);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.file-manager-container {
+    width: 95%;
+    height: 90%;
+    max-width: 1400px;
+    background: var(--bg-primary);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.file-manager-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    border-bottom: 2px solid var(--border-color);
+}
+
+.file-manager-header h2 {
+    margin: 0;
+    font-size: 24px;
+}
+
+.file-manager-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.file-manager-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+}
+
+.file-manager-sidebar {
+    width: 280px;
+    border-right: 1px solid var(--border-color);
+    padding: 20px;
+    overflow-y: auto;
+    background: var(--bg-secondary);
+}
+
+.file-manager-breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 20px;
+    font-size: 14px;
+}
+
+.breadcrumb-item {
+    background: none;
+    border: none;
+    color: var(--accent-color);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.breadcrumb-item:hover {
+    background: var(--bg-tertiary);
+}
+
+.breadcrumb-separator {
+    color: var(--text-secondary);
+}
+
+.storage-info {
+    padding: 16px;
+    background: var(--bg-primary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.storage-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.storage-bar-container {
+    margin-bottom: 8px;
+}
+
+.storage-bar {
+    width: 100%;
+    height: 8px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.storage-bar-fill {
+    height: 100%;
+    background: var(--accent-color);
+    transition: width 0.3s;
+}
+
+.storage-text {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.file-manager-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.file-manager-toolbar {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+}
+
+.file-view-toggle {
+    display: flex;
+    gap: 4px;
+}
+
+.view-btn {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.view-btn:hover {
+    background: var(--bg-tertiary);
+}
+
+.view-btn.active {
+    background: var(--accent-color);
+    color: var(--accent-text, white);
+    border-color: var(--accent-color);
+}
+
+.file-manager-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 20px;
+    padding: 24px;
+    overflow-y: auto;
+}
+
+.file-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+}
+
+.file-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    border-color: var(--accent-color);
+}
+
+.file-icon {
+    font-size: 48px;
+    margin-bottom: 8px;
+    position: relative;
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.file-thumbnail {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: 4px;
+}
+
+.file-name {
+    font-size: 13px;
+    color: var(--text-primary);
+    word-break: break-word;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-size {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+.file-manager-list {
+    padding: 20px;
+    overflow-y: auto;
+}
+
+.file-list-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.file-list-table th {
+    text-align: left;
+    padding: 12px;
+    border-bottom: 2px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.file-list-table td {
+    padding: 12px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+.file-list-row {
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.file-list-row:hover {
+    background: var(--bg-secondary);
+}
+
+.file-manager-loading,
+.file-manager-empty,
+.file-manager-error {
+    padding: 40px;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.file-manager-error {
+    color: var(--error-color, #ff4444);
+}
+
+/* Image Viewer */
+.image-viewer-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.image-viewer-container {
+    position: relative;
+    width: 95%;
+    height: 95%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.image-viewer-close {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    font-size: 24px;
+    cursor: pointer;
+    z-index: 10;
+    transition: background 0.2s;
+}
+
+.image-viewer-close:hover {
+    background: rgba(0, 0, 0, 0.9);
+}
+
+.image-viewer-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: none;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    font-size: 32px;
+    cursor: pointer;
+    z-index: 10;
+    transition: background 0.2s;
+}
+
+.image-viewer-nav:hover {
+    background: rgba(0, 0, 0, 0.9);
+}
+
+.image-viewer-prev {
+    left: 20px;
+}
+
+.image-viewer-next {
+    right: 20px;
+}
+
+.image-viewer-content {
+    max-width: 90%;
+    max-height: 90%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.image-viewer-content img {
+    max-width: 100%;
+    max-height: 85vh;
+    object-fit: contain;
+    border-radius: 8px;
+}
+
+.image-viewer-info {
+    margin-top: 16px;
+    color: white;
+    font-size: 14px;
+    text-align: center;
+}
+
+/* Address Copy Box */
+.address-copy-box {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.address-input {
+    flex: 1;
+    padding: 10px 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: monospace;
+    font-size: 13px;
+}
+
+/* File Actions */
+.file-item {
+    position: relative;
+}
+
+.file-actions {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.file-item:hover .file-actions {
+    opacity: 1;
+}
+
+.file-action-btn {
+    background: rgba(0, 0, 0, 0.7);
+    border: none;
+    color: white;
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.file-action-btn:hover {
+    background: rgba(0, 0, 0, 0.9);
+}
+
+/* File Modals */
+.file-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    z-index: 10002;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.file-modal-content {
+    background: var(--bg-primary);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.file-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.file-modal-header h3 {
+    margin: 0;
+    font-size: 20px;
+}
+
+.file-modal-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 28px;
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.file-modal-close:hover {
+    background: var(--bg-secondary);
+}
+
+.file-modal-body {
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.file-modal-body .form-group {
+    margin-bottom: 20px;
+}
+
+.file-modal-body label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.file-modal-body input[type="text"],
+.file-modal-body input[type="email"],
+.file-modal-body input[type="number"],
+.file-modal-body textarea {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.file-modal-body input:focus,
+.file-modal-body textarea:focus {
+    outline: none;
+    border-color: var(--accent-color);
+}
+
+.file-modal-body textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+.file-modal-body small {
+    display: block;
+    margin-top: 4px;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.file-modal-footer {
+    padding: 20px 24px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}

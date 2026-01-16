@@ -294,9 +294,9 @@ def get_email_body(msg: email.message.Message) -> Tuple[str, Optional[str]]:
     return text_body, html_body
 
 
-# Attachment size limits
-MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024  # 25 MB per attachment
-MAX_TOTAL_ATTACHMENT_SIZE = 50 * 1024 * 1024  # 50 MB total
+# No attachment size limits
+MAX_ATTACHMENT_SIZE = None  # No limit
+MAX_TOTAL_ATTACHMENT_SIZE = None  # No limit
 
 
 def get_attachments(msg: email.message.Message) -> List[EmailAttachment]:
@@ -319,23 +319,7 @@ def get_attachments(msg: email.message.Message) -> List[EmailAttachment]:
                     data = part.get_payload(decode=True) or b""
                     size = len(data)
 
-                    # Check size limits
-                    if size > MAX_ATTACHMENT_SIZE:
-                        logger.warning(f"Attachment {filename} exceeds size limit ({size} > {MAX_ATTACHMENT_SIZE})")
-                        # Still add metadata but without data
-                        attachments.append(
-                            EmailAttachment(
-                                filename=f"{filename} (too large - {size // 1024 // 1024}MB)",
-                                content_type=part.get_content_type(),
-                                size=size,
-                                data=b"",  # Don't load oversized attachments
-                            )
-                        )
-                        continue
-
-                    if total_size + size > MAX_TOTAL_ATTACHMENT_SIZE:
-                        logger.warning(f"Total attachment size exceeded, skipping {filename}")
-                        continue
+                    # No size limits - load all attachments
 
                     total_size += size
                     attachments.append(
@@ -1088,13 +1072,7 @@ def send_email(
             if attachments:
                 total_size = 0
                 for filename, data, content_type in attachments:
-                    # Check size limits
-                    if len(data) > MAX_ATTACHMENT_SIZE:
-                        logger.warning(f"Attachment {filename} too large ({len(data)} bytes), skipping")
-                        continue
-                    if total_size + len(data) > MAX_TOTAL_ATTACHMENT_SIZE:
-                        logger.warning(f"Total attachment size exceeded, skipping {filename}")
-                        continue
+                    # No size limits - include all attachments
 
                     total_size += len(data)
                     safe_filename = sanitize_filename(filename)

@@ -63,7 +63,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'rss', 'cal', 'contacts', 'mail', 'music', 'todo'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'rss', 'cal', 'contacts', 'mail', 'music', 'todo', 'notes', 'files'];
         this.pluginActions = []; // Will be populated with plugin action hints
 
         // Load plugins and mail accounts for autocomplete
@@ -72,6 +72,8 @@ class ChatHandler {
         this.loadMailAccountsForAutocomplete().then(() => {
             this.loadContactEmailsForAutocomplete();
         });
+        // Load note titles for autocomplete
+        this.loadNoteTitlesForAutocomplete();
 
         // Enter to send (Shift+Enter for new line)
         this.messageInput.addEventListener('keydown', (e) => {
@@ -845,6 +847,12 @@ class ChatHandler {
                     if (targetTab === 'apikeys' && typeof apiKeysManager !== 'undefined') {
                         apiKeysManager.loadKeys();
                     }
+                    
+                    // Load storage/cloud addresses when switching to that tab
+                    if (targetTab === 'storage') {
+                        this.loadStorageAddresses();
+                        this.loadStorageUsage();
+                    }
                 });
             });
 
@@ -1042,6 +1050,83 @@ class ChatHandler {
                     });
                 }
             }
+        }
+    }
+    
+    async loadStorageAddresses() {
+        try {
+            const response = await fetch('/api/auth/storage-addresses');
+            if (response.ok) {
+                const data = await response.json();
+                
+                // Get base URL from current location
+                const protocol = window.location.protocol;
+                const hostname = window.location.hostname;
+                
+                // Update WebDAV address
+                const webdavInput = document.getElementById('webdavAddress');
+                const webdavUsername = document.getElementById('webdavUsername');
+                if (webdavInput && data.webdav_url) {
+                    // Replace localhost with actual hostname
+                    const webdavUrl = data.webdav_url.replace('localhost', hostname).replace('http://', `${protocol}//`);
+                    webdavInput.value = webdavUrl;
+                }
+                if (webdavUsername && data.username) {
+                    webdavUsername.textContent = data.username;
+                }
+                
+                // Update CalDAV address
+                const caldavInput = document.getElementById('caldavAddress');
+                const caldavUsername = document.getElementById('caldavUsername');
+                if (caldavInput && data.caldav_url) {
+                    const caldavUrl = data.caldav_url.replace('localhost', hostname).replace('http://', `${protocol}//`);
+                    caldavInput.value = caldavUrl;
+                }
+                if (caldavUsername && data.username) {
+                    caldavUsername.textContent = data.username;
+                }
+                
+                // Update CardDAV address
+                const carddavInput = document.getElementById('carddavAddress');
+                const carddavUsername = document.getElementById('carddavUsername');
+                if (carddavInput && data.carddav_url) {
+                    const carddavUrl = data.carddav_url.replace('localhost', hostname).replace('http://', `${protocol}//`);
+                    carddavInput.value = carddavUrl;
+                }
+                if (carddavUsername && data.username) {
+                    carddavUsername.textContent = data.username;
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load storage addresses:', e);
+        }
+    }
+    
+    async loadStorageUsage() {
+        try {
+            const response = await fetch('/api/files/list');
+            if (response.ok) {
+                const data = await response.json();
+                const storage = data.storage;
+                
+                const storageText = document.getElementById('storageText');
+                const storageBarFill = document.getElementById('storageBarFill');
+                
+                if (storageText) {
+                    const used_mb = storage.used_mb.toFixed(1);
+                    const quota_mb = storage.unlimited ? '∞' : storage.quota_mb.toFixed(1);
+                    storageText.textContent = `${used_mb} MB / ${quota_mb} MB`;
+                }
+                
+                if (storageBarFill && !storage.unlimited) {
+                    const percent = Math.min(100, (storage.used / storage.quota) * 100);
+                    storageBarFill.style.width = `${percent}%`;
+                } else if (storageBarFill) {
+                    storageBarFill.style.width = '0%';
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load storage usage:', e);
         }
     }
 
@@ -1473,6 +1558,33 @@ class ChatHandler {
         textarea.innerHTML = cmd;
         const decodedCmd = textarea.value;
 
+        // Intercept notes command to open notes browser
+        const notesCmdMatch = decodedCmd.trim().toLowerCase();
+        if (notesCmdMatch === 'notes' || notesCmdMatch.startsWith('notes ')) {
+            if (window.notesBrowser) {
+                window.notesBrowser.open();
+                // Handle subcommands
+                if (notesCmdMatch.startsWith('notes search ')) {
+                    const query = decodedCmd.substring('notes search '.length).trim();
+                    if (query && window.notesBrowser) {
+                        setTimeout(() => {
+                            document.getElementById('notesBrowserSearchInput').value = query;
+                            window.notesBrowser.searchQuery = query;
+                            window.notesBrowser.loadNotes();
+                        }, 100);
+                    }
+                } else if (notesCmdMatch.startsWith('notes folder ')) {
+                    const folderName = decodedCmd.substring('notes folder '.length).trim();
+                    // Folder filtering would need folder name lookup - for now just open browser
+                }
+                return;  // Don't send to server
+            } else if (window.openNotesModal) {
+                // Fallback to modal if browser not available
+                window.openNotesModal();
+                return;  // Don't send to server
+            }
+        }
+
         // Intercept cal get commands to open edit modal in WebUI
         const calGetMatch = decodedCmd.match(/^cal\s+get\s+(\S+)/i);
         if (calGetMatch && window.openCalendarModal) {
@@ -1844,6 +1956,36 @@ class ChatHandler {
                     <a href="${safeUrl}" target="_blank">${safeTitle}</a>
                     <p>${safeContent}</p>
                 </div>`;
+            }
+            html += '</div>';
+        } else if (data.type === 'files' && data.files) {
+            html += '<div class="file-search-results">';
+            if (data.files.length === 0) {
+                html += '<p class="no-results">No files found.</p>';
+            } else {
+                for (const file of data.files) {
+                    const safeName = this.escapeHtml(file.name);
+                    const safePath = this.escapeHtml(file.path);
+                    const fileSize = this.formatFileSize(file.size || 0);
+                    const modifiedDate = file.modified ? new Date(file.modified * 1000).toLocaleString() : '';
+                    const fileId = 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                    
+                    html += `<div class="file-result-item" data-file-path="${this.escapeHtml(file.path)}" data-file-name="${safeName}">
+                        <div class="file-result-header">
+                            ${file.thumbnail ? `<img src="${file.thumbnail}" alt="${safeName}" class="file-thumbnail">` : '<div class="file-icon">📄</div>'}
+                            <div class="file-info">
+                                <div class="file-name">${safeName}</div>
+                                <div class="file-meta">${safePath} • ${fileSize}${modifiedDate ? ' • ' + modifiedDate : ''}</div>
+                            </div>
+                        </div>
+                        <div class="file-actions">
+                            <button class="file-action-btn" onclick="window.chatHandler.downloadFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Download">⬇️ Download</button>
+                            <button class="file-action-btn" onclick="window.chatHandler.shareFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Share">🔗 Share</button>
+                            <button class="file-action-btn" onclick="window.chatHandler.emailFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Email">✉️ Email</button>
+                            <button class="file-action-btn file-action-delete" onclick="window.chatHandler.deleteFile('${this.escapeHtml(file.path)}', '${safeName}')" title="Delete">🗑️ Delete</button>
+                        </div>
+                    </div>`;
+                }
             }
             html += '</div>';
         } else if (data.type === 'music_play' && data.track && window.musicPlayer) {
@@ -2298,6 +2440,108 @@ class ChatHandler {
         link.download = `posterchanai_${Date.now()}.png`;
         link.href = img.src;
         link.click();
+    }
+
+    async downloadFile(filePath, fileName) {
+        try {
+            const response = await fetch(`/api/files/view/${encodeURIComponent(filePath)}`);
+            if (!response.ok) {
+                throw new Error('Failed to download file');
+            }
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+            this.showToast('File downloaded');
+        } catch (error) {
+            console.error('Error downloading file:', error);
+            this.showToast('Error downloading file', 'error');
+        }
+    }
+
+    async shareFile(filePath, fileName) {
+        try {
+            const response = await fetch('/api/files/share', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_path: filePath })
+            });
+            if (!response.ok) {
+                throw new Error('Failed to create share');
+            }
+            const data = await response.json();
+            const shareUrl = window.location.origin + data.share_url;
+            
+            // Copy to clipboard
+            await navigator.clipboard.writeText(shareUrl);
+            this.showToast(`Share URL copied to clipboard: ${shareUrl}`);
+        } catch (error) {
+            console.error('Error sharing file:', error);
+            this.showToast('Error sharing file', 'error');
+        }
+    }
+
+    async emailFile(filePath, fileName) {
+        // Open email modal with file pre-selected
+        if (window.fileManager) {
+            window.fileManager.emailFile(filePath, fileName);
+        } else {
+            // Fallback: prompt for email address
+            const to = prompt('Enter email address:');
+            if (!to) return;
+            
+            try {
+                const response = await fetch('/api/files/email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        file_paths: [filePath],
+                        to: to,
+                        subject: `Shared file: ${fileName}`,
+                        body: `Please find the attached file: ${fileName}`
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error('Failed to send email');
+                }
+                this.showToast('Email sent successfully');
+            } catch (error) {
+                console.error('Error sending email:', error);
+                this.showToast('Error sending email', 'error');
+            }
+        }
+    }
+
+    async deleteFile(filePath, fileName) {
+        if (!confirm(`Are you sure you want to delete "${fileName}"? This action cannot be undone.`)) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/files/delete?file_path=${encodeURIComponent(filePath)}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) {
+                throw new Error('Failed to delete file');
+            }
+            this.showToast('File deleted successfully');
+            
+            // Remove the file result item from the UI
+            const fileItems = document.querySelectorAll(`.file-result-item[data-file-path="${this.escapeHtml(filePath)}"]`);
+            fileItems.forEach(item => {
+                item.style.opacity = '0.5';
+                item.style.textDecoration = 'line-through';
+                setTimeout(() => item.remove(), 500);
+            });
+        } catch (error) {
+            console.error('Error deleting file:', error);
+            this.showToast('Error deleting file', 'error');
+        }
     }
 
     async copyImage(imageId) {
@@ -2831,6 +3075,33 @@ class ChatHandler {
         }
     }
 
+    async loadNoteTitlesForAutocomplete() {
+        try {
+            const response = await fetch('/api/notes?limit=100'); // Get recent notes for autocomplete
+            if (response.ok) {
+                const notes = await response.json();
+                if (notes && notes.length > 0) {
+                    // Extract note titles and create search hints
+                    const noteTitles = notes.map(n => n.title).filter(t => t && t.length > 0);
+                    console.log('Note titles loaded for autocomplete:', noteTitles.length);
+
+                    // Store for use in autocomplete
+                    this.noteTitles = noteTitles;
+
+                    // Add note titles to notes search subcommand for autocomplete
+                    // Use a copy to avoid modifying the original array
+                    this.subcommands['notes search'] = [...noteTitles];
+                    this.subcommands['note find'] = [...noteTitles];
+                    this.subcommands['find note'] = [...noteTitles];
+                    
+                    console.log('Note titles added to autocomplete:', noteTitles.length, 'titles');
+                }
+            }
+        } catch (e) {
+            console.debug('Could not load note titles:', e);
+        }
+    }
+
     // Subcommands that can be autocompleted
     subcommands = {
         'torrents': ['download', 'list', 'add', 'start', 'stop', 'delete', 'movies', 'tv', 'music', 'anime'],
@@ -2862,6 +3133,8 @@ class ChatHandler {
         'music queue': ['add', 'clear'],
         // Todo subcommands
         'todo': ['add', 'rm', 'list'],
+        // Notes subcommands
+        'notes': ['search', 'folder', 'new', 'list'],
         // RSS subcommands
         'rss': ['sync', 'add', 'remove', 'list', 'search'],
         // YouTube download subcommands
@@ -2900,6 +3173,25 @@ class ChatHandler {
                 this.showToast('Type your message (optional), press Enter to forward');
                 return;
             }
+            
+            // Special case: notes search / note find / find note - show note title suggestions
+            if (/^(notes\s+search|note\s+find|find\s+note)$/i.test(cmdPrefix) && this.noteTitles && this.noteTitles.length > 0) {
+                // Filter note titles that match the current input
+                const searchTerm = lastPart.toLowerCase();
+                const matches = this.noteTitles.filter(title => 
+                    title.toLowerCase().includes(searchTerm)
+                ).slice(0, 5); // Limit to 5 suggestions
+                
+                if (matches.length === 1 && matches[0].toLowerCase().startsWith(searchTerm)) {
+                    // Auto-complete if single match
+                    const completed = cmdPrefix + ' ' + matches[0];
+                    this.messageInput.value = completed + input.substring(cursorPos);
+                    this.messageInput.setSelectionRange(completed.length, completed.length);
+                } else if (matches.length > 0) {
+                    this.showToast(`Note suggestions: ${matches.join(', ')}`);
+                }
+                return;
+            }
             // Special case: mail forward/send <account> <id> -> suggest recipient emails
             let effectiveCmdPrefix = cmdPrefix;
             if (/^mail\s+(forward|send)\s+\S+\s+\d+$/i.test(cmdPrefix)) {
@@ -2909,8 +3201,8 @@ class ChatHandler {
             console.log('Autocomplete lookup:', { cmdPrefix, effectiveCmdPrefix, lastPart, hasSubs: !!this.subcommands[effectiveCmdPrefix], subs: this.subcommands[effectiveCmdPrefix] });
             if (this.subcommands[effectiveCmdPrefix] && this.subcommands[effectiveCmdPrefix].length > 0) {
                 const subs = this.subcommands[effectiveCmdPrefix];
-                // Case-insensitive matching for folder hints etc.
-                const matches = subs.filter(s => s.toLowerCase().startsWith(lastPart.toLowerCase()));
+                // Case-insensitive matching for folder hints, note titles, etc.
+                const matches = subs.filter(s => s.toLowerCase().startsWith(lastPart.toLowerCase()) || s.toLowerCase().includes(lastPart.toLowerCase()));
 
                 console.log('Autocomplete matches:', matches.length, matches);
                 // Check for empty lastPart first to show all options

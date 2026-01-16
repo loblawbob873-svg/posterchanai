@@ -304,7 +304,10 @@ async def ping_native(db: Session) -> bool:
         if not info["loaded"]:
             logger.warning("Native model not loaded, attempting to load...")
             try:
-                service._ensure_model_loaded()
+                # Run model loading in thread pool to avoid blocking the event loop
+                import asyncio
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, service._ensure_model_loaded)
                 logger.info("Native model loaded successfully")
                 return True
             except Exception as e:
@@ -331,7 +334,10 @@ async def ping_ipex(db: Session) -> bool:
         if not info["loaded"]:
             logger.warning("IPEX model not loaded, attempting to load...")
             try:
-                service._ensure_model_loaded()
+                # Run model loading in thread pool to avoid blocking the event loop
+                import asyncio
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, service._ensure_model_loaded)
                 logger.info("IPEX model loaded successfully")
                 return True
             except Exception as e:
@@ -497,15 +503,29 @@ def start_health_check():
     finally:
         db.close()
 
-    # Start the task
+    # Start the task in background (don't block startup)
     try:
         loop = asyncio.get_running_loop()
+        _health_check_task = loop.create_task(health_check_loop())
+        logger.info("Health check started")
     except RuntimeError:
-        # No running loop, create one
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    _health_check_task = loop.create_task(health_check_loop())
-    logger.info("Health check started")
+        # No running loop - this shouldn't happen during startup, but handle it gracefully
+        logger.warning("No running event loop for health check, will start after server starts")
+        # Schedule to start after a delay using threading
+        import threading
+        def delayed_start():
+            import time
+            time.sleep(5)  # Wait for server to start
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                _health_check_task = loop.create_task(health_check_loop())
+                loop.run_forever()
+            except Exception as e:
+                logger.error(f"Failed to start health check in background: {e}")
+        thread = threading.Thread(target=delayed_start, daemon=True)
+        thread.start()
+        logger.info("Health check scheduled to start in background")
 
 
 def stop_health_check():
