@@ -467,15 +467,16 @@ class StorageService:
         note_path.mkdir(parents=True, exist_ok=True)
         return note_path
 
-    def save_note_attachment(self, username: str, note_id: int, file_data: bytes, original_name: str) -> str:
+    def save_note_attachment(self, username: str, note_id: int, file_data: bytes, original_name: str, bypass_proxy: bool = False) -> str:
         """Save an attachment file for a note and return the filename. Proxies to storage server if configured."""
-        # Check if storage server is configured - proxy request if so
-        storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-        if storage_server_url and storage_server_url.value:
-            # Proxy to storage server
-            return self._proxy_save_note_attachment(storage_server_url.value, username, note_id, file_data, original_name)
+        # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
+        if not bypass_proxy:
+            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+            if storage_server_url and storage_server_url.value:
+                # Proxy to storage server
+                return self._proxy_save_note_attachment(storage_server_url.value, username, note_id, file_data, original_name)
         
-        # Local file saving (storage server node)
+        # Local file saving (storage server node or when bypassing proxy)
         note_path = self.get_note_path(username, note_id)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         ext = Path(original_name).suffix or ""
@@ -519,15 +520,30 @@ class StorageService:
                         logger.error(f"[STORAGE] Failed to proxy save_note_attachment: {response.status_code} - {response.text}")
                         raise Exception(f"Storage server error: {response.status_code}")
             
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If we're in an async context, we need to use a thread
+            # Try to get running event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # If we're in an async context with a running loop, run in a new thread with its own event loop
                 import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_async_proxy())
+                    finally:
+                        new_loop.close()
+                
                 with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, _async_proxy())
+                    future = executor.submit(_run_in_new_loop)
                     return future.result()
-            else:
-                return loop.run_until_complete(_async_proxy())
+            except RuntimeError:
+                # No running loop, we can use asyncio.run or create a new loop
+                try:
+                    loop = asyncio.get_event_loop()
+                    return loop.run_until_complete(_async_proxy())
+                except RuntimeError:
+                    # No event loop at all, create one
+                    return asyncio.run(_async_proxy())
         except Exception as e:
             logger.error(f"[STORAGE] Error proxying note attachment: {e}", exc_info=True)
             raise
