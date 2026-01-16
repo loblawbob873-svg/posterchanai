@@ -24,9 +24,12 @@
                         <button class="tab-btn active" id="fileManagerFilesTab" data-tab="files">📁 Files</button>
                         <button class="tab-btn" id="fileManagerSharesTab" data-tab="shares">🔗 Shared Files</button>
                     </div>
-                    <div class="file-view-toggle" id="fileViewToggle" style="display: none;">
-                        <button class="view-btn active" data-view="grid" title="Grid View">⊞</button>
-                        <button class="view-btn" data-view="list" title="List View">☰</button>
+                    <div class="file-toolbar-actions">
+                        <button class="btn-icon" id="fileManagerRefreshBtn" title="Refresh" onclick="if(window.fileManager){window.fileManager.refresh();}else{console.error('FileManager not initialized');}">🔄</button>
+                        <div class="file-view-toggle" id="fileViewToggle" style="display: none;">
+                            <button class="view-btn active" data-view="grid" title="Grid View">⊞</button>
+                            <button class="view-btn" data-view="list" title="List View">☰</button>
+                        </div>
                     </div>
                     <div class="file-selection-controls" id="fileSelectionControls" style="display: none;">
                         <button class="btn-secondary" id="fileManagerSelectAllBtn">Select All</button>

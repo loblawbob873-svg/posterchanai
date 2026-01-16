@@ -62,6 +62,14 @@ class FileManager {
         document.getElementById('fileManagerFilesTab')?.addEventListener('click', () => this.switchTab('files'));
         document.getElementById('fileManagerSharesTab')?.addEventListener('click', () => this.switchTab('shares'));
         
+        // Refresh button
+        attachButtonListener('fileManagerRefreshBtn', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('FileManager: Refresh button clicked');
+            this.refresh();
+        });
+        
         // View toggle
         document.querySelectorAll('.view-btn').forEach(btn => {
             btn.addEventListener('click', () => {
