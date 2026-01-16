@@ -566,7 +566,7 @@ class NotesManager {
                 is_pinned: isPinned
             };
             
-            const response = await fetch(url, {
+            const response = await csrfFetch(url, {
                 method: method,
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
@@ -615,7 +615,7 @@ class NotesManager {
         }
         
         try {
-            const response = await fetch(`/api/notes/${this.currentNoteId}`, {
+            const response = await csrfFetch(`/api/notes/${this.currentNoteId}`, {
                 method: 'DELETE'
             });
             
@@ -637,7 +637,7 @@ class NotesManager {
         const isPinned = document.getElementById('pinNoteBtn').dataset.pinned === 'true';
         
         try {
-            const response = await fetch(`/api/notes/${this.currentNoteId}`, {
+            const response = await csrfFetch(`/api/notes/${this.currentNoteId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ is_pinned: !isPinned })
@@ -658,7 +658,7 @@ class NotesManager {
         if (!name) return;
         
         try {
-            const response = await fetch('/api/notes/folders', {
+            const response = await csrfFetch('/api/notes/folders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: name.trim() })

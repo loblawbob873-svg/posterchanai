@@ -35,6 +35,7 @@
             </div>
         </div>
         <button class="quick-btn" id="notesBrowseBtn" title="Browse Notes">📝 Notes</button>
+        <button class="quick-btn" id="fileManagerBtn" title="File Manager" onclick="if(window.fileManager){window.fileManager.open();}else{console.error('FileManager not initialized');}">📁 Files</button>
         <div class="quick-btn-dropdown">
             <button class="quick-btn dropdown-toggle" id="searchDropdownBtn">Web ▾</button>
             <div class="dropdown-menu" id="searchDropdownMenu">

@@ -325,56 +325,62 @@ async def startup():
         # Auto-start WebDAV/CalDAV/CardDAV servers if enabled
         db_dav = SessionLocal()
         try:
+            def get_dav_setting(key, default=""):
+                s = db_dav.query(Setting).filter(Setting.key == key).first()
+                return s.value if s and s.value else default
+            
+            # Get all DAV settings once to avoid duplicate queries
+            webdav_enabled = get_dav_setting("webdav_enabled", "false")
+            caldav_enabled = get_dav_setting("caldav_enabled", "false")
+            cardav_enabled = get_dav_setting("cardav_enabled", "false")
+            
             try:
                 from app.services.webdav_server import start_webdav_server
             except ImportError as e:
-                logging.warning(f"WebDAV server not available (missing wsgidav?): {e}")
+                # Only warn if WebDAV is actually enabled
+                if webdav_enabled.lower() == "true":
+                    logging.warning(f"WebDAV server is enabled but not available (missing wsgidav?): {e}")
+                    logging.warning("Install wsgidav to enable WebDAV: pip install wsgidav>=4.3.0")
                 start_webdav_server = None
             try:
                 from app.services.caldav_server import start_caldav_server
                 from app.services.cardav_server import start_cardav_server
             except ImportError as e:
-                logging.warning(f"CalDAV/CardDAV servers not available: {e}")
+                # Only warn if CalDAV/CardDAV are enabled
+                if caldav_enabled.lower() == "true" or cardav_enabled.lower() == "true":
+                    logging.warning(f"CalDAV/CardDAV servers are enabled but not available: {e}")
                 start_caldav_server = None
                 start_cardav_server = None
             
-            def get_dav_setting(key, default=""):
-                s = db_dav.query(Setting).filter(Setting.key == key).first()
-                return s.value if s and s.value else default
-            
             # Start WebDAV server
-            if start_webdav_server:
-                webdav_enabled = get_dav_setting("webdav_enabled", "false")
-                if webdav_enabled.lower() == "true":
-                    webdav_port = int(get_dav_setting("webdav_port", "8080"))
-                    if start_webdav_server(db_dav, webdav_port):
-                        logging.info(f"Built-in WebDAV server started on port {webdav_port}")
-                    else:
-                        logging.error("Failed to start WebDAV server")
+            if start_webdav_server and webdav_enabled.lower() == "true":
+                webdav_port = int(get_dav_setting("webdav_port", "8080"))
+                if start_webdav_server(db_dav, webdav_port):
+                    logging.info(f"Built-in WebDAV server started on port {webdav_port}")
+                else:
+                    logging.error("Failed to start WebDAV server")
             
             # Start CalDAV server
-            if start_caldav_server:
-                caldav_enabled = get_dav_setting("caldav_enabled", "false")
-                if caldav_enabled.lower() == "true":
-                    caldav_port = int(get_dav_setting("caldav_port", "8081"))
-                    if start_caldav_server(db_dav, caldav_port):
-                        logging.info(f"Built-in CalDAV server started on port {caldav_port}")
-                    else:
-                        logging.error("Failed to start CalDAV server")
+            if start_caldav_server and caldav_enabled.lower() == "true":
+                caldav_port = int(get_dav_setting("caldav_port", "8081"))
+                if start_caldav_server(db_dav, caldav_port):
+                    logging.info(f"Built-in CalDAV server started on port {caldav_port}")
+                else:
+                    logging.error("Failed to start CalDAV server")
             
             # Start CardDAV server
-            if start_cardav_server:
-                cardav_enabled = get_dav_setting("cardav_enabled", "false")
-                if cardav_enabled.lower() == "true":
-                    cardav_port = int(get_dav_setting("cardav_port", "8082"))
-                    if start_cardav_server(db_dav, cardav_port):
-                        logging.info(f"Built-in CardDAV server started on port {cardav_port}")
-                    else:
-                        logging.error("Failed to start CardDAV server")
+            if start_cardav_server and cardav_enabled.lower() == "true":
+                cardav_port = int(get_dav_setting("cardav_port", "8082"))
+                if start_cardav_server(db_dav, cardav_port):
+                    logging.info(f"Built-in CardDAV server started on port {cardav_port}")
+                else:
+                    logging.error("Failed to start CardDAV server")
         except Exception as e:
             logging.error(f"Failed to start DAV servers: {e}", exc_info=True)
         finally:
             db_dav.close()
+        
+        logging.info("Application startup complete")
     except Exception as e:
         logging.error(f"CRITICAL: Startup failed with exception: {e}", exc_info=True)
         raise  # Re-raise to let FastAPI handle it properly

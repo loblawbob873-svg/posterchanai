@@ -229,10 +229,13 @@ class SettingsResponse(BaseModel):
     # WebDAV/CalDAV/CardDAV server settings
     webdav_enabled: str = "false"  # Enable built-in WebDAV server
     webdav_port: str = "8080"  # WebDAV server port
+    webdav_base_url: str = ""  # WebDAV base URL (e.g., https://ai.poster.place) - leave empty to auto-detect
     caldav_enabled: str = "false"  # Enable built-in CalDAV server
     caldav_port: str = "8081"  # CalDAV server port
+    caldav_base_url: str = ""  # CalDAV base URL (e.g., https://ai.poster.place) - leave empty to auto-detect
     cardav_enabled: str = "false"  # Enable built-in CardDAV server
     cardav_port: str = "8082"  # CardDAV server port
+    cardav_base_url: str = ""  # CardDAV base URL (e.g., https://ai.poster.place) - leave empty to auto-detect
     file_cache_enabled: str = "true"  # Enable file listing cache
     file_cache_ttl: str = "300"  # File cache TTL in seconds (default: 5 minutes)
     file_cache_max_size: str = "1000"  # Maximum number of cached directory listings

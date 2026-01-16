@@ -2466,7 +2466,7 @@ class ChatHandler {
 
     async shareFile(filePath, fileName) {
         try {
-            const response = await fetch('/api/files/share', {
+            const response = await csrfFetch('/api/files/share', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ file_path: filePath })
@@ -2496,7 +2496,7 @@ class ChatHandler {
             if (!to) return;
             
             try {
-                const response = await fetch('/api/files/email', {
+                const response = await csrfFetch('/api/files/email', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -2523,7 +2523,7 @@ class ChatHandler {
         }
         
         try {
-            const response = await fetch(`/api/files/delete?file_path=${encodeURIComponent(filePath)}`, {
+            const response = await csrfFetch(`/api/files/delete?file_path=${encodeURIComponent(filePath)}`, {
                 method: 'DELETE'
             });
             if (!response.ok) {

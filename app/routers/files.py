@@ -3,7 +3,7 @@ File Manager Router - Web-based file manager with image thumbnails and viewer.
 Includes configurable memory cache for file listings, email, and public sharing.
 All blocking I/O operations are run in thread pools to prevent blocking.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 from pathlib import Path
@@ -733,6 +733,79 @@ async def revoke_share(
     return {"message": "Share revoked"}
 
 
+class DeleteFilesRequest(BaseModel):
+    file_paths: List[str]  # List of file/folder paths to delete
+
+
+@router.post("/delete-bulk")
+async def delete_files_bulk(
+    request: DeleteFilesRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete multiple files or directories."""
+    storage = get_storage_service(db)
+    user_path = storage.get_user_path(current_user.username)
+    
+    # Run deletions in thread pool
+    def _delete_files_sync():
+        deleted = []
+        errors = []
+        
+        for file_path in request.file_paths:
+            try:
+                # Sanitize and validate path
+                safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
+                full_path = user_path / safe_path
+                
+                # Validate path is within user directory
+                if not _validate_path_within_base(full_path, user_path):
+                    errors.append(f"{file_path}: Access denied")
+                    continue
+                
+                if not full_path.exists():
+                    errors.append(f"{file_path}: Not found")
+                    continue
+                
+                # Delete the file or directory
+                if full_path.is_file():
+                    full_path.unlink()
+                elif full_path.is_dir():
+                    import shutil
+                    shutil.rmtree(full_path)
+                else:
+                    errors.append(f"{file_path}: Neither file nor directory")
+                    continue
+                
+                deleted.append(file_path)
+            except Exception as e:
+                errors.append(f"{file_path}: {str(e)}")
+        
+        return deleted, errors
+    
+    try:
+        deleted, errors = await asyncio.to_thread(_delete_files_sync)
+        
+        # Invalidate file cache
+        try:
+            cache = get_file_cache(db)
+            cache.invalidate(f"{current_user.username}:")
+            # Invalidate parent directories
+            for file_path in request.file_paths:
+                parent_path = '/'.join(file_path.split('/')[:-1]) if '/' in file_path else ""
+                cache.invalidate(f"{current_user.username}:{parent_path}")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+        
+        return {
+            "message": f"Deleted {len(deleted)} item(s)",
+            "deleted": deleted,
+            "errors": errors
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/delete")
 async def delete_file(
     file_path: str = Query(..., description="File path relative to user root"),
@@ -785,5 +858,232 @@ async def delete_file(
             logger.warning(f"Failed to invalidate cache: {e}")
         
         return {"message": "File deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class MoveFilesRequest(BaseModel):
+    file_paths: List[str]  # List of file/folder paths to move
+    destination: str  # Destination directory path (relative to user root)
+
+
+@router.post("/move")
+async def move_files(
+    request: MoveFilesRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Move files or folders to a different location."""
+    storage = get_storage_service(db)
+    user_path = storage.get_user_path(current_user.username)
+    
+    # Sanitize and validate destination path
+    try:
+        if request.destination and request.destination.strip():
+            safe_dest = Path(*[_sanitize_path_component(p) for p in request.destination.split('/') if p])
+            dest_path = user_path / safe_dest
+        else:
+            # Empty destination means root directory
+            dest_path = user_path
+        
+        # Validate destination is within user directory
+        if not _validate_path_within_base(dest_path, user_path):
+            raise HTTPException(status_code=403, detail="Invalid destination path")
+        
+        # Destination must exist and be a directory
+        if not dest_path.exists():
+            raise HTTPException(status_code=404, detail="Destination directory does not exist")
+        
+        if not dest_path.is_dir():
+            raise HTTPException(status_code=400, detail="Destination must be a directory")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid destination path: {e}")
+    
+    # Run move operations in thread pool
+    def _move_files_sync():
+        moved = []
+        errors = []
+        
+        for file_path in request.file_paths:
+            try:
+                # Sanitize source path
+                safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
+                source_path = user_path / safe_path
+                
+                # Validate source is within user directory
+                if not _validate_path_within_base(source_path, user_path):
+                    errors.append(f"{file_path}: Access denied")
+                    continue
+                
+                if not source_path.exists():
+                    errors.append(f"{file_path}: Not found")
+                    continue
+                
+                # Check if destination already has a file/folder with the same name
+                target_path = dest_path / source_path.name
+                if target_path.exists():
+                    errors.append(f"{file_path}: Destination already contains '{source_path.name}'")
+                    continue
+                
+                # Move the file/folder
+                import shutil
+                shutil.move(str(source_path), str(target_path))
+                moved.append(file_path)
+            except Exception as e:
+                errors.append(f"{file_path}: {str(e)}")
+        
+        return moved, errors
+    
+    try:
+        moved, errors = await asyncio.to_thread(_move_files_sync)
+        
+        # Invalidate file cache
+        try:
+            cache = get_file_cache(db)
+            cache.invalidate(f"{current_user.username}:")
+            # Invalidate both source and destination directories
+            for file_path in request.file_paths:
+                parent_path = '/'.join(file_path.split('/')[:-1]) if '/' in file_path else ""
+                cache.invalidate(f"{current_user.username}:{parent_path}")
+            cache.invalidate(f"{current_user.username}:{request.destination}")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+        
+        return {
+            "message": f"Moved {len(moved)} item(s)",
+            "moved": moved,
+            "errors": errors
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    path: str = Form("", description="Target directory path (relative to user root)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Upload a file to the user's storage."""
+    storage = get_storage_service(db)
+    user_path = storage.get_user_path(current_user.username)
+    
+    # Sanitize and validate target path
+    target_path = user_path
+    if path:
+        try:
+            safe_path = Path(*[_sanitize_path_component(p) for p in path.split('/') if p])
+            target_path = user_path / safe_path
+            
+            # Validate path is within user directory
+            if not _validate_path_within_base(target_path, user_path):
+                raise HTTPException(status_code=403, detail="Access denied")
+            
+            # Create directory if it doesn't exist
+            target_path.mkdir(parents=True, exist_ok=True)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    
+    # Sanitize filename
+    try:
+        safe_filename = _sanitize_path_component(file.filename or "uploaded_file")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid filename: {e}")
+    
+    full_file_path = target_path / safe_filename
+    
+    # Check if file already exists
+    if full_file_path.exists():
+        # Add number suffix
+        base_name = full_file_path.stem
+        extension = full_file_path.suffix
+        counter = 1
+        while full_file_path.exists():
+            full_file_path = target_path / f"{base_name}_{counter}{extension}"
+            counter += 1
+    
+    # Read file content
+    content = await file.read()
+    
+    # Run file write in thread pool
+    def _write_file_sync():
+        try:
+            with open(full_file_path, 'wb') as f:
+                f.write(content)
+            return str(full_file_path.relative_to(user_path))
+        except Exception as e:
+            raise Exception(f"Error writing file: {e}")
+    
+    try:
+        relative_path = await asyncio.to_thread(_write_file_sync)
+        
+        # Invalidate file cache
+        try:
+            cache = get_file_cache(db)
+            cache.invalidate(f"{current_user.username}:")
+            if path:
+                cache.invalidate(f"{current_user.username}:{path}")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+        
+        return {
+            "message": "File uploaded successfully",
+            "path": relative_path,
+            "filename": safe_filename
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/mkdir")
+async def create_directory(
+    path: str = Form(..., description="Directory path relative to user root"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new directory."""
+    storage = get_storage_service(db)
+    user_path = storage.get_user_path(current_user.username)
+    
+    # Sanitize and validate path
+    try:
+        safe_path = Path(*[_sanitize_path_component(p) for p in path.split('/') if p])
+        full_path = user_path / safe_path
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    
+    # Validate path is within user directory
+    if not _validate_path_within_base(full_path, user_path):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if full_path.exists():
+        raise HTTPException(status_code=400, detail="Directory already exists")
+    
+    # Run directory creation in thread pool
+    def _create_dir_sync():
+        try:
+            full_path.mkdir(parents=True, exist_ok=True)
+            return str(full_path.relative_to(user_path))
+        except Exception as e:
+            raise Exception(f"Error creating directory: {e}")
+    
+    try:
+        relative_path = await asyncio.to_thread(_create_dir_sync)
+        
+        # Invalidate file cache
+        try:
+            cache = get_file_cache(db)
+            cache.invalidate(f"{current_user.username}:")
+            if path:
+                parent_path = '/'.join(path.split('/')[:-1]) if '/' in path else ""
+                cache.invalidate(f"{current_user.username}:{parent_path}")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+        
+        return {
+            "message": "Directory created successfully",
+            "path": relative_path
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

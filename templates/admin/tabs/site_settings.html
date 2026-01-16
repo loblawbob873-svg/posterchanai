@@ -115,6 +115,11 @@
             <small>Port for WebDAV server (default: 8080). Restart required to change port.</small>
         </div>
         <div class="form-group">
+            <label for="webdav_base_url">WebDAV Base URL (optional)</label>
+            <input type="url" id="webdav_base_url" name="webdav_base_url" placeholder="https://ai.poster.place">
+            <small>Base URL for WebDAV (e.g., https://ai.poster.place). Leave empty to auto-detect from request (ports are omitted, assumes reverse proxy).</small>
+        </div>
+        <div class="form-group">
             <label for="caldav_enabled">
                 <input type="checkbox" id="caldav_enabled" name="caldav_enabled"> Enable CalDAV Server
             </label>
@@ -126,6 +131,11 @@
             <small>Port for CalDAV server (default: 8081). Restart required to change port.</small>
         </div>
         <div class="form-group">
+            <label for="caldav_base_url">CalDAV Base URL (optional)</label>
+            <input type="url" id="caldav_base_url" name="caldav_base_url" placeholder="https://ai.poster.place">
+            <small>Base URL for CalDAV (e.g., https://ai.poster.place). Leave empty to auto-detect from request (ports are omitted, assumes reverse proxy).</small>
+        </div>
+        <div class="form-group">
             <label for="cardav_enabled">
                 <input type="checkbox" id="cardav_enabled" name="cardav_enabled"> Enable CardDAV Server
             </label>
@@ -135,6 +145,11 @@
             <label for="cardav_port">CardDAV Port</label>
             <input type="number" id="cardav_port" name="cardav_port" value="8082" min="1024" max="65535">
             <small>Port for CardDAV server (default: 8082). Restart required to change port.</small>
+        </div>
+        <div class="form-group">
+            <label for="cardav_base_url">CardDAV Base URL (optional)</label>
+            <input type="url" id="cardav_base_url" name="cardav_base_url" placeholder="https://ai.poster.place">
+            <small>Base URL for CardDAV (e.g., https://ai.poster.place). Leave empty to auto-detect from request (ports are omitted, assumes reverse proxy).</small>
         </div>
         <div class="form-group" style="margin-top: 12px; padding: 10px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;">
             <small style="color: #aaa; display: block;">

@@ -6,15 +6,51 @@ class FileManager {
         this.currentFiles = [];
         this.imageFiles = [];
         this.currentImageIndex = 0;
+        this.selectedFiles = new Set(); // Track selected file paths
         this.init();
     }
     
     init() {
-        // Open file manager button
-        document.getElementById('openFileManagerBtn')?.addEventListener('click', () => this.open());
+        // Use a helper to attach event listeners with retry
+        const attachButtonListener = (buttonId, handler, retries = 3) => {
+            const button = document.getElementById(buttonId);
+            if (button) {
+                button.addEventListener('click', handler);
+                return true;
+            } else if (retries > 0) {
+                // Retry after a short delay if button doesn't exist yet
+                setTimeout(() => attachButtonListener(buttonId, handler, retries - 1), 100);
+            } else {
+                console.warn(`FileManager: Button ${buttonId} not found after retries`);
+            }
+            return false;
+        };
+        
+        // Open file manager button (from user settings)
+        attachButtonListener('openFileManagerBtn', () => this.open());
+        
+        // Open file manager button (from chat UI)
+        attachButtonListener('fileManagerBtn', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('FileManager: Button clicked, opening file manager...');
+            this.open();
+        });
         
         // Close button
-        document.getElementById('fileManagerCloseBtn')?.addEventListener('click', () => this.close());
+        attachButtonListener('fileManagerCloseBtn', () => this.close());
+        
+        // Upload button
+        attachButtonListener('fileManagerUploadBtn', () => this.showUploadDialog());
+        
+        // New folder button
+        attachButtonListener('fileManagerNewFolderBtn', () => this.createNewFolder());
+        
+        // Selection controls
+        attachButtonListener('fileManagerSelectAllBtn', () => this.selectAll());
+        attachButtonListener('fileManagerSelectNoneBtn', () => this.selectNone());
+        attachButtonListener('fileManagerDeleteBtn', () => this.deleteSelected());
+        attachButtonListener('fileManagerMoveBtn', () => this.showMoveDialog());
         
         // View toggle
         document.querySelectorAll('.view-btn').forEach(btn => {
@@ -33,10 +69,17 @@ class FileManager {
     }
     
     async open() {
+        console.log('FileManager: open() called');
         const overlay = document.getElementById('fileManagerOverlay');
         if (overlay) {
+            console.log('FileManager: Overlay found, displaying...');
             overlay.style.display = 'block';
+            overlay.style.zIndex = '10000';
             await this.loadFiles('');
+            console.log('FileManager: Overlay displayed and files loaded');
+        } else {
+            console.error('FileManager: fileManagerOverlay not found!');
+            console.error('FileManager: Available elements with "file" in id:', Array.from(document.querySelectorAll('[id*="file"]')).map(el => el.id));
         }
     }
     
@@ -49,6 +92,8 @@ class FileManager {
     
     async loadFiles(path) {
         this.currentPath = path;
+        // Clear selection when navigating
+        this.selectedFiles.clear();
         const grid = document.getElementById('fileManagerGrid');
         if (grid) {
             grid.innerHTML = '<div class="file-manager-loading">Loading files...</div>';
@@ -127,6 +172,7 @@ class FileManager {
         
         if (this.currentFiles.length === 0) {
             grid.innerHTML = '<div class="file-manager-empty">No files in this directory</div>';
+            this.updateSelectionUI();
             return;
         }
         
@@ -135,6 +181,7 @@ class FileManager {
             grid.innerHTML = this.currentFiles.map(item => {
                 const icon = item.is_directory ? '📂' : this.getFileIcon(item.name);
                 const thumbnail = item.thumbnail ? `<img src="${item.thumbnail}" alt="" class="file-thumbnail">` : '';
+                const isSelected = this.selectedFiles.has(item.path);
                 const actions = !item.is_directory ? `
                     <div class="file-actions" onclick="event.stopPropagation();">
                         <button class="file-action-btn" title="Email" onclick="fileManager.emailFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}')">📧</button>
@@ -142,9 +189,12 @@ class FileManager {
                     </div>
                 ` : '';
                 return `
-                    <div class="file-item ${item.is_directory ? 'directory' : 'file'}" 
+                    <div class="file-item ${item.is_directory ? 'directory' : 'file'} ${isSelected ? 'selected' : ''}" 
                          data-path="${this.escapeHtml(item.path)}" 
                          data-is-dir="${item.is_directory}">
+                        <input type="checkbox" class="file-checkbox" ${isSelected ? 'checked' : ''} 
+                               onchange="fileManager.toggleSelection('${this.escapeHtml(item.path)}', this.checked)"
+                               onclick="event.stopPropagation();">
                         <div class="file-icon">${thumbnail || icon}</div>
                         <div class="file-name" title="${this.escapeHtml(item.name)}">${this.escapeHtml(item.name)}</div>
                         ${!item.is_directory ? `<div class="file-size">${this.formatSize(item.size)}</div>` : ''}
@@ -158,6 +208,7 @@ class FileManager {
                 <table class="file-list-table">
                     <thead>
                         <tr>
+                            <th style="width: 30px;"><input type="checkbox" id="selectAllCheckbox" onchange="fileManager.toggleSelectAll(this.checked)"></th>
                             <th>Name</th>
                             <th>Size</th>
                             <th>Modified</th>
@@ -167,6 +218,7 @@ class FileManager {
                     <tbody>
                         ${this.currentFiles.map(item => {
                             const date = new Date(item.modified * 1000);
+                            const isSelected = this.selectedFiles.has(item.path);
                             const actions = !item.is_directory ? `
                                 <td>
                                     <button class="file-action-btn" title="Email" onclick="fileManager.emailFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}')">📧</button>
@@ -174,9 +226,12 @@ class FileManager {
                                 </td>
                             ` : '<td></td>';
                             return `
-                                <tr class="file-list-row ${item.is_directory ? 'directory' : 'file'}" 
+                                <tr class="file-list-row ${item.is_directory ? 'directory' : 'file'} ${isSelected ? 'selected' : ''}" 
                                     data-path="${this.escapeHtml(item.path)}" 
                                     data-is-dir="${item.is_directory}">
+                                    <td><input type="checkbox" class="file-checkbox" ${isSelected ? 'checked' : ''} 
+                                               onchange="fileManager.toggleSelection('${this.escapeHtml(item.path)}', this.checked)"
+                                               onclick="event.stopPropagation();"></td>
                                     <td>${item.is_directory ? '📂' : this.getFileIcon(item.name)} ${this.escapeHtml(item.name)}</td>
                                     <td>${item.is_directory ? '-' : this.formatSize(item.size)}</td>
                                     <td>${date.toLocaleString()}</td>
@@ -192,8 +247,8 @@ class FileManager {
         // Add click handlers
         grid.querySelectorAll('.file-item, .file-list-row').forEach(item => {
             item.addEventListener('click', (e) => {
-                // Don't trigger if clicking on action buttons
-                if (e.target.closest('.file-actions, .file-action-btn')) {
+                // Don't trigger if clicking on checkboxes or action buttons
+                if (e.target.closest('.file-checkbox, .file-actions, .file-action-btn')) {
                     return;
                 }
                 const path = item.dataset.path;
@@ -213,6 +268,8 @@ class FileManager {
                 }
             });
         });
+        
+        this.updateSelectionUI();
     }
     
     async emailFile(filePath, fileName) {
@@ -254,7 +311,7 @@ class FileManager {
         }
         
         try {
-            const response = await fetch('/api/files/email', {
+            const response = await csrfFetch('/api/files/email', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -284,7 +341,7 @@ class FileManager {
         const maxAccesses = document.getElementById('shareMaxAccesses').value;
         
         try {
-            const response = await fetch('/api/files/share', {
+            const response = await csrfFetch('/api/files/share', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -395,14 +452,337 @@ class FileManager {
         div.textContent = text;
         return div.innerHTML;
     }
+    
+    showUploadDialog() {
+        // Create a hidden file input
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.style.display = 'none';
+        
+        input.addEventListener('change', async (e) => {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+            
+            // Show loading indicator
+            const grid = document.getElementById('fileManagerGrid');
+            const originalContent = grid ? grid.innerHTML : '';
+            if (grid) {
+                grid.innerHTML = '<div class="file-manager-loading">Uploading files...</div>';
+            }
+            
+            try {
+                // Upload each file
+                for (const file of files) {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('path', this.currentPath);
+                    
+                    const response = await csrfFetch('/api/files/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.detail || 'Upload failed');
+                    }
+                }
+                
+                // Reload files after upload
+                await this.loadFiles(this.currentPath);
+            } catch (error) {
+                console.error('Error uploading file:', error);
+                alert(`Error uploading file: ${error.message || 'Unknown error'}`);
+                if (grid) {
+                    grid.innerHTML = originalContent;
+                }
+            } finally {
+                // Remove the input element
+                document.body.removeChild(input);
+            }
+        });
+        
+        // Trigger file picker
+        document.body.appendChild(input);
+        input.click();
+    }
+    
+    async createNewFolder() {
+        const folderName = prompt('Enter folder name:');
+        if (!folderName || !folderName.trim()) return;
+        
+        try {
+            const safeName = folderName.trim();
+            const targetPath = this.currentPath ? `${this.currentPath}/${safeName}` : safeName;
+            
+            const formData = new FormData();
+            formData.append('path', targetPath);
+            
+            const response = await csrfFetch('/api/files/mkdir', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (response.ok) {
+                // Reload files to show new folder
+                await this.loadFiles(this.currentPath);
+            } else {
+                const error = await response.json();
+                throw new Error(error.detail || 'Failed to create folder');
+            }
+        } catch (error) {
+            console.error('Error creating folder:', error);
+            alert(`Error creating folder: ${error.message || 'Unknown error'}`);
+        }
+    }
+    
+    // Selection management
+    toggleSelection(filePath, checked) {
+        if (checked) {
+            this.selectedFiles.add(filePath);
+        } else {
+            this.selectedFiles.delete(filePath);
+        }
+        this.updateSelectionUI();
+    }
+    
+    selectAll() {
+        this.currentFiles.forEach(item => {
+            this.selectedFiles.add(item.path);
+        });
+        this.renderFiles(); // Re-render to update checkboxes
+        this.updateSelectionUI();
+    }
+    
+    selectNone() {
+        this.selectedFiles.clear();
+        this.renderFiles(); // Re-render to update checkboxes
+        this.updateSelectionUI();
+    }
+    
+    toggleSelectAll(checked) {
+        if (checked) {
+            this.selectAll();
+        } else {
+            this.selectNone();
+        }
+    }
+    
+    updateSelectionUI() {
+        const controls = document.getElementById('fileSelectionControls');
+        const count = document.getElementById('fileSelectionCount');
+        const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+        
+        const selectedCount = this.selectedFiles.size;
+        
+        if (controls) {
+            controls.style.display = selectedCount > 0 ? 'flex' : 'none';
+        }
+        
+        if (count) {
+            count.textContent = `${selectedCount} selected`;
+        }
+        
+        if (selectAllCheckbox) {
+            selectAllCheckbox.checked = selectedCount > 0 && selectedCount === this.currentFiles.length;
+        }
+    }
+    
+    async deleteSelected() {
+        const selected = Array.from(this.selectedFiles);
+        if (selected.length === 0) {
+            alert('No files selected');
+            return;
+        }
+        
+        const count = selected.length;
+        const confirmMsg = `Are you sure you want to delete ${count} item(s)? This action cannot be undone.`;
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+        
+        try {
+            const response = await csrfFetch('/api/files/delete-bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_paths: selected })
+            });
+            
+            const data = await response.json();
+            if (response.ok) {
+                if (data.errors && data.errors.length > 0) {
+                    alert(`Deleted ${data.deleted.length} item(s). Errors: ${data.errors.join(', ')}`);
+                } else {
+                    alert(`Successfully deleted ${data.deleted.length} item(s)`);
+                }
+                this.selectedFiles.clear();
+                await this.loadFiles(this.currentPath);
+            } else {
+                alert('Error: ' + (data.detail || 'Failed to delete files'));
+            }
+        } catch (error) {
+            console.error('Error deleting files:', error);
+            alert('Error deleting files. Please try again.');
+        }
+    }
+    
+    showMoveDialog() {
+        const selected = Array.from(this.selectedFiles);
+        if (selected.length === 0) {
+            alert('No files selected');
+            return;
+        }
+        
+        const modal = document.getElementById('fileMoveModal');
+        const countSpan = document.getElementById('moveFileCount');
+        const destinationInput = document.getElementById('moveDestination');
+        
+        if (modal && countSpan && destinationInput) {
+            countSpan.textContent = selected.length;
+            destinationInput.value = '';
+            modal.style.display = 'block';
+            this.loadMoveDestinationFolders();
+        }
+    }
+    
+    async loadMoveDestinationFolders() {
+        // Load all directories for browsing
+        const foldersDiv = document.getElementById('moveDestinationFolders');
+        if (!foldersDiv) return;
+        
+        try {
+            const response = await fetch('/api/files/list?path=');
+            if (response.ok) {
+                const data = await response.json();
+                const dirs = data.items.filter(item => item.is_directory);
+                
+                foldersDiv.innerHTML = dirs.map(dir => {
+                    return `<button type="button" class="btn-secondary folder-btn" onclick="fileManager.selectMoveDestination('${this.escapeHtml(dir.path)}')">📂 ${this.escapeHtml(dir.name)}</button>`;
+                }).join('');
+            }
+        } catch (error) {
+            console.error('Error loading folders:', error);
+        }
+    }
+    
+    browseMoveDestination(path) {
+        const destinationInput = document.getElementById('moveDestination');
+        if (destinationInput) {
+            destinationInput.value = path || '';
+        }
+    }
+    
+    selectMoveDestination(path) {
+        const destinationInput = document.getElementById('moveDestination');
+        if (destinationInput) {
+            destinationInput.value = path;
+        }
+    }
+    
+    async executeMove() {
+        const selected = Array.from(this.selectedFiles);
+        if (selected.length === 0) {
+            alert('No files selected');
+            return;
+        }
+        
+        const destinationInput = document.getElementById('moveDestination');
+        if (!destinationInput) return;
+        
+        const destination = destinationInput.value.trim();
+        
+        try {
+            const response = await csrfFetch('/api/files/move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    file_paths: selected,
+                    destination: destination
+                })
+            });
+            
+            const data = await response.json();
+            if (response.ok) {
+                if (data.errors && data.errors.length > 0) {
+                    alert(`Moved ${data.moved.length} item(s). Errors: ${data.errors.join(', ')}`);
+                } else {
+                    alert(`Successfully moved ${data.moved.length} item(s)`);
+                }
+                this.selectedFiles.clear();
+                document.getElementById('fileMoveModal').style.display = 'none';
+                await this.loadFiles(this.currentPath);
+            } else {
+                alert('Error: ' + (data.detail || 'Failed to move files'));
+            }
+        } catch (error) {
+            console.error('Error moving files:', error);
+            alert('Error moving files. Please try again.');
+        }
+    }
 }
 
 // Initialize file manager
 let fileManager;
-document.addEventListener('DOMContentLoaded', () => {
+
+// Function to ensure button handler is attached (with retry logic)
+function ensureFileManagerButtonHandler() {
+    const fileManagerBtn = document.getElementById('fileManagerBtn');
+    if (fileManagerBtn) {
+        // Check if already attached
+        if (fileManagerBtn.dataset.listenerAttached === 'true') {
+            return; // Already attached
+        }
+        
+        // Remove any existing listeners by cloning the node
+        const newBtn = fileManagerBtn.cloneNode(true);
+        fileManagerBtn.parentNode.replaceChild(newBtn, fileManagerBtn);
+        newBtn.dataset.listenerAttached = 'true';
+        
+        newBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('FileManager: Button clicked (direct handler)');
+            if (window.fileManager) {
+                window.fileManager.open();
+            } else {
+                console.error('FileManager: window.fileManager is not available, initializing...');
+                fileManager = new FileManager();
+                window.fileManager = fileManager;
+                window.fileManager.open();
+            }
+        });
+        
+        console.log('FileManager: Direct button handler attached');
+        return true;
+    } else {
+        console.warn('FileManager: fileManagerBtn not found');
+        return false;
+    }
+}
+
+// Initialize immediately if DOM is ready, otherwise wait for DOMContentLoaded
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        fileManager = new FileManager();
+        window.fileManager = fileManager;
+        console.log('FileManager: Initialized (DOMContentLoaded)');
+        ensureFileManagerButtonHandler();
+    });
+} else {
+    // DOM is already ready
     fileManager = new FileManager();
     window.fileManager = fileManager;
-});
+    console.log('FileManager: Initialized (DOM ready)');
+    ensureFileManagerButtonHandler();
+}
+
+// Also try to attach handler after delays as fallbacks (in case DOM loads late)
+setTimeout(() => {
+    if (!ensureFileManagerButtonHandler()) {
+        setTimeout(ensureFileManagerButtonHandler, 1000);
+    }
+}, 500);
 
 // Global function for copying addresses
 function copyAddress(inputId) {

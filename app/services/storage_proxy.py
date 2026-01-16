@@ -6,6 +6,7 @@ import logging
 import httpx
 from fastapi import Request, HTTPException
 from fastapi.responses import Response, StreamingResponse
+from typing import Union
 from sqlalchemy.orm import Session
 from app.models import Setting
 
@@ -20,7 +21,7 @@ async def proxy_storage_request(
     json_body: dict = None,
     files: dict = None,
     stream: bool = False
-) -> Response:
+) -> Union[Response, StreamingResponse, dict]:
     """
     Forward storage request to remote storage server.
     
@@ -73,7 +74,9 @@ async def proxy_storage_request(
                     files_data = {}
                     for key, (filename, content, content_type) in files.items():
                         files_data[key] = (filename, content, content_type)
-                    response = await client.post(url, headers=headers, files=files_data, data=json_body or {}, follow_redirects=True)
+                    # json_body contains form data when files are present
+                    form_data = json_body or {}
+                    response = await client.post(url, headers=headers, files=files_data, data=form_data, follow_redirects=True)
                 else:
                     # Regular JSON POST
                     response = await client.post(url, headers=headers, json=json_body, follow_redirects=True)

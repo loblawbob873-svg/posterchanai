@@ -510,22 +510,21 @@ def start_health_check():
         logger.info("Health check started")
     except RuntimeError:
         # No running loop - this shouldn't happen during startup, but handle it gracefully
-        logger.warning("No running event loop for health check, will start after server starts")
-        # Schedule to start after a delay using threading
+        # Since start_health_check() is called from a background thread in main.py,
+        # this case should be very rare. We'll retry after a delay.
+        logger.warning("No running event loop for health check, will retry after delay")
         import threading
-        def delayed_start():
+        def delayed_retry():
             import time
             time.sleep(5)  # Wait for server to start
             try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                _health_check_task = loop.create_task(health_check_loop())
-                loop.run_forever()
+                # Retry - by now the server should be running with an event loop
+                start_health_check()
             except Exception as e:
-                logger.error(f"Failed to start health check in background: {e}")
-        thread = threading.Thread(target=delayed_start, daemon=True)
+                logger.error(f"Failed to start health check after retry: {e}")
+        thread = threading.Thread(target=delayed_retry, daemon=True)
         thread.start()
-        logger.info("Health check scheduled to start in background")
+        logger.info("Health check retry scheduled")
 
 
 def stop_health_check():
