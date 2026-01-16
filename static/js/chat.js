@@ -1515,13 +1515,27 @@ class ChatHandler {
         }
 
         // Ensure we have a conversation - create one if needed
-        if (!this.currentConversationId) {
+        if (!this.currentConversationId || !window.app?.currentConversation) {
             console.log('executeCommand: No conversation exists, creating one...');
             try {
                 if (window.app && window.app.createConversation) {
                     await window.app.createConversation();
-                    // Wait a bit for the conversation to be set
-                    await new Promise(resolve => setTimeout(resolve, 100));
+                    // Wait for WebSocket to actually connect (not just start connecting)
+                    await new Promise((resolve, reject) => {
+                        let attempts = 0;
+                        const maxAttempts = 50; // 5 seconds max wait
+                        const checkConnection = () => {
+                            attempts++;
+                            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                                resolve();
+                            } else if (attempts >= maxAttempts) {
+                                reject(new Error('WebSocket connection timeout'));
+                            } else {
+                                setTimeout(checkConnection, 100);
+                            }
+                        };
+                        checkConnection();
+                    });
                 } else {
                     console.error('executeCommand: Cannot create conversation - app.createConversation not available');
                     alert('Please create a conversation first');
@@ -1537,43 +1551,33 @@ class ChatHandler {
         // Check WebSocket connection
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             console.warn('executeCommand: WebSocket not connected, attempting reconnect...');
-            // Try to reconnect and queue the command
+            // Try to reconnect and wait for connection
             if (this.currentConversationId) {
                 this.connect(this.currentConversationId);
-                setTimeout(() => this.executeCommand(decodedCmd), 500);
+                // Wait for WebSocket to connect
+                await new Promise((resolve, reject) => {
+                    let attempts = 0;
+                    const maxAttempts = 50; // 5 seconds max wait
+                    const checkConnection = () => {
+                        attempts++;
+                        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                            resolve();
+                        } else if (attempts >= maxAttempts) {
+                            reject(new Error('WebSocket connection timeout'));
+                        } else {
+                            setTimeout(checkConnection, 100);
+                        }
+                    };
+                    checkConnection();
+                });
+                // Retry the command after connection is established
+                return this.executeCommand(decodedCmd);
             } else {
-                // No conversation - create one first
-                console.log('executeCommand: No conversation exists, creating one...');
-                try {
-                    if (window.app && window.app.createConversation) {
-                        await window.app.createConversation();
-                        // Wait for WebSocket to connect
-                        await new Promise(resolve => {
-                            const checkConnection = () => {
-                                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                                    resolve();
-                                } else if (this.currentConversationId) {
-                                    // Try connecting
-                                    this.connect(this.currentConversationId);
-                                    setTimeout(checkConnection, 200);
-                                } else {
-                                    setTimeout(checkConnection, 100);
-                                }
-                            };
-                            checkConnection();
-                        });
-                        // Retry the command after connection is established
-                        setTimeout(() => this.executeCommand(decodedCmd), 300);
-                    } else {
-                        console.error('executeCommand: Cannot create conversation - app.createConversation not available');
-                        alert('Please create a conversation first');
-                    }
-                } catch (err) {
-                    console.error('executeCommand: Failed to create conversation:', err);
-                    alert('Failed to create conversation. Please refresh the page.');
-                }
+                // This shouldn't happen if the above check worked, but handle it anyway
+                console.error('executeCommand: No conversation ID after creation');
+                alert('Failed to establish connection. Please try again.');
+                return;
             }
-            return;
         }
 
         // If command ends with space, put in input for user to complete (e.g., reply)

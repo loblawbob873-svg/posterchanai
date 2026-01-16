@@ -56,6 +56,24 @@ fi
 # Method 1: Use ydotool if available (Wayland-native, works globally)
 # ydotool doesn't need window detection - it sends keys globally
 if command -v ydotool &> /dev/null; then
+    # Check if ydotoold is running
+    if ! pgrep -x ydotoold > /dev/null 2>&1; then
+        echo "ydotoold daemon not running. Starting it..."
+        # Try to start ydotoold (may need sudo)
+        if command -v ydotoold &> /dev/null; then
+            # Start in background
+            ydotoold &>/dev/null &
+            sleep 0.5  # Wait for daemon to start
+        elif command -v sudo &> /dev/null; then
+            sudo ydotoold &>/dev/null &
+            sleep 0.5
+        else
+            echo "Warning: ydotoold not found. Install ydotool package."
+            echo "  sudo emerge -av app-misc/ydotool"
+        fi
+    fi
+    
+    # Try to use ydotool
     case "$ACTION" in
         play|pause|toggle)
             # Send Alt+P (play/pause)
@@ -64,7 +82,11 @@ if command -v ydotool &> /dev/null; then
                 exit 0
             else
                 # Try with sudo if permission denied
-                sudo ydotool key 29:1 25:1 29:0 25:0 2>/dev/null && exit 0 || true
+                if sudo ydotool key 29:1 25:1 29:0 25:0 2>/dev/null; then
+                    exit 0
+                else
+                    echo "ydotool failed. Is ydotoold running? Try: sudo ydotoold &"
+                fi
             fi
             ;;
         next)
@@ -73,7 +95,11 @@ if command -v ydotool &> /dev/null; then
             if ydotool key 29:1 33:1 29:0 33:0 2>/dev/null; then
                 exit 0
             else
-                sudo ydotool key 29:1 33:1 29:0 33:0 2>/dev/null && exit 0 || true
+                if sudo ydotool key 29:1 33:1 29:0 33:0 2>/dev/null; then
+                    exit 0
+                else
+                    echo "ydotool failed. Is ydotoold running? Try: sudo ydotoold &"
+                fi
             fi
             ;;
         prev|previous)
@@ -82,7 +108,11 @@ if command -v ydotool &> /dev/null; then
             if ydotool key 29:1 19:1 29:0 19:0 2>/dev/null; then
                 exit 0
             else
-                sudo ydotool key 29:1 19:1 29:0 19:0 2>/dev/null && exit 0 || true
+                if sudo ydotool key 29:1 19:1 29:0 19:0 2>/dev/null; then
+                    exit 0
+                else
+                    echo "ydotool failed. Is ydotoold running? Try: sudo ydotoold &"
+                fi
             fi
             ;;
         stop)
@@ -91,7 +121,11 @@ if command -v ydotool &> /dev/null; then
             if ydotool key 29:1 31:1 29:0 31:0 2>/dev/null; then
                 exit 0
             else
-                sudo ydotool key 29:1 31:1 29:0 31:0 2>/dev/null && exit 0 || true
+                if sudo ydotool key 29:1 31:1 29:0 31:0 2>/dev/null; then
+                    exit 0
+                else
+                    echo "ydotool failed. Is ydotoold running? Try: sudo ydotoold &"
+                fi
             fi
             ;;
         *)
@@ -100,7 +134,7 @@ if command -v ydotool &> /dev/null; then
             ;;
     esac
     # If we get here, ydotool failed
-    echo "ydotool failed. Trying alternative methods..."
+    echo "Trying alternative methods..."
 fi
 
 # Method 2: Use xdotool if available (X11 compatibility layer)
@@ -167,28 +201,27 @@ case "$ACTION" in
     play|pause|toggle)
         echo "Browser focused. Press Alt+P to play/pause."
         echo ""
-        echo "To enable automatic control, install ydotool:"
-        echo "  sudo emerge -av app-misc/ydotool"
+        echo "To enable automatic control:"
+        echo "  1. Install ydotool: sudo emerge -av app-misc/ydotool"
+        echo "  2. Start ydotoold daemon: sudo ydotoold &"
+        echo "  3. Or add to startup: echo 'ydotoold &' >> ~/.bashrc"
         echo ""
         echo "Or use system media keys when browser tab is active."
         ;;
     next)
         echo "Browser focused. Press Alt+F for next track."
         echo ""
-        echo "To enable automatic control, install ydotool:"
-        echo "  sudo emerge -av app-misc/ydotool"
+        echo "To enable automatic control, start ydotoold: sudo ydotoold &"
         ;;
     prev|previous)
         echo "Browser focused. Press Alt+R for previous track."
         echo ""
-        echo "To enable automatic control, install ydotool:"
-        echo "  sudo emerge -av app-misc/ydotool"
+        echo "To enable automatic control, start ydotoold: sudo ydotoold &"
         ;;
     stop)
         echo "Browser focused. Press Alt+S to stop."
         echo ""
-        echo "To enable automatic control, install ydotool:"
-        echo "  sudo emerge -av app-misc/ydotool"
+        echo "To enable automatic control, start ydotoold: sudo ydotoold &"
         ;;
     *)
         echo "Usage: $0 {play|pause|toggle|next|prev|previous|stop}"
