@@ -193,12 +193,20 @@ async def save_note_attachment(
     # Get original filename
     original_name = file.filename or "attachment"
     
-    # Run blocking file I/O in thread pool to prevent blocking other requests
+    # Run blocking file I/O - handle both async and sync contexts
     def _save_attachment_sync():
         storage = StorageService(db)
         return storage.save_note_attachment(username, note_id, content, original_name)
     
-    filename = await asyncio.to_thread(_save_attachment_sync)
+    # Try to get running event loop
+    try:
+        loop = asyncio.get_running_loop()
+        # Use executor to run blocking I/O
+        filename = await loop.run_in_executor(None, _save_attachment_sync)
+    except RuntimeError:
+        # No running event loop - we're likely in a thread pool
+        # Just run synchronously since we're already in a separate thread
+        filename = _save_attachment_sync()
     
     # Invalidate file cache for notes directory (non-blocking)
     try:
