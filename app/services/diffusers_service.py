@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Setting
 
-# Configure logging
+# Configure logging first (before using logger)
 logger = logging.getLogger("diffusers_service")
 logger.setLevel(logging.INFO)
 logger.propagate = False
@@ -26,6 +26,14 @@ if not logger.handlers:
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter('%(asctime)s [DIFFUSERS] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
     logger.addHandler(handler)
+
+# Try to import numpy for image validation
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+    logger.warning("numpy not available, image blank detection will be limited")
 
 # Global instance (singleton)
 _diffusers_instance: Optional["DiffusersService"] = None
@@ -74,6 +82,108 @@ def is_rocm() -> bool:
             return "amd" in device_name or "radeon" in device_name
         return False
     except Exception:
+        return False
+
+
+def is_image_blank(image: Image.Image, threshold: float = 0.99) -> bool:
+    """
+    Check if an image is blank (all pixels are the same or very similar).
+    
+    Args:
+        image: PIL Image to check
+        threshold: Threshold for considering image blank (0.99 = 99% of pixels must be similar)
+    
+    Returns:
+        True if image appears blank, False otherwise
+    """
+    if not HAS_NUMPY:
+        # Fallback: basic check using PIL histogram
+        try:
+            # Convert to RGB if needed
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Get histogram - if all pixels are the same, histogram will have very few non-zero bins
+            hist = image.histogram()
+            non_zero_bins = sum(1 for h in hist if h > 0)
+            # For RGB, we have 256 bins per channel = 768 total
+            # If most bins are zero, image is likely blank
+            # Also check image size - very small images might have few bins but not be blank
+            width, height = image.size
+            if width * height < 100:  # Very small images (< 10x10) - be more lenient
+                # For tiny images, require even fewer colors to be considered blank
+                if non_zero_bins < 3:
+                    logger.warning("Image appears blank (histogram check, tiny image)")
+                    return True
+            elif non_zero_bins < 10:  # Very few colors for normal-sized images
+                logger.warning("Image appears blank (histogram check)")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error checking if image is blank (fallback): {e}")
+            return False
+    
+    try:
+        # Convert to RGB if needed (handles RGBA, L, etc.)
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        # Convert to numpy array
+        img_array = np.array(image)
+        
+        # Check if image has valid dimensions
+        if img_array.size == 0:
+            logger.warning("Image has zero size")
+            return True
+        
+        # Check image dimensions are reasonable
+        if len(img_array.shape) < 2 or img_array.shape[0] == 0 or img_array.shape[1] == 0:
+            logger.warning(f"Image has invalid dimensions: {img_array.shape}")
+            return True
+        
+        # Calculate standard deviation for each channel
+        std_dev = np.std(img_array, axis=(0, 1))
+        
+        # If all channels have very low variance, image is likely blank
+        # A blank image would have std_dev close to 0 for all channels
+        max_std = np.max(std_dev)
+        
+        # Also check if most pixels are the same color
+        # For large images, sample pixels to avoid memory issues with np.unique()
+        pixels = img_array.reshape(-1, 3)
+        total_pixels = pixels.shape[0]
+        
+        # Sample pixels for large images to avoid expensive np.unique() on millions of pixels
+        # Sample up to 100k pixels (enough for accurate estimation)
+        max_sample_size = 100000
+        if total_pixels > max_sample_size:
+            # Randomly sample pixels
+            sample_indices = np.random.choice(total_pixels, max_sample_size, replace=False)
+            sample_pixels = pixels[sample_indices]
+            unique_colors_in_sample = len(np.unique(sample_pixels, axis=0))
+            # Use the ratio in the sample as an estimate for the full image
+            # If 50 unique colors in 100k sample, ratio is 50/100k = 0.0005
+            unique_ratio = unique_colors_in_sample / max_sample_size
+            # For logging, estimate total unique colors (scaled to full image size)
+            unique_colors = int(unique_colors_in_sample * (total_pixels / max_sample_size))
+        else:
+            unique_colors = len(np.unique(pixels, axis=0))
+            unique_ratio = unique_colors / total_pixels if total_pixels > 0 else 0
+        
+        # Image is blank if:
+        # 1. Very low standard deviation (all pixels nearly identical) - std_dev < 5.0
+        # 2. Very few unique colors - less than (1 - threshold) of pixels are unique
+        #    With threshold=0.99, this means <1% unique colors
+        is_blank = max_std < 5.0 or unique_ratio < (1.0 - threshold)
+        
+        if is_blank:
+            logger.warning(f"Image appears blank: std_dev={max_std:.2f}, unique_colors={unique_colors}/{total_pixels} ({unique_ratio*100:.2f}%)")
+        
+        return is_blank
+        
+    except Exception as e:
+        logger.error(f"Error checking if image is blank: {e}")
+        # If we can't check, assume it's not blank to avoid false positives
         return False
 
 
@@ -477,33 +587,101 @@ class DiffusersService:
 
             # model_cpu_offload (ROCm) needs CPU generator
             gen_device = "cpu" if is_rocm() else self._device
-            generator = torch.Generator(device=gen_device).manual_seed(seed)
 
-            logger.info(f"Generating: {prompt[:50]}... (seed={seed}, steps={steps})")
+            # Retry up to 2 times if we get a blank image
+            max_retries = 2
+            result = None
+            image = None
+            
+            for attempt in range(max_retries + 1):
+                # Use different seed on retry
+                current_seed = seed if attempt == 0 else random.randint(0, 2**32 - 1)
+                generator = torch.Generator(device=gen_device).manual_seed(current_seed)
 
-            # Update last used at START of generation to prevent idle timeout during long generations
-            self._last_used = time.time()
+                if attempt > 0:
+                    logger.info(f"Retry {attempt}/{max_retries} with new seed: {current_seed}")
+                else:
+                    logger.info(f"Generating: {prompt[:50]}... (seed={current_seed}, steps={steps})")
 
-            # Default negative prompt
-            if not negative_prompt:
-                negative_prompt = "bad quality, blurry, distorted, ugly, deformed, low resolution"
+                # Update last used at START of generation to prevent idle timeout during long generations
+                self._last_used = time.time()
 
-            result = self._pipe(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                width=width,
-                height=height,
-                num_inference_steps=steps,
-                guidance_scale=cfg,
-                generator=generator,
-            )
+                # Default negative prompt
+                if not negative_prompt:
+                    negative_prompt = "bad quality, blurry, distorted, ugly, deformed, low resolution"
 
-            image = result.images[0]
+                result = self._pipe(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    width=width,
+                    height=height,
+                    num_inference_steps=steps,
+                    guidance_scale=cfg,
+                    generator=generator,
+                )
+
+                # Validate result contains images
+                if not result.images or len(result.images) == 0:
+                    logger.error("Pipeline returned no images")
+                    # Clean up before retrying
+                    del result
+                    result = None
+                    gc.collect()
+                    if hasattr(torch, "xpu") and torch.xpu.is_available():
+                        torch.xpu.empty_cache()
+                    elif torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    if attempt == max_retries:
+                        return None
+                    continue
+
+                image = result.images[0]
+
+                # Validate image is not blank
+                if not is_image_blank(image):
+                    # Image is valid, break out of retry loop
+                    break
+                else:
+                    logger.warning(f"Generated blank image on attempt {attempt + 1}/{max_retries + 1}, retrying...")
+                    del result
+                    del image
+                    result = None
+                    image = None
+                    gc.collect()
+                    # Clean up GPU memory for all device types
+                    if hasattr(torch, "xpu") and torch.xpu.is_available():
+                        torch.xpu.empty_cache()
+                    elif torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    
+                    # If this was the last attempt, return None
+                    if attempt == max_retries:
+                        logger.error("Generated blank image after all retries, returning None")
+                        return None
+
+            # At this point, if we have a valid image, result and image should be set
+            # If we don't have an image, something went wrong
+            if image is None or result is None:
+                logger.error("No valid image generated after retries")
+                return None
 
             # Convert to bytes
             img_byte_arr = io.BytesIO()
             image.save(img_byte_arr, format='PNG')
             img_bytes = img_byte_arr.getvalue()
+
+            # Validate bytes are not empty
+            if not img_bytes or len(img_bytes) < 100:  # PNG header is ~100 bytes minimum
+                logger.error(f"Generated image bytes are empty or too small: {len(img_bytes)} bytes")
+                del result
+                del image
+                gc.collect()
+                # Clean up GPU memory for all device types
+                if hasattr(torch, "xpu") and torch.xpu.is_available():
+                    torch.xpu.empty_cache()
+                elif torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                return None
 
             logger.info(f"Generation complete: {len(img_bytes)} bytes")
 
@@ -513,7 +691,10 @@ class DiffusersService:
             # Cleanup to free VRAM
             del result
             gc.collect()
-            if torch.cuda.is_available():
+            # Clean up GPU memory for all device types
+            if hasattr(torch, "xpu") and torch.xpu.is_available():
+                torch.xpu.empty_cache()
+            elif torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
             return img_bytes
@@ -524,7 +705,10 @@ class DiffusersService:
             try:
                 gc.collect()
                 import torch
-                if torch.cuda.is_available():
+                # Clean up GPU memory for all device types
+                if hasattr(torch, "xpu") and torch.xpu.is_available():
+                    torch.xpu.empty_cache()
+                elif torch.cuda.is_available():
                     torch.cuda.empty_cache()
             except Exception:
                 pass
