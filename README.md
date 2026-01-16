@@ -100,12 +100,6 @@ New settings are automatically added to the database when the app starts. No man
 - AI-powered mood playlists
 - Queue management
 
-### Terminal UI (TUI)
-- Full-featured terminal client with vim-style navigation
-- Access all features from the command line
-- Real-time streaming responses
-- Built-in music player
-
 ### RAG (Retrieval-Augmented Generation)
 - Codebase indexing for code-aware AI responses
 - Local embeddings (runs offline)
@@ -155,25 +149,6 @@ Type these commands in the chat:
 | `news` | Fetch and summarize RSS feeds |
 
 See [Command Reference](docs/ADVANCED.md#commands) for detailed command usage.
-
-## Terminal UI (TUI)
-
-A full-featured terminal client with vim-style navigation.
-
-### Installation
-```bash
-cd tui
-pip install -r requirements.txt
-```
-
-### Running
-```bash
-python -m tui
-# Or with arguments
-python -m tui --server https://your-server.com --user yourusername
-```
-
-See [TUI Documentation](docs/ADVANCED.md#terminal-ui-tui) for keyboard shortcuts and features.
 
 ## Voice Input
 
