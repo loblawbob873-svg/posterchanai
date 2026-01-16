@@ -70,15 +70,26 @@ class RssService:
             logger.debug(f"Using proxy parameter: {proxy_config}")
             async with aiohttp.ClientSession() as session:
                 headers = {"User-Agent": "Mozilla/5.0 (compatible; Posterchanai/1.0)"}
-                async with session.get(url, headers=headers, proxy=proxy_config, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    if resp.status != 200:
-                        return {"error": f"HTTP {resp.status}", "entries": []}
+                try:
+                    async with session.get(url, headers=headers, proxy=proxy_config, timeout=aiohttp.ClientTimeout(total=30), ssl=False) as resp:
+                        if resp.status != 200:
+                            try:
+                                error_text = await resp.text()
+                                logger.warning(f"RSS feed returned status {resp.status} for {url}: {error_text[:200]}")
+                            except:
+                                pass
+                            return {"error": f"HTTP {resp.status}", "entries": []}
 
-                    content = await resp.text()
-                    if resp.status != 200:
-                        return {"error": f"HTTP {resp.status}", "entries": []}
-
-                    content = await resp.text()
+                        content = await resp.text()
+                except aiohttp.ClientProxyConnectionError as e:
+                    logger.error(f"Proxy connection error for {url}: {e}")
+                    return {"error": f"Proxy connection error: {str(e)}", "entries": []}
+                except aiohttp.ServerTimeoutError as e:
+                    logger.error(f"Timeout fetching {url}: {e}")
+                    return {"error": f"Timeout: {str(e)}", "entries": []}
+                except Exception as e:
+                    logger.error(f"aiohttp error fetching {url}: {e}")
+                    return {"error": f"Connection error: {str(e)}", "entries": []}
 
             # Parse with feedparser
             feed = feedparser.parse(content)
@@ -279,14 +290,25 @@ class RssService:
             logger.debug(f"Using proxy parameter: {proxy_config}")
             async with aiohttp.ClientSession() as session:
                 headers = {"User-Agent": "Mozilla/5.0 (compatible; Posterchanai/1.0)"}
-                async with session.get(url, headers=headers, proxy=proxy_config, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    if resp.status != 200:
-                        return None
+                try:
+                    async with session.get(url, headers=headers, proxy=proxy_config, timeout=aiohttp.ClientTimeout(total=30), ssl=False) as resp:
+                        if resp.status != 200:
+                            logger.warning(f"Article fetch returned status {resp.status} for {url}")
+                            return None
 
-                    html = await resp.text()
-                    text = html_to_text(html)
-                    # Limit length
-                    return text[:10000] if len(text) > 10000 else text
+                        html = await resp.text()
+                        text = html_to_text(html)
+                        # Limit length
+                        return text[:10000] if len(text) > 10000 else text
+                except aiohttp.ClientProxyConnectionError as e:
+                    logger.error(f"Proxy connection error fetching article {url}: {e}")
+                    return None
+                except aiohttp.ServerTimeoutError as e:
+                    logger.error(f"Timeout fetching article {url}: {e}")
+                    return None
+                except Exception as e:
+                    logger.error(f"Error fetching article {url}: {e}")
+                    return None
         except Exception as e:
             logger.error(f"Error fetching article from {url}: {e}")
             return None

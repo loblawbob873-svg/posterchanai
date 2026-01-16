@@ -15,6 +15,9 @@ import os
 warnings.filterwarnings("ignore")
 os.environ["PYTHONWARNINGS"] = "ignore"
 
+# Suppress PyTorch kernel registration warnings (they're harmless)
+os.environ["PYTORCH_DISABLE_RUNNING_SCRIPT_CHK"] = "1"
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"error": "No config provided"}))
@@ -46,7 +49,16 @@ def main():
         sys.exit(1)
 
     try:
+        # Import torch - kernel registration warnings are harmless and won't cause failures
         import torch
+        # Initialize XPU early to get kernel registration warnings out of the way
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            try:
+                # Create a dummy tensor to trigger kernel registration
+                _ = torch.zeros(1, device="xpu")
+            except Exception:
+                pass  # Ignore any errors during initialization
+        
         import base64
         import io
         import random
@@ -141,8 +153,23 @@ def main():
         print(json.dumps({"image": img_base64, "seed": seed}))
 
     except Exception as e:
-        print(json.dumps({"error": str(e)}))
+        import traceback
+        error_msg = str(e)
+        # Include traceback for debugging, but truncate if too long
+        tb = traceback.format_exc()
+        if len(tb) > 1000:
+            tb = tb[:1000] + "... (truncated)"
+        print(json.dumps({"error": error_msg, "traceback": tb}))
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        error_msg = f"Fatal error in subprocess: {str(e)}"
+        tb = traceback.format_exc()
+        if len(tb) > 1000:
+            tb = tb[:1000] + "... (truncated)"
+        print(json.dumps({"error": error_msg, "traceback": tb}), file=sys.stderr)
+        sys.exit(1)

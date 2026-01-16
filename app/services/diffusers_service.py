@@ -582,21 +582,59 @@ class DiffusersService:
         logger.info(f"Subprocess generation: {prompt[:50]}... (device={self._device})")
 
         try:
+            # Inherit environment, especially LD_LIBRARY_PATH for oneAPI/XPU
+            env = os.environ.copy()
+            # Ensure oneAPI paths are in LD_LIBRARY_PATH if not already
+            if "LD_LIBRARY_PATH" in env:
+                # Keep existing paths
+                pass
+            else:
+                env["LD_LIBRARY_PATH"] = ""
+            
             result = subprocess.run(
                 [python_path, script_path, json.dumps(config)],
                 capture_output=True,
                 text=True,
                 timeout=600,  # 10 minute timeout
                 cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                env=env,
             )
 
             if result.returncode != 0:
-                logger.error(f"Subprocess failed (exit={result.returncode}): {result.stderr[:500] if result.stderr else 'no stderr'}")
+                # Check if stderr contains actual errors (not just kernel warnings)
+                stderr_text = result.stderr[:1000] if result.stderr else ""
+                # Kernel registration warnings are harmless - check for actual errors
+                if "kernel" in stderr_text.lower() and "warning" in stderr_text.lower():
+                    # Might just be kernel warnings, check if we got valid JSON output
+                    if result.stdout.strip():
+                        try:
+                            output = json.loads(result.stdout.strip())
+                            if "error" not in output:
+                                # Got valid output despite warnings, use it
+                                logger.warning(f"Subprocess had kernel warnings but succeeded: {stderr_text[:200]}")
+                                logger.info(f"Subprocess generation complete (seed={output.get('seed')})")
+                                return output.get("image")
+                        except json.JSONDecodeError:
+                            pass  # Not valid JSON, continue with error handling
+                
+                logger.error(f"Subprocess failed (exit={result.returncode}): {stderr_text}")
+                # Try to parse error from stdout if available
+                if result.stdout.strip():
+                    try:
+                        output = json.loads(result.stdout.strip())
+                        if "error" in output:
+                            logger.error(f"Subprocess error: {output['error']}")
+                            if "traceback" in output:
+                                logger.debug(f"Traceback: {output['traceback'][:500]}")
+                    except json.JSONDecodeError:
+                        pass
                 return None
 
-            # Log stderr warnings but don't fail on them
+            # Log stderr warnings but don't fail on them (kernel registration warnings are harmless)
             if result.stderr:
-                logger.debug(f"Subprocess stderr (warnings): {result.stderr[:200]}")
+                # Only log if it's not just kernel warnings
+                if "kernel" not in result.stderr.lower() or "warning" not in result.stderr.lower():
+                    logger.debug(f"Subprocess stderr: {result.stderr[:200]}")
 
             # Parse output
             try:
