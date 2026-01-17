@@ -69,9 +69,21 @@ async def serve_saved_attachment(
     current_user: User = Depends(get_current_user)
 ):
     """Serve a saved mail attachment from temp directory (opens in browser)."""
-    # Verify user owns this file
-    if current_user.username != username:
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Decode URL-encoded username (handles @ symbols, etc.)
+    from urllib.parse import unquote
+    try:
+        decoded_username = unquote(username)
+    except:
+        decoded_username = username
+    
+    # Verify user owns this file (username must match after decoding)
+    if current_user.username != decoded_username:
+        # Try URL-encoding the current username to see if it matches
+        from urllib.parse import quote
+        encoded_current = quote(current_user.username, safe='')
+        if encoded_current != username and current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+        decoded_username = current_user.username
     
     # Decode URL-encoded filename
     try:
@@ -85,12 +97,12 @@ async def serve_saved_attachment(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid filename: {str(e)}")
     
-    # Get storage service and construct path
+    # Get storage service and construct path using decoded username
     storage = StorageService(db)
-    file_path = Path(storage.upload_path) / username / "temp" / "mail_attachments" / safe_filename
+    file_path = Path(storage.upload_path) / decoded_username / "temp" / "mail_attachments" / safe_filename
     
     # Validate path is within expected directory
-    base_path = Path(storage.upload_path) / username / "temp" / "mail_attachments"
+    base_path = Path(storage.upload_path) / decoded_username / "temp" / "mail_attachments"
     if not _validate_path_within_base(file_path, base_path):
         raise HTTPException(status_code=403, detail="Invalid file path")
     

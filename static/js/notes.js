@@ -319,10 +319,21 @@ class NotesManager {
         // Ensure we have username and noteId before rendering
         // These should be set when the note is loaded
         if (!this.currentNoteId) {
-            console.error('updatePreview: No noteId available');
+            console.warn('updatePreview: No noteId available');
         }
-        if (!this.currentUsername && (!this.currentNote || !this.currentNote.username)) {
-            console.error('updatePreview: No username available');
+        // Try to get username from multiple sources
+        if (!this.currentUsername) {
+            if (this.currentNote && this.currentNote.username) {
+                this.currentUsername = this.currentNote.username;
+            } else {
+                // Fallback: try to get from DOM
+                const sidebarUser = document.querySelector('.user-name');
+                if (sidebarUser && sidebarUser.textContent) {
+                    this.currentUsername = sidebarUser.textContent.trim();
+                } else {
+                    console.warn('updatePreview: No username available, images may not load correctly');
+                }
+            }
         }
         
         const markdown = contentInput.value;

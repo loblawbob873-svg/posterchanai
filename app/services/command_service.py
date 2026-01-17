@@ -3129,10 +3129,11 @@ Return ONLY valid JSON, no other text. If this is not a bill or invoice, return 
                 with open(temp_file_path, "wb") as f:
                     f.write(attachment.data)
                 
-                # Generate URL to open in browser
+                # Generate URL to open in browser - URL-encode both username and filename
                 from urllib.parse import quote
-                encoded_filename = quote(safe_filename)
-                attachment_url = f"/api/mail/attachment/{self.user.username}/{encoded_filename}"
+                encoded_username = quote(self.user.username, safe='')
+                encoded_filename = quote(safe_filename, safe='')
+                attachment_url = f"/api/mail/attachment/{encoded_username}/{encoded_filename}"
                 
                 # Return HTML with clickable link that opens in new tab
                 return {
