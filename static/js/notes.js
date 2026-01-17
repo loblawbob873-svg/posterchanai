@@ -306,6 +306,17 @@ class NotesManager {
         const contentPreview = document.getElementById('noteContentPreview');
         if (!contentInput || !contentPreview) return;
         
+        // Get username and noteId for image URL conversion
+        let username = 'user';
+        const sidebarUser = document.querySelector('.user-name');
+        if (sidebarUser && sidebarUser.textContent) {
+            username = sidebarUser.textContent.trim();
+        } else if (this.currentNote && this.currentNote.username) {
+            username = this.currentNote.username;
+        }
+        
+        let noteId = this.currentNoteId;
+        
         const markdown = contentInput.value;
         let rendered = this.renderMarkdown(markdown);
         
@@ -314,6 +325,7 @@ class NotesManager {
         const placeholder = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
         
         // Replace old Joplin resource URLs in img src attributes in the HTML string
+        // Also convert bare filenames to proper note attachment URLs
         rendered = rendered.replace(/<img([^>]*)\ssrc=["']([^"']+)["']([^>]*)>/gi, (match, before, src, after) => {
             // Check for old Joplin resource format (:/[32-char-hex] or bare [32-char-hex])
             const isOldFormat = src.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(src);
@@ -322,6 +334,18 @@ class NotesManager {
             if (isOldFormat || isBareFormat) {
                 return `<img${before} src="${placeholder}"${after}>`;
             }
+            
+            // If it's a bare filename (not a full URL), convert to note attachment URL
+            if (!src.startsWith('http') && !src.startsWith('/api/') && !src.startsWith('data:') && !src.startsWith('/') && !src.startsWith(':/')) {
+                // It's likely a filename - convert to proper URL
+                const filename = src.split('/').pop().split('?')[0]; // Remove path and query params
+                // Make sure it's not a resource ID (32 hex chars)
+                if (!/^[a-f0-9]{32}$/i.test(filename) && noteId && username) {
+                    const properUrl = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
+                    return `<img${before} src="${properUrl}"${after}>`;
+                }
+            }
+            
             return match;
         });
         
@@ -370,6 +394,15 @@ class NotesManager {
                     img.onerror = null;
                     // Prevent the browser from trying to load it
                     img.removeAttribute('srcset');
+                }
+            } else if (!src.startsWith('http') && !src.startsWith('/api/') && !src.startsWith('data:') && !src.startsWith('/') && !src.startsWith(':/')) {
+                // Bare filename - convert to proper URL
+                const filename = src.split('/').pop().split('?')[0];
+                // Make sure it's not a resource ID (32 hex chars)
+                if (!/^[a-f0-9]{32}$/i.test(filename) && noteId && username) {
+                    const properUrl = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
+                    img.src = properUrl;
+                    img.setAttribute('src', properUrl);
                 }
             }
         });

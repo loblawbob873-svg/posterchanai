@@ -2574,7 +2574,9 @@ class ChatHandler {
             // Check for existing shares
             const sharesResponse = await fetch('/api/files/shares');
             if (sharesResponse.ok) {
-                const shares = await sharesResponse.json();
+                const sharesData = await sharesResponse.json();
+                // Handle both array and object responses
+                const shares = Array.isArray(sharesData) ? sharesData : (sharesData.shares || []);
                 const existingShare = shares.find(s => s.file_path === filePath);
                 
                 if (existingShare) {
