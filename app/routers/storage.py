@@ -166,10 +166,10 @@ async def save_file(
 
 @router.post("/save-note-attachment")
 async def save_note_attachment(
+    request: FastAPIRequest,
     file: UploadFile = File(...),
     username: str = Form(...),
     note_id: int = Form(...),
-    request: FastAPIRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_optional)
 ):
