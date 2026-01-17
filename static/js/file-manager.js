@@ -2195,20 +2195,6 @@ class FileManager {
         
         grid.innerHTML = '';
         
-        // Check if our array matches the sorted copy
-        let orderMismatch = false;
-        for (let i = 0; i < Math.min(this.allImages.length, 10); i++) {
-            if (this.allImages[i].path !== sortedCopy[i].path) {
-                orderMismatch = true;
-                console.warn(`Order mismatch at index ${i}: expected ${sortedCopy[i].name}, got ${this.allImages[i].name}`);
-                break;
-            }
-        }
-        if (orderMismatch) {
-            console.warn('Array order mismatch detected, re-sorting...');
-            this.allImages = sortedCopy;
-        }
-        
         this.allImages.forEach((image, index) => {
             const item = document.createElement('div');
             item.className = 'cyberpunk-gallery-item';
