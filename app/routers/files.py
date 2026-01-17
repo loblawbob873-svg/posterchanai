@@ -1196,8 +1196,22 @@ async def upload_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Upload a file to the user's storage."""
+    """Upload a file to the user's storage. Proxies to storage server if configured."""
     storage = get_storage_service(db)
+    
+    # Check if storage server is configured - proxy request if so
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            try:
+                # Proxy to storage server
+                return await _proxy_upload_file(url, current_user.username, file, path, db)
+            except Exception as e:
+                logger.warning(f"[FILES] Failed to proxy upload_file, falling back to local: {e}")
+                # Fall through to local storage below
+    
+    # Local file saving (storage server node or when proxy fails)
     user_path = storage.get_user_path(current_user.username)
     
     # Sanitize and validate target path
@@ -1265,6 +1279,43 @@ async def upload_file(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _proxy_upload_file(storage_server_url: str, username: str, file: UploadFile, path: str, db: Session):
+    """Proxy file upload to storage server"""
+    import httpx
+    from app.models import Setting
+    
+    try:
+        # Get server-to-server API token
+        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        
+        url = f"{storage_server_url.rstrip('/')}/api/storage/upload-file"
+        headers = {}
+        if storage_server_token and storage_server_token.value:
+            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        
+        # Read file content
+        content = await file.read()
+        
+        files = {
+            "file": (file.filename, content, file.content_type or "application/octet-stream")
+        }
+        data = {
+            "username": username,
+            "path": path
+        }
+        
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.post(url, headers=headers, files=files, data=data)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"[FILES] Failed to proxy upload_file: {response.status_code} - {response.text}")
+                raise Exception(f"Storage server error: {response.status_code}")
+    except Exception as e:
+        logger.error(f"[FILES] Error proxying upload_file: {e}", exc_info=True)
+        raise
 
 
 @router.post("/mkdir")
