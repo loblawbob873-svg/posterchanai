@@ -256,7 +256,30 @@ async def get_all_images(
                         headers=headers
                     )
                     if response.status_code == 200:
-                        return response.json()
+                        try:
+                            # Get the JSON response from storage server
+                            data = response.json()
+                            # Clean it to ensure no bytes slipped through
+                            def _clean_proxy_response(obj, depth=0):
+                                if depth > 10:
+                                    return ""
+                                if obj is None:
+                                    return None
+                                elif isinstance(obj, bytes):
+                                    return obj.decode('utf-8', errors='ignore')
+                                elif isinstance(obj, (dict,)):
+                                    return {str(k): _clean_proxy_response(v, depth+1) for k, v in obj.items()}
+                                elif isinstance(obj, (list, tuple)):
+                                    return [_clean_proxy_response(item, depth+1) for item in obj]
+                                elif isinstance(obj, (str, int, float, bool)):
+                                    return obj
+                                else:
+                                    return str(obj)
+                            cleaned_data = _clean_proxy_response(data)
+                            return cleaned_data
+                        except Exception as json_err:
+                            logger.error(f"[FILES] Error parsing/cleaning storage server response: {json_err}")
+                            raise
                     else:
                         # Try to get error details from response
                         try:
@@ -662,29 +685,22 @@ async def get_all_images(
         # Recursively clean the entire result to ensure JSON serializability
         cleaned_result = _clean_for_json(result)
         
-        # Use custom JSON encoder to handle any remaining edge cases
-        class BytesSafeEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, bytes):
-                    return obj.decode('utf-8', errors='ignore')
-                elif isinstance(obj, Path):
-                    return str(obj)
-                return super().default(obj)
+        # Double-check: ensure the result dict itself is clean
+        if isinstance(cleaned_result, dict):
+            # Ensure all top-level values are serializable
+            final_result = {}
+            for key, value in cleaned_result.items():
+                if isinstance(key, bytes):
+                    key = key.decode('utf-8', errors='ignore')
+                if isinstance(value, bytes):
+                    value = value.decode('utf-8', errors='ignore')
+                elif isinstance(value, Path):
+                    value = str(value)
+                final_result[str(key)] = value
+            cleaned_result = final_result
         
-        # Return as JSONResponse - FastAPI will serialize, but we've cleaned everything
-        # If there's still an issue, the custom encoder will catch it
-        try:
-            return JSONResponse(content=cleaned_result)
-        except Exception as json_err:
-            logger.error(f"[FILES] JSONResponse failed: {json_err}")
-            # Try with explicit JSON encoding using custom encoder
-            try:
-                json_str = json.dumps(cleaned_result, cls=BytesSafeEncoder)
-                return JSONResponse(content=json.loads(json_str))
-            except Exception as final_err:
-                logger.error(f"[FILES] Final JSON encoding failed: {final_err}")
-                # Return minimal safe response
-                return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False})
+        # Return as JSONResponse - FastAPI will serialize automatically
+        return JSONResponse(content=cleaned_result)
     except Exception as e:
         logger.error(f"[FILES] Error in get_all_images: {e}", exc_info=True)
         # Ensure error message is also JSON serializable

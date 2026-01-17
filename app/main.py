@@ -24,11 +24,25 @@ from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, news
 from app.services.load_balancer import NoHealthyServersError
 from fastapi.responses import JSONResponse
 
+# Custom JSON encoder to handle bytes and other non-serializable types
+import json
+from pathlib import Path
+
+class BytesSafeJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles bytes and Path objects."""
+    def default(self, obj):
+        if isinstance(obj, bytes):
+            return obj.decode('utf-8', errors='ignore')
+        elif isinstance(obj, Path):
+            return str(obj)
+        return super().default(obj)
+
 # Initialize FastAPI app
 app = FastAPI(
     title="Posterchanai",
     description="AI Chat Application",
-    version="1.0.0"
+    version="1.0.0",
+    json_encoder=BytesSafeJSONEncoder
 )
 
 # Exception handler for NoHealthyServersError - prevent it from being shown to client
