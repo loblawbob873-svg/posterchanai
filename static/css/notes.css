@@ -170,6 +170,36 @@
     background: rgba(255, 255, 255, 0.2);
 }
 
+.notes-folder-item .folder-delete-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 14px;
+    opacity: 0.5;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+}
+
+.notes-folder-item .folder-delete-btn:hover {
+    opacity: 1;
+    background: rgba(255, 0, 0, 0.1);
+    transform: scale(1.1);
+}
+
+.notes-folder-item.active .folder-delete-btn {
+    opacity: 0.7;
+}
+
+.notes-folder-item.active .folder-delete-btn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.2);
+}
+
 /* Main Content Area */
 .notes-main {
     flex: 1 1 0;

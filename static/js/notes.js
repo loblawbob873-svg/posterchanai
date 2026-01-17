@@ -190,6 +190,7 @@ class NotesManager {
                     <span class="folder-icon">📂</span>
                     <span class="folder-name">${this.escapeHtml(folder.name)}</span>
                     <span class="folder-count">${folder.notes_count}</span>
+                    <button class="folder-delete-btn" onclick="event.stopPropagation(); notesManager.deleteFolder(${folder.id}, '${this.escapeJs(folder.name)}')" title="Delete folder">🗑️</button>
                 </div>
             `;
         });
@@ -1384,6 +1385,61 @@ class NotesManager {
         }
     }
     
+    async deleteFolder(folderId, folderName) {
+        if (!confirm(`Are you sure you want to delete folder "${folderName}"?\n\nAll notes in this folder will be moved to "All Notes" (root).`)) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/notes/folders/${folderId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                this.showToast(data.message || 'Folder deleted successfully', 'success');
+                
+                // If we were viewing this folder, switch to "All Notes"
+                if (this.currentFolderId === folderId) {
+                    this.currentFolderId = 0;
+                    // Update active folder in UI
+                    const foldersList = document.getElementById('notesFoldersList');
+                    if (foldersList) {
+                        foldersList.querySelectorAll('.notes-folder-item').forEach(item => {
+                            item.classList.remove('active');
+                            if (parseInt(item.dataset.folderId) === 0) {
+                                item.classList.add('active');
+                            }
+                        });
+                    }
+                }
+                
+                // Reload folders and notes
+                await this.loadFolders();
+                await this.loadNotes();
+            } else {
+                let errorDetail = 'Unknown error';
+                try {
+                    const errorText = await response.text();
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        errorDetail = errorJson.detail || errorJson.message || errorText;
+                    } catch {
+                        errorDetail = errorText || `HTTP ${response.status}`;
+                    }
+                } catch (e) {
+                    errorDetail = `HTTP ${response.status}: ${response.statusText}`;
+                }
+                console.error('Error deleting folder:', errorDetail);
+                this.showToast(`Error deleting folder: ${errorDetail}`, 'error');
+            }
+        } catch (error) {
+            console.error('Error deleting folder:', error);
+            this.showToast(`Error deleting folder: ${error.message || 'Network error'}`, 'error');
+        }
+    }
+    
     attachModeButtons() {
         // Attach event listeners to Edit/Preview mode buttons
         // This is called separately because buttons might not be available during init()
@@ -1841,6 +1897,17 @@ class NotesManager {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+    
+    escapeJs(text) {
+        // Escape JavaScript string for use in HTML attributes
+        return String(text)
+            .replace(/\\/g, '\\\\')
+            .replace(/'/g, "\\'")
+            .replace(/"/g, '\\"')
+            .replace(/\n/g, '\\n')
+            .replace(/\r/g, '\\r')
+            .replace(/\t/g, '\\t');
     }
 }
 

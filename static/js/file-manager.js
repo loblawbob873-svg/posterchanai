@@ -53,6 +53,38 @@ class FileManager {
         // Upload button
         attachButtonListener('fileManagerUploadBtn', () => this.showUploadDialog());
         
+        // Upload directory button
+        attachButtonListener('fileManagerUploadDirBtn', () => this.showUploadDirectoryDialog());
+        
+        // Mobile upload buttons
+        attachButtonListener('mobileUploadFileBtn', () => this.showMobileFileUpload());
+        attachButtonListener('mobileUploadCameraBtn', () => this.showMobileCameraUpload());
+        
+        // Mobile upload area tap handler
+        const mobileUploadArea = document.getElementById('mobileUploadArea');
+        if (mobileUploadArea) {
+            mobileUploadArea.addEventListener('click', (e) => {
+                // Only trigger if clicking on the area itself, not buttons
+                if (e.target === mobileUploadArea || e.target.classList.contains('mobile-upload-content')) {
+                    this.showMobileFileUpload();
+                }
+            });
+        }
+        
+        // Mobile file input handlers
+        const mobileFileInput = document.getElementById('mobileFileInput');
+        if (mobileFileInput) {
+            mobileFileInput.addEventListener('change', (e) => this.handleMobileFileUpload(e));
+        }
+        
+        const mobileCameraInput = document.getElementById('mobileCameraInput');
+        if (mobileCameraInput) {
+            mobileCameraInput.addEventListener('change', (e) => this.handleMobileFileUpload(e));
+        }
+        
+        // Detect mobile and show mobile upload area
+        this.detectMobile();
+        
         // New folder button
         attachButtonListener('fileManagerNewFolderBtn', (e) => {
             e.preventDefault();
@@ -327,6 +359,15 @@ class FileManager {
             console.log('FileManager: Overlay found, displaying...');
             overlay.style.display = 'flex'; // Use flex for modal
             
+            // Detect mobile and show/hide mobile upload area
+            this.detectMobile();
+            
+            // Add resize listener for mobile detection on orientation change
+            if (!this._resizeListener) {
+                this._resizeListener = () => this.detectMobile();
+                window.addEventListener('resize', this._resizeListener);
+            }
+            
             // Ensure we're on the files tab by default
             this.switchTab('files');
             
@@ -342,6 +383,12 @@ class FileManager {
         const overlay = document.getElementById('fileManagerOverlay');
         if (overlay) {
             overlay.style.display = 'none';
+        }
+        
+        // Remove resize listener when closing
+        if (this._resizeListener) {
+            window.removeEventListener('resize', this._resizeListener);
+            this._resizeListener = null;
         }
     }
     
@@ -1169,6 +1216,227 @@ class FileManager {
         // Trigger file picker
         document.body.appendChild(input);
         input.click();
+    }
+    
+    showUploadDirectoryDialog() {
+        // Create a hidden file input with webkitdirectory attribute
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.webkitdirectory = true;
+        input.directory = true; // Fallback for Firefox
+        input.multiple = true;
+        input.style.display = 'none';
+        
+        input.addEventListener('change', async (e) => {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+            
+            // Show loading indicator
+            const grid = document.getElementById('fileManagerGrid');
+            const originalContent = grid ? grid.innerHTML : '';
+            if (grid) {
+                grid.innerHTML = `<div class="file-manager-loading">Uploading ${files.length} files from directory...</div>`;
+            }
+            
+            try {
+                // Group files by their relative path to preserve directory structure
+                const fileMap = new Map();
+                const basePath = this.currentPath || '';
+                
+                files.forEach(file => {
+                    // Get the relative path from the file's webkitRelativePath
+                    // webkitRelativePath format: "folder/subfolder/file.txt"
+                    const relativePath = file.webkitRelativePath || file.name;
+                    const pathParts = relativePath.split('/');
+                    const fileName = pathParts.pop();
+                    const dirPath = pathParts.join('/');
+                    
+                    // Build the full target path
+                    const targetDir = basePath ? `${basePath}/${dirPath}` : dirPath;
+                    
+                    if (!fileMap.has(targetDir)) {
+                        fileMap.set(targetDir, []);
+                    }
+                    fileMap.get(targetDir).push({ file, fileName });
+                });
+                
+                // Upload files, creating directories as needed
+                let uploadedCount = 0;
+                for (const [dirPath, fileList] of fileMap.entries()) {
+                    // Create directory if it doesn't exist (if dirPath is not empty)
+                    if (dirPath) {
+                        try {
+                            const formData = new FormData();
+                            formData.append('path', dirPath);
+                            
+                            const mkdirResponse = await csrfFetch('/api/files/mkdir', {
+                                method: 'POST',
+                                body: formData
+                            });
+                            
+                            if (!mkdirResponse.ok && mkdirResponse.status !== 400) {
+                                // 400 means directory already exists, which is fine
+                                const error = await mkdirResponse.json();
+                                console.warn(`Warning creating directory ${dirPath}:`, error.detail || 'Directory creation failed');
+                            }
+                        } catch (dirError) {
+                            console.warn(`Warning creating directory ${dirPath}:`, dirError);
+                            // Continue anyway - directory might already exist
+                        }
+                    }
+                    
+                    // Upload all files in this directory
+                    for (const { file, fileName } of fileList) {
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        formData.append('path', dirPath);
+                        
+                        const response = await csrfFetch('/api/files/upload', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        if (!response.ok) {
+                            const error = await response.json();
+                            console.error(`Error uploading ${fileName}:`, error.detail || 'Upload failed');
+                            // Continue with other files
+                        } else {
+                            uploadedCount++;
+                        }
+                    }
+                }
+                
+                // Reload files after upload
+                await this.loadFiles(this.currentPath);
+                
+                if (uploadedCount > 0) {
+                    this.showToast(`Successfully uploaded ${uploadedCount} file(s)`, 'success');
+                } else {
+                    this.showToast('No files were uploaded', 'error');
+                }
+            } catch (error) {
+                console.error('Error uploading directory:', error);
+                alert(`Error uploading directory: ${error.message || 'Unknown error'}`);
+                if (grid) {
+                    grid.innerHTML = originalContent;
+                }
+            } finally {
+                // Remove the input element
+                document.body.removeChild(input);
+            }
+        });
+        
+        // Trigger file picker
+        document.body.appendChild(input);
+        input.click();
+    }
+    
+    detectMobile() {
+        // Check if device is mobile
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                         (window.innerWidth <= 768 && 'ontouchstart' in window);
+        
+        const mobileUploadArea = document.getElementById('mobileUploadArea');
+        const fileManagerGrid = document.getElementById('fileManagerGrid');
+        
+        if (isMobile && mobileUploadArea && fileManagerGrid) {
+            // Show mobile upload area at the top of the grid
+            mobileUploadArea.style.display = 'block';
+            // Add mobile class for styling
+            document.getElementById('fileManagerOverlay')?.classList.add('mobile-device');
+        } else if (mobileUploadArea) {
+            mobileUploadArea.style.display = 'none';
+        }
+    }
+    
+    showMobileFileUpload() {
+        const input = document.getElementById('mobileFileInput');
+        if (input) {
+            input.click();
+        }
+    }
+    
+    showMobileCameraUpload() {
+        const input = document.getElementById('mobileCameraInput');
+        if (input) {
+            input.click();
+        }
+    }
+    
+    async handleMobileFileUpload(e) {
+        const files = Array.from(e.target.files);
+        if (files.length === 0) return;
+        
+        // Show loading indicator
+        const grid = document.getElementById('fileManagerGrid');
+        const mobileUploadArea = document.getElementById('mobileUploadArea');
+        const originalContent = grid ? grid.innerHTML : '';
+        
+        if (grid) {
+            grid.innerHTML = `<div class="file-manager-loading">Uploading ${files.length} file(s)...</div>`;
+        }
+        
+        if (mobileUploadArea) {
+            mobileUploadArea.style.opacity = '0.5';
+            mobileUploadArea.style.pointerEvents = 'none';
+        }
+        
+        try {
+            let uploadedCount = 0;
+            let failedCount = 0;
+            
+            // Upload each file
+            for (const file of files) {
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('path', this.currentPath);
+                    
+                    const response = await csrfFetch('/api/files/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!response.ok) {
+                        const error = await response.json();
+                        console.error(`Error uploading ${file.name}:`, error.detail || 'Upload failed');
+                        failedCount++;
+                    } else {
+                        uploadedCount++;
+                    }
+                } catch (error) {
+                    console.error(`Error uploading ${file.name}:`, error);
+                    failedCount++;
+                }
+            }
+            
+            // Reload files after upload
+            await this.loadFiles(this.currentPath);
+            
+            // Show result message
+            if (uploadedCount > 0) {
+                this.showToast(`Successfully uploaded ${uploadedCount} file(s)${failedCount > 0 ? `, ${failedCount} failed` : ''}`, 'success');
+            } else {
+                this.showToast(`Failed to upload ${failedCount} file(s)`, 'error');
+            }
+        } catch (error) {
+            console.error('Error uploading files:', error);
+            this.showToast(`Error uploading files: ${error.message || 'Unknown error'}`, 'error');
+            if (grid) {
+                grid.innerHTML = originalContent;
+            }
+        } finally {
+            // Reset inputs
+            const mobileFileInput = document.getElementById('mobileFileInput');
+            const mobileCameraInput = document.getElementById('mobileCameraInput');
+            if (mobileFileInput) mobileFileInput.value = '';
+            if (mobileCameraInput) mobileCameraInput.value = '';
+            
+            if (mobileUploadArea) {
+                mobileUploadArea.style.opacity = '1';
+                mobileUploadArea.style.pointerEvents = 'auto';
+            }
+        }
     }
     
     async createNewFolder() {

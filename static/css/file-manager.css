@@ -247,6 +247,137 @@
     opacity: 0.7;
 }
 
+/* Mobile Upload Area */
+.mobile-upload-area {
+    background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-color-dark, var(--accent-color)) 100%);
+    border: 2px dashed rgba(255, 255, 255, 0.3);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.mobile-upload-area:active {
+    transform: scale(0.98);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.mobile-upload-content {
+    color: white;
+}
+
+.mobile-upload-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+.mobile-upload-text {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    opacity: 0.95;
+}
+
+.mobile-upload-options {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.mobile-upload-btn {
+    background: rgba(255, 255, 255, 0.2);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(10px);
+}
+
+.mobile-upload-btn:hover,
+.mobile-upload-btn:active {
+    background: rgba(255, 255, 255, 0.3);
+    border-color: rgba(255, 255, 255, 0.5);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* Mobile-specific styles */
+@media (max-width: 768px) {
+    .file-manager-header-actions {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    
+    .file-manager-header-actions .btn-secondary {
+        font-size: 12px;
+        padding: 8px 12px;
+    }
+    
+    .file-manager-sidebar {
+        width: 100%;
+        max-width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .file-manager-body {
+        flex-direction: column;
+    }
+    
+    .file-selection-controls {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    
+    .file-selection-controls .btn-secondary,
+    .file-selection-controls .btn-danger {
+        font-size: 12px;
+        padding: 6px 10px;
+    }
+    
+    .mobile-upload-area {
+        margin: 12px;
+        padding: 20px;
+    }
+    
+    .mobile-upload-icon {
+        font-size: 40px;
+    }
+    
+    .mobile-upload-text {
+        font-size: 14px;
+    }
+    
+    .mobile-upload-btn {
+        padding: 10px 20px;
+        font-size: 13px;
+    }
+}
+
+/* Touch device optimizations */
+@media (hover: none) and (pointer: coarse) {
+    .file-manager-header-actions .btn-secondary,
+    .file-selection-controls .btn-secondary,
+    .file-selection-controls .btn-danger {
+        min-height: 44px; /* iOS recommended touch target size */
+        min-width: 44px;
+    }
+    
+    .mobile-upload-btn {
+        min-height: 44px;
+        padding: 12px 24px;
+    }
+}
+
 .file-manager-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));

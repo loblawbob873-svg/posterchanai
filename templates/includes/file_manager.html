@@ -5,6 +5,7 @@
             <h2>📁 File Manager</h2>
             <div class="file-manager-header-actions">
                 <button class="btn-secondary" id="fileManagerUploadBtn">📤 Upload</button>
+                <button class="btn-secondary" id="fileManagerUploadDirBtn">📁 Upload Directory</button>
                 <button class="btn-secondary" id="fileManagerNewFolderBtn">📂 New Folder</button>
             </div>
             <button class="btn-icon modal-close" id="fileManagerCloseBtn">&times;</button>
@@ -43,6 +44,19 @@
                             <button class="view-btn" data-view="list" title="List View">☰</button>
                         </div>
                     </div>
+                </div>
+                <!-- Mobile Upload Area -->
+                <div class="mobile-upload-area" id="mobileUploadArea" style="display: none;">
+                    <div class="mobile-upload-content">
+                        <div class="mobile-upload-icon">📤</div>
+                        <div class="mobile-upload-text">Tap to upload files</div>
+                        <div class="mobile-upload-options">
+                            <button class="mobile-upload-btn" id="mobileUploadFileBtn">📁 Files</button>
+                            <button class="mobile-upload-btn" id="mobileUploadCameraBtn">📷 Camera</button>
+                        </div>
+                    </div>
+                    <input type="file" id="mobileFileInput" multiple accept="*/*" style="display: none;">
+                    <input type="file" id="mobileCameraInput" accept="image/*" capture="environment" style="display: none;">
                 </div>
                 <div class="file-manager-grid" id="fileManagerGrid">
                     <div class="file-manager-loading">Loading files...</div>
