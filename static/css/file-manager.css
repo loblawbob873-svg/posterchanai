@@ -609,7 +609,9 @@
 }
 
 .file-modal-body input:focus,
-.file-modal-body textarea:focus {
+.file-modal-body textarea:focus,
+.file-modal-body select:focus,
+.file-modal-body .form-control:focus {
     outline: none;
     border-color: var(--accent-color);
 }
