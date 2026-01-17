@@ -104,23 +104,58 @@ def generate_thumbnail_file(
         # Reopen for processing (verify() closes the file)
         # Open and process image
         with Image.open(image_path) as img:
-            # Create thumbnail (maintains aspect ratio)
+            original_mode = img.mode
+            logger.debug(f"Processing image {image_path.name} with mode: {original_mode}")
+            
+            # Convert to a mode that supports thumbnail operations first
+            # Handle palette mode (P) - convert to RGBA first to preserve transparency
+            if img.mode == 'P':
+                # Check if image has transparency
+                if 'transparency' in img.info:
+                    img = img.convert('RGBA')
+                else:
+                    img = img.convert('RGB')
+            # Handle grayscale with alpha (LA)
+            elif img.mode == 'LA':
+                img = img.convert('RGBA')
+            # Handle other unsupported modes
+            elif img.mode not in ('RGB', 'RGBA', 'L', 'CMYK'):
+                # Try to convert to RGB, fallback to RGBA if that fails
+                try:
+                    img = img.convert('RGB')
+                except Exception:
+                    try:
+                        img = img.convert('RGBA')
+                    except Exception as e:
+                        logger.warning(f"Could not convert mode {original_mode} to RGB/RGBA: {e}, trying L")
+                        img = img.convert('L').convert('RGB')
+            
+            # Create thumbnail (maintains aspect ratio) - now safe to call
             img.thumbnail(max_size, Image.Resampling.LANCZOS)
             
-            # Convert to RGB if necessary (for formats like PNG with transparency)
-            if img.mode in ('RGBA', 'LA', 'P'):
+            # Convert to RGB for JPEG saving (handle transparency)
+            if img.mode in ('RGBA', 'LA'):
                 background = Image.new('RGB', img.size, (255, 255, 255))
-                if img.mode == 'P':
-                    img = img.convert('RGBA')
-                background.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                if img.mode == 'RGBA':
+                    background.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
+                elif img.mode == 'LA':
+                    background.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
                 img = background
-            elif img.mode != 'RGB':
+            elif img.mode not in ('RGB', 'L'):
+                # Convert any remaining non-RGB modes to RGB
+                if img.mode == 'L':
+                    img = img.convert('RGB')
+                else:
+                    img = img.convert('RGB')
+            
+            # Ensure we have RGB mode for JPEG
+            if img.mode != 'RGB':
                 img = img.convert('RGB')
             
             # Save thumbnail
             img.save(thumbnail_path, format='JPEG', quality=quality)
             
-            logger.debug(f"Generated thumbnail: {thumbnail_path}")
+            logger.debug(f"Generated thumbnail: {thumbnail_path} (original mode: {original_mode}, final mode: {img.mode})")
             return True
             
     except Exception as e:
