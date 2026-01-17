@@ -322,6 +322,25 @@ class NotesManager {
         // Also replace any remaining :/[resource-id] patterns that might be in the HTML
         rendered = rendered.replace(/:\/([a-f0-9]{32})/g, () => placeholder);
         
+        // Replace bare resource IDs that might appear as standalone URLs or in href attributes
+        // This catches cases where resource IDs appear without the :/ prefix
+        rendered = rendered.replace(/(src|href)=["']([a-f0-9]{32})["']/gi, (match, attr, id) => {
+            // Only replace if it's exactly 32 hex characters (Joplin resource ID format)
+            if (/^[a-f0-9]{32}$/i.test(id)) {
+                return `${attr}="${placeholder}"`;
+            }
+            return match;
+        });
+        
+        // Also replace bare resource IDs that might be in URLs (like /api/files/view/[resource-id])
+        rendered = rendered.replace(/(\/api\/[^"'\s]*\/)([a-f0-9]{32})([^"'\s]*)/gi, (match, prefix, id, suffix) => {
+            // If the ID is exactly 32 hex chars and appears to be a Joplin resource ID
+            if (/^[a-f0-9]{32}$/i.test(id)) {
+                return prefix + placeholder + suffix;
+            }
+            return match;
+        });
+        
         contentPreview.innerHTML = rendered;
         
         // Double-check after rendering to catch any that slipped through
@@ -332,12 +351,38 @@ class NotesManager {
             
             const isOldFormat = src.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(src);
             const isBareFormat = /^[a-f0-9]{32}$/.test(src);
+            // Also check if src is a bare resource ID in a URL path
+            const isResourceIdInPath = /\/[a-f0-9]{32}(?:\/|$|:)/.test(src) && /[a-f0-9]{32}/.test(src);
             
-            if (isOldFormat || isBareFormat) {
-                img.src = placeholder;
-                img.setAttribute('src', placeholder);
-                img.setAttribute('alt', 'Image not found (old Joplin resource)');
-                img.onerror = null;
+            if (isOldFormat || isBareFormat || isResourceIdInPath) {
+                // Extract just the resource ID part if it's in a path
+                const resourceIdMatch = src.match(/([a-f0-9]{32})/);
+                if (resourceIdMatch && /^[a-f0-9]{32}$/i.test(resourceIdMatch[1])) {
+                    img.src = placeholder;
+                    img.setAttribute('src', placeholder);
+                    img.setAttribute('alt', 'Image not found (old Joplin resource)');
+                    img.onerror = null;
+                    // Prevent the browser from trying to load it
+                    img.removeAttribute('srcset');
+                }
+            }
+        });
+        
+        // Also check all links for resource IDs
+        const links = contentPreview.querySelectorAll('a[href]');
+        links.forEach(link => {
+            const href = link.getAttribute('href') || link.href;
+            if (!href) return;
+            
+            // Check if href contains a bare resource ID
+            const resourceIdMatch = href.match(/([a-f0-9]{32})/);
+            if (resourceIdMatch && /^[a-f0-9]{32}$/i.test(resourceIdMatch[1]) && !href.startsWith('http')) {
+                // Replace with placeholder or remove the link
+                link.href = '#';
+                link.onclick = (e) => {
+                    e.preventDefault();
+                    alert('This link references an old Joplin resource that is no longer available.');
+                };
             }
         });
     }
@@ -417,10 +462,10 @@ class NotesManager {
         const links = [];
         processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
             const index = links.length;
-            // Check if this is an old Joplin resource URL (:/[resource-id])
-            if (url.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(url)) {
-                // Old Joplin resource format - return as-is (will result in 404, but that's expected for unmigrated resources)
-                links.push({ text, url, external: false });
+            // Check if this is an old Joplin resource URL (:/[resource-id] or bare [resource-id])
+            if ((url.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(url)) || /^[a-f0-9]{32}$/.test(url)) {
+                // Old Joplin resource format - replace with placeholder link
+                links.push({ text, url: '#', external: false, isOldResource: true });
             } else {
                 const isExternal = url.startsWith('http') || url.startsWith('//');
                 links.push({ text, url, external: isExternal });
@@ -587,6 +632,10 @@ class NotesManager {
         // Restore links (after escaping, so they're not escaped)
         html = html.replace(/\x00LINK(\d+)\x00/g, (match, index) => {
             const link = links[parseInt(index)];
+            // Handle old Joplin resource links specially
+            if (link && link.isOldResource) {
+                return `<a href="#" onclick="alert('This link references an old Joplin resource that is no longer available.'); return false;" class="old-resource-link" style="color: #888; text-decoration: line-through;">${this.escapeHtml(link.text)}</a>`;
+            }
             const target = link.external ? ' target="_blank" rel="noopener"' : '';
             return `<a href="${this.escapeHtml(link.url)}"${target}>${this.escapeHtml(link.text)}</a>`;
         });
