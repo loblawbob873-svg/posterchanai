@@ -3,11 +3,12 @@ Storage Router - Internal API endpoints for storage server operations.
 These endpoints are called by client nodes when proxying file operations.
 All blocking I/O operations are run in thread pools to prevent blocking.
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, Query
 from fastapi import Request as FastAPIRequest
 from starlette.requests import Request as StarletteRequest
 from sqlalchemy.orm import Session
 from pathlib import Path
+import os
 from app.database import get_db
 from app.auth import get_current_user, get_current_user_optional
 from app.models import User
@@ -422,3 +423,97 @@ async def delete_note_attachments(
         return {"success": True, "message": "Attachments deleted"}
     else:
         raise HTTPException(status_code=500, detail="Failed to delete attachments")
+
+
+@router.get("/list-files")
+async def list_files(
+    username: str = Query(..., description="Username"),
+    path: str = Query("", description="Directory path relative to user root"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """
+    List files and directories. Called by client nodes when proxying file listings.
+    Only accessible on storage server node.
+    """
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        from fastapi import Request as FastAPIRequest
+        request = FastAPIRequest
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    # Handle path
+    target_path = user_path
+    if path:
+        try:
+            safe_path = Path(*[_sanitize_path_component(p) for p in path.split('/') if p])
+            target_path = user_path / safe_path
+            if not _validate_path_within_base(target_path, user_path):
+                raise HTTPException(status_code=403, detail="Access denied")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    
+    if not target_path.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+    if not target_path.is_dir():
+        raise HTTPException(status_code=400, detail="Path is not a directory")
+    
+    # List directory
+    def _list_sync():
+        items = []
+        for item in sorted(target_path.iterdir()):
+            try:
+                stat = item.stat()
+                is_dir = item.is_dir()
+                item_path = str(item.relative_to(user_path))
+                
+                item_info = {
+                    "name": item.name,
+                    "path": item_path,
+                    "is_directory": is_dir,
+                    "size": stat.st_size if not is_dir else 0,
+                    "modified": stat.st_mtime,
+                    "is_external": False,
+                }
+                items.append(item_info)
+            except Exception as e:
+                logger.warning(f"Error reading item {item}: {e}")
+                continue
+        return items
+    
+    items = await asyncio.to_thread(_list_sync)
+    
+    # Calculate usage
+    def _calc_usage():
+        total = 0
+        for root, dirs, files in os.walk(user_path):
+            for f in files:
+                try:
+                    total += (Path(root) / f).stat().st_size
+                except:
+                    pass
+        return total
+    
+    current_usage = await asyncio.to_thread(_calc_usage)
+    
+    return {
+        "items": items,
+        "path": path,
+        "current_usage": current_usage,
+        "quota": 0  # Quota is managed on main server
+    }

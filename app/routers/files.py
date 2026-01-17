@@ -209,6 +209,33 @@ async def list_files(
     current_user: User = Depends(get_current_user)
 ):
     """List files and directories in user's storage or external storage. Uses memory cache if enabled."""
+    # Check if storage server is configured - proxy request if so (for user storage only, not external)
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            # Check if this is an external storage path (don't proxy external storage)
+            is_external = False
+            if path:
+                path_parts = path.split('/')
+                if path_parts and path_parts[0]:
+                    mount_point = path_parts[0]
+                    external_storage = db.query(ExternalStorage).filter(
+                        ExternalStorage.mount_point == mount_point,
+                        ExternalStorage.is_active == True
+                    ).first()
+                    if external_storage:
+                        is_external = True
+            
+            if not is_external:
+                # Proxy to storage server
+                try:
+                    return await _proxy_list_files(url, current_user.username, path, db)
+                except Exception as e:
+                    logger.warning(f"[FILES] Failed to proxy list_files, falling back to local: {e}")
+                    # Fall through to local storage below
+    
+    # Local file listing (storage server node or when proxy fails or external storage)
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
@@ -1322,6 +1349,40 @@ async def _proxy_upload_file(storage_server_url: str, username: str, filename: s
         return await asyncio.to_thread(_sync_proxy)
     except Exception as e:
         logger.error(f"[FILES] Error proxying upload_file: {e}", exc_info=True)
+        raise
+
+
+async def _proxy_list_files(storage_server_url: str, username: str, path: str, db: Session):
+    """Proxy file listing to storage server"""
+    from app.models import Setting
+    import requests
+    
+    try:
+        # Get server-to-server API token
+        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        
+        url = f"{storage_server_url.rstrip('/')}/api/storage/list-files"
+        headers = {}
+        if storage_server_token and storage_server_token.value:
+            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        
+        params = {
+            "username": username,
+            "path": path
+        }
+        
+        # Use synchronous requests in thread pool
+        def _sync_proxy():
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"[FILES] Failed to proxy list_files: {response.status_code} - {response.text}")
+                raise Exception(f"Storage server error: {response.status_code}")
+        
+        return await asyncio.to_thread(_sync_proxy)
+    except Exception as e:
+        logger.error(f"[FILES] Error proxying list_files: {e}", exc_info=True)
         raise
 
 
