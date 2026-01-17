@@ -146,7 +146,11 @@ class NotesManager {
                 const data = await response.json();
                 // Always set notes to the response, even if empty array
                 this.notes = Array.isArray(data) ? data : [];
-                console.log(`Loaded ${this.notes.length} notes from API`);
+                console.log(`Loaded ${this.notes.length} notes from API`, this.notes.length > 0 ? '(first note: ' + this.notes[0].title + ')' : '(no notes)');
+                if (this.notes.length === 0) {
+                    console.warn('API returned empty array! Response:', data);
+                    console.warn('Full response status:', response.status, response.statusText);
+                }
                 // Force re-render even if notes array is empty
                 this.renderNotes();
             } else {
@@ -552,8 +556,10 @@ class NotesManager {
             
             // If it's already an /api/ URL, use it as-is (might be from migration)
             if (src.startsWith('/api/notes/files/')) {
-                // Already a proper URL, use it as-is
-                mediaSrc = src;
+                // Already a proper URL, use it as-is but add cache busting
+                // Check if it already has query params
+                const separator = src.includes('?') ? '&' : '?';
+                mediaSrc = `${src}${separator}t=${Date.now()}`;
                 console.log('Using existing API URL:', mediaSrc);
             } else if (src.startsWith('http://') || src.startsWith('https://')) {
                 // External URL, use as-is
@@ -773,8 +779,12 @@ class NotesManager {
             }
             
             // Add cache busting and error handling
-            const cacheBust = safeSrc.includes('?') ? '&' : '?';
-            const imgSrc = `${safeSrc}${cacheBust}t=${Date.now()}`;
+            // Check if URL already has cache busting
+            let imgSrc = safeSrc;
+            if (!imgSrc.includes('?t=') && !imgSrc.includes('&t=')) {
+                const cacheBust = imgSrc.includes('?') ? '&' : '?';
+                imgSrc = `${safeSrc}${cacheBust}t=${Date.now()}`;
+            }
             
             console.log('Creating img tag:', { imgIndex, src: imgSrc, alt: safeAlt });
             
@@ -1793,11 +1803,24 @@ function initNotesModal() {
         window.notesCacheVersion = `v${Date.now()}`;
         manager.notes = [];
         manager.folders = [];
+        // Clear any cached data
+        if (window.sessionStorage) {
+            try {
+                Object.keys(window.sessionStorage).forEach(key => {
+                    if (key.startsWith('notes_')) {
+                        window.sessionStorage.removeItem(key);
+                    }
+                });
+            } catch (e) {
+                // Ignore storage errors
+            }
+        }
         // Small delay to ensure DOM is ready
         setTimeout(() => {
+            console.log('Loading notes and folders...');
             manager.loadFolders();
             manager.loadNotes();
-        }, 50);
+        }, 100);
         manager.attachModeButtons();
     };
 }
