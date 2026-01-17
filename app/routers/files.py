@@ -1281,8 +1281,7 @@ async def upload_file(
 
 
 async def _proxy_upload_file(storage_server_url: str, username: str, file: UploadFile, path: str, db: Session):
-    """Proxy file upload to storage server"""
-    import httpx
+    """Proxy file upload to storage server - uses synchronous requests to avoid event loop issues"""
     from app.models import Setting
     
     try:
@@ -1305,22 +1304,18 @@ async def _proxy_upload_file(storage_server_url: str, username: str, file: Uploa
             "path": path
         }
         
-        # Use async httpx client with explicit transport (same as storage_proxy.py)
-        transport = httpx.AsyncHTTPTransport(
-            retries=3,
-            http2=False
-        )
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(300.0, connect=10.0),
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
-            transport=transport
-        ) as client:
-            response = await client.post(url, headers=headers, files=files, data=data)
+        # Use synchronous requests in thread pool (same approach as note attachments)
+        # This avoids httpx connection issues
+        def _sync_proxy():
+            import requests
+            response = requests.post(url, headers=headers, files=files, data=data, timeout=300)
             if response.status_code == 200:
                 return response.json()
             else:
                 logger.error(f"[FILES] Failed to proxy upload_file: {response.status_code} - {response.text}")
                 raise Exception(f"Storage server error: {response.status_code}")
+        
+        return await asyncio.to_thread(_sync_proxy)
     except Exception as e:
         logger.error(f"[FILES] Error proxying upload_file: {e}", exc_info=True)
         raise
