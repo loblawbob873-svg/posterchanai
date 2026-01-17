@@ -1309,9 +1309,7 @@ class FileManager {
                 // Reload files after upload
                 await this.loadFiles(this.currentPath);
                 
-                if (uploadedCount > 0) {
-                    this.showToast(`Successfully uploaded ${uploadedCount} file(s)`, 'success');
-                } else {
+                if (uploadedCount === 0) {
                     this.showToast('No files were uploaded', 'error');
                 }
             } catch (error) {
@@ -1413,10 +1411,8 @@ class FileManager {
             // Reload files after upload
             await this.loadFiles(this.currentPath);
             
-            // Show result message
-            if (uploadedCount > 0) {
-                this.showToast(`Successfully uploaded ${uploadedCount} file(s)${failedCount > 0 ? `, ${failedCount} failed` : ''}`, 'success');
-            } else {
+            // Show error message only if all uploads failed
+            if (uploadedCount === 0 && failedCount > 0) {
                 this.showToast(`Failed to upload ${failedCount} file(s)`, 'error');
             }
         } catch (error) {

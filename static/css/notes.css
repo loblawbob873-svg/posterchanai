@@ -174,15 +174,17 @@
     background: transparent;
     border: none;
     cursor: pointer;
-    padding: 4px 8px;
+    padding: 6px 10px;
     border-radius: 4px;
-    font-size: 14px;
-    opacity: 0.5;
+    font-size: 16px;
+    opacity: 0.6;
     transition: all 0.2s ease;
     display: flex;
     align-items: center;
     justify-content: center;
     margin-left: auto;
+    min-width: 32px;
+    min-height: 32px;
 }
 
 .notes-folder-item .folder-delete-btn:hover {

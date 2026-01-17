@@ -182,14 +182,13 @@ class NotesManager {
         // Keep "All Notes" item
         let html = '<div class="notes-folder-item active" data-folder-id="0"><span class="folder-icon">📁</span><span class="folder-name">All Notes</span></div>';
         
-        // Render folders (simple flat list for now)
-        // Filter out empty folders (folders with 0 notes)
-        this.folders.filter(folder => folder.notes_count > 0).forEach(folder => {
+        // Render folders (show all folders, including empty ones)
+        this.folders.forEach(folder => {
             html += `
                 <div class="notes-folder-item" data-folder-id="${folder.id}">
                     <span class="folder-icon">📂</span>
                     <span class="folder-name">${this.escapeHtml(folder.name)}</span>
-                    <span class="folder-count">${folder.notes_count}</span>
+                    <span class="folder-count">${folder.notes_count || 0}</span>
                     <button class="folder-delete-btn" onclick="event.stopPropagation(); notesManager.deleteFolder(${folder.id}, '${this.escapeJs(folder.name)}')" title="Delete folder">🗑️</button>
                 </div>
             `;
