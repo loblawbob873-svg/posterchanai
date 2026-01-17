@@ -825,19 +825,37 @@ async def get_storage_addresses(
             return f"{base}{path_suffix}"
     
     webdav_url = ""
-    if webdav_enabled and webdav_enabled.value.lower() == "true":
-        webdav_url = build_dav_url(webdav_base_url, webdav_port, "8080", f"/{current_user.username}")
-        logger.debug(f"Built WebDAV URL: {webdav_url}")
+    if webdav_enabled:
+        logger.debug(f"WebDAV enabled setting value: '{webdav_enabled.value}' (type: {type(webdav_enabled.value)})")
+        if webdav_enabled.value and str(webdav_enabled.value).strip().lower() == "true":
+            webdav_url = build_dav_url(webdav_base_url, webdav_port, "8080", f"/{current_user.username}")
+            logger.debug(f"Built WebDAV URL: {webdav_url}")
+        else:
+            logger.debug(f"WebDAV not enabled (value: {webdav_enabled.value})")
+    else:
+        logger.debug("WebDAV setting not found in database")
     
     caldav_url = ""
-    if caldav_enabled and caldav_enabled.value.lower() == "true":
-        caldav_url = build_dav_url(caldav_base_url, caldav_port, "8081", f"/caldav/{current_user.username}/")
-        logger.debug(f"Built CalDAV URL: {caldav_url}")
+    if caldav_enabled:
+        logger.debug(f"CalDAV enabled setting value: '{caldav_enabled.value}' (type: {type(caldav_enabled.value)})")
+        if caldav_enabled.value and str(caldav_enabled.value).strip().lower() == "true":
+            caldav_url = build_dav_url(caldav_base_url, caldav_port, "8081", f"/caldav/{current_user.username}/")
+            logger.debug(f"Built CalDAV URL: {caldav_url}")
+        else:
+            logger.debug(f"CalDAV not enabled (value: {caldav_enabled.value})")
+    else:
+        logger.debug("CalDAV setting not found in database")
     
     cardav_url = ""
-    if cardav_enabled and cardav_enabled.value.lower() == "true":
-        cardav_url = build_dav_url(cardav_base_url, cardav_port, "8082", f"/carddav/{current_user.username}/")
-        logger.debug(f"Built CardDAV URL: {cardav_url}")
+    if cardav_enabled:
+        logger.debug(f"CardDAV enabled setting value: '{cardav_enabled.value}' (type: {type(cardav_enabled.value)})")
+        if cardav_enabled.value and str(cardav_enabled.value).strip().lower() == "true":
+            cardav_url = build_dav_url(cardav_base_url, cardav_port, "8082", f"/carddav/{current_user.username}/")
+            logger.debug(f"Built CardDAV URL: {cardav_url}")
+        else:
+            logger.debug(f"CardDAV not enabled (value: {cardav_enabled.value})")
+    else:
+        logger.debug("CardDAV setting not found in database")
     
     result = {
         "username": current_user.username,
