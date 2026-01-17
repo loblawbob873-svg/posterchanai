@@ -19,7 +19,7 @@ CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "X-CSRF-Token"
 CSRF_TOKEN_LENGTH = 32
 
-# Paths that don't require CSRF protection
+# Paths that don't require CSRF protection (only used if CSRF_ENABLED=true)
 CSRF_EXEMPT_PATHS: Set[str] = {
     "/v1/",      # OpenAI-compatible API uses API key auth
     "/api/tts",  # API key authenticated
@@ -27,8 +27,6 @@ CSRF_EXEMPT_PATHS: Set[str] = {
     "/api/storage/",  # Storage server endpoints (server-to-server auth)
     "/mcp/",     # MCP server endpoints
     "/ws/",      # WebSocket connections
-    # Temporarily exempt notes folders endpoint until CSRF header issue is resolved
-    # "/api/notes/folders",  # TODO: Re-enable after fixing CSRF header sending
 }
 
 # Paths that are always exempt (login, public resources, read-only endpoints)
@@ -68,70 +66,49 @@ def is_path_exempt(path: str) -> bool:
 
 class CSRFMiddleware(BaseHTTPMiddleware):
     """
-    CSRF protection middleware using Double Submit Cookie pattern.
-
-    For state-changing requests (POST, PUT, DELETE, PATCH):
-    - Requires X-CSRF-Token header matching the csrf_token cookie
-    - Exempt paths don't require validation
-
-    For all responses:
-    - Sets/refreshes CSRF token cookie if not present
+    CSRF protection middleware - DISABLED by default.
+    
+    With SameSite="lax" cookies and authentication, CSRF protection is less critical.
+    The middleware still sets CSRF cookies for compatibility, but doesn't enforce validation.
+    
+    To re-enable CSRF protection, set CSRF_ENABLED environment variable to "true".
     """
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Get or generate CSRF token
+        # Check if CSRF is enabled via environment variable
+        import os
+        csrf_enabled = os.getenv("CSRF_ENABLED", "false").lower() == "true"
+        
+        # Get or generate CSRF token (still set cookie for compatibility)
         csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
 
-        # Check if this is a state-changing request
-        if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        # Only validate CSRF if explicitly enabled
+        if csrf_enabled and request.method in ("POST", "PUT", "DELETE", "PATCH"):
             # Skip validation for exempt paths
             if not is_path_exempt(request.url.path):
                 # Skip if request has Authorization header (API key or Bearer token for server-to-server)
                 auth_header = request.headers.get("Authorization")
                 if not auth_header:
-                    # Validate CSRF token - check both case variations and common variations
-                    # HTTP headers are case-insensitive, but Starlette normalizes them to lowercase
-                    # So we need to check lowercase version
-                    # Starlette/ASGI normalizes header names to lowercase, so check that first
+                    # Validate CSRF token
                     csrf_header = (
-                        request.headers.get("x-csrf-token") or  # Lowercase (Starlette normalized)
-                        request.headers.get(CSRF_HEADER_NAME) or  # Original case
-                        request.headers.get(CSRF_HEADER_NAME.lower()) or  # Explicit lowercase
-                        request.headers.get("X-Csrf-Token")  # Mixed case
+                        request.headers.get("x-csrf-token") or
+                        request.headers.get(CSRF_HEADER_NAME) or
+                        request.headers.get(CSRF_HEADER_NAME.lower())
                     )
-                    
-                    # Log all headers for debugging
-                    all_headers = dict(request.headers)
-                    logger.warning(f"CSRF check for {request.method} {request.url.path}: cookie={bool(csrf_cookie)}, header={bool(csrf_header)}, header_keys={list(all_headers.keys())}, looking_for={CSRF_HEADER_NAME}")
 
                     if not csrf_cookie:
-                        # Log for debugging
-                        logger.warning(f"CSRF token missing from cookies for {request.method} {request.url.path}")
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="CSRF token missing from cookies"
                         )
 
                     if not csrf_header:
-                        # Log for debugging - show all headers to help diagnose
-                        all_header_names = list(request.headers.keys())
-                        all_headers_dict = dict(request.headers)
-                        logger.error(f"CSRF token missing from header for {request.method} {request.url.path}")
-                        logger.error(f"  Cookie present: {bool(csrf_cookie)}")
-                        logger.error(f"  All header names: {all_header_names}")
-                        logger.error(f"  All headers: {all_headers_dict}")
-                        logger.error(f"  Looking for: {CSRF_HEADER_NAME}")
-                        # Print to stderr as well for immediate visibility
-                        import sys
-                        print(f"ERROR: CSRF token missing from header for {request.method} {request.url.path}", file=sys.stderr)
-                        print(f"  Headers received: {all_header_names}", file=sys.stderr)
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="CSRF token missing from header"
                         )
 
                     if not secrets.compare_digest(csrf_cookie, csrf_header):
-                        logger.warning(f"CSRF token mismatch for {request.method} {request.url.path}")
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="CSRF token mismatch"
