@@ -199,16 +199,15 @@ async function toggleRssSkip(id) {
     }
 }
 
-// Update storage quota
-// Storage rescan functionality
-document.getElementById('rescanAllStorageBtn')?.addEventListener('click', async () => {
-    if (!confirm('Rescan file storage for all users? This will invalidate file cache and may take a moment.')) {
+// Combined file scanning functionality (EXIF + thumbnails + rescan)
+document.getElementById('scanFilesBtn')?.addEventListener('click', async () => {
+    if (!confirm('Scan all user files?\n\nThis will:\n• Restore EXIF timestamps from photos/videos\n• Generate thumbnails\n• Update file index\n• Clear caches\n\nThis may take 2-5 minutes for large collections.')) {
         return;
     }
     
     const statusDiv = document.getElementById('storageRescanStatus');
     statusDiv.style.display = 'block';
-    statusDiv.innerHTML = '<div style="color: #4a9eff;">⏳ Rescanning storage for all users...</div>';
+    statusDiv.innerHTML = '<div style="color: #4a9eff;">⏳ Scanning files for all users...</div>';
     
     try {
         const response = await csrfFetch('/api/admin/storage/rescan', {
@@ -226,8 +225,7 @@ document.getElementById('rescanAllStorageBtn')?.addEventListener('click', async 
                     • Successful: ${data.summary.successful}<br>
                     • Failed: ${data.summary.failed}<br>
                     • Total files found: ${data.summary.total_files.toLocaleString()}<br>
-                    • Total directories: ${data.summary.total_directories.toLocaleString()}
-                </div>`;
+                    • Total directories: ${data.summary.total_directories.toLocaleString()}</div>`;
             }
             
             if (data.results && data.results.length > 0) {
@@ -237,8 +235,12 @@ document.getElementById('rescanAllStorageBtn')?.addEventListener('click', async 
                 `;
                 for (const result of data.results) {
                     if (result.status === 'success') {
+                        let exifInfo = '';
+                        if (result.exif_restored !== undefined) {
+                            exifInfo = ` [EXIF: ${result.exif_restored}/${result.exif_processed} restored]`;
+                        }
                         html += `<div style="color: #4ade80; margin-bottom: 4px;">
-                            ${result.username}: ${result.files} files, ${result.directories} directories
+                            ${result.username}: ${result.files} files, ${result.directories} directories${exifInfo}
                         </div>`;
                     } else {
                         html += `<div style="color: #ff6b6b; margin-bottom: 4px;">
@@ -252,171 +254,15 @@ document.getElementById('rescanAllStorageBtn')?.addEventListener('click', async 
             statusDiv.innerHTML = html;
         } else {
             const error = await response.json();
-            statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${error.detail || 'Failed to rescan storage'}</div>`;
+            statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${error.detail || 'Failed to scan files'}</div>`;
         }
     } catch (err) {
-        console.error('Storage rescan error:', err);
+        console.error('File scan error:', err);
         statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${err.message}</div>`;
     }
 });
 
-// Rescan for specific user (will be shown when a user is selected)
-document.getElementById('rescanUserStorageBtn')?.addEventListener('click', async () => {
-    const selectedUserId = window.selectedUserIdForRescan;
-    if (!selectedUserId) {
-        alert('Please select a user first');
-        return;
-    }
-    
-    if (!confirm(`Rescan file storage for selected user? This will invalidate file cache.`)) {
-        return;
-    }
-    
-    const statusDiv = document.getElementById('storageRescanStatus');
-    statusDiv.style.display = 'block';
-    statusDiv.innerHTML = '<div style="color: #4a9eff;">⏳ Rescanning storage...</div>';
-    
-    try {
-        const response = await csrfFetch(`/api/admin/storage/rescan?user_id=${selectedUserId}`, {
-            method: 'POST'
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            let html = `<div style="color: #4ade80; margin-bottom: 12px;">✅ ${data.message}</div>`;
-            
-            if (data.results && data.results.length > 0) {
-                const result = data.results[0];
-                if (result.status === 'success') {
-                    html += `<div style="background: #1a1a2e; padding: 12px; border-radius: 6px; margin-top: 8px;">
-                        <strong>Results for ${result.username}:</strong><br>
-                        • Files: ${result.files.toLocaleString()}<br>
-                        • Directories: ${result.directories.toLocaleString()}
-                    </div>`;
-                } else {
-                    html += `<div style="color: #ff6b6b; margin-top: 8px;">Error: ${result.error || 'Unknown error'}</div>`;
-                }
-            }
-            
-            statusDiv.innerHTML = html;
-        } else {
-            const error = await response.json();
-            statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${error.detail || 'Failed to rescan storage'}</div>`;
-        }
-    } catch (err) {
-        console.error('Storage rescan error:', err);
-        statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${err.message}</div>`;
-    }
-});
-
-// Thumbnail generation functionality
-document.getElementById('generateThumbnailsAllBtn')?.addEventListener('click', async () => {
-    if (!confirm('Generate thumbnails for all users? This may take a while for users with many images.')) {
-        return;
-    }
-    
-    const statusDiv = document.getElementById('thumbnailGenerationStatus');
-    statusDiv.style.display = 'block';
-    statusDiv.innerHTML = '<div style="color: #4a9eff;">⏳ Generating thumbnails for all users...</div>';
-    
-    try {
-        const response = await csrfFetch('/api/admin/generate-thumbnails', {
-            method: 'POST'
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            let html = `<div style="color: #4ade80; margin-bottom: 12px;">✅ ${data.message}</div>`;
-            
-            if (data.summary) {
-                html += `<div style="background: #1a1a2e; padding: 12px; border-radius: 6px; margin-top: 8px;">
-                    <strong>Summary:</strong><br>
-                    • Total users: ${data.summary.total_users}<br>
-                    • Successful: ${data.summary.successful_users}<br>
-                    • Failed: ${data.summary.failed_users}<br>
-                    • Thumbnails generated: ${data.summary.total_thumbnails_generated.toLocaleString()}<br>
-                    • Failed: ${data.summary.total_failed.toLocaleString()}
-                </div>`;
-            }
-            
-            if (data.results && data.results.length > 0) {
-                html += `<details style="margin-top: 12px;">
-                    <summary style="cursor: pointer; color: #888; user-select: none;">View detailed results</summary>
-                    <div style="margin-top: 8px; max-height: 300px; overflow-y: auto; background: #1a1a2e; padding: 12px; border-radius: 6px;">
-                `;
-                for (const result of data.results) {
-                    if (result.status === 'success') {
-                        html += `<div style="color: #4ade80; margin-bottom: 4px;">
-                            ${result.username}: ${result.successful} generated, ${result.failed} failed
-                        </div>`;
-                    } else {
-                        html += `<div style="color: #ff6b6b; margin-bottom: 4px;">
-                            ${result.username}: Error - ${result.error || 'Unknown error'}
-                        </div>`;
-                    }
-                }
-                html += `</div></details>`;
-            }
-            
-            statusDiv.innerHTML = html;
-        } else {
-            const error = await response.json();
-            statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${error.detail || 'Failed to generate thumbnails'}</div>`;
-        }
-    } catch (err) {
-        console.error('Thumbnail generation error:', err);
-        statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${err.message}</div>`;
-    }
-});
-
-// Generate thumbnails for specific user (will be shown when a user is selected)
-document.getElementById('generateThumbnailsUserBtn')?.addEventListener('click', async () => {
-    const selectedUserId = window.selectedUserIdForThumbnails;
-    if (!selectedUserId) {
-        alert('Please select a user first');
-        return;
-    }
-    
-    if (!confirm(`Generate thumbnails for selected user? This may take a moment if there are many images.`)) {
-        return;
-    }
-    
-    const statusDiv = document.getElementById('thumbnailGenerationStatus');
-    statusDiv.style.display = 'block';
-    statusDiv.innerHTML = '<div style="color: #4a9eff;">⏳ Generating thumbnails...</div>';
-    
-    try {
-        const response = await csrfFetch(`/api/admin/generate-thumbnails?user_id=${selectedUserId}`, {
-            method: 'POST'
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            let html = `<div style="color: #4ade80; margin-bottom: 12px;">✅ ${data.message}</div>`;
-            
-            if (data.results && data.results.length > 0) {
-                const result = data.results[0];
-                if (result.status === 'success') {
-                    html += `<div style="background: #1a1a2e; padding: 12px; border-radius: 6px; margin-top: 8px;">
-                        <strong>Results for ${result.username}:</strong><br>
-                        • Thumbnails generated: ${result.successful.toLocaleString()}<br>
-                        • Failed: ${result.failed.toLocaleString()}
-                    </div>`;
-                } else {
-                    html += `<div style="color: #ff6b6b; margin-top: 8px;">Error: ${result.error || 'Unknown error'}</div>`;
-                }
-            }
-            
-            statusDiv.innerHTML = html;
-        } else {
-            const error = await response.json();
-            statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${error.detail || 'Failed to generate thumbnails'}</div>`;
-        }
-    } catch (err) {
-        console.error('Thumbnail generation error:', err);
-        statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${err.message}</div>`;
-    }
-});
+// Rescan for specific user - functionality removed, use scanFilesBtn instead
 
 async function updateStorageQuota(userId, username) {
     const quotaInput = document.getElementById(`quota_${userId}`);

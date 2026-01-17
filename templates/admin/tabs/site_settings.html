@@ -221,26 +221,26 @@
     <fieldset>
         <legend>Storage Administration</legend>
         <div class="form-group">
-            <label>Rescan File Storage</label>
+            <label>Scan Files</label>
             <div style="display: flex; gap: 8px; align-items: center;">
-                <button type="button" class="btn-secondary" id="rescanAllStorageBtn">Rescan All Users</button>
-                <button type="button" class="btn-secondary" id="rescanUserStorageBtn" style="display: none;">Rescan Selected User</button>
+                <button type="button" class="btn-primary" id="scanFilesBtn">Scan All Users</button>
+                <button type="button" class="btn-secondary" id="rescanUserStorageBtn" style="display: none;">Scan Selected User</button>
             </div>
-            <small>Rescan file storage to ensure database consistency. Invalidates file cache and recalculates file counts. Use this if files appear missing or storage usage is incorrect.</small>
+            <small>
+                Scans all user files and performs the following:
+                <ul style="margin: 8px 0; padding-left: 20px;">
+                    <li><strong>Restore EXIF timestamps</strong> - Sets file modification dates to match original photo/video capture dates</li>
+                    <li><strong>Generate thumbnails</strong> - Creates preview images for photos and videos</li>
+                    <li><strong>Update file index</strong> - Ensures database is consistent with actual storage</li>
+                    <li><strong>Clear caches</strong> - Invalidates stale cached data</li>
+                </ul>
+                Use this after uploading files via rsync or if photos aren't sorting correctly by date.
+            </small>
             <div id="storageRescanStatus" style="margin-top: 12px; display: none;"></div>
-        </div>
-        <div class="form-group" style="margin-top: 12px;">
-            <label>Generate Thumbnails</label>
-            <div style="display: flex; gap: 8px; align-items: center;">
-                <button type="button" class="btn-secondary" id="generateThumbnailsAllBtn">Generate All Users</button>
-                <button type="button" class="btn-secondary" id="generateThumbnailsUserBtn" style="display: none;">Generate Selected User</button>
-            </div>
-            <small>Generate thumbnails for all images in user storage. Thumbnails are stored in <code>.thumbnails</code> folders within user directories. Use this to regenerate thumbnails after changes or if thumbnails are missing.</small>
-            <div id="thumbnailGenerationStatus" style="margin-top: 12px; display: none;"></div>
         </div>
         <div class="form-group" style="margin-top: 12px; padding: 10px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;">
             <small style="color: #aaa; display: block;">
-                <strong style="color: #4a9eff;">ℹ️ Note:</strong> Rescanning walks through all user files and directories, invalidates the file cache, and ensures the database is consistent with actual file storage. This may take a moment for users with many files.
+                <strong style="color: #4a9eff;">ℹ️ Note:</strong> This process may take 2-5 minutes for large photo collections (4,000+ files). Progress will be shown below.
             </small>
         </div>
     </fieldset>
