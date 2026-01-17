@@ -61,20 +61,38 @@ async def no_healthy_servers_handler(request: FastAPIRequest, exc: NoHealthyServ
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+def _clean_error_detail(detail):
+    """Clean error detail to ensure it's JSON serializable."""
+    if detail is None:
+        return None
+    elif isinstance(detail, bytes):
+        return detail.decode('utf-8', errors='ignore')
+    elif isinstance(detail, (str, int, float, bool)):
+        return detail
+    elif isinstance(detail, (list, tuple)):
+        return [_clean_error_detail(item) for item in detail]
+    elif isinstance(detail, dict):
+        return {str(k): _clean_error_detail(v) for k, v in detail.items()}
+    else:
+        return str(detail)
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: FastAPIRequest, exc: StarletteHTTPException):
     """Ensure HTTP exceptions return JSON instead of HTML"""
+    cleaned_detail = _clean_error_detail(exc.detail)
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.detail}
+        content={"detail": cleaned_detail}
     )
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: FastAPIRequest, exc: RequestValidationError):
     """Ensure validation errors return JSON"""
+    errors = exc.errors()
+    cleaned_errors = _clean_error_detail(errors)
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors()}
+        content={"detail": cleaned_errors}
     )
 
 @app.exception_handler(Exception)
@@ -84,13 +102,18 @@ async def general_exception_handler(request: FastAPIRequest, exc: Exception):
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
     
     error_detail = str(exc)
+    # Clean the error detail to ensure it's JSON serializable
+    error_detail = _clean_error_detail(error_detail)
     
     # Check if this is an API request (starts with /api/)
     if request.url.path.startswith("/api/"):
         # Return JSON error response for API routes
+        # Ensure the content dict is also clean
+        content = {"detail": f"Internal server error: {error_detail}"}
+        content = _clean_error_detail(content)
         return JSONResponse(
             status_code=500,
-            content={"detail": f"Internal server error: {error_detail}"}
+            content=content
         )
     # For non-API requests, re-raise to let FastAPI's default handler deal with it
     # This allows HTML error pages for web pages

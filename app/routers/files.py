@@ -288,25 +288,50 @@ async def get_all_images(
                             # Test serialization before returning
                             try:
                                 import json
-                                test_json = json.dumps(cleaned_data)
+                                # Use custom encoder
+                                class BytesSafeEncoder(json.JSONEncoder):
+                                    def default(self, obj):
+                                        if isinstance(obj, bytes):
+                                            return obj.decode('utf-8', errors='ignore')
+                                        elif isinstance(obj, Path):
+                                            return str(obj)
+                                        return super().default(obj)
+                                test_json = json.dumps(cleaned_data, cls=BytesSafeEncoder)
                                 logger.debug(f"[FILES] Proxy response cleaned and validated: {len(cleaned_data.get('images', []))} images")
                             except (TypeError, ValueError) as test_err:
                                 logger.error(f"[FILES] Proxy response still has serialization issues after cleaning: {test_err}")
-                                # Try to find the problem
+                                logger.error(f"[FILES] Error type: {type(test_err).__name__}")
+                                # Try to find the problem with detailed logging
+                                problematic_paths = []
                                 def find_problem(obj, path="root", depth=0):
-                                    if depth > 5:
+                                    if depth > 10:
                                         return
-                                    if isinstance(obj, bytes):
-                                        logger.error(f"[FILES] Found bytes at {path}")
-                                    elif isinstance(obj, Path):
-                                        logger.error(f"[FILES] Found Path at {path}")
-                                    elif isinstance(obj, dict):
-                                        for k, v in obj.items():
-                                            find_problem(v, f"{path}.{k}", depth+1)
-                                    elif isinstance(obj, (list, tuple)):
-                                        for i, item in enumerate(obj[:5]):
-                                            find_problem(item, f"{path}[{i}]", depth+1)
+                                    try:
+                                        if isinstance(obj, bytes):
+                                            problematic_paths.append(f"{path} (bytes: {obj[:50] if len(obj) > 50 else obj})")
+                                            return
+                                        elif isinstance(obj, Path):
+                                            problematic_paths.append(f"{path} (Path: {obj})")
+                                            return
+                                        elif isinstance(obj, dict):
+                                            for k, v in obj.items():
+                                                find_problem(v, f"{path}.{k}", depth+1)
+                                        elif isinstance(obj, (list, tuple)):
+                                            for i, item in enumerate(obj[:20]):
+                                                find_problem(item, f"{path}[{i}]", depth+1)
+                                        else:
+                                            # Try to serialize this value alone
+                                            try:
+                                                json.dumps(obj)
+                                            except (TypeError, ValueError) as e:
+                                                problematic_paths.append(f"{path} (type {type(obj).__name__}: {e})")
+                                    except Exception as e:
+                                        problematic_paths.append(f"{path} (error checking: {e})")
                                 find_problem(cleaned_data)
+                                if problematic_paths:
+                                    logger.error(f"[FILES] Found {len(problematic_paths)} problematic paths:")
+                                    for p in problematic_paths[:10]:
+                                        logger.error(f"[FILES]   - {p}")
                                 # Return safe empty response
                                 return {"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False}
                             
