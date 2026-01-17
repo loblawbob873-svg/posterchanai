@@ -1055,24 +1055,16 @@ async def get_all_images(
     
     try:
         result = await asyncio.to_thread(_get_all_images_sync)
-        # Result is already cleaned by ensure_serializable_image() - don't clean again
-        # to avoid converting dicts to strings
-        cleaned_result = result
+        # Result is already cleaned by ensure_serializable_image() 
+        # Don't do any additional processing that might convert dicts to strings
         
-        # Double-check: ensure the result dict itself is clean
-        # Don't over-process - just verify top level structure
-        if isinstance(cleaned_result, dict):
-            # Verify images is a list of dicts, not strings
-            if 'images' in cleaned_result and isinstance(cleaned_result['images'], list):
-                # Check if first image is a string (it shouldn't be)
-                if cleaned_result['images'] and isinstance(cleaned_result['images'][0], str):
-                    logger.error(f"[STORAGE] BUG: Images are strings instead of dicts! First image: {cleaned_result['images'][0][:100]}")
-                    # This shouldn't happen - images should already be dicts from ensure_serializable_image
-                    return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False, "error": "Serialization bug - images are strings"})
-            
-            final_result = cleaned_result
-        else:
-            final_result = cleaned_result
+        # Verify the structure is correct
+        if isinstance(result, dict) and 'images' in result:
+            if result['images'] and isinstance(result['images'][0], str):
+                logger.error(f"[STORAGE] BUG: Images are strings! First: {result['images'][0][:100]}")
+        
+        # Return directly without additional cleaning
+        return JSONResponse(content=result)
         
         # Custom JSON encoder for testing
         class BytesSafeEncoder(json.JSONEncoder):
