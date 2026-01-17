@@ -1196,7 +1196,20 @@ async def upload_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Upload a file to the user's storage."""
+    """Upload a file to the user's storage. Proxies to storage server if configured."""
+    # Check if storage server is configured - proxy request if so
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            try:
+                # Proxy to storage server
+                return await _proxy_upload_file(url, current_user.username, file, path, db)
+            except Exception as e:
+                logger.warning(f"[FILES] Failed to proxy upload_file, falling back to local: {e}")
+                # Fall through to local storage below
+    
+    # Local file saving (storage server node or when proxy fails)
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
@@ -1281,11 +1294,8 @@ async def _proxy_upload_file(storage_server_url: str, username: str, file: Uploa
         if storage_server_token and storage_server_token.value:
             headers["Authorization"] = f"Bearer {storage_server_token.value}"
         
-        # Read file content (need to reset file pointer if already read)
+        # Read file content
         content = await file.read()
-        
-        # Reset file pointer for potential retry
-        await file.seek(0)
         
         files = {
             "file": (file.filename, content, file.content_type or "application/octet-stream")
@@ -1295,15 +1305,14 @@ async def _proxy_upload_file(storage_server_url: str, username: str, file: Uploa
             "path": path
         }
         
-        # Use synchronous requests to avoid event loop issues
-        import requests
-        response = requests.post(url, headers=headers, files=files, data=data, timeout=300)
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            logger.error(f"[FILES] Failed to proxy upload_file: {response.status_code} - {response.text}")
-            raise Exception(f"Storage server error: {response.status_code}")
+        # Use async httpx client
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.post(url, headers=headers, files=files, data=data)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"[FILES] Failed to proxy upload_file: {response.status_code} - {response.text}")
+                raise Exception(f"Storage server error: {response.status_code}")
     except Exception as e:
         logger.error(f"[FILES] Error proxying upload_file: {e}", exc_info=True)
         raise
