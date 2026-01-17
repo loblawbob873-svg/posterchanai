@@ -181,6 +181,38 @@
     background: rgba(255, 255, 255, 0.2);
 }
 
+.notes-browser-folder-item .folder-delete-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 16px;
+    opacity: 0.6;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    min-width: 32px;
+    min-height: 32px;
+}
+
+.notes-browser-folder-item .folder-delete-btn:hover {
+    opacity: 1;
+    background: rgba(255, 0, 0, 0.1);
+    transform: scale(1.1);
+}
+
+.notes-browser-folder-item.active .folder-delete-btn {
+    opacity: 0.7;
+}
+
+.notes-browser-folder-item.active .folder-delete-btn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.2);
+}
+
 .notes-browser-main {
     flex: 1;
     display: flex;

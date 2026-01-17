@@ -176,16 +176,21 @@ class NotesManager {
     }
     
     renderFolders() {
-        const foldersList = document.getElementById('notesFoldersList');
+        // Try both possible folder list IDs (for different UI versions)
+        const foldersList = document.getElementById('notesFoldersList') || document.getElementById('notesBrowserFoldersList');
         if (!foldersList) return;
         
+        // Determine which class to use based on which UI is active
+        const isBrowserUI = foldersList.id === 'notesBrowserFoldersList';
+        const folderItemClass = isBrowserUI ? 'notes-browser-folder-item' : 'notes-folder-item';
+        
         // Keep "All Notes" item
-        let html = '<div class="notes-folder-item active" data-folder-id="0"><span class="folder-icon">📁</span><span class="folder-name">All Notes</span></div>';
+        let html = `<div class="${folderItemClass} active" data-folder-id="0"><span class="folder-icon">📁</span><span class="folder-name">All Notes</span></div>`;
         
         // Render folders (show all folders, including empty ones)
         this.folders.forEach(folder => {
             html += `
-                <div class="notes-folder-item" data-folder-id="${folder.id}">
+                <div class="${folderItemClass}" data-folder-id="${folder.id}">
                     <span class="folder-icon">📂</span>
                     <span class="folder-name">${this.escapeHtml(folder.name)}</span>
                     <span class="folder-count">${folder.notes_count || 0}</span>
@@ -196,8 +201,8 @@ class NotesManager {
         
         foldersList.innerHTML = html;
         
-        // Add click handlers
-        foldersList.querySelectorAll('.notes-folder-item').forEach(item => {
+        // Add click handlers (handle both UI versions)
+        foldersList.querySelectorAll('.notes-folder-item, .notes-browser-folder-item').forEach(item => {
             item.addEventListener('click', () => {
                 // Close note editor if open
                 const notesEditor = document.getElementById('notesEditor');
@@ -1402,10 +1407,10 @@ class NotesManager {
                 // If we were viewing this folder, switch to "All Notes"
                 if (this.currentFolderId === folderId) {
                     this.currentFolderId = 0;
-                    // Update active folder in UI
-                    const foldersList = document.getElementById('notesFoldersList');
+                    // Update active folder in UI (try both possible IDs)
+                    const foldersList = document.getElementById('notesFoldersList') || document.getElementById('notesBrowserFoldersList');
                     if (foldersList) {
-                        foldersList.querySelectorAll('.notes-folder-item').forEach(item => {
+                        foldersList.querySelectorAll('.notes-folder-item, .notes-browser-folder-item').forEach(item => {
                             item.classList.remove('active');
                             if (parseInt(item.dataset.folderId) === 0) {
                                 item.classList.add('active');
