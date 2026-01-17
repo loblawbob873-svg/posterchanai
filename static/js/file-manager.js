@@ -21,6 +21,8 @@ class FileManager {
         this.imageLoadOffset = 0;
         this.imageLoadLimit = 50;
         this.hasMoreImages = true;
+        this.loadingImages = false; // Track if images are currently loading
+        this.scrollObserver = null; // Intersection observer for infinite scroll
         this.currentAudioPlayer = null; // Track currently playing audio
         this.init();
     }
@@ -1951,6 +1953,38 @@ class FileManager {
         if (viewer) {
             viewer.style.display = 'block';
             this.loadAllImages();
+            this.setupInfiniteScroll();
+        }
+    }
+    
+    setupInfiniteScroll() {
+        // Remove existing observer if any
+        if (this.scrollObserver) {
+            this.scrollObserver.disconnect();
+        }
+        
+        const grid = document.getElementById('cyberpunkGalleryGrid');
+        if (!grid) return;
+        
+        // Create intersection observer for infinite scroll
+        this.scrollObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting && this.hasMoreImages && !this.loadingImages) {
+                    // Load more images when user scrolls near bottom
+                    console.log('Infinite scroll triggered - loading more images...');
+                    this.loadMoreImages();
+                }
+            });
+        }, {
+            root: null,
+            rootMargin: '300px', // Start loading 300px before reaching bottom
+            threshold: 0.01
+        });
+        
+        // Observe sentinel element (will be added in renderImageGrid)
+        const sentinel = document.getElementById('galleryScrollSentinel');
+        if (sentinel) {
+            this.scrollObserver.observe(sentinel);
         }
     }
     
@@ -2095,6 +2129,8 @@ class FileManager {
             console.error('Error loading images:', error);
             grid.innerHTML = `<div class="cyberpunk-loading"><div class="cyberpunk-loading-text" style="color: #ff0066;">[ERROR: ${error.message}]</div></div>`;
             if (infoEl) infoEl.textContent = '[ERROR LOADING IMAGES]';
+        } finally {
+            this.loadingImages = false;
         }
     }
     
@@ -2111,14 +2147,14 @@ class FileManager {
             return;
         }
         
-        // Ensure images are sorted before rendering (safety check)
-        // Convert to numbers explicitly to ensure numeric comparison
-        // Sort in descending order: newest first (higher timestamp = newer)
+        // CRITICAL: Sort by modified time (newest first) before rendering
+        // Convert to numbers explicitly to ensure numeric comparison (not string)
+        // This MUST happen every time before rendering to ensure correct order
         this.allImages.sort((a, b) => {
             const timeA = Number(a.modified) || 0;
             const timeB = Number(b.modified) || 0;
             // Descending order (newest first) - higher timestamp comes first
-            // timeB - timeA: if B is newer (timeB > timeA), returns positive, B comes before A ✓
+            // timeB - timeA: if B is newer (timeB > timeA), returns positive, B comes before A
             if (timeB !== timeA) {
                 return timeB - timeA; // Positive if B is newer, negative if A is newer
             }
@@ -2128,15 +2164,36 @@ class FileManager {
             return pathA.localeCompare(pathB);
         });
         
-        grid.innerHTML = '';
+        // Debug: log first few to verify sorting
+        if (this.allImages.length > 0) {
+            console.log(`Photo Gallery - Sorted ${this.allImages.length} images. First 10 (should be newest first):`);
+            this.allImages.slice(0, 10).forEach((img, idx) => {
+                const ts = Number(img.modified) || 0;
+                const date = ts > 0 ? new Date(ts * 1000).toLocaleString() : 'N/A';
+                console.log(`  ${idx + 1}. ${img.name}: timestamp=${ts}, date=${date}`);
+            });
+            
+            // Verify sorting
+            let prevTs = null;
+            let errors = 0;
+            for (let i = 0; i < Math.min(this.allImages.length, 20); i++) {
+                const currTs = Number(this.allImages[i].modified) || 0;
+                if (prevTs !== null && currTs > prevTs) {
+                    errors++;
+                    if (errors === 1) {
+                        console.error(`❌ Sorting error at index ${i}: ${this.allImages[i].name} (${currTs}) is NEWER than previous (${prevTs})`);
+                    }
+                }
+                prevTs = currTs;
+            }
+            if (errors === 0) {
+                console.log('✓ Sorting verified: All images in correct order (newest first)');
+            } else {
+                console.error(`❌ Found ${errors} sorting errors!`);
+            }
+        }
         
-        // Verify array is sorted before rendering
-        const sortedCopy = [...this.allImages].sort((a, b) => {
-            const timeA = Number(a.modified) || 0;
-            const timeB = Number(b.modified) || 0;
-            if (timeB !== timeA) return timeB - timeA;
-            return (a.path || '').toLowerCase().localeCompare((b.path || '').toLowerCase());
-        });
+        grid.innerHTML = '';
         
         // Check if our array matches the sorted copy
         let orderMismatch = false;
@@ -2227,6 +2284,21 @@ class FileManager {
             
             grid.appendChild(item);
         });
+        
+        // Add/update scroll sentinel for infinite scroll (at the end of grid)
+        let sentinel = document.getElementById('galleryScrollSentinel');
+        if (!sentinel) {
+            sentinel = document.createElement('div');
+            sentinel.id = 'galleryScrollSentinel';
+            sentinel.style.height = '1px';
+            sentinel.style.width = '100%';
+            grid.appendChild(sentinel);
+        }
+        
+        // Re-observe sentinel if observer exists
+        if (this.scrollObserver && sentinel) {
+            this.scrollObserver.observe(sentinel);
+        }
     }
     
     openFullscreenViewer(index) {
