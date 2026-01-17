@@ -1380,13 +1380,16 @@ class NotesManager {
             }
             
             console.log('CSRF token found:', csrfToken.substring(0, 8) + '...');
+            console.log('Full token length:', csrfToken.length);
             
-            // Build headers with CSRF token
-            const headers = new Headers();
-            headers.set('Content-Type', 'application/json');
-            headers.set('X-CSRF-Token', csrfToken);
+            // Build headers object (plain object, not Headers() to ensure it works)
+            const headers = {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': csrfToken
+            };
             
-            console.log('Sending request with headers:', Object.fromEntries(headers.entries()));
+            console.log('Sending request with headers:', headers);
+            console.log('Header X-CSRF-Token value:', headers['X-CSRF-Token'] ? headers['X-CSRF-Token'].substring(0, 8) + '...' : 'MISSING');
             
             const response = await fetch('/api/notes/folders', {
                 method: 'POST',
