@@ -5,9 +5,11 @@ All blocking I/O operations are run in thread pools to prevent blocking.
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, Query
 from fastapi import Request as FastAPIRequest
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.requests import Request as StarletteRequest
 from sqlalchemy.orm import Session
 from pathlib import Path
+from typing import List
 import os
 from app.database import get_db
 from app.auth import get_current_user, get_current_user_optional
@@ -380,6 +382,63 @@ async def upload_file(
         "path": relative_path,
         "filename": safe_filename
     }
+
+
+@router.post("/delete-note-attachment")
+async def delete_note_attachment(
+    request: FastAPIRequest,
+    username: str = Form(...),
+    note_id: int = Form(...),
+    filename: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """Delete a specific attachment file for a note (storage server endpoint)."""
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify user owns this note
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Run blocking file I/O - handle both async and sync contexts
+    # Bypass proxy since we're already on the storage server endpoint
+    def _delete_attachment_sync():
+        storage = StorageService(db)
+        return storage.delete_note_attachment(username, note_id, filename, bypass_proxy=True)
+    
+    # Try to get running event loop
+    try:
+        loop = asyncio.get_running_loop()
+        # Use executor to run blocking I/O
+        success = await loop.run_in_executor(None, _delete_attachment_sync)
+    except RuntimeError:
+        # No running event loop - we're likely in a thread pool
+        # Just run synchronously since we're already in a separate thread
+        success = _delete_attachment_sync()
+    
+    if success:
+        # Invalidate file cache for notes directory (non-blocking)
+        try:
+            from app.routers.files import get_file_cache
+            cache = get_file_cache(db)
+            cache.invalidate(f"{username}:notes/{note_id}")
+            cache.invalidate(f"{username}:notes")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+        
+        return {"message": "Attachment deleted successfully", "success": True}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to delete attachment")
 
 
 @router.post("/delete-note-attachments")
@@ -872,3 +931,351 @@ async def list_files(
         "current_usage": current_usage,
         "quota": 0  # Quota is managed on main server
     }
+
+
+@router.get("/view-file")
+async def view_file(
+    request: FastAPIRequest,
+    username: str = Query(...),
+    file_path: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """
+    View/download a file. Called by client nodes when proxying file view requests.
+    Only accessible on storage server node.
+    """
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    # Sanitize and validate path
+    try:
+        safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
+        full_path = user_path / safe_path
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    
+    # Validate path is within user directory
+    if not _validate_path_within_base(full_path, user_path):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if not full_path.exists() or not full_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Determine media type
+    suffix = full_path.suffix.lower()
+    media_types = {
+        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+        '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+        '.pdf': 'application/pdf',
+        '.txt': 'text/plain', '.md': 'text/markdown',
+        '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript',
+    }
+    media_type = media_types.get(suffix, 'application/octet-stream')
+    
+    # For images, set headers to display inline instead of triggering download
+    headers = {}
+    if suffix in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
+        headers['Content-Disposition'] = 'inline'
+    
+    return FileResponse(
+        full_path,
+        media_type=media_type,
+        filename=full_path.name,
+        headers=headers
+    )
+
+
+@router.get("/thumbnail-file")
+async def thumbnail_file(
+    request: FastAPIRequest,
+    username: str = Query(...),
+    file_path: str = Query(...),
+    size: int = Query(200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """
+    Get thumbnail for an image file. Called by client nodes when proxying thumbnail requests.
+    Only accessible on storage server node.
+    """
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    # Sanitize and validate path
+    try:
+        safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
+        full_path = user_path / safe_path
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    
+    # Validate path is within user directory
+    if not _validate_path_within_base(full_path, user_path):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if not full_path.exists() or not full_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Generate thumbnail in thread pool (image processing is CPU-intensive)
+    from app.routers.files import generate_thumbnail
+    try:
+        thumbnail_data = await asyncio.to_thread(generate_thumbnail, full_path, (size, size))
+        if thumbnail_data:
+            return JSONResponse({"thumbnail": thumbnail_data})
+        else:
+            raise HTTPException(status_code=400, detail="File is not an image")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating thumbnail: {e}")
+
+
+@router.post("/move-files")
+async def move_files(
+    request: FastAPIRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """
+    Move files or folders. Called by client nodes when proxying file move operations.
+    Only accessible on storage server node.
+    """
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    from typing import List
+    
+    # Parse JSON body (server-to-server requests use JSON)
+    try:
+        body = await request.json()
+        username = body.get("username")
+        file_paths = body.get("file_paths", [])
+        destination = body.get("destination", "")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
+    
+    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    # Sanitize and validate destination path
+    try:
+        if destination and destination.strip():
+            safe_dest = Path(*[_sanitize_path_component(p) for p in destination.split('/') if p])
+            dest_path = user_path / safe_dest
+        else:
+            # Empty destination means root directory
+            dest_path = user_path
+        
+        # Validate destination is within user directory
+        if not _validate_path_within_base(dest_path, user_path):
+            raise HTTPException(status_code=403, detail="Invalid destination path")
+        
+        # Destination must exist and be a directory
+        if not dest_path.exists():
+            raise HTTPException(status_code=404, detail="Destination directory does not exist")
+        
+        if not dest_path.is_dir():
+            raise HTTPException(status_code=400, detail="Destination must be a directory")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid destination path: {e}")
+    
+    # Run move operations in thread pool
+    def _move_files_sync():
+        moved = []
+        errors = []
+        
+        for file_path in file_paths:
+            try:
+                # Sanitize source path
+                safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
+                source_path = user_path / safe_path
+                
+                # Validate source is within user directory
+                if not _validate_path_within_base(source_path, user_path):
+                    errors.append(f"{file_path}: Access denied")
+                    continue
+                
+                if not source_path.exists():
+                    errors.append(f"{file_path}: Not found")
+                    continue
+                
+                # Check if destination already has a file/folder with the same name
+                target_path = dest_path / source_path.name
+                if target_path.exists():
+                    errors.append(f"{file_path}: Destination already contains '{source_path.name}'")
+                    continue
+                
+                # Move the file/folder
+                import shutil
+                shutil.move(str(source_path), str(target_path))
+                moved.append(file_path)
+            except Exception as e:
+                errors.append(f"{file_path}: {str(e)}")
+        
+        return moved, errors
+    
+    try:
+        moved, errors = await asyncio.to_thread(_move_files_sync)
+        
+        # Invalidate file cache
+        try:
+            from app.routers.files import get_file_cache
+            cache = get_file_cache(db)
+            cache.invalidate(f"{username}:")
+            # Invalidate both source and destination directories
+            for file_path in file_paths:
+                parent_path = '/'.join(file_path.split('/')[:-1]) if '/' in file_path else ""
+                cache.invalidate(f"{username}:{parent_path}")
+            cache.invalidate(f"{username}:{destination}")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+        
+        return {
+            "message": f"Moved {len(moved)} item(s)",
+            "moved": moved,
+            "errors": errors
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/delete-files-bulk")
+async def delete_files_bulk(
+    request: FastAPIRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """
+    Delete multiple files or directories. Called by client nodes when proxying bulk delete operations.
+    Only accessible on storage server node.
+    """
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    from typing import List
+    
+    # Parse JSON body (server-to-server requests use JSON)
+    try:
+        body = await request.json()
+        username = body.get("username")
+        file_paths = body.get("file_paths", [])
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
+    
+    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    # Run deletions in thread pool
+    def _delete_files_sync():
+        deleted = []
+        errors = []
+        
+        for file_path in file_paths:
+            try:
+                # Sanitize and validate path
+                safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
+                full_path = user_path / safe_path
+                
+                # Validate path is within user directory
+                if not _validate_path_within_base(full_path, user_path):
+                    errors.append(f"{file_path}: Access denied")
+                    continue
+                
+                if not full_path.exists():
+                    errors.append(f"{file_path}: Not found")
+                    continue
+                
+                # Delete the file or directory
+                if full_path.is_file():
+                    full_path.unlink()
+                elif full_path.is_dir():
+                    import shutil
+                    shutil.rmtree(full_path)
+                else:
+                    errors.append(f"{file_path}: Neither file nor directory")
+                    continue
+                
+                deleted.append(file_path)
+            except Exception as e:
+                errors.append(f"{file_path}: {str(e)}")
+        
+        return deleted, errors
+    
+    try:
+        deleted, errors = await asyncio.to_thread(_delete_files_sync)
+        
+        # Invalidate file cache
+        try:
+            from app.routers.files import get_file_cache
+            cache = get_file_cache(db)
+            cache.invalidate(f"{username}:")
+            # Invalidate parent directories
+            for file_path in file_paths:
+                parent_path = '/'.join(file_path.split('/')[:-1]) if '/' in file_path else ""
+                cache.invalidate(f"{username}:{parent_path}")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+        
+        return {
+            "message": f"Deleted {len(deleted)} item(s)",
+            "deleted": deleted,
+            "errors": errors
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

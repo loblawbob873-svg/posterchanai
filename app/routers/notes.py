@@ -914,7 +914,8 @@ async def delete_note_attachment(
             thread_db = SessionLocal()
             try:
                 storage = StorageService(thread_db)
-                return storage.delete_note_attachment(username, note_id, filename)
+                # Don't bypass proxy - let StorageService handle proxying
+                return storage.delete_note_attachment(username, note_id, filename, bypass_proxy=False)
             finally:
                 thread_db.close()
         

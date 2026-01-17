@@ -754,50 +754,16 @@ async def upload_avatar(
                 "filename": filename
             }
         except HTTPException as e:
-            # If proxy fails, fall back to local save (might be on storage server itself)
-            logger.warning(f"Proxy failed ({e.status_code}): {e.detail}, falling back to local save")
-            # Fall through to local save
+            # NO FALLBACK - if proxy fails, request fails
+            logger.error(f"Proxy failed ({e.status_code}): {e.detail}")
+            raise
         except Exception as e:
-            # If proxy fails, fall back to local save (might be on storage server itself)
-            logger.warning(f"Error proxying avatar upload: {e}, falling back to local save")
-            # Fall through to local save
+            # NO FALLBACK - if proxy fails, request fails
+            logger.error(f"Error proxying avatar upload: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Failed to proxy avatar upload: {str(e)}")
     
-    # Local file saving (storage server node or fallback from proxy failure)
-    logger.debug(f"Saving avatar locally for user: {current_user.username}")
-    try:
-        # Get file extension
-        ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}
-        ext = ext_map.get(file.content_type, ".png")
-        logger.debug(f"File extension: {ext}, content_type: {file.content_type}, size: {len(content)} bytes")
-
-        # Save avatar (run in thread pool since save_avatar is blocking I/O)
-        storage = StorageService(db)
-        
-        def _save_avatar_sync():
-            try:
-                return storage.save_avatar(current_user.username, content, ext)
-            except Exception as e:
-                logger.error(f"Error in _save_avatar_sync: {e}", exc_info=True)
-                raise
-        
-        filename = await asyncio.to_thread(_save_avatar_sync)
-        logger.debug(f"Avatar saved with filename: {filename}")
-
-        # Update user record
-        current_user.avatar = filename
-        db.commit()
-        logger.debug(f"User record updated with avatar: {filename}")
-
-        # Add cache busting to avatar URL
-        avatar_url = f"/api/auth/avatar/{current_user.username}?t={int(time.time())}"
-        return {
-            "message": "Avatar uploaded",
-            "avatar": avatar_url,
-            "filename": filename
-        }
-    except Exception as e:
-        logger.error(f"Error saving avatar locally: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to save avatar: {str(e)}")
+    # If storage server is not configured, fail explicitly
+    raise HTTPException(status_code=500, detail="Storage server not configured. Cannot upload avatar.")
 
 
 @router.delete("/avatar")
@@ -912,41 +878,19 @@ async def get_avatar(
                 logger.debug(f"Successfully proxied avatar for {username} from storage server")
                 return result
             except HTTPException as e:
-                logger.warning(f"HTTPException proxying avatar for {username}: {e.status_code} - {e.detail}")
-                if e.status_code == 404:
-                    raise HTTPException(status_code=404, detail="Avatar not found")
-                # For other errors, fall through to local serving
-                logger.warning(f"Falling back to local avatar serving for {username}")
+                logger.error(f"HTTPException proxying avatar for {username}: {e.status_code} - {e.detail}")
+                # NO FALLBACK - if proxy fails, request fails
+                raise
             except Exception as e:
-                logger.warning(f"Error proxying avatar get for {username}, falling back to local: {e}", exc_info=True)
-                # Fall through to local serving
+                logger.error(f"Error proxying avatar get for {username}: {e}", exc_info=True)
+                # NO FALLBACK - if proxy fails, request fails
+                raise HTTPException(status_code=500, detail=f"Failed to proxy avatar request: {str(e)}")
         else:
-            # Invalid URL - log but fall back to local storage
-            logger.warning(f"Invalid storage_server_url (missing protocol): {url}, using local storage for avatar")
+            # Invalid URL - fail explicitly
+            raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
     else:
-        logger.debug(f"Serving avatar for {username} from local storage (no storage_server_url configured)")
-    
-    # Serve avatar from local storage
-    logger.debug(f"Serving avatar for {username} from local storage")
-    
-    # Local file serving
-    storage = StorageService(db)
-    avatar_path = storage.get_avatar_path(username)
-    
-    logger.debug(f"Avatar path for {username}: {avatar_path} (exists: {avatar_path.exists() if avatar_path else False})")
-
-    if not avatar_path or not avatar_path.exists():
-        logger.warning(f"Avatar not found for {username} at {avatar_path}")
-        raise HTTPException(status_code=404, detail="Avatar not found")
-
-    # Determine content type
-    ext = avatar_path.suffix.lower()
-    content_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}
-    content_type = content_types.get(ext, "image/png")
-    
-    logger.debug(f"Serving avatar file: {avatar_path} (type: {content_type})")
-
-    return FileResponse(avatar_path, media_type=content_type)
+        # Storage server not configured - fail explicitly
+        raise HTTPException(status_code=500, detail="Storage server not configured. Cannot get avatar.")
 
 
 # ============== Custom AI Service Testing ==============

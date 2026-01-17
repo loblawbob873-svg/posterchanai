@@ -426,7 +426,34 @@ async def view_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """View/download a file. Returns image viewer HTML for images. Supports external storage."""
+    """View/download a file. Returns image viewer HTML for images. Supports external storage. Proxies to storage server if configured (NO FALLBACK)."""
+    # Check if this is an external storage path (don't proxy external storage)
+    path_parts = file_path.split('/')
+    is_external = False
+    if path_parts and path_parts[0]:
+        mount_point = path_parts[0]
+        external_storage = db.query(ExternalStorage).filter(
+            ExternalStorage.mount_point == mount_point,
+            ExternalStorage.is_active == True
+        ).first()
+        if external_storage and current_user in external_storage.allowed_users:
+            is_external = True
+    
+    # Check if storage server is configured - proxy request if so (for user storage only, not external)
+    if not is_external:
+        storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        if storage_server_url and storage_server_url.value:
+            url = storage_server_url.value.strip()
+            if url.startswith(('http://', 'https://')):
+                logger.info(f"[FILES] Proxying view_file to storage server: {url}")
+                # Proxy to storage server - NO FALLBACK
+                return await _proxy_view_file(url, current_user.username, file_path, db)
+            else:
+                raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
+        else:
+            raise HTTPException(status_code=500, detail="Storage server not configured. Cannot view files.")
+    
+    # Handle external storage or local fallback (only for external storage)
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
@@ -434,7 +461,6 @@ async def view_file(
     external_storage = None
     external_file_path = None
     
-    path_parts = file_path.split('/')
     if path_parts and path_parts[0]:
         mount_point = path_parts[0]
         external_storage = db.query(ExternalStorage).filter(
@@ -466,19 +492,8 @@ async def view_file(
             # User doesn't have access
             raise HTTPException(status_code=403, detail="Access denied: you don't have permission to access this storage")
         else:
-            # Regular user storage path
-            try:
-                safe_path = Path(*[_sanitize_path_component(p) for p in path_parts if p])
-                full_path = user_path / safe_path
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
-            
-            # Validate path is within user directory
-            if not _validate_path_within_base(full_path, user_path):
-                raise HTTPException(status_code=403, detail="Access denied")
-            
-            if not full_path.exists() or not full_path.is_file():
-                raise HTTPException(status_code=404, detail="File not found")
+            # Regular user storage path (should not reach here if proxying is configured)
+            raise HTTPException(status_code=500, detail="Storage server not configured. Cannot view files.")
     else:
         raise HTTPException(status_code=400, detail="Invalid file path")
     
@@ -517,7 +532,34 @@ async def get_thumbnail(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get thumbnail for an image file. Supports external storage."""
+    """Get thumbnail for an image file. Supports external storage. Proxies to storage server if configured (NO FALLBACK)."""
+    # Check if this is an external storage path (don't proxy external storage)
+    path_parts = file_path.split('/')
+    is_external = False
+    if path_parts and path_parts[0]:
+        mount_point = path_parts[0]
+        external_storage = db.query(ExternalStorage).filter(
+            ExternalStorage.mount_point == mount_point,
+            ExternalStorage.is_active == True
+        ).first()
+        if external_storage and current_user in external_storage.allowed_users:
+            is_external = True
+    
+    # Check if storage server is configured - proxy request if so (for user storage only, not external)
+    if not is_external:
+        storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        if storage_server_url and storage_server_url.value:
+            url = storage_server_url.value.strip()
+            if url.startswith(('http://', 'https://')):
+                logger.info(f"[FILES] Proxying get_thumbnail to storage server: {url}")
+                # Proxy to storage server - NO FALLBACK
+                return await _proxy_get_thumbnail(url, current_user.username, file_path, size, db)
+            else:
+                raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
+        else:
+            raise HTTPException(status_code=500, detail="Storage server not configured. Cannot get thumbnail.")
+    
+    # Handle external storage or local fallback (only for external storage)
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
@@ -556,19 +598,8 @@ async def get_thumbnail(
             # User doesn't have access
             raise HTTPException(status_code=403, detail="Access denied: you don't have permission to access this storage")
         else:
-            # Regular user storage path
-            try:
-                safe_path = Path(*[_sanitize_path_component(p) for p in path_parts if p])
-                full_path = user_path / safe_path
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
-            
-            # Validate path is within user directory
-            if not _validate_path_within_base(full_path, user_path):
-                raise HTTPException(status_code=403, detail="Access denied")
-            
-            if not full_path.exists() or not full_path.is_file():
-                raise HTTPException(status_code=404, detail="File not found")
+            # Regular user storage path (should not reach here if proxying is configured)
+            raise HTTPException(status_code=500, detail="Storage server not configured. Cannot get thumbnail.")
     else:
         raise HTTPException(status_code=400, detail="Invalid file path")
     
@@ -997,67 +1028,21 @@ async def delete_files_bulk(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Delete multiple files or directories."""
-    storage = get_storage_service(db)
-    user_path = storage.get_user_path(current_user.username)
-    
-    # Run deletions in thread pool
-    def _delete_files_sync():
-        deleted = []
-        errors = []
-        
-        for file_path in request.file_paths:
-            try:
-                # Sanitize and validate path
-                safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
-                full_path = user_path / safe_path
-                
-                # Validate path is within user directory
-                if not _validate_path_within_base(full_path, user_path):
-                    errors.append(f"{file_path}: Access denied")
-                    continue
-                
-                if not full_path.exists():
-                    errors.append(f"{file_path}: Not found")
-                    continue
-                
-                # Delete the file or directory
-                if full_path.is_file():
-                    full_path.unlink()
-                elif full_path.is_dir():
-                    import shutil
-                    shutil.rmtree(full_path)
-                else:
-                    errors.append(f"{file_path}: Neither file nor directory")
-                    continue
-                
-                deleted.append(file_path)
-            except Exception as e:
-                errors.append(f"{file_path}: {str(e)}")
-        
-        return deleted, errors
-    
-    try:
-        deleted, errors = await asyncio.to_thread(_delete_files_sync)
-        
-        # Invalidate file cache
-        try:
-            cache = get_file_cache(db)
-            cache.invalidate(f"{current_user.username}:")
-            # Invalidate parent directories
-            for file_path in request.file_paths:
-                parent_path = '/'.join(file_path.split('/')[:-1]) if '/' in file_path else ""
-                cache.invalidate(f"{current_user.username}:{parent_path}")
-        except Exception as e:
-            logger.warning(f"Failed to invalidate cache: {e}")
-        
-        return {
-            "message": f"Deleted {len(deleted)} item(s)",
-            "deleted": deleted,
-            "errors": errors
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Delete multiple files or directories. Proxies to storage server if configured (NO FALLBACK)."""
+    # Check if storage server is configured - proxy request if so (NO FALLBACK)
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            logger.info(f"[FILES] Proxying delete_files_bulk to storage server: {url}")
+            # Proxy to storage server - NO FALLBACK
+            result = await _proxy_delete_files_bulk(url, current_user.username, request.file_paths, db)
+            logger.info(f"[FILES] Successfully proxied delete_files_bulk to storage server")
+            return result
+        else:
+            raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
+    else:
+        raise HTTPException(status_code=500, detail="Storage server not configured. Cannot delete files.")
 
 
 @router.delete("/delete")
@@ -1094,89 +1079,21 @@ async def move_files(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Move files or folders to a different location."""
-    storage = get_storage_service(db)
-    user_path = storage.get_user_path(current_user.username)
-    
-    # Sanitize and validate destination path
-    try:
-        if request.destination and request.destination.strip():
-            safe_dest = Path(*[_sanitize_path_component(p) for p in request.destination.split('/') if p])
-            dest_path = user_path / safe_dest
+    """Move files or folders to a different location. Proxies to storage server if configured (NO FALLBACK)."""
+    # Check if storage server is configured - proxy request if so (NO FALLBACK)
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            logger.info(f"[FILES] Proxying move_files to storage server: {url}")
+            # Proxy to storage server - NO FALLBACK
+            result = await _proxy_move_files(url, current_user.username, request.file_paths, request.destination, db)
+            logger.info(f"[FILES] Successfully proxied move_files to storage server")
+            return result
         else:
-            # Empty destination means root directory
-            dest_path = user_path
-        
-        # Validate destination is within user directory
-        if not _validate_path_within_base(dest_path, user_path):
-            raise HTTPException(status_code=403, detail="Invalid destination path")
-        
-        # Destination must exist and be a directory
-        if not dest_path.exists():
-            raise HTTPException(status_code=404, detail="Destination directory does not exist")
-        
-        if not dest_path.is_dir():
-            raise HTTPException(status_code=400, detail="Destination must be a directory")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid destination path: {e}")
-    
-    # Run move operations in thread pool
-    def _move_files_sync():
-        moved = []
-        errors = []
-        
-        for file_path in request.file_paths:
-            try:
-                # Sanitize source path
-                safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
-                source_path = user_path / safe_path
-                
-                # Validate source is within user directory
-                if not _validate_path_within_base(source_path, user_path):
-                    errors.append(f"{file_path}: Access denied")
-                    continue
-                
-                if not source_path.exists():
-                    errors.append(f"{file_path}: Not found")
-                    continue
-                
-                # Check if destination already has a file/folder with the same name
-                target_path = dest_path / source_path.name
-                if target_path.exists():
-                    errors.append(f"{file_path}: Destination already contains '{source_path.name}'")
-                    continue
-                
-                # Move the file/folder
-                import shutil
-                shutil.move(str(source_path), str(target_path))
-                moved.append(file_path)
-            except Exception as e:
-                errors.append(f"{file_path}: {str(e)}")
-        
-        return moved, errors
-    
-    try:
-        moved, errors = await asyncio.to_thread(_move_files_sync)
-        
-        # Invalidate file cache
-        try:
-            cache = get_file_cache(db)
-            cache.invalidate(f"{current_user.username}:")
-            # Invalidate both source and destination directories
-            for file_path in request.file_paths:
-                parent_path = '/'.join(file_path.split('/')[:-1]) if '/' in file_path else ""
-                cache.invalidate(f"{current_user.username}:{parent_path}")
-            cache.invalidate(f"{current_user.username}:{request.destination}")
-        except Exception as e:
-            logger.warning(f"Failed to invalidate cache: {e}")
-        
-        return {
-            "message": f"Moved {len(moved)} item(s)",
-            "moved": moved,
-            "errors": errors
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
+    else:
+        raise HTTPException(status_code=500, detail="Storage server not configured. Cannot move files.")
 
 
 @router.post("/upload")
@@ -1345,6 +1262,164 @@ async def _proxy_mkdir(storage_server_url: str, username: str, path: str, db: Se
         return await asyncio.to_thread(_sync_proxy)
     except Exception as e:
         logger.error(f"[FILES] Error proxying mkdir: {e}", exc_info=True)
+        raise
+
+
+async def _proxy_view_file(storage_server_url: str, username: str, file_path: str, db: Session):
+    """Proxy file view/download to storage server - uses synchronous requests to avoid event loop issues"""
+    from app.models import Setting
+    import requests
+    from fastapi.responses import Response
+    
+    try:
+        # Get server-to-server API token
+        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        
+        url = f"{storage_server_url.rstrip('/')}/api/storage/view-file"
+        headers = {}
+        if storage_server_token and storage_server_token.value:
+            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        
+        params = {
+            "username": username,
+            "file_path": file_path
+        }
+        
+        # Use synchronous requests in thread pool
+        def _sync_proxy():
+            response = requests.get(url, headers=headers, params=params, timeout=300, stream=True)
+            if response.status_code == 200:
+                # Read the content
+                content = response.content
+                # Get content type and headers
+                content_type = response.headers.get('Content-Type', 'application/octet-stream')
+                response_headers = {}
+                # Copy relevant headers
+                for key, value in response.headers.items():
+                    if key.lower() in ['content-disposition', 'content-type']:
+                        response_headers[key] = value
+                return {
+                    "content": content,
+                    "media_type": content_type,
+                    "headers": response_headers
+                }
+            else:
+                logger.error(f"[FILES] Failed to proxy view_file: {response.status_code} - {response.text}")
+                raise Exception(f"Storage server error: {response.status_code}")
+        
+        result = await asyncio.to_thread(_sync_proxy)
+        # Return Response with the content
+        return Response(
+            content=result["content"],
+            media_type=result["media_type"],
+            headers=result["headers"]
+        )
+    except Exception as e:
+        logger.error(f"[FILES] Error proxying view_file: {e}", exc_info=True)
+        raise
+
+
+async def _proxy_get_thumbnail(storage_server_url: str, username: str, file_path: str, size: int, db: Session):
+    """Proxy thumbnail generation to storage server - uses synchronous requests to avoid event loop issues"""
+    from app.models import Setting
+    import requests
+    
+    try:
+        # Get server-to-server API token
+        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        
+        url = f"{storage_server_url.rstrip('/')}/api/storage/thumbnail-file"
+        headers = {}
+        if storage_server_token and storage_server_token.value:
+            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        
+        params = {
+            "username": username,
+            "file_path": file_path,
+            "size": size
+        }
+        
+        # Use synchronous requests in thread pool
+        def _sync_proxy():
+            response = requests.get(url, headers=headers, params=params, timeout=60)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"[FILES] Failed to proxy get_thumbnail: {response.status_code} - {response.text}")
+                raise Exception(f"Storage server error: {response.status_code}")
+        
+        return await asyncio.to_thread(_sync_proxy)
+    except Exception as e:
+        logger.error(f"[FILES] Error proxying get_thumbnail: {e}", exc_info=True)
+        raise
+
+
+async def _proxy_move_files(storage_server_url: str, username: str, file_paths: List[str], destination: str, db: Session):
+    """Proxy file move operation to storage server - uses synchronous requests to avoid event loop issues"""
+    from app.models import Setting
+    import requests
+    
+    try:
+        # Get server-to-server API token
+        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        
+        url = f"{storage_server_url.rstrip('/')}/api/storage/move-files"
+        headers = {}
+        if storage_server_token and storage_server_token.value:
+            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        
+        data = {
+            "username": username,
+            "file_paths": file_paths,
+            "destination": destination
+        }
+        
+        # Use synchronous requests in thread pool
+        def _sync_proxy():
+            response = requests.post(url, headers=headers, json=data, timeout=300)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"[FILES] Failed to proxy move_files: {response.status_code} - {response.text}")
+                raise Exception(f"Storage server error: {response.status_code}")
+        
+        return await asyncio.to_thread(_sync_proxy)
+    except Exception as e:
+        logger.error(f"[FILES] Error proxying move_files: {e}", exc_info=True)
+        raise
+
+
+async def _proxy_delete_files_bulk(storage_server_url: str, username: str, file_paths: List[str], db: Session):
+    """Proxy bulk file deletion to storage server - uses synchronous requests to avoid event loop issues"""
+    from app.models import Setting
+    import requests
+    
+    try:
+        # Get server-to-server API token
+        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        
+        url = f"{storage_server_url.rstrip('/')}/api/storage/delete-files-bulk"
+        headers = {}
+        if storage_server_token and storage_server_token.value:
+            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        
+        data = {
+            "username": username,
+            "file_paths": file_paths
+        }
+        
+        # Use synchronous requests in thread pool
+        def _sync_proxy():
+            response = requests.post(url, headers=headers, json=data, timeout=300)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"[FILES] Failed to proxy delete_files_bulk: {response.status_code} - {response.text}")
+                raise Exception(f"Storage server error: {response.status_code}")
+        
+        return await asyncio.to_thread(_sync_proxy)
+    except Exception as e:
+        logger.error(f"[FILES] Error proxying delete_files_bulk: {e}", exc_info=True)
         raise
 
 

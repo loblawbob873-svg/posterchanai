@@ -637,8 +637,27 @@ class StorageService:
             logger.error(f"[STORAGE] Error proxying mail attachment: {e}", exc_info=True)
             raise
 
-    def delete_note_attachment(self, username: str, note_id: int, filename: str) -> bool:
-        """Delete a specific attachment file for a note"""
+    def delete_note_attachment(self, username: str, note_id: int, filename: str, bypass_proxy: bool = False) -> bool:
+        """Delete a specific attachment file for a note. Proxies to storage server if configured."""
+        # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
+        if not bypass_proxy:
+            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+            if storage_server_url and storage_server_url.value:
+                # Validate URL has protocol before proxying
+                url = storage_server_url.value.strip()
+                if url.startswith(('http://', 'https://')):
+                    # Valid URL - try to proxy
+                    try:
+                        return self._proxy_delete_note_attachment(url, username, note_id, filename)
+                    except Exception as e:
+                        # If proxy fails, fall back to local storage (per user's "Never fallback" request, this should fail)
+                        # But for now, we'll log and fall back to maintain compatibility
+                        logger.warning(f"[STORAGE] Failed to proxy delete_note_attachment, falling back to local: {e}")
+                        # Fall through to local storage below
+                else:
+                    logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
+        
+        # Local file deletion (storage server node or when bypassing proxy)
         try:
             safe_username = _sanitize_path_component(username)
             safe_note_id = _sanitize_path_component(str(note_id))
@@ -696,6 +715,35 @@ class StorageService:
         except Exception as e:
             logger.error(f"Error deleting note attachments: {e}", exc_info=True)
         return False
+    
+    def _proxy_delete_note_attachment(self, storage_server_url: str, username: str, note_id: int, filename: str) -> bool:
+        """Proxy single note attachment deletion to storage server"""
+        import requests
+        try:
+            # Get server-to-server API token
+            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
+            
+            url = f"{storage_server_url.rstrip('/')}/api/storage/delete-note-attachment"
+            headers = {}
+            if storage_server_token and storage_server_token.value:
+                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            
+            data = {
+                "username": username,
+                "note_id": note_id,
+                "filename": filename
+            }
+            
+            response = requests.post(url, headers=headers, data=data, timeout=30)
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("success", False)
+            else:
+                logger.error(f"[STORAGE] Failed to proxy delete_note_attachment: {response.status_code} - {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"[STORAGE] Error proxying delete_note_attachment: {e}", exc_info=True)
+            raise
     
     def _proxy_delete_note_attachments(self, storage_server_url: str, username: str, note_id: int) -> bool:
         """Proxy note attachments deletion to storage server"""
