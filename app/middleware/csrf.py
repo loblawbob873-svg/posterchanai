@@ -90,14 +90,12 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                     # Validate CSRF token - check both case variations and common variations
                     # HTTP headers are case-insensitive, but Starlette normalizes them to lowercase
                     # So we need to check lowercase version
+                    # Starlette/ASGI normalizes header names to lowercase, so check that first
                     csrf_header = (
-                        request.headers.get(CSRF_HEADER_NAME) or 
-                        request.headers.get(CSRF_HEADER_NAME.lower()) or
-                        request.headers.get("x-csrf-token") or
-                        request.headers.get("X-Csrf-Token") or
-                        # Also check the raw headers dict (case-sensitive)
-                        dict(request.headers).get(CSRF_HEADER_NAME) or
-                        dict(request.headers).get("X-CSRF-Token")
+                        request.headers.get("x-csrf-token") or  # Lowercase (Starlette normalized)
+                        request.headers.get(CSRF_HEADER_NAME) or  # Original case
+                        request.headers.get(CSRF_HEADER_NAME.lower()) or  # Explicit lowercase
+                        request.headers.get("X-Csrf-Token")  # Mixed case
                     )
                     
                     # Log all headers for debugging
