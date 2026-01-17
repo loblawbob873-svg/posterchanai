@@ -23,7 +23,7 @@ async function csrfFetch(url, options = {}) {
         options.credentials = 'include';
     }
 
-    // No CSRF token handling - CSRF is disabled
+    // No CSRF token handling - CSRF is completely disabled
     return fetch(url, options);
 }
 
@@ -35,7 +35,7 @@ function getCSRFToken() {
 }
 
 /**
- * POST request with CSRF protection
+ * POST request wrapper (CSRF disabled)
  */
 async function csrfPost(url, data, options = {}) {
     return csrfFetch(url, {
@@ -50,7 +50,7 @@ async function csrfPost(url, data, options = {}) {
 }
 
 /**
- * PUT request with CSRF protection
+ * PUT request wrapper (CSRF disabled)
  */
 async function csrfPut(url, data, options = {}) {
     return csrfFetch(url, {
@@ -65,7 +65,7 @@ async function csrfPut(url, data, options = {}) {
 }
 
 /**
- * DELETE request with CSRF protection
+ * DELETE request wrapper (CSRF disabled)
  */
 async function csrfDelete(url, options = {}) {
     return csrfFetch(url, {
@@ -84,6 +84,4 @@ window.csrfFetch = csrfFetch;
 window.csrfPost = csrfPost;
 window.csrfPut = csrfPut;
 window.csrfDelete = csrfDelete;
-window.getCSRFToken = getCSRFToken;
-// Also export as getCSRFToken for compatibility
 window.getCSRFToken = getCSRFToken;

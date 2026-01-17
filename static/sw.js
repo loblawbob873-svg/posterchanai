@@ -1,5 +1,5 @@
 // Service Worker for Poster-chan AI PWA
-const CACHE_NAME = 'posterchanai-v6';
+const CACHE_NAME = 'posterchanai-v7';
 const STATIC_ASSETS = [
   '/static/css/style.css',
   '/static/icon-192.png',
@@ -44,6 +44,11 @@ self.addEventListener('fetch', event => {
   }
 
   // For static assets only - cache first, then network
+  // NEVER cache csrf.js - it must always be fresh
+  if (url.pathname.includes('csrf.js')) {
+    return; // Don't cache csrf.js, always fetch fresh
+  }
+  
   if (url.pathname.startsWith('/static/') || url.pathname === '/manifest.json') {
     event.respondWith(
       caches.match(event.request).then(cached => {

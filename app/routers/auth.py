@@ -856,6 +856,9 @@ async def get_avatar(
     db: Session = Depends(get_db)
 ):
     """Get user avatar image. Proxies to storage server if configured."""
+    from fastapi.responses import FileResponse
+    from app.services.storage_service import StorageService
+    
     # Check if storage server is configured - proxy request if so
     storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
     if storage_server_url and storage_server_url.value:
@@ -888,9 +891,36 @@ async def get_avatar(
         else:
             # Invalid URL - fail explicitly
             raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
-    else:
-        # Storage server not configured - fail explicitly
-        raise HTTPException(status_code=500, detail="Storage server not configured. Cannot get avatar.")
+    
+    # Local file serving (storage server node or when storage_server_url is not configured)
+    storage = StorageService(db)
+    
+    # Try to get avatar path - this searches for avatar.* files in user directory
+    avatar_path = storage.get_avatar_path(username)
+    
+    # If not found via glob, check database for specific filename (if user exists in this DB)
+    if not avatar_path or not avatar_path.exists():
+        from app.models import User
+        user = db.query(User).filter(User.username == username).first()
+        if user and user.avatar:
+            user_path = storage.get_user_path(username)
+            avatar_path = user_path / user.avatar
+    
+    if not avatar_path or not avatar_path.exists():
+        raise HTTPException(status_code=404, detail="Avatar not found")
+    
+    # Determine media type from file extension
+    suffix = avatar_path.suffix.lower()
+    media_types = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+    }
+    media_type = media_types.get(suffix, "image/png")
+    
+    return FileResponse(avatar_path, media_type=media_type)
 
 
 # ============== Custom AI Service Testing ==============

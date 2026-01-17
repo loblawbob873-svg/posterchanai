@@ -363,9 +363,25 @@ async def upload_file(
         with open(full_file_path, 'wb') as f:
             f.write(content)
         
-        return str(full_file_path.relative_to(user_path)), safe_filename
+        return str(full_file_path.relative_to(user_path)), safe_filename, full_file_path
     
-    relative_path, safe_filename = await asyncio.to_thread(_upload_file_sync)
+    relative_path, safe_filename, full_file_path = await asyncio.to_thread(_upload_file_sync)
+    
+    # Generate thumbnail for images asynchronously (don't block upload response)
+    try:
+        from app.services.thumbnail_service import is_image_file, generate_thumbnail_for_image
+        # Get user_path in async context
+        storage = StorageService(db)
+        user_path = storage.get_user_path(username)
+        
+        if is_image_file(full_file_path):
+            # Schedule thumbnail generation in background
+            asyncio.create_task(
+                asyncio.to_thread(generate_thumbnail_for_image, user_path, full_file_path)
+            )
+            logger.debug(f"Scheduled thumbnail generation for uploaded image: {full_file_path}")
+    except Exception as e:
+        logger.warning(f"Failed to schedule thumbnail generation for {full_file_path}: {e}")
     
     # Invalidate file cache
     try:
@@ -731,6 +747,14 @@ async def delete_file(
     def _delete_file_sync():
         try:
             if full_path.is_file():
+                # Delete thumbnail if it's an image
+                try:
+                    from app.services.thumbnail_service import is_image_file, delete_thumbnail
+                    if is_image_file(full_path):
+                        delete_thumbnail(user_path, full_path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete thumbnail for {file_path}: {e}")
+                
                 full_path.unlink()
             elif full_path.is_dir():
                 import shutil
@@ -1048,11 +1072,26 @@ async def thumbnail_file(
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     
-    # Generate thumbnail in thread pool (image processing is CPU-intensive)
+    # Try to use stored thumbnail first, then generate if needed
     from app.routers.files import generate_thumbnail
+    from app.services.thumbnail_service import get_thumbnail_if_exists, generate_thumbnail_for_image
     try:
+        # Check for stored thumbnail
+        thumbnail_path = get_thumbnail_if_exists(user_path, full_path)
+        if thumbnail_path and thumbnail_path.exists():
+            # Use stored thumbnail
+            thumbnail_data = await asyncio.to_thread(generate_thumbnail, thumbnail_path, (size, size))
+            if thumbnail_data:
+                return JSONResponse({"thumbnail": thumbnail_data})
+        
+        # Generate thumbnail on-the-fly (and save it for future use)
         thumbnail_data = await asyncio.to_thread(generate_thumbnail, full_path, (size, size))
         if thumbnail_data:
+            # Save thumbnail for future use
+            try:
+                await asyncio.to_thread(generate_thumbnail_for_image, user_path, full_path)
+            except Exception:
+                pass  # Ignore errors when saving thumbnail
             return JSONResponse({"thumbnail": thumbnail_data})
         else:
             raise HTTPException(status_code=400, detail="File is not an image")
@@ -1243,6 +1282,14 @@ async def delete_files_bulk(
                 
                 # Delete the file or directory
                 if full_path.is_file():
+                    # Delete thumbnail if it's an image
+                    try:
+                        from app.services.thumbnail_service import is_image_file, delete_thumbnail
+                        if is_image_file(full_path):
+                            delete_thumbnail(user_path, full_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete thumbnail for {file_path}: {e}")
+                    
                     full_path.unlink()
                 elif full_path.is_dir():
                     import shutil

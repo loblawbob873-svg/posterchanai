@@ -909,3 +909,103 @@ def trigger_mcp_warmup(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to warmup MCP: {str(e)}"
         )
+
+
+@router.post("/generate-thumbnails")
+async def generate_thumbnails(
+    user_id: Optional[int] = Query(None, description="User ID to generate thumbnails for (None = all users)"),
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """
+    Generate thumbnails for all images in user storage.
+    Can be run for a specific user or all users.
+    """
+    from app.services.storage_service import get_storage_service
+    from app.services.thumbnail_service import generate_thumbnails_for_user
+    from app.database import SessionLocal
+    
+    def _generate_for_user(username: str, upload_path: str):
+        """Generate thumbnails for a single user. Thread-safe version."""
+        # Create new database session for this thread
+        thread_db = SessionLocal()
+        try:
+            from app.services.storage_service import StorageService
+            storage = StorageService(thread_db)
+            user_path = storage.get_user_path(username)
+            
+            successful, failed = generate_thumbnails_for_user(user_path)
+            
+            logger.info(f"[Thumbnails] User {username}: {successful} successful, {failed} failed")
+            return {
+                "username": username,
+                "successful": successful,
+                "failed": failed,
+                "status": "success"
+            }
+        except Exception as e:
+            logger.error(f"[Thumbnails] Error generating thumbnails for user {username}: {e}", exc_info=True)
+            return {
+                "username": username,
+                "status": "error",
+                "error": str(e)
+            }
+        finally:
+            thread_db.close()
+    
+    # Get storage service to access upload_path
+    storage = get_storage_service(db)
+    upload_path = storage.upload_path
+    
+    # Run thumbnail generation in thread pool to avoid blocking
+    if user_id:
+        # Generate for specific user
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        result = await asyncio.to_thread(_generate_for_user, user.username, upload_path)
+        result["user_id"] = user.id
+        return {
+            "message": f"Thumbnail generation completed for user {user.username}",
+            "results": [result]
+        }
+    else:
+        # Generate for all users
+        users = db.query(User).all()
+        results = []
+        
+        # Generate thumbnails for all users in parallel (but in thread pool)
+        tasks = [asyncio.to_thread(_generate_for_user, user.username, upload_path) for user in users]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle any exceptions and add user_id to results
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"[Thumbnails] Exception for user {users[i].username}: {result}")
+                processed_results.append({
+                    "user_id": users[i].id,
+                    "username": users[i].username,
+                    "status": "error",
+                    "error": str(result)
+                })
+            else:
+                result["user_id"] = users[i].id
+                processed_results.append(result)
+        
+        total_successful = sum(r.get("successful", 0) for r in processed_results if r.get("status") == "success")
+        total_failed = sum(r.get("failed", 0) for r in processed_results if r.get("status") == "success")
+        success_count = sum(1 for r in processed_results if r.get("status") == "success")
+        
+        return {
+            "message": f"Thumbnail generation completed for {len(users)} user(s)",
+            "summary": {
+                "total_users": len(users),
+                "successful_users": success_count,
+                "failed_users": len(users) - success_count,
+                "total_thumbnails_generated": total_successful,
+                "total_failed": total_failed
+            },
+            "results": processed_results
+        }

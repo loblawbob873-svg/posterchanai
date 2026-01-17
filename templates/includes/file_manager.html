@@ -69,6 +69,48 @@
     </div>
 </div>
 
+<!-- Upload Monitor Panel -->
+<div class="upload-monitor-panel" id="uploadMonitorPanel" style="display: none;">
+    <div class="upload-monitor-header">
+        <h3>📤 Upload Monitor</h3>
+        <div class="upload-monitor-actions">
+            <button class="btn-icon" id="uploadMonitorMinimizeBtn" title="Minimize">−</button>
+            <button class="btn-icon" id="uploadMonitorCloseBtn" title="Close">×</button>
+        </div>
+    </div>
+    <div class="upload-monitor-body" id="uploadMonitorBody">
+        <div class="upload-monitor-summary" id="uploadMonitorSummary">
+            <div class="upload-summary-item">
+                <span class="summary-label">Total:</span>
+                <span class="summary-value" id="uploadTotalCount">0</span>
+            </div>
+            <div class="upload-summary-item">
+                <span class="summary-label">Uploading:</span>
+                <span class="summary-value" id="uploadActiveCount">0</span>
+            </div>
+            <div class="upload-summary-item">
+                <span class="summary-label">Completed:</span>
+                <span class="summary-value" id="uploadCompletedCount">0</span>
+            </div>
+            <div class="upload-summary-item">
+                <span class="summary-label">Failed:</span>
+                <span class="summary-value" id="uploadFailedCount">0</span>
+            </div>
+            <div class="upload-summary-item">
+                <span class="summary-label">Speed:</span>
+                <span class="summary-value" id="uploadSpeed">-</span>
+            </div>
+        </div>
+        <div class="upload-monitor-list" id="uploadMonitorList">
+            <div class="upload-monitor-empty">No uploads in progress</div>
+        </div>
+    </div>
+    <div class="upload-monitor-footer">
+        <button class="btn-secondary btn-small" id="uploadMonitorClearBtn" style="display: none;">Clear Completed</button>
+        <button class="btn-danger btn-small" id="uploadMonitorCancelAllBtn" style="display: none;">Cancel All</button>
+    </div>
+</div>
+
 <!-- Image Viewer Modal -->
 <div class="image-viewer-modal" id="imageViewerModal" style="display: none;">
     <div class="image-viewer-container">

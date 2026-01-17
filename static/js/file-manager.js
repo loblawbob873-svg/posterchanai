@@ -11,6 +11,9 @@ class FileManager {
         this.currentTab = 'files'; // 'files' or 'shares'
         this.searchQuery = ''; // Current search query
         this.externalStorageMounts = []; // External storage mounts
+        this.uploadQueue = []; // Upload queue
+        this.uploadMonitorVisible = false;
+        this.uploadMonitorMinimized = false;
         this.init();
     }
     
@@ -169,6 +172,12 @@ class FileManager {
         document.getElementById('imageViewerClose')?.addEventListener('click', () => this.closeImageViewer());
         document.getElementById('imageViewerPrev')?.addEventListener('click', () => this.prevImage());
         document.getElementById('imageViewerNext')?.addEventListener('click', () => this.nextImage());
+        
+        // Upload monitor
+        document.getElementById('uploadMonitorMinimizeBtn')?.addEventListener('click', () => this.toggleUploadMonitorMinimize());
+        document.getElementById('uploadMonitorCloseBtn')?.addEventListener('click', () => this.hideUploadMonitor());
+        document.getElementById('uploadMonitorClearBtn')?.addEventListener('click', () => this.clearCompletedUploads());
+        document.getElementById('uploadMonitorCancelAllBtn')?.addEventListener('click', () => this.cancelAllUploads());
     }
     
     switchTab(tab) {
@@ -364,8 +373,11 @@ class FileManager {
             
             // Add resize listener for mobile detection on orientation change
             if (!this._resizeListener) {
-                this._resizeListener = () => this.detectMobile();
+                this._resizeListener = () => {
+                    this.detectMobile();
+                };
                 window.addEventListener('resize', this._resizeListener);
+                window.addEventListener('orientationchange', this._resizeListener);
             }
             
             // Ensure we're on the files tab by default
@@ -385,9 +397,10 @@ class FileManager {
             overlay.style.display = 'none';
         }
         
-        // Remove resize listener when closing
+        // Remove resize and orientation listeners when closing
         if (this._resizeListener) {
             window.removeEventListener('resize', this._resizeListener);
+            window.removeEventListener('orientationchange', this._resizeListener);
             this._resizeListener = null;
         }
     }
@@ -1170,47 +1183,15 @@ class FileManager {
         input.multiple = true;
         input.style.display = 'none';
         
-        input.addEventListener('change', async (e) => {
+        input.addEventListener('change', (e) => {
             const files = Array.from(e.target.files);
             if (files.length === 0) return;
             
-            // Show loading indicator
-            const grid = document.getElementById('fileManagerGrid');
-            const originalContent = grid ? grid.innerHTML : '';
-            if (grid) {
-                grid.innerHTML = '<div class="file-manager-loading">Uploading files...</div>';
-            }
+            // Add files to upload queue
+            this.addToUploadQueue(files, this.currentPath);
             
-            try {
-                // Upload each file
-                for (const file of files) {
-                    const formData = new FormData();
-                    formData.append('file', file);
-                    formData.append('path', this.currentPath);
-                    
-                    const response = await csrfFetch('/api/files/upload', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    if (!response.ok) {
-                        const error = await response.json();
-                        throw new Error(error.detail || 'Upload failed');
-                    }
-                }
-                
-                // Reload files after upload
-                await this.loadFiles(this.currentPath);
-            } catch (error) {
-                console.error('Error uploading file:', error);
-                alert(`Error uploading file: ${error.message || 'Unknown error'}`);
-                if (grid) {
-                    grid.innerHTML = originalContent;
-                }
-            } finally {
-                // Remove the input element
-                document.body.removeChild(input);
-            }
+            // Remove the input element
+            document.body.removeChild(input);
         });
         
         // Trigger file picker
@@ -1231,97 +1212,59 @@ class FileManager {
             const files = Array.from(e.target.files);
             if (files.length === 0) return;
             
-            // Show loading indicator
-            const grid = document.getElementById('fileManagerGrid');
-            const originalContent = grid ? grid.innerHTML : '';
-            if (grid) {
-                grid.innerHTML = `<div class="file-manager-loading">Uploading ${files.length} files from directory...</div>`;
-            }
+            // Group files by their relative path to preserve directory structure
+            const fileMap = new Map();
+            const basePath = this.currentPath || '';
             
-            try {
-                // Group files by their relative path to preserve directory structure
-                const fileMap = new Map();
-                const basePath = this.currentPath || '';
+            files.forEach(file => {
+                // Get the relative path from the file's webkitRelativePath
+                // webkitRelativePath format: "folder/subfolder/file.txt"
+                const relativePath = file.webkitRelativePath || file.name;
+                const pathParts = relativePath.split('/');
+                const fileName = pathParts.pop();
+                const dirPath = pathParts.join('/');
                 
-                files.forEach(file => {
-                    // Get the relative path from the file's webkitRelativePath
-                    // webkitRelativePath format: "folder/subfolder/file.txt"
-                    const relativePath = file.webkitRelativePath || file.name;
-                    const pathParts = relativePath.split('/');
-                    const fileName = pathParts.pop();
-                    const dirPath = pathParts.join('/');
-                    
-                    // Build the full target path
-                    const targetDir = basePath ? `${basePath}/${dirPath}` : dirPath;
-                    
-                    if (!fileMap.has(targetDir)) {
-                        fileMap.set(targetDir, []);
-                    }
-                    fileMap.get(targetDir).push({ file, fileName });
-                });
+                // Build the full target path
+                const targetDir = basePath ? `${basePath}/${dirPath}` : dirPath;
                 
-                // Upload files, creating directories as needed
-                let uploadedCount = 0;
-                for (const [dirPath, fileList] of fileMap.entries()) {
-                    // Create directory if it doesn't exist (if dirPath is not empty)
-                    if (dirPath) {
-                        try {
-                            const formData = new FormData();
-                            formData.append('path', dirPath);
-                            
-                            const mkdirResponse = await csrfFetch('/api/files/mkdir', {
-                                method: 'POST',
-                                body: formData
-                            });
-                            
-                            if (!mkdirResponse.ok && mkdirResponse.status !== 400) {
-                                // 400 means directory already exists, which is fine
-                                const error = await mkdirResponse.json();
-                                console.warn(`Warning creating directory ${dirPath}:`, error.detail || 'Directory creation failed');
-                            }
-                        } catch (dirError) {
-                            console.warn(`Warning creating directory ${dirPath}:`, dirError);
-                            // Continue anyway - directory might already exist
-                        }
-                    }
-                    
-                    // Upload all files in this directory
-                    for (const { file, fileName } of fileList) {
+                if (!fileMap.has(targetDir)) {
+                    fileMap.set(targetDir, []);
+                }
+                fileMap.get(targetDir).push({ file, fileName });
+            });
+            
+            // Create directories first
+            for (const dirPath of fileMap.keys()) {
+                if (dirPath) {
+                    try {
                         const formData = new FormData();
-                        formData.append('file', file);
                         formData.append('path', dirPath);
                         
-                        const response = await csrfFetch('/api/files/upload', {
+                        const mkdirResponse = await csrfFetch('/api/files/mkdir', {
                             method: 'POST',
                             body: formData
                         });
                         
-                        if (!response.ok) {
-                            const error = await response.json();
-                            console.error(`Error uploading ${fileName}:`, error.detail || 'Upload failed');
-                            // Continue with other files
-                        } else {
-                            uploadedCount++;
+                        if (!mkdirResponse.ok && mkdirResponse.status !== 400) {
+                            // 400 means directory already exists, which is fine
+                            const error = await mkdirResponse.json();
+                            console.warn(`Warning creating directory ${dirPath}:`, error.detail || 'Directory creation failed');
                         }
+                    } catch (dirError) {
+                        console.warn(`Warning creating directory ${dirPath}:`, dirError);
+                        // Continue anyway - directory might already exist
                     }
                 }
-                
-                // Reload files after upload
-                await this.loadFiles(this.currentPath);
-                
-                if (uploadedCount === 0) {
-                    this.showToast('No files were uploaded', 'error');
-                }
-            } catch (error) {
-                console.error('Error uploading directory:', error);
-                alert(`Error uploading directory: ${error.message || 'Unknown error'}`);
-                if (grid) {
-                    grid.innerHTML = originalContent;
-                }
-            } finally {
-                // Remove the input element
-                document.body.removeChild(input);
             }
+            
+            // Add all files to upload queue with their respective paths
+            for (const [dirPath, fileList] of fileMap.entries()) {
+                const filesToUpload = fileList.map(item => item.file);
+                this.addToUploadQueue(filesToUpload, dirPath);
+            }
+            
+            // Remove the input element
+            document.body.removeChild(input);
         });
         
         // Trigger file picker
@@ -1365,74 +1308,14 @@ class FileManager {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
         
-        // Show loading indicator
-        const grid = document.getElementById('fileManagerGrid');
-        const mobileUploadArea = document.getElementById('mobileUploadArea');
-        const originalContent = grid ? grid.innerHTML : '';
+        // Add files to upload queue
+        this.addToUploadQueue(files, this.currentPath);
         
-        if (grid) {
-            grid.innerHTML = `<div class="file-manager-loading">Uploading ${files.length} file(s)...</div>`;
-        }
-        
-        if (mobileUploadArea) {
-            mobileUploadArea.style.opacity = '0.5';
-            mobileUploadArea.style.pointerEvents = 'none';
-        }
-        
-        try {
-            let uploadedCount = 0;
-            let failedCount = 0;
-            
-            // Upload each file
-            for (const file of files) {
-                try {
-                    const formData = new FormData();
-                    formData.append('file', file);
-                    formData.append('path', this.currentPath);
-                    
-                    const response = await csrfFetch('/api/files/upload', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    if (!response.ok) {
-                        const error = await response.json();
-                        console.error(`Error uploading ${file.name}:`, error.detail || 'Upload failed');
-                        failedCount++;
-                    } else {
-                        uploadedCount++;
-                    }
-                } catch (error) {
-                    console.error(`Error uploading ${file.name}:`, error);
-                    failedCount++;
-                }
-            }
-            
-            // Reload files after upload
-            await this.loadFiles(this.currentPath);
-            
-            // Show error message only if all uploads failed
-            if (uploadedCount === 0 && failedCount > 0) {
-                this.showToast(`Failed to upload ${failedCount} file(s)`, 'error');
-            }
-        } catch (error) {
-            console.error('Error uploading files:', error);
-            this.showToast(`Error uploading files: ${error.message || 'Unknown error'}`, 'error');
-            if (grid) {
-                grid.innerHTML = originalContent;
-            }
-        } finally {
-            // Reset inputs
-            const mobileFileInput = document.getElementById('mobileFileInput');
-            const mobileCameraInput = document.getElementById('mobileCameraInput');
-            if (mobileFileInput) mobileFileInput.value = '';
-            if (mobileCameraInput) mobileCameraInput.value = '';
-            
-            if (mobileUploadArea) {
-                mobileUploadArea.style.opacity = '1';
-                mobileUploadArea.style.pointerEvents = 'auto';
-            }
-        }
+        // Reset inputs
+        const mobileFileInput = document.getElementById('mobileFileInput');
+        const mobileCameraInput = document.getElementById('mobileCameraInput');
+        if (mobileFileInput) mobileFileInput.value = '';
+        if (mobileCameraInput) mobileCameraInput.value = '';
     }
     
     async createNewFolder() {
@@ -1668,6 +1551,324 @@ class FileManager {
             console.error('Error moving files:', error);
             alert('Error moving files. Please try again.');
         }
+    }
+    
+    // Upload Monitoring Methods
+    addToUploadQueue(files, path = '') {
+        const uploadItems = files.map(file => ({
+            id: Date.now() + Math.random(),
+            file: file,
+            name: file.name,
+            size: file.size,
+            path: path,
+            status: 'pending', // pending, uploading, completed, failed, cancelled
+            progress: 0,
+            uploaded: 0,
+            speed: 0,
+            xhr: null,
+            startTime: null,
+            error: null
+        }));
+        
+        this.uploadQueue.push(...uploadItems);
+        this.showUploadMonitor();
+        this.updateUploadMonitor();
+        this.processUploadQueue();
+    }
+    
+    processUploadQueue() {
+        // Process up to 3 uploads concurrently
+        const maxConcurrent = 3;
+        const active = this.uploadQueue.filter(u => u.status === 'uploading').length;
+        const pending = this.uploadQueue.filter(u => u.status === 'pending');
+        
+        for (let i = 0; i < Math.min(maxConcurrent - active, pending.length); i++) {
+            this.startUpload(pending[i]);
+        }
+    }
+    
+    startUpload(uploadItem) {
+        if (uploadItem.status !== 'pending') return;
+        
+        uploadItem.status = 'uploading';
+        uploadItem.startTime = Date.now();
+        uploadItem.uploaded = 0;
+        
+        const formData = new FormData();
+        formData.append('file', uploadItem.file);
+        formData.append('path', uploadItem.path);
+        
+        const xhr = new XMLHttpRequest();
+        uploadItem.xhr = xhr;
+        
+        xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+                uploadItem.uploaded = e.loaded;
+                uploadItem.progress = (e.loaded / e.total) * 100;
+                
+                // Calculate speed
+                const elapsed = (Date.now() - uploadItem.startTime) / 1000; // seconds
+                if (elapsed > 0) {
+                    uploadItem.speed = uploadItem.uploaded / elapsed; // bytes per second
+                }
+                
+                this.updateUploadMonitor();
+            }
+        });
+        
+        xhr.addEventListener('load', () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                uploadItem.status = 'completed';
+                uploadItem.progress = 100;
+                this.updateUploadMonitor();
+                this.processUploadQueue();
+                
+                // Reload files if this was the last upload
+                setTimeout(() => {
+                    if (this.uploadQueue.filter(u => u.status === 'uploading').length === 0) {
+                        this.loadFiles(this.currentPath);
+                    }
+                }, 500);
+            } else {
+                uploadItem.status = 'failed';
+                uploadItem.error = `HTTP ${xhr.status}: ${xhr.statusText}`;
+                this.updateUploadMonitor();
+                this.processUploadQueue();
+            }
+        });
+        
+        xhr.addEventListener('error', () => {
+            uploadItem.status = 'failed';
+            uploadItem.error = 'Network error';
+            this.updateUploadMonitor();
+            this.processUploadQueue();
+        });
+        
+        xhr.addEventListener('abort', () => {
+            uploadItem.status = 'cancelled';
+            this.updateUploadMonitor();
+            this.processUploadQueue();
+        });
+        
+        xhr.open('POST', '/api/files/upload');
+        xhr.send(formData);
+    }
+    
+    cancelUpload(uploadId) {
+        const uploadItem = this.uploadQueue.find(u => u.id === uploadId);
+        if (uploadItem && uploadItem.xhr) {
+            uploadItem.xhr.abort();
+            uploadItem.status = 'cancelled';
+            this.updateUploadMonitor();
+            this.processUploadQueue();
+        }
+    }
+    
+    cancelAllUploads() {
+        this.uploadQueue.forEach(uploadItem => {
+            if (uploadItem.status === 'pending' || uploadItem.status === 'uploading') {
+                if (uploadItem.xhr) {
+                    uploadItem.xhr.abort();
+                }
+                uploadItem.status = 'cancelled';
+            }
+        });
+        this.updateUploadMonitor();
+    }
+    
+    clearCompletedUploads() {
+        this.uploadQueue = this.uploadQueue.filter(u => 
+            u.status !== 'completed' && u.status !== 'failed' && u.status !== 'cancelled'
+        );
+        this.updateUploadMonitor();
+        
+        if (this.uploadQueue.length === 0) {
+            this.hideUploadMonitor();
+        }
+    }
+    
+    showUploadMonitor() {
+        this.uploadMonitorVisible = true;
+        const panel = document.getElementById('uploadMonitorPanel');
+        if (panel) {
+            panel.style.display = 'block';
+            if (this.uploadMonitorMinimized) {
+                panel.classList.add('minimized');
+            } else {
+                panel.classList.remove('minimized');
+            }
+        }
+    }
+    
+    hideUploadMonitor() {
+        this.uploadMonitorVisible = false;
+        const panel = document.getElementById('uploadMonitorPanel');
+        if (panel) {
+            panel.style.display = 'none';
+        }
+    }
+    
+    toggleUploadMonitorMinimize() {
+        this.uploadMonitorMinimized = !this.uploadMonitorMinimized;
+        const panel = document.getElementById('uploadMonitorPanel');
+        if (panel) {
+            if (this.uploadMonitorMinimized) {
+                panel.classList.add('minimized');
+            } else {
+                panel.classList.remove('minimized');
+            }
+        }
+    }
+    
+    updateUploadMonitor() {
+        const total = this.uploadQueue.length;
+        const active = this.uploadQueue.filter(u => u.status === 'uploading').length;
+        const completed = this.uploadQueue.filter(u => u.status === 'completed').length;
+        const failed = this.uploadQueue.filter(u => u.status === 'failed').length;
+        
+        // Calculate average speed
+        const uploading = this.uploadQueue.filter(u => u.status === 'uploading');
+        const avgSpeed = uploading.length > 0
+            ? uploading.reduce((sum, u) => sum + u.speed, 0) / uploading.length
+            : 0;
+        
+        // Update summary
+        document.getElementById('uploadTotalCount').textContent = total;
+        document.getElementById('uploadActiveCount').textContent = active;
+        document.getElementById('uploadCompletedCount').textContent = completed;
+        document.getElementById('uploadFailedCount').textContent = failed;
+        document.getElementById('uploadSpeed').textContent = this.formatSpeed(avgSpeed);
+        
+        // Update list
+        const list = document.getElementById('uploadMonitorList');
+        if (!list) return;
+        
+        if (this.uploadQueue.length === 0) {
+            list.innerHTML = '<div class="upload-monitor-empty">No uploads in progress</div>';
+            return;
+        }
+        
+        list.innerHTML = this.uploadQueue.map(uploadItem => {
+            const statusIcon = {
+                'pending': '⏳',
+                'uploading': '📤',
+                'completed': '✅',
+                'failed': '❌',
+                'cancelled': '🚫'
+            }[uploadItem.status] || '❓';
+            
+            const statusClass = uploadItem.status;
+            const progressBar = uploadItem.status === 'uploading' || uploadItem.status === 'completed'
+                ? `<div class="upload-progress-bar">
+                    <div class="upload-progress-fill" style="width: ${uploadItem.progress}%"></div>
+                </div>`
+                : '';
+            
+            const speedInfo = uploadItem.status === 'uploading' && uploadItem.speed > 0
+                ? `<span class="upload-speed">${this.formatSpeed(uploadItem.speed)}</span>`
+                : '';
+            
+            const cancelBtn = uploadItem.status === 'pending' || uploadItem.status === 'uploading'
+                ? `<button class="btn-icon btn-small" onclick="fileManager.cancelUpload(${uploadItem.id})" title="Cancel">×</button>`
+                : '';
+            
+            const errorInfo = uploadItem.error
+                ? `<div class="upload-error">${this.escapeHtml(uploadItem.error)}</div>`
+                : '';
+            
+            return `
+                <div class="upload-item ${statusClass}">
+                    <div class="upload-item-header">
+                        <span class="upload-status-icon">${statusIcon}</span>
+                        <span class="upload-file-name" title="${this.escapeHtml(uploadItem.name)}">${this.escapeHtml(uploadItem.name)}</span>
+                        <span class="upload-file-size">${this.formatSize(uploadItem.size)}</span>
+                        ${speedInfo}
+                        ${cancelBtn}
+                    </div>
+                    ${progressBar}
+                    ${errorInfo}
+                </div>
+            `;
+        }).join('');
+        
+        // Update footer buttons visibility
+        const hasCompleted = completed > 0 || failed > 0 || this.uploadQueue.some(u => u.status === 'cancelled');
+        const hasActive = active > 0 || this.uploadQueue.some(u => u.status === 'pending');
+        
+        document.getElementById('uploadMonitorClearBtn').style.display = hasCompleted ? 'inline-block' : 'none';
+        document.getElementById('uploadMonitorCancelAllBtn').style.display = hasActive ? 'inline-block' : 'none';
+    }
+    
+    formatSpeed(bytesPerSecond) {
+        if (bytesPerSecond < 1024) {
+            return `${Math.round(bytesPerSecond)} B/s`;
+        } else if (bytesPerSecond < 1024 * 1024) {
+            return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+        } else {
+            return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
+        }
+    }
+    
+    showToast(message, type = 'info') {
+        // Create toast notification
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: ${type === 'error' ? '#ff3366' : type === 'success' ? '#4ade80' : '#3b82f6'};
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 10000;
+            font-size: 14px;
+            font-weight: 500;
+            animation: slideIn 0.3s ease;
+        `;
+        
+        // Add animation
+        const style = document.createElement('style');
+        if (!document.getElementById('toast-animations')) {
+            style.id = 'toast-animations';
+            style.textContent = `
+                @keyframes slideIn {
+                    from {
+                        transform: translateX(100%);
+                        opacity: 0;
+                    }
+                    to {
+                        transform: translateX(0);
+                        opacity: 1;
+                    }
+                }
+                @keyframes slideOut {
+                    from {
+                        transform: translateX(0);
+                        opacity: 1;
+                    }
+                    to {
+                        transform: translateX(100%);
+                        opacity: 0;
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+        
+        document.body.appendChild(toast);
+        
+        // Auto-remove after 3 seconds
+        setTimeout(() => {
+            toast.style.animation = 'slideOut 0.3s ease';
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 300);
+        }, 3000);
     }
 }
 

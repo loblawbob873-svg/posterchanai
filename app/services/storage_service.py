@@ -3,12 +3,60 @@ import shutil
 import base64
 import logging
 import httpx
+import socket
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 from app.models import Setting
 
 logger = logging.getLogger(__name__)
+
+
+def _is_same_machine_url(url: str, current_port: int = None) -> bool:
+    """
+    Check if a storage server URL points to the same machine.
+    This prevents proxying to localhost when storage should be on a different machine.
+    """
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        if not host:
+            return False
+        
+        # Get local IPs and hostnames
+        local_ips = {'127.0.0.1', 'localhost', '0.0.0.0', '::1'}
+        try:
+            hostname = socket.gethostname()
+            local_ips.add(hostname.lower())
+            local_ips.add(socket.gethostbyname(hostname))
+            # Get all IP addresses for this host
+            for info in socket.getaddrinfo(hostname, None):
+                ip = info[4][0]
+                if ip and not ip.startswith('::'):
+                    local_ips.add(ip)
+        except Exception:
+            pass
+        
+        # Check if host is a local IP/hostname
+        is_local = host.lower() in local_ips or host in local_ips
+        
+        # If current_port is provided, also check if port matches
+        if current_port and is_local:
+            port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+            if port == current_port:
+                logger.warning(f"[STORAGE] storage_server_url points to same machine and port: {url}")
+                return True
+        
+        # If it's localhost/127.0.0.1, it's the same machine regardless of port
+        if is_local and host.lower() in ('localhost', '127.0.0.1', '::1'):
+            logger.warning(f"[STORAGE] storage_server_url points to same machine (localhost): {url}")
+            return True
+        
+        return False
+    except Exception as e:
+        logger.warning(f"[STORAGE] Error checking if URL is same machine: {url}, error: {e}")
+        return False
 
 
 def _sanitize_path_component(component: str) -> str:
@@ -90,17 +138,21 @@ class StorageService:
             # Validate URL has protocol before proxying
             url = storage_server_url.value.strip()
             if url.startswith(('http://', 'https://')):
+                # Check if URL points to same machine - this is likely a misconfiguration
+                if _is_same_machine_url(url):
+                    logger.error(f"[STORAGE] storage_server_url points to same machine: {url}. This will cause files to be saved locally. Please use a different machine's URL or leave storage_server_url empty for local storage.")
+                    # Still try to proxy, but log the warning
+                
                 # Valid URL - try to proxy
                 try:
                     return self._proxy_save_image(url, username, conversation_id, image_base64, prefix)
                 except Exception as e:
-                    # If proxy fails, fall back to local storage
-                    logger.warning(f"[STORAGE] Failed to proxy save_image, falling back to local: {e}")
-                    # Fall through to local storage below
+                    # If proxy fails, raise error instead of silently falling back
+                    logger.error(f"[STORAGE] Failed to proxy save_image to {url}: {e}")
+                    raise Exception(f"Failed to save image to storage server: {e}")
             else:
-                # Invalid URL - log but fall back to local storage
-                logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
-                # Fall through to local storage below
+                # Invalid URL - raise error
+                raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
         
         # Local file saving (storage server node)
         conv_path = self.get_conversation_path(username, conversation_id)
@@ -150,28 +202,24 @@ class StorageService:
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 # If we're in an async context, we need to handle this differently
-                # For now, fall back to local save
-                logger.warning("[STORAGE] Cannot proxy save_image in async context, saving locally")
-                conv_path = self.get_conversation_path(username, conversation_id)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                filename = f"{prefix}_{timestamp}.png"
-                filepath = conv_path / filename
-                with open(filepath, "wb") as f:
-                    f.write(image_data)
-                return str(filepath)
+                # Use asyncio.create_task or run in executor
+                import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_async_proxy())
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    return future.result()
             else:
                 return loop.run_until_complete(_async_proxy())
         except Exception as e:
             logger.error(f"[STORAGE] Error proxying save_image: {e}", exc_info=True)
-            # Fall back to local save
-            conv_path = self.get_conversation_path(username, conversation_id)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            filename = f"{prefix}_{timestamp}.png"
-            filepath = conv_path / filename
-            image_data = base64.b64decode(image_base64)
-            with open(filepath, "wb") as f:
-                f.write(image_data)
-            return str(filepath)
+            raise
 
     def save_avatar(self, username: str, image_data: bytes, ext: str = ".png") -> str:
         """Save user avatar image and return the filename. Proxies to storage server if configured."""
@@ -181,17 +229,20 @@ class StorageService:
             # Validate URL has protocol before proxying
             url = storage_server_url.value.strip()
             if url.startswith(('http://', 'https://')):
+                # Check if URL points to same machine - this is likely a misconfiguration
+                if _is_same_machine_url(url):
+                    logger.error(f"[STORAGE] storage_server_url points to same machine: {url}. This will cause files to be saved locally. Please use a different machine's URL or leave storage_server_url empty for local storage.")
+                
                 # Valid URL - try to proxy
                 try:
                     return self._proxy_save_avatar(url, username, image_data, ext)
                 except Exception as e:
-                    # If proxy fails, fall back to local storage
-                    logger.warning(f"[STORAGE] Failed to proxy save_avatar, falling back to local: {e}")
-                    # Fall through to local storage below
+                    # If proxy fails, raise error instead of silently falling back
+                    logger.error(f"[STORAGE] Failed to proxy save_avatar to {url}: {e}")
+                    raise Exception(f"Failed to save avatar to storage server: {e}")
             else:
-                # Invalid URL - log but fall back to local storage
-                logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
-                # Fall through to local storage below
+                # Invalid URL - raise error
+                raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
         
         # Local file saving (storage server node)
         user_path = self.get_user_path(username)
@@ -239,29 +290,24 @@ class StorageService:
             
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # If we're in an async context, fall back to local save
-                logger.warning("[STORAGE] Cannot proxy save_avatar in async context, saving locally")
-                user_path = self.get_user_path(username)
-                filename = f"avatar{ext}"
-                filepath = user_path / filename
-                for old_file in user_path.glob("avatar.*"):
-                    old_file.unlink()
-                with open(filepath, "wb") as f:
-                    f.write(image_data)
-                return filename
+                # If we're in an async context, use executor
+                import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_async_proxy())
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    return future.result()
             else:
                 return loop.run_until_complete(_async_proxy())
         except Exception as e:
             logger.error(f"[STORAGE] Error proxying save_avatar: {e}", exc_info=True)
-            # Fall back to local save
-            user_path = self.get_user_path(username)
-            filename = f"avatar{ext}"
-            filepath = user_path / filename
-            for old_file in user_path.glob("avatar.*"):
-                old_file.unlink()
-            with open(filepath, "wb") as f:
-                f.write(image_data)
-            return filename
+            raise
 
     def get_avatar_path(self, username: str) -> Path | None:
         """Get path to user's avatar if it exists"""
@@ -282,8 +328,12 @@ class StorageService:
         # Check if storage server is configured - proxy request if so
         storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
         if storage_server_url and storage_server_url.value:
+            url = storage_server_url.value.strip()
+            # Check if URL points to same machine - this is likely a misconfiguration
+            if _is_same_machine_url(url):
+                logger.error(f"[STORAGE] storage_server_url points to same machine: {url}. This will cause files to be saved locally. Please use a different machine's URL or leave storage_server_url empty for local storage.")
             # Proxy to storage server
-            return self._proxy_save_file(storage_server_url.value, username, conversation_id, content, original_name)
+            return self._proxy_save_file(url, username, conversation_id, content, original_name)
         
         # Local file saving (storage server node)
         conv_path = self.get_conversation_path(username, conversation_id)
@@ -332,29 +382,24 @@ class StorageService:
             
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # If we're in an async context, fall back to local save
-                logger.warning("[STORAGE] Cannot proxy save_file in async context, saving locally")
-                conv_path = self.get_conversation_path(username, conversation_id)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                ext = Path(original_name).suffix or ".txt"
-                filename = f"file_{timestamp}{ext}"
-                filepath = conv_path / filename
-                with open(filepath, "w", encoding="utf-8") as f:
-                    f.write(content)
-                return str(filepath)
+                # If we're in an async context, use executor
+                import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_async_proxy())
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    return future.result()
             else:
                 return loop.run_until_complete(_async_proxy())
         except Exception as e:
             logger.error(f"[STORAGE] Error proxying save_file: {e}", exc_info=True)
-            # Fall back to local save
-            conv_path = self.get_conversation_path(username, conversation_id)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            ext = Path(original_name).suffix or ".txt"
-            filename = f"file_{timestamp}{ext}"
-            filepath = conv_path / filename
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(content)
-            return str(filepath)
+            raise
 
     def save_raw_file(self, username: str, conversation_id: int, data: bytes, original_name: str) -> str:
         """Save raw file bytes to disk and return the file path"""
@@ -500,17 +545,19 @@ class StorageService:
                 # Validate URL has protocol before proxying
                 url = storage_server_url.value.strip()
                 if url.startswith(('http://', 'https://')):
+                    # Check if URL points to same machine - this is likely a misconfiguration
+                    if _is_same_machine_url(url):
+                        logger.error(f"[STORAGE] storage_server_url points to same machine: {url}. This will cause files to be saved locally. Please use a different machine's URL or leave storage_server_url empty for local storage.")
                     try:
                         # Proxy to storage server
                         return self._proxy_save_note_attachment(url, username, note_id, file_data, original_name)
                     except Exception as e:
-                        # If proxy fails, fall back to local storage
-                        logger.warning(f"[STORAGE] Failed to proxy save_note_attachment, falling back to local: {e}")
-                        # Fall through to local storage below
+                        # If proxy fails, raise error instead of silently falling back
+                        logger.error(f"[STORAGE] Failed to proxy save_note_attachment to {url}: {e}")
+                        raise Exception(f"Failed to save note attachment to storage server: {e}")
                 else:
-                    # Invalid URL - log but fall back to local storage
-                    logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
-                    # Fall through to local storage below
+                    # Invalid URL - raise error
+                    raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
         
         # Local file saving (storage server node or when bypassing proxy)
         try:
@@ -576,17 +623,19 @@ class StorageService:
                 # Validate URL has protocol before proxying
                 url = storage_server_url.value.strip()
                 if url.startswith(('http://', 'https://')):
+                    # Check if URL points to same machine - this is likely a misconfiguration
+                    if _is_same_machine_url(url):
+                        logger.error(f"[STORAGE] storage_server_url points to same machine: {url}. This will cause files to be saved locally. Please use a different machine's URL or leave storage_server_url empty for local storage.")
                     try:
                         # Proxy to storage server
                         return self._proxy_save_mail_attachment(url, username, file_data, original_name)
                     except Exception as e:
-                        # If proxy fails, fall back to local storage
-                        logger.warning(f"[STORAGE] Failed to proxy save_mail_attachment, falling back to local: {e}")
-                        # Fall through to local storage below
+                        # If proxy fails, raise error instead of silently falling back
+                        logger.error(f"[STORAGE] Failed to proxy save_mail_attachment to {url}: {e}")
+                        raise Exception(f"Failed to save mail attachment to storage server: {e}")
                 else:
-                    # Invalid URL - log but fall back to local storage
-                    logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
-                    # Fall through to local storage below
+                    # Invalid URL - raise error
+                    raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
         
         # Local file saving (storage server node or when bypassing proxy)
         try:
