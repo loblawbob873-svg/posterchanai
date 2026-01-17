@@ -27,6 +27,8 @@ from app.auth import get_current_user
 from app.models import User, Setting, SharedFile, ExternalStorage
 from app.services.storage_service import get_storage_service, _sanitize_path_component, _validate_path_within_base
 
+logger = logging.getLogger(__name__)
+
 
 def safe_query_setting(db: Session, key: str) -> Optional[Setting]:
     """Safely query a Setting, handling IndexError and other database errors."""
@@ -38,8 +40,6 @@ def safe_query_setting(db: Session, key: str) -> Optional[Setting]:
     except Exception as e:
         logger.error(f"Unexpected error querying setting '{key}': {e}", exc_info=True)
         return None
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
@@ -828,7 +828,7 @@ async def list_files(
 ):
     """List files and directories in user's storage or external storage. Uses memory cache if enabled."""
     # Check if storage server is configured - proxy request if so (for user storage only, not external)
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    storage_server_url = safe_query_setting(db, "storage_server_url")
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
@@ -1071,7 +1071,7 @@ async def view_file(
     
     # Check if storage server is configured - proxy request if so (for user storage only, not external)
     if not is_external:
-        storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        storage_server_url = safe_query_setting(db, "storage_server_url")
         if storage_server_url and storage_server_url.value:
             url = storage_server_url.value.strip()
             if url.startswith(('http://', 'https://')):
@@ -1177,7 +1177,7 @@ async def get_thumbnail(
     
     # Check if storage server is configured - proxy request if so (for user storage only, not external)
     if not is_external:
-        storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        storage_server_url = safe_query_setting(db, "storage_server_url")
         if storage_server_url and storage_server_url.value:
             url = storage_server_url.value.strip()
             if url.startswith(('http://', 'https://')):
@@ -1686,7 +1686,7 @@ async def delete_files_bulk(
 ):
     """Delete multiple files or directories. Proxies to storage server if configured (NO FALLBACK)."""
     # Check if storage server is configured - proxy request if so (NO FALLBACK)
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    storage_server_url = safe_query_setting(db, "storage_server_url")
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
@@ -1709,7 +1709,7 @@ async def delete_file(
 ):
     """Delete a file or directory. Proxies to storage server if configured (NO FALLBACK)."""
     # Check if storage server is configured - proxy request if so (NO FALLBACK)
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    storage_server_url = safe_query_setting(db, "storage_server_url")
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
@@ -1737,7 +1737,7 @@ async def move_files(
 ):
     """Move files or folders to a different location. Proxies to storage server if configured (NO FALLBACK)."""
     # Check if storage server is configured - proxy request if so (NO FALLBACK)
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    storage_server_url = safe_query_setting(db, "storage_server_url")
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
@@ -1766,7 +1766,7 @@ async def upload_file(
     content_type = file.content_type or "application/octet-stream"
     
     # Check if storage server is configured - proxy request if so
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    storage_server_url = safe_query_setting(db, "storage_server_url")
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
@@ -1787,7 +1787,7 @@ async def _proxy_upload_file(storage_server_url: str, username: str, filename: s
     
     try:
         # Get server-to-server API token
-        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        storage_server_token = safe_query_setting(db, "storage_server_token")
         
         url = f"{storage_server_url.rstrip('/')}/api/storage/upload-file"
         headers = {}
@@ -1826,7 +1826,7 @@ async def _proxy_list_files(storage_server_url: str, username: str, path: str, d
     
     try:
         # Get server-to-server API token
-        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        storage_server_token = safe_query_setting(db, "storage_server_token")
         
         url = f"{storage_server_url.rstrip('/')}/api/storage/list-files"
         headers = {}
@@ -1860,7 +1860,7 @@ async def _proxy_delete_file(storage_server_url: str, username: str, file_path: 
     
     try:
         # Get server-to-server API token
-        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        storage_server_token = safe_query_setting(db, "storage_server_token")
         
         url = f"{storage_server_url.rstrip('/')}/api/storage/delete-file"
         headers = {}
@@ -1894,7 +1894,7 @@ async def _proxy_mkdir(storage_server_url: str, username: str, path: str, db: Se
     
     try:
         # Get server-to-server API token
-        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        storage_server_token = safe_query_setting(db, "storage_server_token")
         
         url = f"{storage_server_url.rstrip('/')}/api/storage/mkdir"
         headers = {}
@@ -1929,7 +1929,7 @@ async def _proxy_view_file(storage_server_url: str, username: str, file_path: st
     
     try:
         # Get server-to-server API token
-        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        storage_server_token = safe_query_setting(db, "storage_server_token")
         
         url = f"{storage_server_url.rstrip('/')}/api/storage/view-file"
         headers = {}
@@ -1982,7 +1982,7 @@ async def _proxy_get_thumbnail(storage_server_url: str, username: str, file_path
     
     try:
         # Get server-to-server API token
-        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        storage_server_token = safe_query_setting(db, "storage_server_token")
         
         url = f"{storage_server_url.rstrip('/')}/api/storage/thumbnail-file"
         headers = {}
@@ -2017,7 +2017,7 @@ async def _proxy_move_files(storage_server_url: str, username: str, file_paths: 
     
     try:
         # Get server-to-server API token
-        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        storage_server_token = safe_query_setting(db, "storage_server_token")
         
         url = f"{storage_server_url.rstrip('/')}/api/storage/move-files"
         headers = {}
@@ -2052,7 +2052,7 @@ async def _proxy_delete_files_bulk(storage_server_url: str, username: str, file_
     
     try:
         # Get server-to-server API token
-        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        storage_server_token = safe_query_setting(db, "storage_server_token")
         
         url = f"{storage_server_url.rstrip('/')}/api/storage/delete-files-bulk"
         headers = {}
@@ -2087,7 +2087,7 @@ async def create_directory(
 ):
     """Create a new directory. Proxies to storage server if configured (NO FALLBACK)."""
     # Check if storage server is configured - proxy request if so (NO FALLBACK)
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    storage_server_url = safe_query_setting(db, "storage_server_url")
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):

@@ -16,14 +16,27 @@ import os
 import time
 from app.database import get_db
 from app.auth import get_current_user, get_current_user_optional
-from app.models import User
+from app.models import User, Setting
 from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
+from typing import Optional
 import logging
 import asyncio
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/storage", tags=["storage"])
+
+
+def safe_query_setting(db: Session, key: str) -> Optional[Setting]:
+    """Safely query a Setting, handling IndexError and other database errors."""
+    try:
+        return db.query(Setting).filter(Setting.key == key).first()
+    except (IndexError, AttributeError) as e:
+        logger.warning(f"Error querying setting '{key}': {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error querying setting '{key}': {e}", exc_info=True)
+        return None
 
 
 @router.post("/save-image")
@@ -211,7 +224,7 @@ async def save_note_attachment(
     if not is_server_request:
         # Check if this is a server token request
         from app.models import Setting
-        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        storage_server_token = safe_query_setting(db, "storage_server_token")
         if storage_server_token and storage_server_token.value:
             # Check if the request has the server token
             auth_header = request.headers.get("Authorization", "")
@@ -340,7 +353,7 @@ async def upload_file(
     if not is_server_request:
         # Check if this is a server token request
         from app.models import Setting
-        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        storage_server_token = safe_query_setting(db, "storage_server_token")
         if storage_server_token and storage_server_token.value:
             # Check if the request has the server token
             auth_header = request.headers.get("Authorization", "")
@@ -462,7 +475,7 @@ async def delete_note_attachment(
     """Delete a specific attachment file for a note (storage server endpoint)."""
     # Check if this is a server-to-server request
     from app.models import Setting
-    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    storage_server_token = safe_query_setting(db, "storage_server_token")
     is_server_request = current_user is None
     
     if not is_server_request and storage_server_token and storage_server_token.value:
@@ -564,7 +577,7 @@ async def list_files(
     """
     # Check if this is a server-to-server request
     from app.models import Setting
-    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    storage_server_token = safe_query_setting(db, "storage_server_token")
     is_server_request = current_user is None
     
     if not is_server_request and storage_server_token and storage_server_token.value:
@@ -689,7 +702,7 @@ async def get_all_images(
     """
     # Check if this is a server-to-server request
     from app.models import Setting
-    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    storage_server_token = safe_query_setting(db, "storage_server_token")
     is_server_request = current_user is None
     
     if not is_server_request and storage_server_token and storage_server_token.value:
@@ -1220,7 +1233,7 @@ async def mkdir(
     """
     # Check if this is a server-to-server request
     from app.models import Setting
-    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    storage_server_token = safe_query_setting(db, "storage_server_token")
     is_server_request = current_user is None
     
     if not is_server_request and storage_server_token and storage_server_token.value:
@@ -1295,7 +1308,7 @@ async def delete_file(
     """
     # Check if this is a server-to-server request
     from app.models import Setting
-    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    storage_server_token = safe_query_setting(db, "storage_server_token")
     is_server_request = current_user is None
     
     if not is_server_request and storage_server_token and storage_server_token.value:
@@ -1382,7 +1395,7 @@ async def delete_file(
     """
     # Check if this is a server-to-server request
     from app.models import Setting
-    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    storage_server_token = safe_query_setting(db, "storage_server_token")
     is_server_request = current_user is None
     
     if not is_server_request and storage_server_token and storage_server_token.value:
@@ -1459,7 +1472,7 @@ async def list_files(
     """
     # Check if this is a server-to-server request
     from app.models import Setting
-    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    storage_server_token = safe_query_setting(db, "storage_server_token")
     is_server_request = current_user is None
     
     if not is_server_request and storage_server_token and storage_server_token.value:
@@ -1554,7 +1567,7 @@ async def view_file(
     """
     # Check if this is a server-to-server request
     from app.models import Setting
-    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    storage_server_token = safe_query_setting(db, "storage_server_token")
     is_server_request = current_user is None
     
     if not is_server_request and storage_server_token and storage_server_token.value:
@@ -1641,7 +1654,7 @@ async def thumbnail_file(
     """
     # Check if this is a server-to-server request
     from app.models import Setting
-    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    storage_server_token = safe_query_setting(db, "storage_server_token")
     is_server_request = current_user is None
     
     if not is_server_request and storage_server_token and storage_server_token.value:
@@ -1731,7 +1744,7 @@ async def move_files(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
     
-    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    storage_server_token = safe_query_setting(db, "storage_server_token")
     is_server_request = current_user is None
     
     if not is_server_request and storage_server_token and storage_server_token.value:
@@ -1852,7 +1865,7 @@ async def delete_files_bulk(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
     
-    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    storage_server_token = safe_query_setting(db, "storage_server_token")
     is_server_request = current_user is None
     
     if not is_server_request and storage_server_token and storage_server_token.value:
