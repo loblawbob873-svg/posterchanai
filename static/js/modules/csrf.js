@@ -1,94 +1,37 @@
 /**
- * CSRF Protection Utilities
- * Automatically includes CSRF token in state-changing requests
+ * CSRF Protection Utilities - DISABLED
+ * CSRF protection has been completely disabled.
+ * This is now just a simple fetch wrapper that ensures credentials are included.
  */
 
-const CSRF_COOKIE_NAME = 'csrf_token';
-const CSRF_HEADER_NAME = 'X-CSRF-Token';
-
 /**
- * Get CSRF token from cookies
- */
-function getCSRFToken() {
-    const cookies = document.cookie.split(';');
-    for (const cookie of cookies) {
-        const [name, value] = cookie.trim().split('=');
-        if (name === CSRF_COOKIE_NAME) {
-            // Handle URL-encoded values
-            try {
-                return decodeURIComponent(value);
-            } catch (e) {
-                return value;
-            }
-        }
-    }
-    return null;
-}
-
-/**
- * CSRF-protected fetch wrapper
- * Automatically adds CSRF token header for POST, PUT, DELETE, PATCH requests
+ * Simple fetch wrapper (CSRF disabled)
+ * Just ensures credentials are included for authenticated requests
  *
  * @param {string} url - The URL to fetch
  * @param {Object} options - Fetch options
  * @returns {Promise<Response>}
  */
 async function csrfFetch(url, options = {}) {
-    const method = (options.method || 'GET').toUpperCase();
-
     // Ensure headers object exists
     if (!options.headers) {
         options.headers = {};
     }
     
-    // Ensure credentials are included
+    // Ensure credentials are included for authenticated requests
     if (!options.credentials) {
         options.credentials = 'include';
     }
 
-    // Add CSRF token for all authenticated requests
-    let token = getCSRFToken();
-    
-    // For state-changing methods, ensure we have a token
-    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
-        if (!token) {
-            console.warn(`CSRF token not found in cookies for ${method} request to ${url}`);
-            console.warn('Available cookies:', document.cookie);
-            
-            // Try to fetch the token by making a GET request to trigger cookie setting
-            try {
-                await fetch('/', { method: 'GET', credentials: 'include' });
-                // Wait for cookie to be set
-                await new Promise(resolve => setTimeout(resolve, 300));
-                token = getCSRFToken();
-                if (token) {
-                    console.log('CSRF token retrieved after retry');
-                } else {
-                    console.error('CSRF token still not available after retry');
-                    console.error('Cookies after retry:', document.cookie);
-                }
-            } catch (e) {
-                console.error('Failed to retrieve CSRF token:', e);
-            }
-        }
-        
-        // Always set the header for state-changing methods if we have a token
-        // Use lowercase header name since Starlette normalizes headers to lowercase
-        if (token) {
-            // Set in lowercase (Starlette normalizes all headers to lowercase)
-            options.headers['x-csrf-token'] = token;
-            // Also set in original case for compatibility (though Starlette will normalize it)
-            options.headers[CSRF_HEADER_NAME] = token;
-            console.log(`CSRF token added to ${method} request: ${token.substring(0, 8)}...`);
-            console.log(`Headers object:`, options.headers);
-            console.log(`x-csrf-token in headers:`, 'x-csrf-token' in options.headers);
-        } else {
-            console.error(`WARNING: No CSRF token available for ${method} request to ${url}`);
-            console.error(`Available cookies:`, document.cookie);
-        }
-    }
-
+    // No CSRF token handling - CSRF is disabled
     return fetch(url, options);
+}
+
+/**
+ * Get CSRF token (compatibility function - always returns null since CSRF is disabled)
+ */
+function getCSRFToken() {
+    return null;
 }
 
 /**
