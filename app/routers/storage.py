@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List
 from datetime import datetime
 import os
+import time
 from app.database import get_db
 from app.auth import get_current_user, get_current_user_optional
 from app.models import User
@@ -764,14 +765,20 @@ async def get_all_images(
                     
                     relative_path = str(item.relative_to(user_path))
                     
-                    # Get modification time (prefer mtime, fallback to ctime if mtime is 0)
-                    # Use the actual file's mtime, not the directory's mtime
-                    modified_time = stat.st_mtime if stat.st_mtime > 0 else stat.st_ctime
+                    # Get modification time for sorting
+                    # CRITICAL: Use mtime (modification time) - this is when file content was last modified
+                    # For uploaded files, mtime reflects when they were uploaded
+                    # For copied files, mtime might be preserved, but that's OK - we want to sort by when file was last modified
+                    modified_time = stat.st_mtime
+                    
+                    # Fallback to ctime only if mtime is invalid (0 or negative)
+                    if modified_time <= 0:
+                        modified_time = stat.st_ctime if stat.st_ctime > 0 else time.time()
                     
                     # Ensure we have a valid timestamp
                     if modified_time <= 0:
-                        logger.warning(f"Invalid timestamp for {item}: mtime={stat.st_mtime}, ctime={stat.st_ctime}")
-                        modified_time = max(stat.st_mtime, stat.st_ctime, 1.0)  # At least use 1.0 as fallback
+                        logger.warning(f"Invalid timestamp for {item}: mtime={stat.st_mtime}, ctime={stat.st_ctime}, using current time")
+                        modified_time = time.time()  # Use current time as fallback
                     
                     from app.services.thumbnail_service import is_image_file, is_video_file
                     
@@ -876,18 +883,29 @@ async def get_all_images(
         
         # Sort by modified time (newest first)
         # Ensure modified is a number, not string, and convert to float explicitly
+        # CRITICAL: Convert ALL timestamps to float BEFORE sorting to ensure proper numeric comparison
         for img in images:
             if 'modified' in img:
                 # Ensure it's a float, handle None/empty cases
                 try:
-                    img['modified'] = float(img['modified']) if img['modified'] is not None and img['modified'] != '' else 0.0
-                except (ValueError, TypeError):
+                    modified_val = img['modified']
+                    if modified_val is None or modified_val == '':
+                        img['modified'] = 0.0
+                    else:
+                        img['modified'] = float(modified_val)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Failed to convert modified time for {img.get('path', 'unknown')}: {e}, using 0.0")
                     img['modified'] = 0.0
         
         # Sort by modified time descending (newest first), then by path ascending for stability
-        # Use reverse=True to get descending order (newest first)
-        # Explicitly convert to float in sort key to ensure numeric comparison
-        images.sort(key=lambda x: (float(x.get('modified', 0) or 0), str(x.get('path', '')).lower()), reverse=True)
+        # CRITICAL: Sort by negative timestamp to ensure newest first (higher timestamp = newer)
+        def sort_key(img):
+            modified = float(img.get('modified', 0) or 0)
+            path = str(img.get('path', '')).lower()
+            # Return tuple: (negative_modified, path) so higher timestamps sort first
+            return (-modified, path)
+        
+        images.sort(key=sort_key)
         
         # Debug: log statistics
         total_scanned = len(images) + skipped_count

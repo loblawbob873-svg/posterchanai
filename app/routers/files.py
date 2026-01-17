@@ -362,21 +362,20 @@ async def get_all_images(
                     
                     relative_path = str(item.relative_to(user_path))
                     
-                    # Get modification time (prefer mtime, fallback to ctime if mtime is 0)
-                    # Use the actual file's mtime, not the directory's mtime
-                    # IMPORTANT: Use mtime (modification time) for sorting - this is when file was last modified
-                    modified_time = stat.st_mtime if stat.st_mtime > 0 else stat.st_ctime
+                    # Get modification time for sorting
+                    # CRITICAL: Use mtime (modification time) - this is when file content was last modified
+                    # For uploaded files, mtime reflects when they were uploaded
+                    # For copied files, mtime might be preserved, but that's OK - we want to sort by when file was last modified
+                    modified_time = stat.st_mtime
+                    
+                    # Fallback to ctime only if mtime is invalid (0 or negative)
+                    if modified_time <= 0:
+                        modified_time = stat.st_ctime if stat.st_ctime > 0 else time.time()
                     
                     # Ensure we have a valid timestamp
                     if modified_time <= 0:
-                        logger.warning(f"Invalid timestamp for {item}: mtime={stat.st_mtime}, ctime={stat.st_ctime}")
-                        modified_time = max(stat.st_mtime, stat.st_ctime, 1.0)  # At least use 1.0 as fallback
-                    
-                    # Log suspicious timestamps (very old or future dates)
-                    if modified_time < 946684800:  # Before year 2000
-                        logger.debug(f"Very old timestamp for {item.name}: {modified_time} ({datetime.fromtimestamp(modified_time).isoformat()})")
-                    if modified_time > time.time() + 86400:  # More than 1 day in future
-                        logger.warning(f"Future timestamp for {item.name}: {modified_time} ({datetime.fromtimestamp(modified_time).isoformat()})")
+                        logger.warning(f"Invalid timestamp for {item}: mtime={stat.st_mtime}, ctime={stat.st_ctime}, using current time")
+                        modified_time = time.time()  # Use current time as fallback
                     
                     from app.services.thumbnail_service import is_image_file, is_video_file
                     
@@ -486,18 +485,32 @@ async def get_all_images(
         
         # Sort by modified time (newest first)
         # Ensure modified is a number, not string, and convert to float explicitly
+        # CRITICAL: Convert ALL timestamps to float BEFORE sorting to ensure proper numeric comparison
         for img in images:
             if 'modified' in img:
                 # Ensure it's a float, handle None/empty cases
                 try:
-                    img['modified'] = float(img['modified']) if img['modified'] is not None and img['modified'] != '' else 0.0
-                except (ValueError, TypeError):
+                    modified_val = img['modified']
+                    if modified_val is None or modified_val == '':
+                        img['modified'] = 0.0
+                    else:
+                        img['modified'] = float(modified_val)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Failed to convert modified time for {img.get('path', 'unknown')}: {e}, using 0.0")
                     img['modified'] = 0.0
         
         # Sort by modified time descending (newest first), then by path ascending for stability
         # Use reverse=True to get descending order (newest first)
-        # Explicitly convert to float in sort key to ensure numeric comparison
-        images.sort(key=lambda x: (float(x.get('modified', 0) or 0), str(x.get('path', '')).lower()), reverse=True)
+        # CRITICAL: Sort by negative timestamp to ensure newest first (higher timestamp = newer)
+        # This is more reliable than reverse=True with tuple sorting
+        def sort_key(img):
+            modified = float(img.get('modified', 0) or 0)
+            path = str(img.get('path', '')).lower()
+            # Return tuple: (negative_modified, path) so higher timestamps sort first
+            # Negative because we want descending order: -1800 < -1700, so 1800 comes before 1700
+            return (-modified, path)
+        
+        images.sort(key=sort_key)
         
         # Debug: log statistics
         total_scanned = len(images) + skipped_count
@@ -512,9 +525,9 @@ async def get_all_images(
         
         # Debug: log first few images to verify sorting
         if images:
-            logger.info(f"[FILES] Found {len(images)} images total. First 10 (newest first):")
-            for i, img in enumerate(images[:10]):
-                mod_time = img.get('modified', 0)
+            logger.info(f"[FILES] Found {len(images)} images total. First 20 (newest first):")
+            for i, img in enumerate(images[:20]):
+                mod_time = float(img.get('modified', 0) or 0)
                 mod_date = datetime.fromtimestamp(mod_time).isoformat() if mod_time > 0 else 'N/A'
                 path_info = img.get('path', 'unknown')
                 # Check if this looks like a thumbnail file
@@ -523,25 +536,26 @@ async def get_all_images(
                 logger.info(f"  {i+1}. {img.get('name')} - modified: {mod_time} ({mod_date}) - path: {path_info}{thumb_marker}")
             
             # Verify sorting - check that newer files come before older files
+            # For newest-first: each file should have timestamp <= previous file
             prev_time = None
             sorting_errors = []
-            for i, img in enumerate(images[:100]):  # Check first 100
+            for i, img in enumerate(images[:200]):  # Check first 200
                 curr_time = float(img.get('modified', 0) or 0)
                 if prev_time is not None and curr_time > prev_time:
-                    # Current file is newer than previous - this is WRONG (should be oldest to newest)
-                    sorting_errors.append((i, img.get('name'), curr_time, prev_time))
-                    logger.error(f"[FILES] ❌ Sorting error at index {i}: {img.get('name')} (time: {curr_time}) is NEWER than previous (time: {prev_time}) - should be OLDER!")
+                    # Current file is newer than previous - this is WRONG for newest-first sorting
+                    sorting_errors.append((i, img.get('name'), curr_time, prev_time, img.get('path', 'unknown')))
+                    logger.error(f"[FILES] ❌ Sorting error at index {i}: {img.get('name')} (time: {curr_time}, path: {img.get('path', 'unknown')}) is NEWER than previous (time: {prev_time}) - should be OLDER or EQUAL!")
                 prev_time = curr_time
             
             if not sorting_errors:
-                logger.info(f"[FILES] ✓ Sorting verified: All {min(100, len(images))} checked images are in correct order (newest first)")
+                logger.info(f"[FILES] ✓ Sorting verified: All {min(200, len(images))} checked images are in correct order (newest first)")
             else:
-                logger.error(f"[FILES] ❌ Found {len(sorting_errors)} sorting errors in first 100 images - sorting is REVERSED!")
-                # If sorting is reversed, fix it
-                if len(sorting_errors) > 10:  # If many errors, likely reversed
-                    logger.warning(f"[FILES] Attempting to fix reversed sort order...")
-                    images.sort(key=lambda x: (float(x.get('modified', 0) or 0), str(x.get('path', '')).lower()), reverse=False)
-                    logger.warning(f"[FILES] Re-sorted with reverse=False (oldest first) - this is WRONG, need to investigate!")
+                logger.error(f"[FILES] ❌ Found {len(sorting_errors)} sorting errors in first 200 images!")
+                logger.error(f"[FILES] First 5 errors: {sorting_errors[:5]}")
+                # Log sample of timestamps to debug
+                logger.error(f"[FILES] Sample timestamps from first 20 files:")
+                for i, img in enumerate(images[:20]):
+                    logger.error(f"  [{i}] {img.get('name')}: modified={float(img.get('modified', 0) or 0)}")
         
         # Apply pagination
         total = len(images)
