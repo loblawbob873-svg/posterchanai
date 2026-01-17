@@ -610,27 +610,33 @@ async def get_all_images(
     
     try:
         result = await asyncio.to_thread(_get_all_images_sync)
-        # Ensure result is JSON serializable before returning
-        import json
-        try:
-            json.dumps(result)  # Test serialization
-        except (TypeError, ValueError) as json_err:
-            logger.error(f"[FILES] JSON serialization error: {json_err}")
-            logger.error(f"[FILES] Result type: {type(result)}, keys: {result.keys() if isinstance(result, dict) else 'N/A'}")
-            # Try to fix by ensuring all values are serializable
-            if isinstance(result, dict) and "images" in result:
-                fixed_images = []
-                for img in result.get("images", []):
-                    fixed_img = {}
+        # Result should already be cleaned in _get_all_images_sync, but double-check
+        # FastAPI will handle serialization, but we ensure everything is clean
+        if isinstance(result, dict) and "images" in result:
+            # Final pass to ensure no bytes or other non-serializable types
+            cleaned_images = []
+            for idx, img in enumerate(result.get("images", [])):
+                try:
+                    cleaned_img = {}
                     for key, value in img.items():
                         if isinstance(value, bytes):
-                            fixed_img[key] = value.decode('utf-8', errors='ignore')
+                            logger.warning(f"[FILES] Found bytes in image {idx}, key '{key}', converting to string")
+                            cleaned_img[key] = value.decode('utf-8', errors='ignore')
                         elif isinstance(value, (Path, type(None))):
-                            fixed_img[key] = str(value) if value else ""
+                            cleaned_img[key] = str(value) if value else ""
+                        elif not isinstance(value, (str, int, float, bool, type(None))):
+                            # Convert any other non-basic type to string
+                            try:
+                                cleaned_img[key] = str(value)
+                            except Exception:
+                                cleaned_img[key] = ""
                         else:
-                            fixed_img[key] = value
-                    fixed_images.append(fixed_img)
-                result["images"] = fixed_images
+                            cleaned_img[key] = value
+                    cleaned_images.append(cleaned_img)
+                except Exception as img_err:
+                    logger.error(f"[FILES] Error cleaning image {idx}: {img_err}, skipping")
+                    # Skip problematic images
+            result["images"] = cleaned_images
         return result
     except Exception as e:
         logger.error(f"[FILES] Error in get_all_images: {e}", exc_info=True)
