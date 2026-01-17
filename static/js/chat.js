@@ -2043,12 +2043,25 @@ class ChatHandler {
                     const escapedPath = this.escapeHtml(file.path).replace(/'/g, "\\'").replace(/"/g, '&quot;');
                     const escapedName = safeName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                     
+                    // Format path for display (show directory if different from filename)
+                    let displayPath = '';
+                    if (safePath !== safeName && safePath.includes('/')) {
+                        const pathParts = safePath.split('/');
+                        if (pathParts.length > 1) {
+                            displayPath = pathParts.slice(0, -1).join('/') + '/';
+                        }
+                    }
+                    
                     html += `<div class="file-result-item" data-file-path="${this.escapeHtml(file.path)}" data-file-name="${safeName}">
                         <div class="file-result-header">
                             ${file.thumbnail ? `<img src="${file.thumbnail}" alt="${safeName}" class="file-thumbnail">` : '<div class="file-icon">📄</div>'}
                             <div class="file-info">
                                 <div class="file-name">${safeName}</div>
-                                <div class="file-meta">${safePath} • ${fileSize}${modifiedDate ? ' • ' + modifiedDate : ''}</div>
+                                <div class="file-meta">
+                                    ${displayPath ? `<span class="file-path" title="${safePath}">${displayPath}</span>` : ''}
+                                    <span class="file-size">${fileSize}</span>
+                                    ${modifiedDate ? `<span class="file-date">${modifiedDate}</span>` : ''}
+                                </div>
                             </div>
                         </div>
                         <div class="file-actions">
