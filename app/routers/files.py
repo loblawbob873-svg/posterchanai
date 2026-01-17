@@ -293,7 +293,13 @@ async def get_all_images(
                             # Verify that images have required fields and filter out invalid ones
                             if 'images' in cleaned_data and cleaned_data['images']:
                                 valid_images = []
+                                original_count = len(cleaned_data['images'])
                                 for img in cleaned_data['images']:
+                                    # Ensure img is a dictionary
+                                    if not isinstance(img, dict):
+                                        logger.warning(f"[FILES] Filtering out non-dict image item (type: {type(img).__name__}): {img}")
+                                        continue
+                                    
                                     # Ensure path exists and is valid
                                     if 'path' not in img or not img['path'] or str(img['path']).strip() == '':
                                         logger.warning(f"[FILES] Filtering out image missing 'path' field: {img}")
@@ -321,8 +327,8 @@ async def get_all_images(
                                 # Update with filtered valid images
                                 cleaned_data['images'] = valid_images
                                 cleaned_data['total'] = len(valid_images)
-                                if len(valid_images) < len(cleaned_data.get('images', [])):
-                                    logger.info(f"[FILES] Filtered {len(cleaned_data.get('images', [])) - len(valid_images)} invalid images from proxy response")
+                                if len(valid_images) < original_count:
+                                    logger.info(f"[FILES] Filtered {original_count - len(valid_images)} invalid images from proxy response")
                             
                             # Test serialization before returning
                             try:
@@ -552,7 +558,12 @@ async def get_all_images(
                             logger.warning(f"[FILES] Found non-serializable type {type(value)} in image_info.{key}, converting")
                             image_info[key] = str(value)
                     
-                    # CRITICAL: Ensure name and path are strings and not empty
+                    # CRITICAL: Ensure image_info is a dict and has required fields
+                    if not isinstance(image_info, dict):
+                        logger.warning(f"[FILES] image_info is not a dict (type: {type(image_info).__name__}), skipping: {item}")
+                        continue
+                    
+                    # Ensure name and path are strings and not empty
                     if 'name' not in image_info or not image_info['name'] or str(image_info['name']).strip() == '':
                         # Extract from path if name is missing
                         if 'path' in image_info and image_info['path']:
@@ -578,7 +589,9 @@ async def get_all_images(
                     logger.warning(f"Error processing image {item}: {e}")
                     continue
         except Exception as e:
-            logger.error(f"Error getting all images: {e}")
+            logger.error(f"Error getting all images: {e}", exc_info=True)
+            import traceback
+            logger.error(f"[FILES] Traceback in _get_all_images_sync: {traceback.format_exc()}")
             raise Exception(f"Error getting all images: {e}")
         
         # Remove duplicates based on path FIRST (before sorting)
@@ -742,13 +755,44 @@ async def get_all_images(
             if "type" not in serializable_img:
                 serializable_img["type"] = "unknown"
             
-            # Ensure types are correct
-            serializable_img["name"] = str(serializable_img["name"])
-            serializable_img["path"] = str(serializable_img["path"])
-            serializable_img["size"] = int(serializable_img["size"])
-            serializable_img["modified"] = float(serializable_img["modified"] or 0)
-            serializable_img["modified_date"] = str(serializable_img["modified_date"])
-            serializable_img["type"] = str(serializable_img["type"])
+            # Ensure types are correct with safe conversions
+            try:
+                serializable_img["name"] = str(serializable_img["name"]) if serializable_img["name"] is not None else ""
+            except Exception:
+                serializable_img["name"] = ""
+            
+            try:
+                serializable_img["path"] = str(serializable_img["path"]) if serializable_img["path"] is not None else ""
+            except Exception:
+                serializable_img["path"] = ""
+            
+            try:
+                size_val = serializable_img.get("size", 0)
+                if size_val is None:
+                    serializable_img["size"] = 0
+                else:
+                    serializable_img["size"] = int(float(size_val))  # Convert via float first to handle string numbers
+            except (ValueError, TypeError):
+                serializable_img["size"] = 0
+            
+            try:
+                modified_val = serializable_img.get("modified", 0)
+                if modified_val is None:
+                    serializable_img["modified"] = 0.0
+                else:
+                    serializable_img["modified"] = float(modified_val)
+            except (ValueError, TypeError):
+                serializable_img["modified"] = 0.0
+            
+            try:
+                serializable_img["modified_date"] = str(serializable_img["modified_date"]) if serializable_img["modified_date"] is not None else ""
+            except Exception:
+                serializable_img["modified_date"] = ""
+            
+            try:
+                serializable_img["type"] = str(serializable_img["type"]) if serializable_img["type"] is not None else "unknown"
+            except Exception:
+                serializable_img["type"] = "unknown"
             
             serializable_images.append(serializable_img)
         
@@ -863,6 +907,8 @@ async def get_all_images(
                 return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False})
     except Exception as e:
         logger.error(f"[FILES] Error in get_all_images: {e}", exc_info=True)
+        import traceback
+        logger.error(f"[FILES] Traceback: {traceback.format_exc()}")
         # Ensure error message is also JSON serializable
         error_msg = str(e)
         if isinstance(e, bytes):

@@ -861,7 +861,12 @@ async def get_all_images(
                             logger.warning(f"[STORAGE] Found non-serializable type {type(value)} in image_info.{key}, converting")
                             image_info[key] = str(value)
                     
-                    # CRITICAL: Ensure name and path are strings and not empty
+                    # CRITICAL: Ensure image_info is a dict and has required fields
+                    if not isinstance(image_info, dict):
+                        logger.warning(f"[STORAGE] image_info is not a dict (type: {type(image_info).__name__}), skipping: {item}")
+                        continue
+                    
+                    # Ensure name and path are strings and not empty
                     if 'name' not in image_info or not image_info['name'] or str(image_info['name']).strip() == '':
                         # Extract from path if name is missing
                         if 'path' in image_info and image_info['path']:
