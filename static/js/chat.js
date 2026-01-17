@@ -902,9 +902,10 @@ class ChatHandler {
                         if (scheduleEnabled) {
                             scheduleEnabled.checked = data.schedule_enabled || false;
                         }
-                        // Load calendar server type
+                        // Load calendar server type (default to builtin if not set)
                         if (calendarServerType) {
-                            const useBuiltin = data.use_builtin_caldav === 'true' || data.use_builtin_caldav === true;
+                            const useBuiltin = data.use_builtin_caldav === undefined || data.use_builtin_caldav === null || 
+                                             data.use_builtin_caldav === 'true' || data.use_builtin_caldav === true;
                             calendarServerType.value = useBuiltin ? 'builtin' : 'external';
                             // Trigger change event to show/hide sections
                             calendarServerType.dispatchEvent(new Event('change'));
@@ -913,9 +914,10 @@ class ChatHandler {
                             caldavCalendars = data.caldav_calendars;
                             renderCalendarList();
                         }
-                        // Load contacts server type
+                        // Load contacts server type (default to builtin if not set)
                         if (contactsServerType) {
-                            const useBuiltin = data.use_builtin_cardav === 'true' || data.use_builtin_cardav === true;
+                            const useBuiltin = data.use_builtin_cardav === undefined || data.use_builtin_cardav === null || 
+                                             data.use_builtin_cardav === 'true' || data.use_builtin_cardav === true;
                             contactsServerType.value = useBuiltin ? 'builtin' : 'external';
                             // Trigger change event to show/hide sections
                             contactsServerType.dispatchEvent(new Event('change'));
