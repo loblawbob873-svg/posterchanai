@@ -1634,32 +1634,66 @@ function escapeHtml(text) {
 
 window.editExternalStorage = async function(id) {
     try {
+        // Load users first if not already loaded
+        if (allUsers.length === 0) {
+            await loadUsersForExternalStorage();
+        }
+        
         const response = await csrfFetch('/api/admin/external-storage');
         if (response.ok) {
             const mounts = await response.json();
             const mount = mounts.find(m => m.id === id);
-            if (!mount) return;
+            if (!mount) {
+                console.error('Mount not found:', id);
+                alert('External storage mount not found');
+                return;
+            }
             
+            // Populate form fields
             document.getElementById('externalStorageId').value = mount.id;
-            document.getElementById('externalStorageName').value = mount.name;
-            document.getElementById('externalStorageMountPath').value = mount.mount_path;
-            document.getElementById('externalStorageMountPoint').value = mount.mount_point;
+            document.getElementById('externalStorageName').value = mount.name || '';
+            document.getElementById('externalStorageMountPath').value = mount.mount_path || '';
+            document.getElementById('externalStorageMountPoint').value = mount.mount_point || '';
             document.getElementById('externalStorageDescription').value = mount.description || '';
-            document.getElementById('externalStorageActive').checked = mount.is_active;
+            document.getElementById('externalStorageActive').checked = mount.is_active !== false;
             
-            // Set allowed users
+            // Set allowed users - ensure userSelect is populated first
             const userSelect = document.getElementById('externalStorageUsers');
-            if (userSelect && mount.allowed_user_ids) {
+            if (userSelect) {
+                // Clear previous selections
                 Array.from(userSelect.options).forEach(option => {
-                    option.selected = mount.allowed_user_ids.includes(parseInt(option.value));
+                    option.selected = false;
                 });
+                
+                // Set selected users if mount has allowed_user_ids
+                if (mount.allowed_user_ids && mount.allowed_user_ids.length > 0) {
+                    Array.from(userSelect.options).forEach(option => {
+                        if (mount.allowed_user_ids.includes(parseInt(option.value))) {
+                            option.selected = true;
+                        }
+                    });
+                }
+            } else {
+                console.error('externalStorageUsers select element not found');
+            }
+            
+            // Clear any previous errors
+            const errorDiv = document.getElementById('externalStorageError');
+            if (errorDiv) {
+                errorDiv.style.display = 'none';
+                errorDiv.textContent = '';
             }
             
             document.getElementById('externalStorageModalTitle').textContent = 'Edit External Storage';
             document.getElementById('externalStorageModal').style.display = 'flex';
+        } else {
+            const error = await response.json();
+            console.error('Failed to load external storage:', error);
+            alert('Error loading external storage: ' + (error.detail || 'Unknown error'));
         }
     } catch (err) {
-        console.error('Failed to load external storage:', err);
+        console.error('Failed to edit external storage:', err);
+        alert('Error: ' + (err.message || 'Failed to load external storage'));
     }
 }
 
