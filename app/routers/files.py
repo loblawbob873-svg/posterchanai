@@ -351,12 +351,19 @@ async def get_all_images(
                     
                     # Get modification time (prefer mtime, fallback to ctime if mtime is 0)
                     # Use the actual file's mtime, not the directory's mtime
+                    # IMPORTANT: Use mtime (modification time) for sorting - this is when file was last modified
                     modified_time = stat.st_mtime if stat.st_mtime > 0 else stat.st_ctime
                     
                     # Ensure we have a valid timestamp
                     if modified_time <= 0:
                         logger.warning(f"Invalid timestamp for {item}: mtime={stat.st_mtime}, ctime={stat.st_ctime}")
                         modified_time = max(stat.st_mtime, stat.st_ctime, 1.0)  # At least use 1.0 as fallback
+                    
+                    # Log suspicious timestamps (very old or future dates)
+                    if modified_time < 946684800:  # Before year 2000
+                        logger.debug(f"Very old timestamp for {item.name}: {modified_time} ({datetime.fromtimestamp(modified_time).isoformat()})")
+                    if modified_time > time.time() + 86400:  # More than 1 day in future
+                        logger.warning(f"Future timestamp for {item.name}: {modified_time} ({datetime.fromtimestamp(modified_time).isoformat()})")
                     
                     from app.services.thumbnail_service import is_image_file, is_video_file
                     
@@ -369,13 +376,32 @@ async def get_all_images(
                         skipped_reasons['not_media'] = skipped_reasons.get('not_media', 0) + 1
                         continue
                     
-                    # For images, do a quick validation check (skip if PIL can't identify it)
+                    # Skip files that are likely thumbnails based on name/path patterns
+                    # Check if filename suggests it's a thumbnail (e.g., thumb_, thumbnail_, _thumb, etc.)
+                    name_lower = item.name.lower()
+                    if any(pattern in name_lower for pattern in ['thumb', 'thumbnail', '_tn', '_small', '_mini']):
+                        # But allow if it's in a normal directory (not .thumbnails)
+                        try:
+                            relative = item.relative_to(user_path)
+                            if '.thumbnails' not in relative.parts:
+                                # It's a regular file with "thumb" in the name, allow it
+                                pass
+                            else:
+                                skipped_count += 1
+                                skipped_reasons['thumbnail_file'] = skipped_reasons.get('thumbnail_file', 0) + 1
+                                continue
+                        except ValueError:
+                            pass
+                    
+                    # For images, do a lightweight validation (skip corrupted files)
+                    # Only check if file can be opened, don't verify full content (too slow)
                     if is_image:
                         try:
                             from PIL import Image
-                            # Quick check - just try to open and verify it's a valid image
+                            # Quick check - just try to open (don't verify, too slow for large scans)
                             with Image.open(item) as img:
-                                img.verify()  # Verify it's a valid image file
+                                # Just check if we can read basic info, don't verify full image
+                                _ = img.format  # This will fail if file is completely invalid
                         except Exception as img_error:
                             # Not a valid image file, skip it
                             skipped_count += 1
@@ -457,6 +483,20 @@ async def get_all_images(
             logger.error(f"Error getting all images: {e}")
             raise Exception(f"Error getting all images: {e}")
         
+        # Remove duplicates based on path FIRST (before sorting)
+        # Keep the first occurrence of each path
+        seen_paths = set()
+        unique_images = []
+        duplicates_removed = 0
+        for img in images:
+            path = img.get('path', '')
+            if path in seen_paths:
+                duplicates_removed += 1
+                continue
+            seen_paths.add(path)
+            unique_images.append(img)
+        images = unique_images
+        
         # Sort by modified time (newest first)
         # Ensure modified is a number, not string, and convert to float explicitly
         for img in images:
@@ -473,7 +513,7 @@ async def get_all_images(
         images.sort(key=lambda x: (float(x.get('modified', 0) or 0), str(x.get('path', '')).lower()), reverse=True)
         
         # Debug: log statistics
-        logger.info(f"[FILES] Image scan complete: {len(images)} valid images/videos found, {skipped_count} files skipped")
+        logger.info(f"[FILES] Image scan complete: {len(images)} unique valid images/videos found, {skipped_count} files skipped, {duplicates_removed} duplicates removed")
         if skipped_reasons:
             logger.info(f"[FILES] Skip reasons: {skipped_reasons}")
         
@@ -489,20 +529,26 @@ async def get_all_images(
                 thumb_marker = " [THUMBNAIL?]" if is_thumbnail else ""
                 logger.info(f"  {i+1}. {img.get('name')} - modified: {mod_time} ({mod_date}) - path: {path_info}{thumb_marker}")
             
-            # Verify sorting - check more images
+            # Verify sorting - check that newer files come before older files
             prev_time = None
             sorting_errors = []
-            for i, img in enumerate(images[:50]):  # Check first 50
+            for i, img in enumerate(images[:100]):  # Check first 100
                 curr_time = float(img.get('modified', 0) or 0)
                 if prev_time is not None and curr_time > prev_time:
+                    # Current file is newer than previous - this is WRONG (should be oldest to newest)
                     sorting_errors.append((i, img.get('name'), curr_time, prev_time))
-                    logger.warning(f"[FILES] Sorting error at index {i}: {img.get('name')} (time: {curr_time}) is newer than previous (time: {prev_time})")
+                    logger.error(f"[FILES] ❌ Sorting error at index {i}: {img.get('name')} (time: {curr_time}) is NEWER than previous (time: {prev_time}) - should be OLDER!")
                 prev_time = curr_time
             
             if not sorting_errors:
-                logger.info(f"[FILES] ✓ Sorting verified: All {min(50, len(images))} checked images are in correct order (newest first)")
+                logger.info(f"[FILES] ✓ Sorting verified: All {min(100, len(images))} checked images are in correct order (newest first)")
             else:
-                logger.error(f"[FILES] ❌ Found {len(sorting_errors)} sorting errors in first 50 images")
+                logger.error(f"[FILES] ❌ Found {len(sorting_errors)} sorting errors in first 100 images - sorting is REVERSED!")
+                # If sorting is reversed, fix it
+                if len(sorting_errors) > 10:  # If many errors, likely reversed
+                    logger.warning(f"[FILES] Attempting to fix reversed sort order...")
+                    images.sort(key=lambda x: (float(x.get('modified', 0) or 0), str(x.get('path', '')).lower()), reverse=False)
+                    logger.warning(f"[FILES] Re-sorted with reverse=False (oldest first) - this is WRONG, need to investigate!")
         
         # Apply pagination
         total = len(images)

@@ -703,6 +703,8 @@ async def get_all_images(
     def _get_all_images_sync():
         """Synchronous function to get all images and videos."""
         images = []
+        skipped_count = 0
+        skipped_reasons = {}
         
         try:
             # Recursively find all image and video files
@@ -717,13 +719,36 @@ async def get_all_images(
                     try:
                         relative = item.relative_to(user_path)
                         if any(part == '.thumbnails' for part in relative.parts):
+                            skipped_count += 1
+                            skipped_reasons['thumbnails'] = skipped_reasons.get('thumbnails', 0) + 1
                             continue
                     except ValueError:
                         # If relative path calculation fails, fall back to string check
                         if '.thumbnails' in str(item):
+                            skipped_count += 1
+                            skipped_reasons['thumbnails'] = skipped_reasons.get('thumbnails', 0) + 1
                             continue
                     
+                    # Check if file exists and is readable
+                    if not item.exists() or not item.is_file():
+                        skipped_count += 1
+                        skipped_reasons['not_file'] = skipped_reasons.get('not_file', 0) + 1
+                        continue
+                    
                     stat = item.stat()
+                    
+                    # Skip empty files (likely not valid media)
+                    if stat.st_size == 0:
+                        skipped_count += 1
+                        skipped_reasons['empty'] = skipped_reasons.get('empty', 0) + 1
+                        continue
+                    
+                    # Skip very small files that are likely not real images/videos (< 100 bytes)
+                    if stat.st_size < 100:
+                        skipped_count += 1
+                        skipped_reasons['too_small'] = skipped_reasons.get('too_small', 0) + 1
+                        continue
+                    
                     relative_path = str(item.relative_to(user_path))
                     
                     # Get modification time (prefer mtime, fallback to ctime if mtime is 0)
@@ -739,6 +764,36 @@ async def get_all_images(
                     
                     is_image = is_image_file(item)
                     is_video = is_video_file(item)
+                    
+                    # Only include files that are actually images or videos
+                    if not is_image and not is_video:
+                        skipped_count += 1
+                        skipped_reasons['not_media'] = skipped_reasons.get('not_media', 0) + 1
+                        continue
+                    
+                    # Skip files that are likely thumbnails based on name/path patterns
+                    name_lower = item.name.lower()
+                    if any(pattern in name_lower for pattern in ['thumb', 'thumbnail', '_tn', '_small', '_mini']):
+                        try:
+                            relative = item.relative_to(user_path)
+                            if '.thumbnails' in relative.parts:
+                                skipped_count += 1
+                                skipped_reasons['thumbnail_file'] = skipped_reasons.get('thumbnail_file', 0) + 1
+                                continue
+                        except ValueError:
+                            pass
+                    
+                    # For images, do a lightweight validation (skip corrupted files)
+                    if is_image:
+                        try:
+                            from PIL import Image
+                            # Quick check - just try to open (don't verify, too slow)
+                            with Image.open(item) as img:
+                                _ = img.format  # This will fail if file is completely invalid
+                        except Exception as img_error:
+                            skipped_count += 1
+                            skipped_reasons['invalid_image'] = skipped_reasons.get('invalid_image', 0) + 1
+                            continue
                     
                     image_info = {
                         "name": item.name,
@@ -869,6 +924,19 @@ async def get_all_images(
             logger.error(f"Error getting all images: {e}")
             raise Exception(f"Error getting all images: {e}")
         
+        # Remove duplicates based on path FIRST (before sorting)
+        seen_paths = set()
+        unique_images = []
+        duplicates_removed = 0
+        for img in images:
+            path = img.get('path', '')
+            if path in seen_paths:
+                duplicates_removed += 1
+                continue
+            seen_paths.add(path)
+            unique_images.append(img)
+        images = unique_images
+        
         # Sort by modified time (newest first)
         # Ensure modified is a number, not string, and convert to float explicitly
         for img in images:
@@ -883,6 +951,11 @@ async def get_all_images(
         # Use reverse=True to get descending order (newest first)
         # Explicitly convert to float in sort key to ensure numeric comparison
         images.sort(key=lambda x: (float(x.get('modified', 0) or 0), str(x.get('path', '')).lower()), reverse=True)
+        
+        # Debug: log statistics
+        logger.info(f"[STORAGE] Image scan complete: {len(images)} unique valid images/videos found, {skipped_count} files skipped, {duplicates_removed} duplicates removed")
+        if skipped_reasons:
+            logger.info(f"[STORAGE] Skip reasons: {skipped_reasons}")
         
         # Debug: log first few images to verify sorting
         if images:
