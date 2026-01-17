@@ -73,13 +73,18 @@ async function csrfFetch(url, options = {}) {
         }
         
         // Always set the header for state-changing methods if we have a token
-        // Use lowercase header name since Starlette normalizes headers
+        // Use lowercase header name since Starlette normalizes headers to lowercase
         if (token) {
-            options.headers['x-csrf-token'] = token;  // Lowercase for Starlette
-            options.headers[CSRF_HEADER_NAME] = token;  // Also set original case for compatibility
-            console.log(`CSRF token added to ${method} request (lowercase): ${token.substring(0, 8)}...`);
+            // Set in lowercase (Starlette normalizes all headers to lowercase)
+            options.headers['x-csrf-token'] = token;
+            // Also set in original case for compatibility (though Starlette will normalize it)
+            options.headers[CSRF_HEADER_NAME] = token;
+            console.log(`CSRF token added to ${method} request: ${token.substring(0, 8)}...`);
+            console.log(`Headers object:`, options.headers);
+            console.log(`x-csrf-token in headers:`, 'x-csrf-token' in options.headers);
         } else {
             console.error(`WARNING: No CSRF token available for ${method} request to ${url}`);
+            console.error(`Available cookies:`, document.cookie);
         }
     }
 
