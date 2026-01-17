@@ -37,13 +37,19 @@ def _load_sqlite_settings():
                 logger.debug("[SQLite] Settings table not found, using default cache settings")
                 return
             
-            cache_setting = db.query(Setting).filter(Setting.key == "sqlite_cache_mb").first()
-            if cache_setting and cache_setting.value:
-                _sqlite_cache_mb = int(cache_setting.value)
+            try:
+                cache_setting = db.query(Setting).filter(Setting.key == "sqlite_cache_mb").first()
+                if cache_setting and cache_setting.value:
+                    _sqlite_cache_mb = int(cache_setting.value)
+            except (IndexError, AttributeError) as e:
+                logger.debug(f"Error querying sqlite_cache_mb setting: {e}, using default")
             
-            mmap_setting = db.query(Setting).filter(Setting.key == "sqlite_mmap_size_mb").first()
-            if mmap_setting and mmap_setting.value:
-                _sqlite_mmap_mb = int(mmap_setting.value)
+            try:
+                mmap_setting = db.query(Setting).filter(Setting.key == "sqlite_mmap_size_mb").first()
+                if mmap_setting and mmap_setting.value:
+                    _sqlite_mmap_mb = int(mmap_setting.value)
+            except (IndexError, AttributeError) as e:
+                logger.debug(f"Error querying sqlite_mmap_size_mb setting: {e}, using default")
             
             _sqlite_settings_loaded = True
             logger.info(f"[SQLite] Cache settings loaded: cache={_sqlite_cache_mb}MB, mmap={_sqlite_mmap_mb}MB")
@@ -115,6 +121,10 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    except (IndexError, AttributeError) as e:
+        logger.error(f"Database query error: {e}", exc_info=True)
+        db.rollback()
+        raise
     finally:
         db.close()
 

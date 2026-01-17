@@ -26,6 +26,18 @@ from app.auth import get_current_user
 from app.models import User, Setting, SharedFile, ExternalStorage
 from app.services.storage_service import get_storage_service, _sanitize_path_component, _validate_path_within_base
 
+
+def safe_query_setting(db: Session, key: str) -> Optional[Setting]:
+    """Safely query a Setting, handling IndexError and other database errors."""
+    try:
+        return db.query(Setting).filter(Setting.key == key).first()
+    except (IndexError, AttributeError) as e:
+        logger.warning(f"Error querying setting '{key}': {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error querying setting '{key}': {e}", exc_info=True)
+        return None
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/files", tags=["files"])
@@ -95,13 +107,13 @@ def get_file_cache(db: Session, force_reload: bool = False) -> FileListingCache:
     global _file_cache
     
     # Load cache settings
-    cache_enabled = db.query(Setting).filter(Setting.key == "file_cache_enabled").first()
-    if cache_enabled and cache_enabled.value.lower() == "false":
+    cache_enabled = safe_query_setting(db, "file_cache_enabled")
+    if cache_enabled and cache_enabled.value and cache_enabled.value.lower() == "false":
         return NoOpCache()
     
     # Load TTL and max_size settings
-    ttl_setting = db.query(Setting).filter(Setting.key == "file_cache_ttl").first()
-    max_size_setting = db.query(Setting).filter(Setting.key == "file_cache_max_size").first()
+    ttl_setting = safe_query_setting(db, "file_cache_ttl")
+    max_size_setting = safe_query_setting(db, "file_cache_max_size")
     
     # Validate and parse settings with defaults
     try:
@@ -232,7 +244,8 @@ async def get_all_images(
 ):
     """Get all images and videos from user's storage recursively, sorted by newest first. Supports proxying to storage server."""
     # Check if storage server is configured - proxy request if so
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    storage_server_url = safe_query_setting(db, "storage_server_url")
+    
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
@@ -240,7 +253,7 @@ async def get_all_images(
             # Proxy to storage server
             try:
                 import httpx
-                storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+                storage_server_token = safe_query_setting(db, "storage_server_token")
                 
                 headers = {}
                 if storage_server_token and storage_server_token.value:
