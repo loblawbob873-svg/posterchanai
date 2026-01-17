@@ -9,7 +9,7 @@
                 <button class="btn-icon-only" id="fileManagerNewFolderBtn" title="New Folder">📂</button>
                 <button class="btn-icon-only" id="fileManagerPictureViewerBtn" title="Photo Gallery">🖼️</button>
             </div>
-            <button class="btn-icon modal-close" id="fileManagerCloseBtn">&times;</button>
+            <button class="btn-icon modal-close modal-close-cyberpunk" id="fileManagerCloseBtn">✕</button>
         </div>
         <div class="modal-body" style="padding: 0; display: flex; flex-direction: column; overflow: hidden;">
             <div class="file-manager-body" style="display: flex; flex: 1; overflow: hidden;">
@@ -130,7 +130,7 @@
     <div class="modal-content">
         <div class="modal-header">
             <h2>📧 Email File</h2>
-            <button class="btn-icon modal-close" onclick="document.getElementById('fileEmailModal').style.display='none'">&times;</button>
+            <button class="btn-icon modal-close modal-close-cyberpunk" onclick="document.getElementById('fileEmailModal').style.display='none'">✕</button>
         </div>
         <div class="modal-body">
             <input type="hidden" id="emailFilePath">
@@ -162,7 +162,7 @@
     <div class="modal-content">
         <div class="modal-header">
             <h2>🔗 Share File</h2>
-            <button class="btn-icon modal-close" onclick="document.getElementById('fileShareModal').style.display='none'">&times;</button>
+            <button class="btn-icon modal-close modal-close-cyberpunk" onclick="document.getElementById('fileShareModal').style.display='none'">✕</button>
         </div>
         <div class="modal-body">
             <input type="hidden" id="shareFilePath">
@@ -199,7 +199,7 @@
     <div class="modal-content">
         <div class="modal-header">
             <h2>📦 Move Files</h2>
-            <button class="btn-icon modal-close" onclick="document.getElementById('fileMoveModal').style.display='none'">&times;</button>
+            <button class="btn-icon modal-close modal-close-cyberpunk" onclick="document.getElementById('fileMoveModal').style.display='none'">✕</button>
         </div>
         <div class="modal-body">
             <p><strong>Selected items:</strong> <span id="moveFileCount">0</span></p>
@@ -301,7 +301,7 @@
     <div class="modal-content cyberpunk-audio-player-content">
         <div class="modal-header">
             <h2>🎵 Audio Player</h2>
-            <button class="btn-icon modal-close" onclick="if(window.fileManager){window.fileManager.closeAudioPlayer();}">&times;</button>
+            <button class="btn-icon modal-close modal-close-cyberpunk" onclick="if(window.fileManager){window.fileManager.closeAudioPlayer();}">✕</button>
         </div>
         <div class="modal-body" style="padding: 20px; text-align: center;">
             <div class="cyberpunk-audio-info" id="audioPlayerTitle" style="color: #00ffff; font-size: 18px; margin-bottom: 20px; font-family: monospace;">
@@ -322,7 +322,7 @@
     <div class="modal-content cyberpunk-video-player-content">
         <div class="modal-header">
             <h2>🎬 Video Player</h2>
-            <button class="btn-icon modal-close" onclick="if(window.fileManager){window.fileManager.closeVideoPlayer();}">&times;</button>
+            <button class="btn-icon modal-close modal-close-cyberpunk" onclick="if(window.fileManager){window.fileManager.closeVideoPlayer();}">✕</button>
         </div>
         <div class="modal-body" style="padding: 20px; text-align: center;">
             <div class="cyberpunk-video-info" id="videoPlayerTitle" style="color: #00ffff; font-size: 18px; margin-bottom: 20px; font-family: monospace;">
