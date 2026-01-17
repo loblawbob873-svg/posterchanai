@@ -1438,37 +1438,19 @@ async def thumbnail_file(
         if not is_image and not is_video:
             raise HTTPException(status_code=400, detail="File is not an image or video")
         
-        # Check for stored thumbnail
+        # CRITICAL: Only use stored thumbnails - never generate on-the-fly!
+        # Thumbnails should be generated during upload, not when viewing gallery.
+        # This prevents ffmpeg from running every time the gallery loads.
         thumbnail_path = get_thumbnail_if_exists(user_path, full_path)
         if thumbnail_path and thumbnail_path.exists():
-            # Use stored thumbnail
+            # Use stored thumbnail only
             thumbnail_data = await asyncio.to_thread(generate_thumbnail, thumbnail_path, (size, size))
             if thumbnail_data:
                 return JSONResponse({"thumbnail": thumbnail_data})
         
-        # Generate thumbnail on-the-fly (and save it for future use)
-        if is_video:
-            # For videos, generate thumbnail file first, then load it
-            video_thumbnail_path = await asyncio.to_thread(
-                generate_thumbnail_for_video_file, user_path, full_path, (size, size)
-            )
-            if video_thumbnail_path and video_thumbnail_path.exists():
-                # Load the generated thumbnail
-                thumbnail_data = await asyncio.to_thread(generate_thumbnail, video_thumbnail_path, (size, size))
-                if thumbnail_data:
-                    return JSONResponse({"thumbnail": thumbnail_data})
-        else:
-            # For images, use existing logic
-            thumbnail_data = await asyncio.to_thread(generate_thumbnail, full_path, (size, size))
-            if thumbnail_data:
-                # Save thumbnail for future use
-                try:
-                    await asyncio.to_thread(generate_thumbnail_for_image, user_path, full_path)
-                except Exception:
-                    pass  # Ignore errors when saving thumbnail
-                return JSONResponse({"thumbnail": thumbnail_data})
-        
-        raise HTTPException(status_code=400, detail="Could not generate thumbnail")
+        # No stored thumbnail exists - return 404 instead of generating on-the-fly
+        # The frontend will handle this gracefully by showing a placeholder or the full image
+        raise HTTPException(status_code=404, detail="Thumbnail not found. Thumbnails are generated during upload.")
     except HTTPException:
         raise
     except Exception as e:

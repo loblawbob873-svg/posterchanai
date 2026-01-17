@@ -195,22 +195,11 @@ async def search_files(
                                     thumbnail = generate_thumbnail(thumbnail_path, max_size=(100, 100))
                                     if thumbnail:
                                         item_info["thumbnail"] = thumbnail
-                                else:
-                                    # Generate on-the-fly
-                                    thumbnail = generate_thumbnail(item, max_size=(100, 100))
-                                    if thumbnail:
-                                        item_info["thumbnail"] = thumbnail
-                                        # Also save thumbnail for future use
-                                        try:
-                                            generate_thumbnail_for_image(user_path, item)
-                                        except Exception as save_error:
-                                            # Don't log "cannot identify" errors
-                                            if "cannot identify" not in str(save_error).lower():
-                                                logger.debug(f"Failed to save thumbnail for {item}: {save_error}")
+                                # If no stored thumbnail exists, don't generate on-the-fly
+                                # This prevents performance issues when browsing files
                             except Exception as e:
-                                # Only log if it's not a "cannot identify" error
-                                if "cannot identify" not in str(e).lower():
-                                    logger.debug(f"Failed to generate thumbnail for {item}: {e}")
+                                # Silently skip if thumbnail doesn't exist
+                                pass
                         
                         results.append(item_info)
                 except Exception as e:
@@ -732,27 +721,16 @@ async def list_files(
                                 # For user storage, check for stored thumbnail
                                 thumbnail_path = get_thumbnail_if_exists(user_path, item)
                                 if thumbnail_path and thumbnail_path.exists():
-                                    # Use stored thumbnail
+                                    # Use stored thumbnail only
                                     thumbnail = generate_thumbnail(thumbnail_path, max_size=(200, 200))
                                     if thumbnail:
                                         item_info["thumbnail"] = thumbnail
-                                else:
-                                    # Generate thumbnail on-the-fly (will also save it)
-                                    thumbnail = generate_thumbnail(item, max_size=(200, 200))
-                                    if thumbnail:
-                                        item_info["thumbnail"] = thumbnail
-                                        # Also save thumbnail for future use
-                                        try:
-                                            generate_thumbnail_for_image(user_path, item)
-                                        except Exception:
-                                            pass  # Ignore errors when saving thumbnail
-                            else:
-                                # For external storage, just generate on-the-fly
-                                thumbnail = generate_thumbnail(item, max_size=(200, 200))
-                                if thumbnail:
-                                    item_info["thumbnail"] = thumbnail
+                                # If no stored thumbnail exists, don't generate on-the-fly
+                                # This prevents performance issues when browsing files
+                            # For external storage, skip thumbnails (they're not stored)
                         except Exception as e:
-                            logger.warning(f"Failed to generate thumbnail for {item}: {e}")
+                            # Silently skip if thumbnail doesn't exist
+                            pass
                     
                     items.append(item_info)
                 except Exception as e:
@@ -1025,45 +1003,20 @@ async def get_thumbnail(
         if not is_image and not is_video:
             raise HTTPException(status_code=400, detail="File is not an image or video")
         
-        # For user storage (not external), check for stored thumbnail
+        # CRITICAL: Only use stored thumbnails - never generate on-the-fly!
+        # Thumbnails should be generated during upload, not when viewing gallery.
+        # This prevents ffmpeg from running every time the gallery loads.
         if not external_storage:
             thumbnail_path = get_thumbnail_if_exists(user_path, full_path)
             if thumbnail_path and thumbnail_path.exists():
-                # Use stored thumbnail
+                # Use stored thumbnail only
                 thumbnail_data = await asyncio.to_thread(generate_thumbnail, thumbnail_path, (size, size))
                 if thumbnail_data:
                     return JSONResponse({"thumbnail": thumbnail_data})
         
-        # Generate thumbnail on-the-fly (and save it for future use)
-        if is_video:
-            # For videos, generate thumbnail file first, then load it
-            if not external_storage:
-                # Generate and save video thumbnail
-                video_thumbnail_path = await asyncio.to_thread(
-                    generate_thumbnail_for_video_file, user_path, full_path, (size, size)
-                )
-                if video_thumbnail_path and video_thumbnail_path.exists():
-                    # Load the generated thumbnail
-                    thumbnail_data = await asyncio.to_thread(generate_thumbnail, video_thumbnail_path, (size, size))
-                    if thumbnail_data:
-                        return JSONResponse({"thumbnail": thumbnail_data})
-            else:
-                # For external storage, try to generate thumbnail directly (may not work without ffmpeg)
-                # This is a limitation - external storage videos may not have thumbnails
-                raise HTTPException(status_code=400, detail="Video thumbnails not supported for external storage")
-        else:
-            # For images, use existing logic
-            thumbnail_data = await asyncio.to_thread(generate_thumbnail, full_path, (size, size))
-            if thumbnail_data:
-                # Save thumbnail for future use (only for user storage)
-                if not external_storage:
-                    try:
-                        await asyncio.to_thread(generate_thumbnail_for_image, user_path, full_path)
-                    except Exception:
-                        pass  # Ignore errors when saving thumbnail
-                return JSONResponse({"thumbnail": thumbnail_data})
-        
-        raise HTTPException(status_code=400, detail="Could not generate thumbnail")
+        # No stored thumbnail exists - return 404 instead of generating on-the-fly
+        # The frontend will handle this gracefully by showing a placeholder or the full image
+        raise HTTPException(status_code=404, detail="Thumbnail not found. Thumbnails are generated during upload.")
     except HTTPException:
         raise
     except Exception as e:
