@@ -2005,14 +2005,17 @@ class FileManager {
             // Ensure images are sorted by modified time (newest first)
             // Sort after combining with existing images to maintain correct order
             // Convert to numbers explicitly to ensure numeric comparison
+            // IMPORTANT: Sort in descending order (newest first) - higher timestamp = newer
+            // timeB - timeA: if B is newer (timeB > timeA), returns positive, B comes before A ✓
             this.allImages.sort((a, b) => {
                 const timeA = Number(a.modified) || 0;
                 const timeB = Number(b.modified) || 0;
                 // Descending order (newest first) - higher timestamp comes first
+                // timeB - timeA gives us: newer files (higher timestamp) come first
                 if (timeB !== timeA) {
-                    return timeB - timeA;
+                    return timeB - timeA; // Positive if B is newer, negative if A is newer
                 }
-                // Stable sort: if timestamps are equal, sort by path
+                // Timestamps are equal, sort by path for stability
                 const pathA = (a.path || '').toLowerCase();
                 const pathB = (b.path || '').toLowerCase();
                 return pathA.localeCompare(pathB);
@@ -2087,14 +2090,16 @@ class FileManager {
         
         // Ensure images are sorted before rendering (safety check)
         // Convert to numbers explicitly to ensure numeric comparison
+        // Sort in descending order: newest first (higher timestamp = newer)
         this.allImages.sort((a, b) => {
             const timeA = Number(a.modified) || 0;
             const timeB = Number(b.modified) || 0;
             // Descending order (newest first) - higher timestamp comes first
+            // timeB - timeA: if B is newer (timeB > timeA), returns positive, B comes before A ✓
             if (timeB !== timeA) {
-                return timeB - timeA;
+                return timeB - timeA; // Positive if B is newer, negative if A is newer
             }
-            // Stable sort: if timestamps are equal, sort by path
+            // Timestamps are equal, sort by path for stability
             const pathA = (a.path || '').toLowerCase();
             const pathB = (b.path || '').toLowerCase();
             return pathA.localeCompare(pathB);

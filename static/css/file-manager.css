@@ -9,37 +9,34 @@
     max-height: 90vh;
     display: flex;
     flex-direction: column;
+    overflow: visible;
+}
+
+#fileManagerOverlay .modal-content.modal-fullscreen .modal-header {
+    overflow: visible;
 }
 
 /* Ensure modal header can accommodate actions */
 #fileManagerOverlay .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     flex-wrap: wrap;
     gap: 12px;
     min-height: 60px;
-    align-items: center;
-    position: relative;
 }
 
 #fileManagerOverlay .modal-header h2 {
     flex-shrink: 0;
-    margin-right: auto;
-    min-width: 0;
-}
-
-#fileManagerOverlay .modal-header .modal-close {
-    flex-shrink: 0;
-    margin-left: auto;
-    order: 10;
+    margin: 0;
 }
 
 .file-manager-header-actions {
     display: flex;
     gap: 8px;
     align-items: center;
-    margin-left: auto;
     flex-wrap: wrap;
-    flex-shrink: 1;
-    min-width: 0;
+    flex-shrink: 0;
 }
 
 .file-manager-header-actions .btn-secondary {
@@ -47,6 +44,10 @@
     flex-shrink: 0;
     font-size: 13px;
     padding: 8px 12px;
+}
+
+#fileManagerOverlay .modal-header .modal-close {
+    flex-shrink: 0;
 }
 
 .file-manager-body {
@@ -216,7 +217,6 @@
     flex: 1;
     justify-content: flex-end;
     flex-wrap: wrap;
-    min-width: 0;
 }
 
 .file-selection-controls .btn-secondary,
@@ -357,12 +357,10 @@
     
     #fileManagerOverlay .modal-header h2 {
         font-size: 18px;
-        margin-right: 8px;
     }
     
     .file-manager-header-actions {
         gap: 6px;
-        order: 2;
     }
     
     .file-manager-header-actions .btn-secondary {
