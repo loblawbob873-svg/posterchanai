@@ -240,7 +240,16 @@ async def get_notes(
             
             result.append(_serialize_note_response(note, folder_name))
         
-        return result
+        # Return with no-cache headers to prevent browser caching
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            content=result,
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
     except Exception as e:
         logger.error(f"Error fetching notes: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error fetching notes: {str(e)}")

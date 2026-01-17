@@ -88,6 +88,9 @@ class NotesManager {
             notesList.innerHTML = '<div class="notes-loading">Loading notes...</div>';
         }
         
+        // Clear cached notes immediately
+        this.notes = [];
+        
         try {
             let url = '/api/notes?';
             if (this.currentFolderId !== 0) {
@@ -96,10 +99,19 @@ class NotesManager {
             if (this.searchQuery) {
                 url += `search=${encodeURIComponent(this.searchQuery)}&`;
             }
+            // Add cache busting to prevent stale data
+            url += `_t=${Date.now()}`;
             
-            const response = await fetch(url);
+            const response = await fetch(url, {
+                cache: 'no-store',
+                headers: {
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache'
+                }
+            });
             if (response.ok) {
                 this.notes = await response.json();
+                // Force re-render even if notes array is empty
                 this.renderNotes();
             } else {
                 const errorText = await response.text();
