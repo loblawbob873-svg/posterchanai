@@ -22,33 +22,33 @@
     </div>
 
     <div class="quick-actions" id="quickActions">
-        <button class="quick-btn mode-btn active" data-mode="">Chat</button>
+        <button class="quick-btn mode-btn active" data-mode="">💬 Chat</button>
         <div class="quick-btn-dropdown">
-            <button class="quick-btn dropdown-toggle" id="pimDropdownBtn">PIM ▾</button>
+            <button class="quick-btn dropdown-toggle" id="pimDropdownBtn">📋 PIM ▾</button>
             <div class="dropdown-menu" id="pimDropdownMenu">
-                <button class="dropdown-item cmd-item" data-cmd="mail">Mail</button>
-                <button class="dropdown-item cmd-item" data-cmd="mail folders">Mail Folders</button>
-                <button class="dropdown-item cmd-item" data-cmd="cal week">Calendar</button>
-                <button class="dropdown-item" id="addEventBtn">Add Event</button>
-                <button class="dropdown-item cmd-item" data-cmd="contacts all">Contacts</button>
-                <button class="dropdown-item cmd-item" data-cmd="todo">Todo List</button>
+                <button class="dropdown-item cmd-item" data-cmd="mail">📧 Mail</button>
+                <button class="dropdown-item cmd-item" data-cmd="mail folders">📬 Mail Folders</button>
+                <button class="dropdown-item cmd-item" data-cmd="cal week">📅 Calendar</button>
+                <button class="dropdown-item" id="addEventBtn">➕ Add Event</button>
+                <button class="dropdown-item cmd-item" data-cmd="contacts all">👥 Contacts</button>
+                <button class="dropdown-item cmd-item" data-cmd="todo">✅ Todo List</button>
             </div>
         </div>
         <button class="quick-btn" id="notesBrowseBtn" title="Browse Notes">📝 Notes</button>
         <button class="quick-btn" id="fileManagerBtn" title="File Manager" onclick="if(window.fileManager){window.fileManager.open();}else{console.error('FileManager not initialized');}">📁 Files</button>
         <div class="quick-btn-dropdown">
-            <button class="quick-btn dropdown-toggle" id="searchDropdownBtn">Web ▾</button>
+            <button class="quick-btn dropdown-toggle" id="searchDropdownBtn">🌐 Web ▾</button>
             <div class="dropdown-menu" id="searchDropdownMenu">
-                <button class="dropdown-item mode-btn" data-mode="search">Web Search</button>
-                <button class="dropdown-item mode-btn" data-mode="images">Images</button>
-                <button class="dropdown-item" id="newsDropdownBtn">News</button>
-                <button class="dropdown-item cmd-item" data-cmd="torrents">Torrents</button>
-                <button class="dropdown-item cmd-item" data-cmd="torrents list">Downloading</button>
+                <button class="dropdown-item mode-btn" data-mode="search">🔍 Web Search</button>
+                <button class="dropdown-item mode-btn" data-mode="images">🖼️ Images</button>
+                <button class="dropdown-item" id="newsDropdownBtn">📰 News</button>
+                <button class="dropdown-item cmd-item" data-cmd="torrents">🧲 Torrents</button>
+                <button class="dropdown-item cmd-item" data-cmd="torrents list">⬇️ Downloading</button>
             </div>
         </div>
-        <button class="quick-btn mode-btn" data-mode="geni">Generate</button>
-        <button class="quick-btn" id="translateBtn">Translate</button>
-        <button class="quick-btn" id="ragBtn" title="RAG Context">RAG</button>
+        <button class="quick-btn mode-btn" data-mode="geni">✨ Generate</button>
+        <button class="quick-btn" id="translateBtn">🌍 Translate</button>
+        <button class="quick-btn" id="ragBtn" title="RAG Context">🗂️ RAG</button>
     </div>
 
     <div class="input-area">
@@ -73,7 +73,7 @@
                 🎤
             </button>
             <textarea id="messageInput" placeholder="Type a message or command..." rows="1"></textarea>
-            <button class="btn-send" id="sendBtn">Send</button>
+            <button class="btn-send" id="sendBtn">📤 Send</button>
         </div>
     </div>
 </main>
