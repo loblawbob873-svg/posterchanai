@@ -292,43 +292,12 @@ async def get_all_images(
                             
                             # Verify that images have required fields and filter out invalid ones
                             if 'images' in cleaned_data and cleaned_data['images']:
-                                valid_images = []
-                                original_count = len(cleaned_data['images'])
-                                for img in cleaned_data['images']:
-                                    # Ensure img is a dictionary
-                                    if not isinstance(img, dict):
-                                        logger.warning(f"[FILES] Filtering out non-dict image item (type: {type(img).__name__}): {img}")
-                                        continue
-                                    
-                                    # Ensure path exists and is valid
-                                    if 'path' not in img or not img['path'] or str(img['path']).strip() == '':
-                                        logger.warning(f"[FILES] Filtering out image missing 'path' field: {img}")
-                                        continue
-                                    
-                                    # Ensure name exists, extract from path if missing
-                                    if 'name' not in img or not img['name'] or str(img['name']).strip() == '':
-                                        if 'path' in img and img['path']:
-                                            img['name'] = str(img['path']).split('/')[-1]
-                                            logger.debug(f"[FILES] Extracted name from path for image: {img['name']}")
-                                        else:
-                                            logger.warning(f"[FILES] Filtering out image missing both 'name' and 'path' fields: {img}")
-                                            continue
-                                    
-                                    # Ensure path is a string
-                                    if not isinstance(img['path'], str):
-                                        img['path'] = str(img['path'])
-                                    
-                                    # Ensure name is a string
-                                    if not isinstance(img['name'], str):
-                                        img['name'] = str(img['name'])
-                                    
-                                    valid_images.append(img)
+                                from app.utils.image_validation import validate_and_filter_images
+                                valid_images = validate_and_filter_images(cleaned_data['images'], source="proxy")
                                 
                                 # Update with filtered valid images
                                 cleaned_data['images'] = valid_images
                                 cleaned_data['total'] = len(valid_images)
-                                if len(valid_images) < original_count:
-                                    logger.info(f"[FILES] Filtered {original_count - len(valid_images)} invalid images from proxy response")
                             
                             # Test serialization before returning
                             try:
@@ -558,27 +527,12 @@ async def get_all_images(
                             logger.warning(f"[FILES] Found non-serializable type {type(value)} in image_info.{key}, converting")
                             image_info[key] = str(value)
                     
-                    # CRITICAL: Ensure image_info is a dict and has required fields
-                    if not isinstance(image_info, dict):
-                        logger.warning(f"[FILES] image_info is not a dict (type: {type(image_info).__name__}), skipping: {item}")
+                    # Validate and clean image data
+                    from app.utils.image_validation import validate_and_clean_image_data
+                    cleaned_image_info = validate_and_clean_image_data(image_info, item_path=item)
+                    if not cleaned_image_info:
                         continue
-                    
-                    # Ensure name and path are strings and not empty
-                    if 'name' not in image_info or not image_info['name'] or str(image_info['name']).strip() == '':
-                        # Extract from path if name is missing
-                        if 'path' in image_info and image_info['path']:
-                            image_info['name'] = str(image_info['path']).split('/')[-1]
-                        else:
-                            logger.warning(f"[FILES] Image missing both name and path, skipping: {item}")
-                            continue
-                    
-                    if 'path' not in image_info or not image_info['path'] or str(image_info['path']).strip() == '':
-                        logger.warning(f"[FILES] Image missing path field, skipping: {item}")
-                        continue
-                    
-                    # Ensure both are strings
-                    image_info['name'] = str(image_info['name'])
-                    image_info['path'] = str(image_info['path'])
+                    image_info = cleaned_image_info
                     
                     # Skip loading thumbnails during initial scan for performance
                     # Thumbnails will be loaded on-demand by the frontend via /thumbnail endpoint
@@ -710,91 +664,8 @@ async def get_all_images(
         paginated_images = images[offset:offset + limit]
         
         # Ensure all data is JSON serializable
-        # Convert any datetime objects to strings, ensure all numbers are floats/ints
-        # CRITICAL: Handle bytes, Path objects, and any other non-serializable types
-        serializable_images = []
-        for img in paginated_images:
-            serializable_img = {}
-            for key, value in img.items():
-                if key == "thumbnail":
-                    # Skip thumbnails - they're loaded on-demand
-                    continue
-                elif isinstance(value, bytes):
-                    # Convert bytes to string (shouldn't happen, but be safe)
-                    serializable_img[key] = value.decode('utf-8', errors='ignore')
-                elif isinstance(value, (Path, type(None))):
-                    # Convert Path objects to string
-                    serializable_img[key] = str(value) if value else ""
-                elif isinstance(value, (int, float)):
-                    # Numbers are fine
-                    serializable_img[key] = value
-                elif isinstance(value, bool):
-                    # Booleans are fine
-                    serializable_img[key] = value
-                elif isinstance(value, str):
-                    # Strings are fine
-                    serializable_img[key] = value
-                else:
-                    # Convert anything else to string
-                    try:
-                        serializable_img[key] = str(value)
-                    except Exception:
-                        serializable_img[key] = ""
-            
-            # Ensure required fields exist with correct types
-            if "name" not in serializable_img:
-                serializable_img["name"] = ""
-            if "path" not in serializable_img:
-                serializable_img["path"] = ""
-            if "size" not in serializable_img:
-                serializable_img["size"] = 0
-            if "modified" not in serializable_img:
-                serializable_img["modified"] = 0.0
-            if "modified_date" not in serializable_img:
-                serializable_img["modified_date"] = ""
-            if "type" not in serializable_img:
-                serializable_img["type"] = "unknown"
-            
-            # Ensure types are correct with safe conversions
-            try:
-                serializable_img["name"] = str(serializable_img["name"]) if serializable_img["name"] is not None else ""
-            except Exception:
-                serializable_img["name"] = ""
-            
-            try:
-                serializable_img["path"] = str(serializable_img["path"]) if serializable_img["path"] is not None else ""
-            except Exception:
-                serializable_img["path"] = ""
-            
-            try:
-                size_val = serializable_img.get("size", 0)
-                if size_val is None:
-                    serializable_img["size"] = 0
-                else:
-                    serializable_img["size"] = int(float(size_val))  # Convert via float first to handle string numbers
-            except (ValueError, TypeError):
-                serializable_img["size"] = 0
-            
-            try:
-                modified_val = serializable_img.get("modified", 0)
-                if modified_val is None:
-                    serializable_img["modified"] = 0.0
-                else:
-                    serializable_img["modified"] = float(modified_val)
-            except (ValueError, TypeError):
-                serializable_img["modified"] = 0.0
-            
-            try:
-                serializable_img["modified_date"] = str(serializable_img["modified_date"]) if serializable_img["modified_date"] is not None else ""
-            except Exception:
-                serializable_img["modified_date"] = ""
-            
-            try:
-                serializable_img["type"] = str(serializable_img["type"]) if serializable_img["type"] is not None else "unknown"
-            except Exception:
-                serializable_img["type"] = "unknown"
-            
-            serializable_images.append(serializable_img)
+        from app.utils.image_validation import ensure_serializable_image
+        serializable_images = [ensure_serializable_image(img) for img in paginated_images]
         
         return {
             "images": serializable_images,

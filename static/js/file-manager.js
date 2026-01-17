@@ -2001,6 +2001,48 @@ class FileManager {
         this.hasMoreImages = true;
     }
     
+    // Helper function to validate and clean a single image
+    _validateImage(img) {
+        if (!img) {
+            return null;
+        }
+        
+        const pathValue = img.path;
+        const hasPath = pathValue != null && 
+                       pathValue !== 'undefined' && 
+                       String(pathValue).trim() !== '';
+        
+        const nameValue = img.name;
+        const hasName = nameValue != null && 
+                       nameValue !== 'undefined' && 
+                       String(nameValue).trim() !== '';
+        
+        // If no path and no name, skip
+        if (!hasPath && !hasName) {
+            return null;
+        }
+        
+        // If we have name but no path, we can't display it - skip
+        if (!hasPath && hasName) {
+            return null;
+        }
+        
+        // Create a clean copy
+        const cleanImg = {...img};
+        
+        // Ensure path is a string
+        cleanImg.path = String(pathValue);
+        
+        // If we have path but no name, extract name from path
+        if (hasPath && !hasName) {
+            cleanImg.name = cleanImg.path.split('/').pop() || cleanImg.path;
+        } else {
+            cleanImg.name = String(nameValue);
+        }
+        
+        return cleanImg;
+    }
+    
     async loadAllImages(reset = true) {
         if (reset) {
             this.allImages = [];
@@ -2030,36 +2072,21 @@ class FileManager {
             // Debug: log first image structure to verify data format
             if (data.images && data.images.length > 0) {
                 console.log('Photo Gallery - First image data structure:', data.images[0]);
-                // Check if name field exists
-                if (!data.images[0].name) {
-                    console.warn('Photo Gallery - WARNING: First image missing "name" field:', data.images[0]);
-                }
             }
             
-            // Backend returns images already sorted (newest first), but we always re-sort to be safe
-            // This ensures correct order even if backend has issues or pagination mixes things up
+            // Filter and validate images
+            const totalReceived = (data.images || []).length;
+            console.log(`Photo Gallery - Received ${totalReceived} images from API`);
             
-            // Filter out invalid images (missing path or name)
-            const validImages = (data.images || []).filter(img => {
-                if (!img) return false;
-                const hasPath = img.path && img.path !== 'undefined' && img.path.trim() !== '';
-                const hasName = img.name && img.name !== 'undefined' && img.name.trim() !== '';
-                if (!hasPath && !hasName) {
-                    console.warn('Photo Gallery - Filtering out invalid image (no path or name):', img);
-                    return false;
-                }
-                // Ensure path exists, extract from name if needed
-                if (!hasPath && hasName) {
-                    // If we only have name, we can't create a valid path - skip it
-                    console.warn('Photo Gallery - Filtering out image with name but no path:', img);
-                    return false;
-                }
-                // Ensure name exists, extract from path if needed
-                if (hasPath && !hasName) {
-                    img.name = img.path.split('/').pop();
-                }
-                return true;
-            });
+            const validImages = (data.images || [])
+                .map(img => this._validateImage(img))
+                .filter(img => img !== null);
+            
+            console.log(`Photo Gallery - After filtering: ${validImages.length} valid images out of ${totalReceived} total`);
+            
+            if (validImages.length === 0 && totalReceived > 0) {
+                console.error('Photo Gallery - All images were filtered out! First few images:', (data.images || []).slice(0, 3));
+            }
             
             if (reset) {
                 this.allImages = validImages;
@@ -2113,6 +2140,9 @@ class FileManager {
                 countEl.textContent = `[${data.total || 0} IMAGES FOUND]`;
             }
             
+            if (countEl) {
+                countEl.textContent = `${this.allImages.length} image${this.allImages.length !== 1 ? 's' : ''}`;
+            }
             if (infoEl) {
                 infoEl.textContent = `[LOADED: ${this.allImages.length}/${data.total || 0}]`;
             }
@@ -2120,6 +2150,9 @@ class FileManager {
             if (loadMoreBtn) {
                 loadMoreBtn.style.display = this.hasMoreImages ? 'block' : 'none';
             }
+            
+            // Log summary for debugging
+            console.log(`Photo Gallery - Load complete: ${this.allImages.length} images loaded, hasMore: ${this.hasMoreImages}, total from API: ${data.total || 0}`);
             
             // Debug: log first few images to verify sorting
             if (this.allImages.length > 0) {
@@ -2234,21 +2267,15 @@ class FileManager {
         grid.innerHTML = '';
         
         this.allImages.forEach((image, index) => {
-            // Validate image object has required fields
-            if (!image || (!image.path && !image.name)) {
+            // Validate image (should already be validated, but double-check)
+            const validated = this._validateImage(image);
+            if (!validated) {
                 console.error('Photo Gallery - Invalid image object at index', index, ':', image);
                 return; // Skip invalid images
             }
             
-            // Extract filename from path if name is not available
-            const imagePath = image.path || '';
-            const imageName = image.name || (imagePath ? imagePath.split('/').pop() : 'Unknown');
-            
-            // Skip if path is invalid
-            if (!imagePath || imagePath === 'undefined' || imagePath.trim() === '') {
-                console.error('Photo Gallery - Skipping image with invalid path at index', index, ':', image);
-                return;
-            }
+            const imagePath = validated.path;
+            const imageName = validated.name;
             
             const item = document.createElement('div');
             item.className = 'cyberpunk-gallery-item';
@@ -2370,21 +2397,15 @@ class FileManager {
             return;
         }
         
-        // Validate and extract media path
-        let mediaPath = media.path || '';
-        if (!mediaPath || mediaPath === 'undefined' || mediaPath.trim() === '') {
-            console.error('Photo Gallery - openFullscreenViewer: Invalid path for media at index', index, ':', media);
+        // Validate media (should already be validated, but double-check)
+        const validated = this._validateImage(media);
+        if (!validated) {
+            console.error('Photo Gallery - openFullscreenViewer: Invalid media at index', index, ':', media);
             return;
         }
         
-        // Extract filename from path if name is not available or invalid
-        let mediaName = media.name;
-        if (!mediaName || mediaName === 'undefined' || mediaName.trim() === '') {
-            // Extract from path
-            const pathParts = mediaPath.split('/');
-            mediaName = pathParts[pathParts.length - 1] || 'Unknown';
-            console.warn('Photo Gallery - openFullscreenViewer: Extracted name from path:', mediaName);
-        }
+        const mediaPath = validated.path;
+        const mediaName = validated.name;
         
         const isVideo = media.type === 'video' || /\.(mp4|avi|mov|mkv|webm|flv|wmv|m4v|3gp|ogv)$/i.test(mediaName);
         
