@@ -1866,6 +1866,8 @@ Return ONLY valid JSON, no other text.""",
                         end_time,
                         location,
                         rrule,
+                        user_id=self.user.id,
+                        db=self.db
                     ):
                         time_str = start_time.strftime("%A, %B %d at %I:%M %p")
                         return {"type": "text", "content": f"✅ Event added: **{summary}**\n\n📅 {time_str}"}
@@ -1878,7 +1880,11 @@ Return ONLY valid JSON, no other text.""",
                     return {"type": "text", "content": "Usage: `cal delete <event_uid>`"}
                 event_uid = param.strip()
                 for cal in calendars:
-                    if delete_event_from_calendar(cal["url"], cal["username"], cal["password"], event_uid):
+                    if delete_event_from_calendar(
+                        cal["url"], cal["username"], cal["password"], event_uid,
+                        user_id=self.user.id,
+                        db=self.db
+                    ):
                         return {"type": "text", "content": "✅ Event deleted successfully."}
                 return {"type": "text", "content": "❌ Event not found or could not be deleted."}
 
@@ -1924,7 +1930,10 @@ Return ONLY valid JSON, no other text.""",
                     new_title = change_request[6:].strip()
                     for cal in calendars:
                         if update_event_in_calendar(
-                            cal["url"], cal["username"], cal["password"], event_uid, summary=new_title
+                            cal["url"], cal["username"], cal["password"], event_uid, 
+                            summary=new_title,
+                            user_id=self.user.id,
+                            db=self.db
                         ):
                             return {"type": "text", "content": f"✅ Updated title to: **{new_title}**"}
 
@@ -2718,6 +2727,8 @@ Return ONLY valid JSON, no other text.""",
                         end_time,
                         location,
                         rrule,
+                        user_id=self.user.id,
+                        db=self.db
                     )
 
                     if success:

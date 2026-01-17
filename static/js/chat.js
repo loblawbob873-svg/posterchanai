@@ -415,6 +415,12 @@ class ChatHandler {
 
         // Calendar & Contacts elements
         const scheduleEnabled = document.getElementById('scheduleEnabled');
+        const calendarServerType = document.getElementById('calendarServerType');
+        const contactsServerType = document.getElementById('contactsServerType');
+        const externalCalendarSettings = document.getElementById('externalCalendarSettings');
+        const builtinCalendarInfo = document.getElementById('builtinCalendarInfo');
+        const externalContactsSettings = document.getElementById('externalContactsSettings');
+        const builtinContactsInfo = document.getElementById('builtinContactsInfo');
         const caldavCalendarList = document.getElementById('caldavCalendarList');
         const addCaldavCalendar = document.getElementById('addCaldavCalendar');
         const carddavUrl = document.getElementById('carddavUrl');
@@ -422,6 +428,24 @@ class ChatHandler {
         const carddavPassword = document.getElementById('carddavPassword');
         const importRadicaleBtn = document.getElementById('importRadicaleBtn');
         const exportCalendarBtn = document.getElementById('exportCalendarBtn');
+
+        // Toggle calendar server type
+        if (calendarServerType) {
+            calendarServerType.addEventListener('change', () => {
+                const isExternal = calendarServerType.value === 'external';
+                if (externalCalendarSettings) externalCalendarSettings.style.display = isExternal ? 'block' : 'none';
+                if (builtinCalendarInfo) builtinCalendarInfo.style.display = isExternal ? 'none' : 'block';
+            });
+        }
+
+        // Toggle contacts server type
+        if (contactsServerType) {
+            contactsServerType.addEventListener('change', () => {
+                const isExternal = contactsServerType.value === 'external';
+                if (externalContactsSettings) externalContactsSettings.style.display = isExternal ? 'block' : 'none';
+                if (builtinContactsInfo) builtinContactsInfo.style.display = isExternal ? 'none' : 'block';
+            });
+        }
 
         // Calendar list management
         let caldavCalendars = [];
@@ -878,9 +902,23 @@ class ChatHandler {
                         if (scheduleEnabled) {
                             scheduleEnabled.checked = data.schedule_enabled || false;
                         }
+                        // Load calendar server type
+                        if (calendarServerType) {
+                            const useBuiltin = data.use_builtin_caldav === 'true' || data.use_builtin_caldav === true;
+                            calendarServerType.value = useBuiltin ? 'builtin' : 'external';
+                            // Trigger change event to show/hide sections
+                            calendarServerType.dispatchEvent(new Event('change'));
+                        }
                         if (data.caldav_calendars) {
                             caldavCalendars = data.caldav_calendars;
                             renderCalendarList();
+                        }
+                        // Load contacts server type
+                        if (contactsServerType) {
+                            const useBuiltin = data.use_builtin_cardav === 'true' || data.use_builtin_cardav === true;
+                            contactsServerType.value = useBuiltin ? 'builtin' : 'external';
+                            // Trigger change event to show/hide sections
+                            contactsServerType.dispatchEvent(new Event('change'));
                         }
                         if (carddavUrl) carddavUrl.value = data.carddav_url || '';
                         if (carddavUsername) carddavUsername.value = data.carddav_username || '';
@@ -1025,17 +1063,30 @@ class ChatHandler {
                 if (scheduleEnabled) {
                     settingsData.schedule_enabled = scheduleEnabled.checked;
                 }
-                // Collect calendar data from the dynamic list
-                settingsData.caldav_calendars = collectCalendarData();
-                if (carddavUrl) {
-                    settingsData.carddav_url = carddavUrl.value.trim();
+                // Calendar server type
+                if (calendarServerType) {
+                    settingsData.use_builtin_caldav = calendarServerType.value === 'builtin' ? 'true' : 'false';
                 }
-                if (carddavUsername) {
-                    settingsData.carddav_username = carddavUsername.value.trim();
+                // Collect calendar data from the dynamic list (only for external)
+                if (calendarServerType && calendarServerType.value === 'external') {
+                    settingsData.caldav_calendars = collectCalendarData();
                 }
-                // Only update password if it's not the placeholder
-                if (carddavPassword && carddavPassword.value !== '********') {
-                    settingsData.carddav_password = carddavPassword.value;
+                // Contacts server type
+                if (contactsServerType) {
+                    settingsData.use_builtin_cardav = contactsServerType.value === 'builtin' ? 'true' : 'false';
+                }
+                // CardDAV settings (only for external)
+                if (contactsServerType && contactsServerType.value === 'external') {
+                    if (carddavUrl) {
+                        settingsData.carddav_url = carddavUrl.value.trim();
+                    }
+                    if (carddavUsername) {
+                        settingsData.carddav_username = carddavUsername.value.trim();
+                    }
+                    // Only update password if it's not the placeholder
+                    if (carddavPassword && carddavPassword.value !== '********') {
+                        settingsData.carddav_password = carddavPassword.value;
+                    }
                 }
 
                 // Add Mail account settings

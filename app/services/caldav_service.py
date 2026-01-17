@@ -31,6 +31,78 @@ CALDAV_OPERATION_TIMEOUT = 10  # Timeout for individual operations
 _caldav_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="caldav_worker")
 
 
+def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
+    """Save event directly to built-in CalDAV storage (bypasses network)."""
+    try:
+        from app.models import User
+        from app.services.caldav_server import get_user_caldav_path
+        from icalendar import Calendar as ICalendar
+        import uuid
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+        
+        caldav_path = get_user_caldav_path(user, db)
+        caldav_path.mkdir(parents=True, exist_ok=True)
+        
+        # Parse iCalendar to extract UID
+        cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+        event_uid = None
+        for component in cal.walk():
+            if component.name in ("VEVENT", "VTODO"):
+                event_uid = str(component.get('uid', uuid.uuid4()))
+                break
+        
+        if not event_uid:
+            event_uid = str(uuid.uuid4())
+        
+        # Save to file
+        ics_file = caldav_path / f"{event_uid}.ics"
+        with open(ics_file, 'w', encoding='utf-8') as f:
+            f.write(ical_data)
+        
+        logger.info(f"Saved event to built-in storage: {ics_file}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving event to built-in storage: {e}")
+        return False
+
+
+def _save_contact_to_builtin(user_id: int, db: Session, vcard_data: str) -> bool:
+    """Save contact directly to built-in CardDAV storage (bypasses network)."""
+    try:
+        from app.models import User
+        from app.services.cardav_server import get_user_cardav_path
+        import vobject
+        import uuid
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+        
+        cardav_path = get_user_cardav_path(user, db)
+        cardav_path.mkdir(parents=True, exist_ok=True)
+        
+        # Parse vCard to extract UID
+        try:
+            vcard = vobject.readOne(vcard_data)
+            contact_uid = str(vcard.uid.value) if hasattr(vcard, 'uid') else str(uuid.uuid4())
+        except:
+            contact_uid = str(uuid.uuid4())
+        
+        # Save to file
+        vcf_file = cardav_path / f"{contact_uid}.vcf"
+        with open(vcf_file, 'w', encoding='utf-8') as f:
+            f.write(vcard_data)
+        
+        logger.info(f"Saved contact to built-in storage: {vcf_file}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving contact to built-in storage: {e}")
+        return False
+
+
 def run_with_timeout(func, timeout=CALDAV_OPERATION_TIMEOUT, *args, **kwargs):
     """Run a blocking function with timeout using thread pool."""
     try:
@@ -127,20 +199,14 @@ def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]
                 caldav_port = db.query(Setting).filter(Setting.key == "caldav_port").first()
                 port = caldav_port.value if caldav_port else "8081"
                 
-                caldav_base_url = db.query(Setting).filter(Setting.key == "caldav_base_url").first()
-                if caldav_base_url and caldav_base_url.value:
-                    url = f"{caldav_base_url.value.rstrip('/')}/caldav/{user.username}/"
-                else:
-                    # Auto-detect URL (use localhost for built-in)
-                    import socket
-                    hostname = socket.gethostname()
-                    url = f"http://{hostname}:{port}/caldav/{user.username}/"
+                # For built-in server, use localhost since commands run on same server
+                url = f"http://localhost:{port}/caldav/{user.username}/"
                 
                 return [{
                     "name": "Built-in Calendar",
                     "url": url,
                     "username": user.username,
-                    "password": "",  # Built-in uses same credentials
+                    "password": "__USE_SESSION_AUTH__",  # Special marker for built-in auth
                     "builtin": True
                 }]
         
@@ -185,29 +251,21 @@ def get_user_contacts_config(user_id: int, db: Session = None) -> Optional[Dict[
         if use_builtin and use_builtin.value == "true":
             # Return built-in CardDAV config
             from app.models import User
-            from app.services.storage_service import get_storage_service
-            from app.database import get_db as get_db_generator
+            from app.models import Setting
             
             user = db.query(User).filter(User.id == user_id).first()
             if user:
                 # Get the CardDAV server URL from settings
-                from app.models import Setting
                 cardav_port = db.query(Setting).filter(Setting.key == "cardav_port").first()
                 port = cardav_port.value if cardav_port else "8082"
                 
-                cardav_base_url = db.query(Setting).filter(Setting.key == "caldav_base_url").first()
-                if cardav_base_url and cardav_base_url.value:
-                    url = f"{cardav_base_url.value.rstrip('/')}/carddav/{user.username}/"
-                else:
-                    # Auto-detect URL (use localhost for built-in)
-                    import socket
-                    hostname = socket.gethostname()
-                    url = f"http://{hostname}:{port}/carddav/{user.username}/"
+                # For built-in server, use localhost since commands run on same server
+                url = f"http://localhost:{port}/carddav/{user.username}/"
                 
                 return {
                     "url": url,
                     "username": user.username,
-                    "password": "",  # Built-in uses same credentials
+                    "password": "__USE_SESSION_AUTH__",  # Special marker for built-in auth
                     "name": "Built-in CardDAV",
                     "builtin": True
                 }
@@ -397,17 +455,76 @@ def add_event_to_calendar(
     start_time: datetime,
     end_time: Optional[datetime] = None,
     location: Optional[str] = None,
-    rrule: Optional[str] = None
+    rrule: Optional[str] = None,
+    user_id: Optional[int] = None,
+    db: Optional[Session] = None
 ) -> bool:
     """Add an event to a CalDAV calendar.
 
     Args:
         rrule: Optional iCalendar RRULE string (e.g., "FREQ=WEEKLY;BYDAY=MO,WE,FR")
+        user_id: Optional user ID for built-in mode
+        db: Optional database session for built-in mode
     """
     try:
         logger.info(f"Adding event '{summary}' to calendar at {url}")
         logger.debug(f"Event times: start={start_time}, end={end_time}, rrule={rrule}")
+        
+        # Check if using built-in server (direct file save)
+        if password == "__USE_SESSION_AUTH__" and user_id and db:
+            logger.info("Using built-in CalDAV storage (direct file save)")
+            
+            # Create event
+            if end_time is None:
+                end_time = start_time + timedelta(hours=1)
 
+            # Convert to local timezone-aware, then to UTC for storage
+            from datetime import timezone as tz
+            start_time = to_local_aware(start_time)
+            end_time = to_local_aware(end_time)
+            start_utc = start_time.astimezone(tz.utc)
+            end_utc = end_time.astimezone(tz.utc)
+
+            cal = Calendar()
+            cal.add('prodid', '-//Posterchanai//Calendar//EN')
+            cal.add('version', '2.0')
+
+            event = Event()
+            event.add('summary', summary)
+            event.add('dtstart', start_utc)
+            event.add('dtend', end_utc)
+            if description:
+                event.add('description', description)
+            if location:
+                event.add('location', location)
+            if rrule:
+                from icalendar import vRecur
+                try:
+                    rrule_dict = {}
+                    for part in rrule.split(';'):
+                        if '=' in part:
+                            key, value = part.split('=', 1)
+                            if key.upper() == 'BYDAY':
+                                rrule_dict[key.lower()] = value.split(',')
+                            elif value.isdigit():
+                                rrule_dict[key.lower()] = int(value)
+                            else:
+                                rrule_dict[key.lower()] = value
+                    event.add('rrule', rrule_dict)
+                except Exception as e:
+                    logger.warning(f"Failed to parse RRULE '{rrule}': {e}")
+            event.add('dtstamp', datetime.now())
+
+            import uuid
+            event_uid = str(uuid.uuid4())
+            event.add('uid', event_uid)
+
+            cal.add_component(event)
+            ical_data = cal.to_ical().decode('utf-8')
+            
+            return _save_event_to_builtin(user_id, db, ical_data)
+
+        # Otherwise use CalDAV protocol (for external servers)
         client = create_caldav_client(url, username, password)
 
         # Try to get calendar from URL directly
@@ -574,10 +691,96 @@ def update_event_in_calendar(
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
     location: Optional[str] = None,
-    rrule: Optional[str] = None
+    rrule: Optional[str] = None,
+    user_id: Optional[int] = None,
+    db: Optional[Session] = None
 ) -> bool:
-    """Update an existing event in a CalDAV calendar."""
+    """Update an existing event in a CalDAV calendar.
+    
+    Args:
+        user_id: Optional user ID for built-in mode
+        db: Optional database session for built-in mode
+    """
     try:
+        # Check if using built-in server (direct file update)
+        if password == "__USE_SESSION_AUTH__" and user_id and db:
+            logger.info(f"Using built-in CalDAV storage (direct file update) for event {event_uid}")
+            
+            from app.models import User
+            from app.services.caldav_server import get_user_caldav_path
+            from icalendar import Calendar as ICalendar
+            
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return False
+            
+            caldav_path = get_user_caldav_path(user, db)
+            ics_file = caldav_path / f"{event_uid}.ics"
+            
+            if not ics_file.exists():
+                logger.warning(f"Event file not found: {ics_file}")
+                return False
+            
+            # Read and parse existing event
+            with open(ics_file, 'r', encoding='utf-8') as f:
+                ical_data = f.read()
+            
+            cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+            
+            # Find and update the event component
+            for component in cal.walk():
+                if component.name == "VEVENT" and str(component.get('uid')) == event_uid:
+                    # Update fields if provided
+                    if summary is not None:
+                        component['summary'] = summary
+                    if description is not None:
+                        component['description'] = description
+                    if start_time is not None:
+                        from datetime import timezone as tz
+                        start_aware = to_local_aware(start_time)
+                        start_utc = start_aware.astimezone(tz.utc)
+                        component['dtstart'] = start_utc
+                    if end_time is not None:
+                        from datetime import timezone as tz
+                        end_aware = to_local_aware(end_time)
+                        end_utc = end_aware.astimezone(tz.utc)
+                        component['dtend'] = end_utc
+                    if location is not None:
+                        component['location'] = location
+                    if rrule is not None:
+                        if rrule == "":
+                            # Remove RRULE
+                            if 'rrule' in component:
+                                del component['rrule']
+                        else:
+                            # Parse and set RRULE
+                            try:
+                                rrule_dict = {}
+                                for part in rrule.split(';'):
+                                    if '=' in part:
+                                        key, value = part.split('=', 1)
+                                        if key.upper() == 'BYDAY':
+                                            rrule_dict[key.lower()] = value.split(',')
+                                        elif value.isdigit():
+                                            rrule_dict[key.lower()] = int(value)
+                                        else:
+                                            rrule_dict[key.lower()] = value
+                                component['rrule'] = rrule_dict
+                            except Exception as e:
+                                logger.warning(f"Failed to parse RRULE '{rrule}': {e}")
+                    
+                    # Save updated event
+                    updated_ical = cal.to_ical().decode('utf-8')
+                    with open(ics_file, 'w', encoding='utf-8') as f:
+                        f.write(updated_ical)
+                    
+                    logger.info(f"Successfully updated event {event_uid} in built-in storage")
+                    return True
+            
+            logger.warning(f"Event component not found in file for UID {event_uid}")
+            return False
+        
+        # Otherwise use CalDAV protocol (for external servers)
         client = create_caldav_client(url, username, password)
 
         try:
@@ -934,6 +1137,34 @@ def add_user_contact(
 
     if not url or not username:
         return False
+    
+    # Check if using built-in server (direct file save)
+    if password == "__USE_SESSION_AUTH__" and config.get('builtin'):
+        import uuid
+        uid = str(uuid.uuid4())
+        vcard_lines = [
+            "BEGIN:VCARD",
+            "VERSION:3.0",
+            f"UID:{uid}",
+            f"FN:{name}"
+        ]
+        
+        # Add name components
+        name_parts = name.split()
+        if len(name_parts) > 1:
+            vcard_lines.append(f"N:{name_parts[-1]};{' '.join(name_parts[:-1])};;;")
+        else:
+            vcard_lines.append(f"N:{name};;;;")
+        
+        if phone:
+            vcard_lines.append(f"TEL;TYPE=CELL:{phone}")
+        if email:
+            vcard_lines.append(f"EMAIL;TYPE=INTERNET:{email}")
+        
+        vcard_lines.append("END:VCARD")
+        vcard_data = "\r\n".join(vcard_lines)
+        
+        return _save_contact_to_builtin(user_id, db, vcard_data)
 
     return add_contact(url, username, password, name, phone, email)
 
@@ -1178,6 +1409,9 @@ def edit_user_contact(user_id: int, db: Session, contact_uid: str, updates: dict
     password = config.get('password', '')
 
     if url and username:
+        # Check if using built-in server (direct file update)
+        if password == "__USE_SESSION_AUTH__" and config.get('builtin'):
+            return _edit_contact_builtin(user_id, db, contact_uid, updates)
         return edit_contact(url, username, password, contact_uid, updates)
     return False
 
@@ -1194,6 +1428,10 @@ def delete_user_contact(user_id: int, db: Session, contact_uid: str) -> bool:
 
     if not url or not username:
         return False
+    
+    # Check if using built-in server (direct file delete)
+    if password == "__USE_SESSION_AUTH__" and config.get('builtin'):
+        return _delete_contact_builtin(user_id, db, contact_uid)
 
     return delete_contact(url, username, password, contact_uid)
 
@@ -1644,10 +1882,40 @@ def delete_event_from_calendar(
     url: str,
     username: str,
     password: str,
-    event_uid: str
+    event_uid: str,
+    user_id: Optional[int] = None,
+    db: Optional[Session] = None
 ) -> bool:
-    """Delete a VEVENT item from a CalDAV calendar by UID."""
+    """Delete a VEVENT item from a CalDAV calendar by UID.
+    
+    Args:
+        user_id: Optional user ID for built-in mode
+        db: Optional database session for built-in mode
+    """
     try:
+        # Check if using built-in server (direct file delete)
+        if password == "__USE_SESSION_AUTH__" and user_id and db:
+            logger.info(f"Using built-in CalDAV storage (direct file delete) for event {event_uid}")
+            
+            from app.models import User
+            from app.services.caldav_server import get_user_caldav_path
+            
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return False
+            
+            caldav_path = get_user_caldav_path(user, db)
+            ics_file = caldav_path / f"{event_uid}.ics"
+            
+            if ics_file.exists():
+                ics_file.unlink()
+                logger.info(f"Deleted event {event_uid} from built-in storage")
+                return True
+            else:
+                logger.warning(f"Event file not found: {ics_file}")
+                return False
+        
+        # Otherwise use CalDAV protocol (for external servers)
         client = create_caldav_client(url, username, password)
 
         # Try to get calendar from URL directly
