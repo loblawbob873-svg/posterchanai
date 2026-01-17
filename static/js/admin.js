@@ -1563,6 +1563,176 @@ document.getElementById('saveAndReindex').addEventListener('click', () => saveCo
 
 // Initialize
 loadSettings();
+
+// External Storage Management
+async function loadExternalStorage() {
+    try {
+        const response = await csrfFetch('/api/admin/external-storage');
+        if (response.ok) {
+            const mounts = await response.json();
+            const listDiv = document.getElementById('externalStorageList');
+            if (!listDiv) return;
+            
+            if (mounts.length === 0) {
+                listDiv.innerHTML = '<p style="color: var(--text-secondary);">No external storage mounts configured.</p>';
+                return;
+            }
+            
+            listDiv.innerHTML = mounts.map(mount => `
+                <div class="external-storage-item" data-id="${mount.id}">
+                    <div class="external-storage-info">
+                        <div class="external-storage-header">
+                            <strong>${escapeHtml(mount.name)}</strong>
+                            <span class="external-storage-mount-point">${escapeHtml(mount.mount_point)}</span>
+                            ${mount.is_active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-inactive">Inactive</span>'}
+                        </div>
+                        <div class="external-storage-details">
+                            <div><strong>Path:</strong> <code>${escapeHtml(mount.mount_path)}</code></div>
+                            ${mount.description ? `<div><strong>Description:</strong> ${escapeHtml(mount.description)}</div>` : ''}
+                        </div>
+                    </div>
+                    <div class="external-storage-actions">
+                        <button class="btn-secondary btn-small" onclick="editExternalStorage(${mount.id})" title="Edit">✏️</button>
+                        <button class="btn-secondary btn-small" onclick="deleteExternalStorage(${mount.id})" title="Delete">🗑️</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+    } catch (err) {
+        console.error('Failed to load external storage:', err);
+    }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+window.editExternalStorage = async function(id) {
+    try {
+        const response = await csrfFetch('/api/admin/external-storage');
+        if (response.ok) {
+            const mounts = await response.json();
+            const mount = mounts.find(m => m.id === id);
+            if (!mount) return;
+            
+            document.getElementById('externalStorageId').value = mount.id;
+            document.getElementById('externalStorageName').value = mount.name;
+            document.getElementById('externalStorageMountPath').value = mount.mount_path;
+            document.getElementById('externalStorageMountPoint').value = mount.mount_point;
+            document.getElementById('externalStorageDescription').value = mount.description || '';
+            document.getElementById('externalStorageActive').checked = mount.is_active;
+            document.getElementById('externalStorageModalTitle').textContent = 'Edit External Storage';
+            document.getElementById('externalStorageModal').style.display = 'flex';
+        }
+    } catch (err) {
+        console.error('Failed to load external storage:', err);
+    }
+}
+
+window.deleteExternalStorage = async function(id) {
+    if (!confirm('Are you sure you want to delete this external storage mount?')) {
+        return;
+    }
+    
+    try {
+        const response = await csrfFetch(`/api/admin/external-storage/${id}`, {
+            method: 'DELETE'
+        });
+        if (response.ok) {
+            await loadExternalStorage();
+            alert('External storage mount deleted');
+        } else {
+            const error = await response.json();
+            alert('Error: ' + (error.detail || 'Failed to delete'));
+        }
+    } catch (err) {
+        alert('Error deleting external storage mount');
+    }
+}
+
+document.getElementById('addExternalStorageBtn')?.addEventListener('click', () => {
+    document.getElementById('externalStorageId').value = '';
+    document.getElementById('externalStorageName').value = '';
+    document.getElementById('externalStorageMountPath').value = '';
+    document.getElementById('externalStorageMountPoint').value = '';
+    document.getElementById('externalStorageDescription').value = '';
+    document.getElementById('externalStorageActive').checked = true;
+    document.getElementById('externalStorageModalTitle').textContent = 'Add External Storage';
+    document.getElementById('externalStorageError').style.display = 'none';
+    document.getElementById('externalStorageModal').style.display = 'flex';
+});
+
+document.getElementById('saveExternalStorageBtn')?.addEventListener('click', async () => {
+    const id = document.getElementById('externalStorageId').value;
+    const name = document.getElementById('externalStorageName').value.trim();
+    const mountPath = document.getElementById('externalStorageMountPath').value.trim();
+    const mountPoint = document.getElementById('externalStorageMountPoint').value.trim();
+    const description = document.getElementById('externalStorageDescription').value.trim();
+    const isActive = document.getElementById('externalStorageActive').checked;
+    
+    if (!name || !mountPath || !mountPoint) {
+        const errorDiv = document.getElementById('externalStorageError');
+        errorDiv.textContent = 'Please fill in all required fields';
+        errorDiv.style.display = 'block';
+        return;
+    }
+    
+    const errorDiv = document.getElementById('externalStorageError');
+    errorDiv.style.display = 'none';
+    
+    try {
+        const data = {
+            name,
+            mount_path: mountPath,
+            mount_point: mountPoint,
+            description: description || null,
+            is_active: isActive
+        };
+        
+        let response;
+        if (id) {
+            // Update
+            response = await csrfFetch(`/api/admin/external-storage/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+        } else {
+            // Create
+            response = await csrfFetch('/api/admin/external-storage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+        }
+        
+        if (response.ok) {
+            document.getElementById('externalStorageModal').style.display = 'none';
+            await loadExternalStorage();
+            alert(id ? 'External storage mount updated' : 'External storage mount created');
+        } else {
+            const error = await response.json();
+            errorDiv.textContent = error.detail || 'Failed to save';
+            errorDiv.style.display = 'block';
+        }
+    } catch (err) {
+        errorDiv.textContent = 'Error: ' + err.message;
+        errorDiv.style.display = 'block';
+    }
+});
+
+// Load external storage when services tab is opened
+document.querySelector('[data-tab="services"]')?.addEventListener('click', () => {
+    setTimeout(loadExternalStorage, 100);
+});
+
+// Load on page load if services tab is active
+if (document.getElementById('tab-services')?.classList.contains('active')) {
+    loadExternalStorage();
+}
 loadUsers();
 loadUsersForPlugins().then(() => loadPlugins());
 

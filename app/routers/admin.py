@@ -4,18 +4,229 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from pydantic import BaseModel
+from datetime import datetime
 import logging
 from app.database import get_db
-from app.models import User, Setting
+from app.models import User, Setting, ExternalStorage
 from app.schemas import UserCreate, UserResponse, SettingsUpdate, SettingsResponse
 from app.auth import get_admin_user, get_password_hash
 from app.services.email_service import get_email_service
 from pathlib import Path
 import asyncio
+import os
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+# External Storage Management
+
+class ExternalStorageCreate(BaseModel):
+    name: str
+    mount_path: str
+    mount_point: str
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class ExternalStorageUpdate(BaseModel):
+    name: Optional[str] = None
+    mount_path: Optional[str] = None
+    mount_point: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ExternalStorageResponse(BaseModel):
+    id: int
+    name: str
+    mount_path: str
+    mount_point: str
+    description: Optional[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+def _validate_external_storage_path(mount_path: str) -> bool:
+    """Validate that external storage path is safe and exists."""
+    try:
+        path = Path(mount_path)
+        # Must be absolute path
+        if not path.is_absolute():
+            return False
+        
+        # Must exist and be a directory
+        if not path.exists() or not path.is_dir():
+            return False
+        
+        # Must be readable
+        if not os.access(path, os.R_OK):
+            return False
+        
+        # Prevent mounting sensitive system directories
+        forbidden_paths = ['/etc', '/sys', '/proc', '/dev', '/boot', '/root']
+        for forbidden in forbidden_paths:
+            if str(path).startswith(forbidden):
+                return False
+        
+        return True
+    except Exception:
+        return False
+
+
+def _validate_mount_point(mount_point: str) -> bool:
+    """Validate mount point name (virtual path in file manager)."""
+    if not mount_point:
+        return False
+    
+    # Must be alphanumeric with dashes/underscores, no path separators
+    import re
+    if not re.match(r'^[a-zA-Z0-9_-]+$', mount_point):
+        return False
+    
+    # Reserved names
+    reserved = ['home', 'root', 'api', 'static', 'admin', 'login', 'register']
+    if mount_point.lower() in reserved:
+        return False
+    
+    return True
+
+
+@router.get("/external-storage", response_model=List[ExternalStorageResponse])
+def get_external_storage(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Get all external storage mounts."""
+    mounts = db.query(ExternalStorage).order_by(ExternalStorage.name).all()
+    return mounts
+
+
+@router.post("/external-storage", response_model=ExternalStorageResponse, status_code=status.HTTP_201_CREATED)
+def create_external_storage(
+    data: ExternalStorageCreate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Create a new external storage mount."""
+    # Validate mount path
+    if not _validate_external_storage_path(data.mount_path):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid mount path. Path must be absolute, exist, be a directory, and be readable."
+        )
+    
+    # Validate mount point
+    if not _validate_mount_point(data.mount_point):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid mount point. Must be alphanumeric with dashes/underscores only."
+        )
+    
+    # Check if mount point already exists
+    existing = db.query(ExternalStorage).filter(
+        ExternalStorage.mount_point == data.mount_point
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Mount point '{data.mount_point}' already exists"
+        )
+    
+    # Create mount
+    mount = ExternalStorage(
+        name=data.name,
+        mount_path=data.mount_path,
+        mount_point=data.mount_point,
+        description=data.description,
+        is_active=data.is_active
+    )
+    db.add(mount)
+    db.commit()
+    db.refresh(mount)
+    
+    logger.info(f"Created external storage mount: {mount.name} -> {mount.mount_path} (mount_point: {mount.mount_point})")
+    return mount
+
+
+@router.put("/external-storage/{mount_id}", response_model=ExternalStorageResponse)
+def update_external_storage(
+    mount_id: int,
+    data: ExternalStorageUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Update an external storage mount."""
+    mount = db.query(ExternalStorage).filter(ExternalStorage.id == mount_id).first()
+    if not mount:
+        raise HTTPException(status_code=404, detail="External storage mount not found")
+    
+    # Validate mount path if provided
+    if data.mount_path and not _validate_external_storage_path(data.mount_path):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid mount path. Path must be absolute, exist, be a directory, and be readable."
+        )
+    
+    # Validate mount point if provided
+    if data.mount_point and not _validate_mount_point(data.mount_point):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid mount point. Must be alphanumeric with dashes/underscores only."
+        )
+    
+    # Check if mount point conflicts with another mount
+    if data.mount_point and data.mount_point != mount.mount_point:
+        existing = db.query(ExternalStorage).filter(
+            ExternalStorage.mount_point == data.mount_point,
+            ExternalStorage.id != mount_id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Mount point '{data.mount_point}' already exists"
+            )
+    
+    # Update fields
+    if data.name is not None:
+        mount.name = data.name
+    if data.mount_path is not None:
+        mount.mount_path = data.mount_path
+    if data.mount_point is not None:
+        mount.mount_point = data.mount_point
+    if data.description is not None:
+        mount.description = data.description
+    if data.is_active is not None:
+        mount.is_active = data.is_active
+    
+    db.commit()
+    db.refresh(mount)
+    
+    logger.info(f"Updated external storage mount: {mount.name}")
+    return mount
+
+
+@router.delete("/external-storage/{mount_id}")
+def delete_external_storage(
+    mount_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Delete an external storage mount."""
+    mount = db.query(ExternalStorage).filter(ExternalStorage.id == mount_id).first()
+    if not mount:
+        raise HTTPException(status_code=404, detail="External storage mount not found")
+    
+    db.delete(mount)
+    db.commit()
+    
+    logger.info(f"Deleted external storage mount: {mount.name}")
+    return {"message": "External storage mount deleted"}
 
 
 @router.get("/settings", response_model=SettingsResponse)

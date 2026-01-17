@@ -241,3 +241,17 @@ class Note(Base):
 
     user = relationship("User", backref="notes")
     folder = relationship("NoteFolder", back_populates="notes")
+
+
+class ExternalStorage(Base):
+    """External storage mounts for File Manager"""
+    __tablename__ = "external_storage"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255), nullable=False)  # Display name (e.g., "Video Storage")
+    mount_path = Column(String(500), nullable=False)  # Actual path (e.g., "/raid/video")
+    mount_point = Column(String(255), nullable=False)  # Virtual path in file manager (e.g., "video")
+    description = Column(Text, nullable=True)  # Optional description
+    is_active = Column(Boolean, default=True)  # Enable/disable mount
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

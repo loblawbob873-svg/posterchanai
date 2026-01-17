@@ -23,7 +23,7 @@ import asyncio
 
 from app.database import get_db
 from app.auth import get_current_user
-from app.models import User, Setting, SharedFile
+from app.models import User, Setting, SharedFile, ExternalStorage
 from app.services.storage_service import get_storage_service, _sanitize_path_component, _validate_path_within_base
 
 logger = logging.getLogger(__name__)
@@ -204,38 +204,80 @@ async def search_files(
 
 @router.get("/list")
 async def list_files(
-    path: str = Query("", description="Directory path relative to user root"),
+    path: str = Query("", description="Directory path relative to user root or external storage mount point"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """List files and directories in user's storage. Uses memory cache if enabled."""
+    """List files and directories in user's storage or external storage. Uses memory cache if enabled."""
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
-    # Sanitize and validate path
+    # Check if this is an external storage path
+    external_storage = None
+    external_path = None
+    
     if path:
-        try:
-            safe_path = Path(*[_sanitize_path_component(p) for p in path.split('/') if p])
-            full_path = user_path / safe_path
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
-    else:
-        full_path = user_path
+        path_parts = path.split('/')
+        # Check if first part is an external storage mount point
+        if path_parts and path_parts[0]:
+            mount_point = path_parts[0]
+            external_storage = db.query(ExternalStorage).filter(
+                ExternalStorage.mount_point == mount_point,
+                ExternalStorage.is_active == True
+            ).first()
+            
+            if external_storage:
+                # This is an external storage path
+                # Build path relative to mount
+                if len(path_parts) > 1:
+                    relative_parts = path_parts[1:]
+                    external_path = Path(external_storage.mount_path) / Path(*relative_parts)
+                else:
+                    external_path = Path(external_storage.mount_path)
+                
+                # Validate external path is within mount
+                mount_path = Path(external_storage.mount_path).resolve()
+                external_path_resolved = external_path.resolve()
+                
+                if not str(external_path_resolved).startswith(str(mount_path)):
+                    raise HTTPException(status_code=403, detail="Access denied: path outside mount")
+                
+                if not external_path.exists():
+                    raise HTTPException(status_code=404, detail="Path not found")
+                
+                if not external_path.is_dir():
+                    raise HTTPException(status_code=400, detail="Path is not a directory")
     
-    # Validate path is within user directory
-    if not _validate_path_within_base(full_path, user_path):
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Handle regular user storage path
+    if not external_storage:
+        # Sanitize and validate path
+        if path:
+            try:
+                safe_path = Path(*[_sanitize_path_component(p) for p in path.split('/') if p])
+                full_path = user_path / safe_path
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+        else:
+            full_path = user_path
+        
+        # Validate path is within user directory
+        if not _validate_path_within_base(full_path, user_path):
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        if not full_path.exists():
+            raise HTTPException(status_code=404, detail="Path not found")
+        
+        if not full_path.is_dir():
+            raise HTTPException(status_code=400, detail="Path is not a directory")
     
-    if not full_path.exists():
-        raise HTTPException(status_code=404, detail="Path not found")
-    
-    if not full_path.is_dir():
-        raise HTTPException(status_code=400, detail="Path is not a directory")
+    # Determine which path to use
+    target_path = external_path if external_storage else full_path
+    base_path = Path(external_storage.mount_path) if external_storage else user_path
     
     # Check cache (normalize path to avoid cache key inconsistencies)
     cache = get_file_cache(db)
     normalized_path = path.strip('/') if path else ""
-    cache_key = f"{current_user.username}:{normalized_path}"
+    cache_key = f"{current_user.username}:{normalized_path}:{'external' if external_storage else 'user'}"
     cached_result = cache.get(cache_key)
     
     if cached_result:
@@ -249,17 +291,29 @@ async def list_files(
         """Synchronous directory listing function."""
         items = []
         try:
-            for item in sorted(full_path.iterdir()):
+            for item in sorted(target_path.iterdir()):
                 try:
                     stat = item.stat()
                     is_dir = item.is_dir()
                     
+                    # Calculate relative path
+                    if external_storage:
+                        # For external storage, path is mount_point/relative_path
+                        relative_to_mount = item.relative_to(Path(external_storage.mount_path))
+                        if str(relative_to_mount) == '.':
+                            item_path = external_storage.mount_point
+                        else:
+                            item_path = f"{external_storage.mount_point}/{relative_to_mount}"
+                    else:
+                        item_path = str(item.relative_to(user_path))
+                    
                     item_info = {
                         "name": item.name,
-                        "path": str(item.relative_to(user_path)),
+                        "path": item_path,
                         "is_directory": is_dir,
                         "size": stat.st_size if not is_dir else 0,
                         "modified": stat.st_mtime,
+                        "is_external": external_storage is not None,
                     }
                     
                     # Generate thumbnail for images (this is CPU-intensive, but we'll do it in thread pool)
@@ -285,13 +339,18 @@ async def list_files(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-    # Calculate storage usage in thread pool (this can be slow for large directories)
+    # Calculate storage usage (only for user storage, not external)
     user_quota = current_user.storage_quota
-    current_usage = await asyncio.to_thread(calculate_directory_size, user_path)
+    if not external_storage:
+        current_usage = await asyncio.to_thread(calculate_directory_size, user_path)
+    else:
+        current_usage = 0  # External storage doesn't count toward quota
     
     result = {
         "items": items,
-        "path": str(full_path.relative_to(user_path)) if path else "",
+        "path": path if path else "",
+        "is_external": external_storage is not None,
+        "external_name": external_storage.name if external_storage else None,
         "storage": {
             "used": current_usage,
             "quota": user_quota,
@@ -307,29 +366,87 @@ async def list_files(
     return result
 
 
+@router.get("/external-storage")
+async def get_external_storage_mounts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get list of active external storage mounts for file manager."""
+    mounts = db.query(ExternalStorage).filter(
+        ExternalStorage.is_active == True
+    ).order_by(ExternalStorage.name).all()
+    
+    return {
+        "mounts": [
+            {
+                "id": mount.id,
+                "name": mount.name,
+                "mount_point": mount.mount_point,
+                "description": mount.description,
+                "mount_path": mount.mount_path
+            }
+            for mount in mounts
+        ]
+    }
+
+
 @router.get("/view/{file_path:path}")
 async def view_file(
     file_path: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """View/download a file. Returns image viewer HTML for images. Invalidates cache for parent directory."""
+    """View/download a file. Returns image viewer HTML for images. Supports external storage."""
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
-    # Sanitize and validate path
-    try:
-        safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
-        full_path = user_path / safe_path
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    # Check if this is an external storage path
+    external_storage = None
+    external_file_path = None
     
-    # Validate path is within user directory
-    if not _validate_path_within_base(full_path, user_path):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    if not full_path.exists() or not full_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
+    path_parts = file_path.split('/')
+    if path_parts and path_parts[0]:
+        mount_point = path_parts[0]
+        external_storage = db.query(ExternalStorage).filter(
+            ExternalStorage.mount_point == mount_point,
+            ExternalStorage.is_active == True
+        ).first()
+        
+        if external_storage:
+            # This is an external storage file
+            if len(path_parts) > 1:
+                relative_parts = path_parts[1:]
+                external_file_path = Path(external_storage.mount_path) / Path(*relative_parts)
+            else:
+                raise HTTPException(status_code=400, detail="Invalid file path")
+            
+            # Validate external path is within mount
+            mount_path = Path(external_storage.mount_path).resolve()
+            external_file_path_resolved = external_file_path.resolve()
+            
+            if not str(external_file_path_resolved).startswith(str(mount_path)):
+                raise HTTPException(status_code=403, detail="Access denied: path outside mount")
+            
+            if not external_file_path.exists() or not external_file_path.is_file():
+                raise HTTPException(status_code=404, detail="File not found")
+            
+            full_path = external_file_path
+        else:
+            # Regular user storage path
+            try:
+                safe_path = Path(*[_sanitize_path_component(p) for p in path_parts if p])
+                full_path = user_path / safe_path
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+            
+            # Validate path is within user directory
+            if not _validate_path_within_base(full_path, user_path):
+                raise HTTPException(status_code=403, detail="Access denied")
+            
+            if not full_path.exists() or not full_path.is_file():
+                raise HTTPException(status_code=404, detail="File not found")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid file path")
     
     # Note: We don't invalidate cache on view - viewing doesn't mean the file changed.
     # Cache will expire naturally via TTL, and actual file modifications (upload/delete)
@@ -360,23 +477,56 @@ async def get_thumbnail(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get thumbnail for an image file."""
+    """Get thumbnail for an image file. Supports external storage."""
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
-    # Sanitize and validate path
-    try:
-        safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
-        full_path = user_path / safe_path
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
-    
-    # Validate path is within user directory
-    if not _validate_path_within_base(full_path, user_path):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    if not full_path.exists() or not full_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
+    # Check if this is an external storage path
+    external_storage = None
+    path_parts = file_path.split('/')
+    if path_parts and path_parts[0]:
+        mount_point = path_parts[0]
+        external_storage = db.query(ExternalStorage).filter(
+            ExternalStorage.mount_point == mount_point,
+            ExternalStorage.is_active == True
+        ).first()
+        
+        if external_storage:
+            # This is an external storage file
+            if len(path_parts) > 1:
+                from urllib.parse import unquote
+                relative_parts = path_parts[1:]
+                external_file_path = Path(external_storage.mount_path) / Path(*relative_parts)
+            else:
+                raise HTTPException(status_code=400, detail="Invalid file path")
+            
+            # Validate external path is within mount
+            mount_path = Path(external_storage.mount_path).resolve()
+            external_file_path_resolved = external_file_path.resolve()
+            
+            if not str(external_file_path_resolved).startswith(str(mount_path)):
+                raise HTTPException(status_code=403, detail="Access denied: path outside mount")
+            
+            if not external_file_path.exists() or not external_file_path.is_file():
+                raise HTTPException(status_code=404, detail="File not found")
+            
+            full_path = external_file_path
+        else:
+            # Regular user storage path
+            try:
+                safe_path = Path(*[_sanitize_path_component(p) for p in path_parts if p])
+                full_path = user_path / safe_path
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+            
+            # Validate path is within user directory
+            if not _validate_path_within_base(full_path, user_path):
+                raise HTTPException(status_code=403, detail="Access denied")
+            
+            if not full_path.exists() or not full_path.is_file():
+                raise HTTPException(status_code=404, detail="File not found")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid file path")
     
     # Generate thumbnail in thread pool (image processing is CPU-intensive)
     try:
@@ -459,7 +609,8 @@ async def invalidate_file_cache(
 
 # Pydantic models for email and sharing
 class EmailFileRequest(BaseModel):
-    file_paths: List[str]  # List of file paths to email
+    file_paths: Optional[List[str]] = None  # List of file paths to email
+    file_urls: Optional[List[str]] = None  # List of file URLs (for note attachments)
     to: str  # Recipient email
     subject: str = "Shared files"
     body: str = "Please find the attached files."
@@ -496,8 +647,61 @@ async def email_files(
     
     # Validate and read files (run file I/O in thread pool)
     attachments = []
-    for file_path in request.file_paths:
-        try:
+    
+    # Handle file URLs (for note attachments)
+    if request.file_urls:
+        from urllib.parse import unquote
+        for file_url in request.file_urls:
+            try:
+                # For note attachments, use the storage service to get the file
+                if file_url.startswith('/api/notes/files/'):
+                    # Parse note attachment URL: /api/notes/files/{username}/{note_id}/{filename}
+                    parts = file_url.split('/')
+                    if len(parts) >= 6:
+                        note_id = int(parts[4])
+                        encoded_filename = parts[5].split('?')[0]  # Remove query params
+                        filename = unquote(encoded_filename)
+                        
+                        # Get file from storage service
+                        note_path = storage.get_note_path(current_user.username, note_id)
+                        file_path = note_path / filename
+                        
+                        if not file_path.exists():
+                            raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+                        
+                        # Read file
+                        def _read_file_sync():
+                            with open(file_path, 'rb') as f:
+                                return f.read()
+                        
+                        file_data = await asyncio.to_thread(_read_file_sync)
+                        
+                        # Determine content type
+                        suffix = file_path.suffix.lower()
+                        content_types = {
+                            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+                            '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+                            '.pdf': 'application/pdf',
+                            '.txt': 'text/plain', '.md': 'text/markdown',
+                            '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript',
+                            '.zip': 'application/zip', '.tar': 'application/x-tar', '.gz': 'application/gzip',
+                        }
+                        content_type = content_types.get(suffix, 'application/octet-stream')
+                        
+                        attachments.append((filename, file_data, content_type))
+                        continue
+                
+                raise HTTPException(status_code=400, detail=f"Invalid file URL format: {file_url}")
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error fetching file from URL {file_url}: {e}")
+                raise HTTPException(status_code=500, detail=f"Error fetching file: {file_url}")
+    
+    # Handle file paths (regular files)
+    if request.file_paths:
+        for file_path in request.file_paths:
+            try:
             # Sanitize and validate path
             safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
             full_path = user_path / safe_path
@@ -534,6 +738,10 @@ async def email_files(
         except Exception as e:
             logger.error(f"Error reading file {file_path}: {e}")
             raise HTTPException(status_code=500, detail=f"Error reading file: {file_path}")
+    
+    # Validate we have either file_paths or file_urls
+    if not request.file_paths and not request.file_urls:
+        raise HTTPException(status_code=400, detail="Either file_paths or file_urls must be provided")
     
     if not attachments:
         raise HTTPException(status_code=400, detail="No valid files to email")

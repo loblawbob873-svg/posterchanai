@@ -773,12 +773,18 @@ class NotesManager {
                     
                     // Choose icon based on file type
                     let icon = '📎'; // Default
+                    const canOpenInNewTab = isImage || isPdf;
+                    
                     if (isImage) {
                         return `<div class="attachment-item" data-filename="${this.escapeHtml(filename)}">
                             <img src="${fileUrl}?t=${Date.now()}" alt="${this.escapeHtml(filename)}" class="attachment-preview" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
                             <div class="attachment-icon" style="display: none;">🖼️</div>
                             <a href="${fileUrl}" target="_blank" class="attachment-link" onclick="event.stopPropagation()">${this.escapeHtml(shortName)}</a>
-                            <button class="attachment-remove-btn" onclick="event.stopPropagation(); window.notesManager.removeAttachment('${this.escapeHtml(filename)}');" title="Remove attachment">🗑️</button>
+                            <div class="attachment-actions">
+                                <button class="attachment-action-btn" onclick="event.stopPropagation(); window.open('${fileUrl}', '_blank');" title="Open in new tab">🔗</button>
+                                <button class="attachment-action-btn" onclick="event.stopPropagation(); window.notesManager.emailAttachment('${this.escapeHtml(filename)}', '${fileUrl}');" title="Email file">📧</button>
+                                <button class="attachment-remove-btn" onclick="event.stopPropagation(); window.notesManager.removeAttachment('${this.escapeHtml(filename)}');" title="Remove attachment">🗑️</button>
+                            </div>
                         </div>`;
                     } else if (isPdf) {
                         icon = '📄';
@@ -797,7 +803,11 @@ class NotesManager {
                     return `<div class="attachment-item" data-filename="${this.escapeHtml(filename)}">
                         <div class="attachment-icon">${icon}</div>
                         <a href="${fileUrl}" target="_blank" class="attachment-link" onclick="event.stopPropagation()">${this.escapeHtml(shortName)}</a>
-                        <button class="attachment-remove-btn" onclick="event.stopPropagation(); window.notesManager.removeAttachment('${this.escapeHtml(filename)}');" title="Remove attachment">🗑️</button>
+                        <div class="attachment-actions">
+                            ${canOpenInNewTab ? `<button class="attachment-action-btn" onclick="event.stopPropagation(); window.open('${fileUrl}', '_blank');" title="Open in new tab">🔗</button>` : ''}
+                            <button class="attachment-action-btn" onclick="event.stopPropagation(); window.notesManager.emailAttachment('${this.escapeHtml(filename)}', '${fileUrl}');" title="Email file">📧</button>
+                            <button class="attachment-remove-btn" onclick="event.stopPropagation(); window.notesManager.removeAttachment('${this.escapeHtml(filename)}');" title="Remove attachment">🗑️</button>
+                        </div>
                     </div>`;
                 }).join('')}
             </div>
@@ -1329,6 +1339,45 @@ class NotesManager {
         } catch (error) {
             console.error('Error uploading attachment:', error);
             this.showToast('Failed to upload attachment', 'error');
+        }
+    }
+    
+    async emailAttachment(filename, fileUrl) {
+        // Get the full file URL for emailing
+        const username = document.querySelector('.user-name')?.textContent?.trim() || 'user';
+        const encodedUsername = encodeURIComponent(username);
+        const encodedFilename = encodeURIComponent(filename);
+        const fullFileUrl = fileUrl || `/api/notes/files/${encodedUsername}/${this.currentNoteId}/${encodedFilename}`;
+        
+        // Open email modal - use the fileEmailModal from file manager
+        const emailModal = document.getElementById('fileEmailModal');
+        if (emailModal) {
+            // Store the API URL in the file path field (fileManager will handle it)
+            // For note attachments, we'll use a special path format that includes the API URL
+            const noteFilePath = `note://${this.currentNoteId}/${filename}`;
+            document.getElementById('emailFilePath').value = noteFilePath;
+            document.getElementById('emailFilePath').dataset.apiUrl = fullFileUrl; // Store API URL in data attribute
+            document.getElementById('emailFileName').textContent = filename;
+            
+            // Load contact emails if fileManager is available
+            if (window.fileManager && typeof window.fileManager.loadContactEmailsForAutocomplete === 'function') {
+                await window.fileManager.loadContactEmailsForAutocomplete();
+            }
+            
+            const emailToInput = document.getElementById('emailTo');
+            if (emailToInput) {
+                emailToInput.value = '';
+                setTimeout(() => emailToInput.focus(), 100);
+            }
+            
+            document.getElementById('emailSubject').value = `Shared file: ${filename}`;
+            document.getElementById('emailBody').value = `Please find the attached file: ${filename}`;
+            emailModal.style.display = 'flex';
+        } else {
+            // Fallback: Use mailto link
+            const subject = encodeURIComponent(`Shared file: ${filename}`);
+            const body = encodeURIComponent(`Please find the attached file: ${filename}\n\nFile URL: ${window.location.origin}${fullFileUrl}`);
+            window.location.href = `mailto:?subject=${subject}&body=${body}`;
         }
     }
     

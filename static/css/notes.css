@@ -675,12 +675,46 @@
     text-decoration: none;
 }
 
-.attachment-remove-btn {
+.attachment-actions {
     position: absolute;
     top: 4px;
     right: 4px;
-    width: 24px;
-    height: 24px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.attachment-item:hover .attachment-actions {
+    opacity: 1;
+}
+
+.attachment-action-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: rgba(74, 158, 255, 0.2);
+    border: 1px solid rgba(74, 158, 255, 0.5);
+    border-radius: 4px;
+    color: var(--accent-color, #4a9eff);
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    font-size: 14px;
+}
+
+.attachment-action-btn:hover {
+    background: rgba(74, 158, 255, 0.4);
+    border-color: var(--accent-color, #4a9eff);
+    transform: scale(1.1);
+}
+
+.attachment-remove-btn {
+    width: 28px;
+    height: 28px;
     padding: 0;
     background: rgba(255, 51, 102, 0.2);
     border: 1px solid rgba(255, 51, 102, 0.5);
@@ -692,11 +726,7 @@
     align-items: center;
     justify-content: center;
     transition: all 0.2s ease;
-    opacity: 0;
-}
-
-.attachment-item:hover .attachment-remove-btn {
-    opacity: 1;
+    font-size: 14px;
 }
 
 .attachment-remove-btn:hover {

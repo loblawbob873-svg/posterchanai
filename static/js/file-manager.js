@@ -10,6 +10,7 @@ class FileManager {
         this.selectedFiles = new Set(); // Track selected file paths
         this.currentTab = 'files'; // 'files' or 'shares'
         this.searchQuery = ''; // Current search query
+        this.externalStorageMounts = []; // External storage mounts
         this.init();
     }
     
@@ -297,6 +298,10 @@ class FileManager {
     }
     
     async loadFiles(path) {
+        // Load external storage mounts first if at root
+        if (!path) {
+            await this.loadExternalStorageMounts();
+        }
         this.currentPath = path;
         // Clear selection when navigating
         this.selectedFiles.clear();
@@ -357,11 +362,32 @@ class FileManager {
         const parts = path ? path.split('/').filter(p => p) : [];
         let html = '<button class="breadcrumb-item" data-path="">Home</button>';
         
-        let currentPath = '';
-        parts.forEach(part => {
-            currentPath += '/' + part;
-            html += ` <span class="breadcrumb-separator">/</span> <button class="breadcrumb-item" data-path="${currentPath}">${this.escapeHtml(part)}</button>`;
-        });
+        // Check if first part is an external storage mount
+        let isExternalPath = false;
+        if (parts.length > 0 && this.externalStorageMounts) {
+            const firstPart = parts[0];
+            const mount = this.externalStorageMounts.find(m => m.mount_point === firstPart);
+            if (mount) {
+                isExternalPath = true;
+                html += ` <span class="breadcrumb-separator">/</span> <button class="breadcrumb-item external-storage-breadcrumb" data-path="${firstPart}" title="${this.escapeHtml(mount.name)}">💾 ${this.escapeHtml(mount.name)}</button>`;
+                
+                // Add remaining parts
+                let currentPath = firstPart;
+                for (let i = 1; i < parts.length; i++) {
+                    currentPath += '/' + parts[i];
+                    html += ` <span class="breadcrumb-separator">/</span> <button class="breadcrumb-item" data-path="${currentPath}">${this.escapeHtml(parts[i])}</button>`;
+                }
+            }
+        }
+        
+        if (!isExternalPath) {
+            // Regular path
+            let currentPath = '';
+            parts.forEach(part => {
+                currentPath += (currentPath ? '/' : '') + part;
+                html += ` <span class="breadcrumb-separator">/</span> <button class="breadcrumb-item" data-path="${currentPath}">${this.escapeHtml(part)}</button>`;
+            });
+        }
         
         breadcrumb.innerHTML = html;
         
@@ -438,9 +464,11 @@ class FileManager {
         if (this.currentView === 'grid') {
             grid.className = 'file-manager-grid';
             grid.innerHTML = filesToRender.map(item => {
-                const icon = item.is_directory ? '📂' : this.getFileIcon(item.name);
+                // Use special icon for external storage
+                const icon = item.is_external ? '💾' : (item.is_directory ? '📂' : this.getFileIcon(item.name));
                 const thumbnail = item.thumbnail ? `<img src="${item.thumbnail}" alt="" class="file-thumbnail">` : '';
                 const isSelected = this.selectedFiles.has(item.path);
+                const isExternal = item.is_external || false;
                 const actions = !item.is_directory ? `
                     <div class="file-actions" onclick="event.stopPropagation();">
                         <button class="file-action-btn" title="Email" onclick="fileManager.emailFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}')">📧</button>
@@ -448,9 +476,10 @@ class FileManager {
                     </div>
                 ` : '';
                 return `
-                    <div class="file-item ${item.is_directory ? 'directory' : 'file'} ${isSelected ? 'selected' : ''}" 
+                    <div class="file-item ${item.is_directory ? 'directory' : 'file'} ${isSelected ? 'selected' : ''} ${isExternal ? 'external-storage' : ''}" 
                          data-path="${this.escapeHtml(item.path)}" 
                          data-is-dir="${item.is_directory}"
+                         data-is-external="${isExternal}"
                          data-name="${this.escapeHtml(item.name)}"
                          oncontextmenu="event.preventDefault(); fileManager.showContextMenu(event, '${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}', ${item.is_directory ? 'true' : 'false'});"
                          onclick="if(event.ctrlKey || event.metaKey) { fileManager.toggleSelection('${this.escapeHtml(item.path)}', !fileManager.selectedFiles.has('${this.escapeHtml(item.path)}')); } else if (!event.target.closest('.file-actions') && !event.target.closest('.file-checkbox')) { ${item.is_directory ? `fileManager.loadFiles('${this.escapeHtml(item.path)}');` : `fileManager.openFile('${this.escapeHtml(item.path)}');`} }">
@@ -458,7 +487,10 @@ class FileManager {
                                onchange="fileManager.toggleSelection('${this.escapeHtml(item.path)}', this.checked)"
                                onclick="event.stopPropagation();">
                         <div class="file-icon">${thumbnail || icon}</div>
-                        <div class="file-name" title="${this.escapeHtml(item.name)}">${this.escapeHtml(item.name)}</div>
+                        <div class="file-name" title="${this.escapeHtml(item.name)}${item.description ? ' - ' + this.escapeHtml(item.description) : ''}">
+                            ${this.escapeHtml(item.name)}
+                            ${isExternal ? '<span class="external-badge" title="External Storage">💾</span>' : ''}
+                        </div>
                         ${!item.is_directory ? `<div class="file-size">${this.formatSize(item.size)}</div>` : ''}
                         ${actions}
                     </div>
@@ -481,6 +513,8 @@ class FileManager {
                         ${filesToRender.map(item => {
                             const date = new Date(item.modified * 1000);
                             const isSelected = this.selectedFiles.has(item.path);
+                            const isExternal = item.is_external || false;
+                            const icon = isExternal ? '💾' : (item.is_directory ? '📂' : this.getFileIcon(item.name));
                             const actions = !item.is_directory ? `
                                 <td>
                                     <button class="file-action-btn" title="Email" onclick="fileManager.emailFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}')">📧</button>
@@ -488,16 +522,17 @@ class FileManager {
                                 </td>
                             ` : '<td></td>';
                             return `
-                                <tr class="file-list-row ${item.is_directory ? 'directory' : 'file'} ${isSelected ? 'selected' : ''}" 
+                                <tr class="file-list-row ${item.is_directory ? 'directory' : 'file'} ${isSelected ? 'selected' : ''} ${isExternal ? 'external-storage' : ''}" 
                                     data-path="${this.escapeHtml(item.path)}" 
                                     data-is-dir="${item.is_directory}"
+                                    data-is-external="${isExternal}"
                                     data-name="${this.escapeHtml(item.name)}"
                                     oncontextmenu="event.preventDefault(); fileManager.showContextMenu(event, '${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}', ${item.is_directory ? 'true' : 'false'});"
                                     onclick="if(event.ctrlKey || event.metaKey) { fileManager.toggleSelection('${this.escapeHtml(item.path)}', !fileManager.selectedFiles.has('${this.escapeHtml(item.path)}')); } else if (!event.target.closest('td:last-child') && !event.target.closest('.file-checkbox')) { ${item.is_directory ? `fileManager.loadFiles('${this.escapeHtml(item.path)}');` : `fileManager.openFile('${this.escapeHtml(item.path)}');`} }">
                                     <td><input type="checkbox" class="file-checkbox" ${isSelected ? 'checked' : ''} 
                                                onchange="fileManager.toggleSelection('${this.escapeHtml(item.path)}', this.checked)"
                                                onclick="event.stopPropagation();"></td>
-                                    <td>${item.is_directory ? '📂' : this.getFileIcon(item.name)} ${this.escapeHtml(item.name)}</td>
+                                    <td>${icon} ${this.escapeHtml(item.name)}${isExternal ? ' <span class="external-badge" title="External Storage">💾</span>' : ''}</td>
                                     <td>${item.is_directory ? '-' : this.formatSize(item.size)}</td>
                                     <td>${date.toLocaleString()}</td>
                                     ${actions}
@@ -606,6 +641,7 @@ class FileManager {
     
     async sendEmail() {
         const filePath = document.getElementById('emailFilePath').value;
+        const apiUrl = document.getElementById('emailFilePath').dataset.apiUrl; // For note attachments
         let to = document.getElementById('emailTo').value.trim();
         const subject = document.getElementById('emailSubject').value.trim();
         const body = document.getElementById('emailBody').value.trim();
@@ -629,15 +665,25 @@ class FileManager {
         }
         
         try {
+            // Check if this is a note attachment (has apiUrl in data attribute)
+            const requestBody = {
+                to: to,
+                subject: subject || 'Shared file',
+                body: body || 'Please find the attached file.'
+            };
+            
+            if (apiUrl) {
+                // For note attachments, send the API URL
+                requestBody.file_urls = [apiUrl];
+            } else {
+                // For regular files, send file paths
+                requestBody.file_paths = [filePath];
+            }
+            
             const response = await csrfFetch('/api/files/email', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    file_paths: [filePath],
-                    to: to,
-                    subject: subject || 'Shared file',
-                    body: body || 'Please find the attached file.'
-                })
+                body: JSON.stringify(requestBody)
             });
             
             const data = await response.json();

@@ -215,4 +215,60 @@
             </div>
         </div>
     </fieldset>
+
+    <fieldset>
+        <legend>External Storage (File Manager)</legend>
+        <p class="fieldset-info">Mount external directories to make them accessible in the File Manager. Example: Mount <code>/raid/video</code> as <code>video</code>.</p>
+        
+        <div id="externalStorageList" class="external-storage-list">
+            <!-- External storage mounts will be loaded here -->
+        </div>
+        
+        <div class="form-group" style="margin-top: 20px;">
+            <button type="button" class="btn-primary" id="addExternalStorageBtn">+ Add External Storage</button>
+        </div>
+        
+        <!-- Add/Edit External Storage Modal -->
+        <div class="modal" id="externalStorageModal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="externalStorageModalTitle">Add External Storage</h3>
+                    <button class="btn-icon modal-close" onclick="document.getElementById('externalStorageModal').style.display='none'">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="externalStorageId">
+                    <div class="form-group">
+                        <label for="externalStorageName">Display Name *</label>
+                        <input type="text" id="externalStorageName" placeholder="Video Storage" required>
+                        <small>The name shown in the File Manager</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="externalStorageMountPath">Mount Path *</label>
+                        <input type="text" id="externalStorageMountPath" placeholder="/raid/video" required>
+                        <small>Absolute path to the directory on the server (must exist and be readable)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="externalStorageMountPoint">Mount Point *</label>
+                        <input type="text" id="externalStorageMountPoint" placeholder="video" required>
+                        <small>Virtual path name in File Manager (alphanumeric, dashes, underscores only)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="externalStorageDescription">Description</label>
+                        <textarea id="externalStorageDescription" rows="2" placeholder="Optional description"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="externalStorageActive">
+                            <input type="checkbox" id="externalStorageActive" checked> Active
+                        </label>
+                        <small>Enable/disable this mount</small>
+                    </div>
+                    <div id="externalStorageError" class="error-message" style="display: none;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-secondary" onclick="document.getElementById('externalStorageModal').style.display='none'">Cancel</button>
+                    <button type="button" class="btn-primary" id="saveExternalStorageBtn">Save</button>
+                </div>
+            </div>
+        </div>
+    </fieldset>
 </div>

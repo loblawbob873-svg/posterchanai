@@ -229,6 +229,24 @@
     border-color: var(--accent-color);
 }
 
+/* External Storage Styling */
+.file-item.external-storage,
+.file-list-row.external-storage {
+    border-left: 3px solid var(--accent-color, #4a9eff);
+    background: linear-gradient(90deg, rgba(74, 158, 255, 0.05) 0%, transparent 10%);
+}
+
+.file-item.external-storage:hover,
+.file-list-row.external-storage:hover {
+    background: linear-gradient(90deg, rgba(74, 158, 255, 0.1) 0%, rgba(74, 158, 255, 0.05) 10%);
+}
+
+.external-badge {
+    font-size: 0.8em;
+    margin-left: 4px;
+    opacity: 0.7;
+}
+
 .file-manager-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
