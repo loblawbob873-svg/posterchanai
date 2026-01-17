@@ -22,6 +22,7 @@ class NotesManager {
         document.getElementById('cancelNoteBtn')?.addEventListener('click', () => this.cancelEdit());
         document.getElementById('deleteNoteBtn')?.addEventListener('click', () => this.deleteNote());
         document.getElementById('pinNoteBtn')?.addEventListener('click', () => this.togglePin());
+        document.getElementById('moveNoteBtn')?.addEventListener('click', () => this.showMoveNoteDialog());
         // Attach file button - use once flag to prevent duplicate listeners
         const attachBtn = document.getElementById('attachFileBtn');
         if (attachBtn && !attachBtn.dataset.listenerAttached) {
@@ -867,6 +868,126 @@ class NotesManager {
         } catch (error) {
             console.error('Error deleting note:', error);
             alert('Error deleting note');
+        }
+    }
+    
+    showMoveNoteDialog() {
+        if (!this.currentNoteId) {
+            this.showToast('Please open a note first', 'error');
+            return;
+        }
+        
+        const modal = document.getElementById('moveNoteModal');
+        const titleSpan = document.getElementById('moveNoteTitle');
+        const folderSelect = document.getElementById('moveNoteFolder');
+        
+        if (!modal || !titleSpan || !folderSelect) {
+            this.showToast('Move dialog elements not found', 'error');
+            return;
+        }
+        
+        // Set note title
+        const titleInput = document.getElementById('noteTitleInput');
+        titleSpan.textContent = titleInput ? titleInput.value || 'Untitled Note' : 'Note';
+        
+        // Populate folder dropdown
+        folderSelect.innerHTML = '<option value="0">All Notes (Root)</option>';
+        this.folders.forEach(folder => {
+            const option = document.createElement('option');
+            option.value = folder.id;
+            option.textContent = folder.name;
+            // Select current folder if note is in one
+            if (this.currentNote && this.currentNote.folder_id === folder.id) {
+                option.selected = true;
+            }
+            folderSelect.appendChild(option);
+        });
+        
+        // If note has no folder, select "All Notes"
+        if (!this.currentNote || !this.currentNote.folder_id) {
+            folderSelect.value = '0';
+        }
+        
+        modal.style.display = 'flex';
+    }
+    
+    async executeMoveNote() {
+        if (!this.currentNoteId) {
+            this.showToast('No note selected', 'error');
+            return;
+        }
+        
+        const folderSelect = document.getElementById('moveNoteFolder');
+        if (!folderSelect) {
+            this.showToast('Folder select not found', 'error');
+            return;
+        }
+        
+        const folderId = parseInt(folderSelect.value);
+        const targetFolderId = folderId === 0 ? null : folderId;
+        
+        // Check if already in target folder
+        const currentFolderId = this.currentNote?.folder_id || null;
+        if (currentFolderId === targetFolderId) {
+            document.getElementById('moveNoteModal').style.display = 'none';
+            this.showToast('Note is already in this folder', 'info');
+            return;
+        }
+        
+        try {
+            // Get current note data
+            const titleInput = document.getElementById('noteTitleInput');
+            const contentInput = document.getElementById('noteContentInput');
+            const tagsInput = document.getElementById('noteTagsInput');
+            const pinBtn = document.getElementById('pinNoteBtn');
+            
+            const updateData = {
+                folder_id: targetFolderId,
+                title: titleInput?.value || this.currentNote?.title,
+                content: contentInput?.value || this.currentNote?.content,
+                tags: tagsInput?.value || this.currentNote?.tags,
+                is_pinned: pinBtn?.dataset.pinned === 'true'
+            };
+            
+            const response = await csrfFetch(`/api/notes/${this.currentNoteId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updateData)
+            });
+            
+            if (response.ok) {
+                const updatedNote = await response.json();
+                this.currentNote = updatedNote;
+                
+                // Update current folder view if needed
+                const newFolderId = updatedNote.folder_id || 0;
+                if (this.currentFolderId !== newFolderId) {
+                    // Note moved to different folder - switch to that folder view
+                    this.currentFolderId = newFolderId;
+                    // Update folder selection in sidebar
+                    document.querySelectorAll('.notes-folder-item').forEach(item => {
+                        item.classList.remove('active');
+                        if (parseInt(item.dataset.folderId) === newFolderId) {
+                            item.classList.add('active');
+                        }
+                    });
+                }
+                
+                // Reload notes list
+                await this.loadNotes();
+                
+                // Close modal
+                document.getElementById('moveNoteModal').style.display = 'none';
+                
+                const folderName = updatedNote.folder_name || 'All Notes';
+                this.showToast(`Note moved to "${folderName}"`);
+            } else {
+                const error = await response.json();
+                this.showToast(error.detail || 'Failed to move note', 'error');
+            }
+        } catch (error) {
+            console.error('Error moving note:', error);
+            this.showToast('Failed to move note', 'error');
         }
     }
     

@@ -34,6 +34,7 @@
                         <input type="text" id="noteTitleInput" placeholder="Untitled Note" class="note-title-input">
                         <div class="notes-editor-actions">
                             <button class="btn-icon" id="attachFileBtn" title="Attach File">📎</button>
+                            <button class="btn-icon" id="moveNoteBtn" title="Move to Folder">📂</button>
                             <button class="btn-icon" id="pinNoteBtn" title="Pin/Unpin Note">📌</button>
                             <button class="btn-icon" id="deleteNoteBtn" title="Delete Note">🗑️</button>
                         </div>
@@ -58,6 +59,29 @@
                 <!-- Hidden file input for attachments -->
                 <input type="file" id="noteFileInput" multiple style="display: none;" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.zip,.rar,.tar,.gz">
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Move Note Modal -->
+<div class="file-modal" id="moveNoteModal" style="display: none;">
+    <div class="file-modal-content">
+        <div class="file-modal-header">
+            <h3>📂 Move Note to Folder</h3>
+            <button class="file-modal-close" onclick="document.getElementById('moveNoteModal').style.display='none'">&times;</button>
+        </div>
+        <div class="file-modal-body">
+            <p><strong>Note:</strong> <span id="moveNoteTitle"></span></p>
+            <div class="form-group">
+                <label for="moveNoteFolder">Destination folder:</label>
+                <select id="moveNoteFolder" class="form-control">
+                    <option value="0">All Notes (Root)</option>
+                </select>
+            </div>
+        </div>
+        <div class="file-modal-footer">
+            <button class="btn-secondary" onclick="document.getElementById('moveNoteModal').style.display='none'">Cancel</button>
+            <button class="btn-primary" onclick="window.notesManager.executeMoveNote()">Move Note</button>
         </div>
     </div>
 </div>

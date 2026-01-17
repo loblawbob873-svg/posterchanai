@@ -595,7 +595,9 @@
 .file-modal-body input[type="text"],
 .file-modal-body input[type="email"],
 .file-modal-body input[type="number"],
-.file-modal-body textarea {
+.file-modal-body textarea,
+.file-modal-body select,
+.file-modal-body .form-control {
     width: 100%;
     padding: 10px 14px;
     background: var(--bg-secondary);
