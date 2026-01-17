@@ -471,13 +471,28 @@ async def get_all_images(
         # Sort the list - this MUST work correctly
         images.sort(key=sort_key)
         
-        # Immediate verification: check first 10 items are in correct order
+        # Immediate verification: check first 50 items are in correct order
         prev_ts = None
-        for i, img in enumerate(images[:10]):
+        sort_errors = []
+        for i, img in enumerate(images[:50]):
             curr_ts = float(img.get('modified', 0) or 0)
             if prev_ts is not None and curr_ts > prev_ts:
+                sort_errors.append((i, img.get('name'), curr_ts, prev_ts))
                 logger.error(f"[FILES] CRITICAL SORT FAILURE at index {i}: {img.get('name')} (ts={curr_ts}) is NEWER than previous (ts={prev_ts})!")
             prev_ts = curr_ts
+        
+        if sort_errors:
+            logger.error(f"[FILES] Found {len(sort_errors)} sorting errors in first 50 images!")
+            # Log first 5 errors with full details
+            for idx, name, curr, prev in sort_errors[:5]:
+                logger.error(f"[FILES] Error {idx}: {name} - current={curr}, previous={prev}, diff={curr-prev}")
+            # If many errors, the sort might be reversed - try fixing it
+            if len(sort_errors) > 10:
+                logger.error("[FILES] Too many errors - attempting to fix by re-sorting...")
+                images.sort(key=sort_key)  # Re-sort
+                logger.error("[FILES] Re-sorted array")
+        else:
+            logger.info(f"[FILES] ✓ Sort verified: First 50 images in correct order (newest first)")
         
         # Debug: log statistics
         total_scanned = len(images) + skipped_count

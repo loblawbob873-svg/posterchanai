@@ -888,11 +888,24 @@ async def get_all_images(
         
         # Double-check: verify sort worked
         prev_ts = None
-        for i, img in enumerate(images[:10]):
+        sort_errors = []
+        for i, img in enumerate(images[:50]):
             curr_ts = float(img.get('modified', 0) or 0)
             if prev_ts is not None and curr_ts > prev_ts:
+                sort_errors.append((i, img.get('name'), curr_ts, prev_ts))
                 logger.error(f"[STORAGE] CRITICAL: Sort failed! Image {i} ({img.get('name')}) has timestamp {curr_ts} which is NEWER than previous {prev_ts}")
             prev_ts = curr_ts
+        
+        if sort_errors:
+            logger.error(f"[STORAGE] Found {len(sort_errors)} sorting errors in first 50 images!")
+            for idx, name, curr, prev in sort_errors[:5]:
+                logger.error(f"[STORAGE] Error {idx}: {name} - current={curr}, previous={prev}, diff={curr-prev}")
+            if len(sort_errors) > 10:
+                logger.error("[STORAGE] Too many errors - attempting to fix by re-sorting...")
+                images.sort(key=sort_key)
+                logger.error("[STORAGE] Re-sorted array")
+        else:
+            logger.info(f"[STORAGE] ✓ Sort verified: First 50 images in correct order (newest first)")
         
         # Debug: log statistics
         total_scanned = len(images) + skipped_count
