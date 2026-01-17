@@ -1,11 +1,12 @@
 /* Notes Modal Styles - Modern & Beautiful UI */
+#notesModal .notes-modal-content,
 .notes-modal-content {
     max-width: 1400px;
     width: min(95vw, 1400px);
-    height: calc(100vh - 20px);
-    max-height: calc(100vh - 20px);
+    height: calc(100vh - 20px) !important;
+    max-height: calc(100vh - 20px) !important;
     border-radius: 12px;
-    overflow: hidden;
+    overflow: hidden !important;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
     display: flex;
     flex-direction: column;
@@ -14,12 +15,14 @@
 
 .notes-modal-body {
     display: flex;
-    flex: 1;
+    flex: 1 1 0;
     min-height: 0;
+    max-height: 100%;
     gap: 0;
     padding: 0;
     background: var(--bg-primary);
-    overflow: hidden;
+    overflow: hidden !important;
+    box-sizing: border-box;
 }
 
 /* Sidebar Styles */
@@ -168,11 +171,13 @@
 
 /* Main Content Area */
 .notes-main {
-    flex: 1;
+    flex: 1 1 0;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: hidden !important;
     background: var(--bg-primary);
+    min-height: 0;
+    max-height: 100%;
 }
 
 /* Notes List Grid */
@@ -324,9 +329,11 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
+    max-height: 100%;
     padding: 20px;
     background: var(--bg-primary);
-    overflow: hidden;
+    overflow: hidden !important;
+    box-sizing: border-box;
 }
 
 .notes-editor-header {
@@ -337,6 +344,8 @@
     padding-bottom: 16px;
     border-bottom: 2px solid var(--border-color);
     flex-shrink: 0;
+    flex-grow: 0;
+    min-height: fit-content;
 }
 
 .note-title-input {
@@ -349,6 +358,8 @@
     font-size: 24px;
     font-weight: 700;
     transition: all 0.2s ease;
+    min-width: 0;
+    box-sizing: border-box;
 }
 
 .note-title-input:focus {
@@ -423,17 +434,18 @@
 }
 
 .notes-editor-content {
-    flex: 1;
+    flex: 1 1 0;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    position: relative;
-    overflow: hidden;
     max-height: 100%;
+    position: relative;
+    overflow: hidden !important;
+    box-sizing: border-box;
 }
 
 #noteContentInput {
-    flex: 1;
+    flex: 1 1 0;
     padding: 16px;
     background: var(--bg-secondary);
     border: 2px solid var(--border-color);
@@ -443,11 +455,13 @@
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'Courier New', monospace;
     resize: none;
     min-height: 0;
-    max-height: 100%;
-    overflow-y: auto;
+    max-height: 100% !important;
+    overflow-y: auto !important;
     overflow-x: hidden;
     line-height: 1.8;
     transition: all 0.2s ease;
+    box-sizing: border-box;
+    width: 100%;
 }
 
 #noteContentInput:focus {
@@ -457,7 +471,7 @@
 }
 
 .notes-content-preview {
-    flex: 1;
+    flex: 1 1 0;
     padding: 16px;
     background: var(--bg-secondary);
     border: 2px solid var(--border-color);
@@ -465,11 +479,13 @@
     color: var(--text-primary);
     font-size: 15px;
     line-height: 1.8;
-    overflow-y: auto;
+    overflow-y: auto !important;
     overflow-x: hidden;
     min-height: 0;
-    max-height: 100%;
+    max-height: 100% !important;
     position: relative;
+    box-sizing: border-box;
+    width: 100%;
 }
 
 .notes-content-preview h1,
@@ -572,6 +588,7 @@
     padding-top: 16px;
     border-top: 2px solid var(--border-color);
     flex-shrink: 0;
+    flex-grow: 0;
 }
 
 .notes-editor-footer button {
@@ -597,6 +614,10 @@
     background: var(--bg-secondary);
     border-radius: 10px;
     border: 2px solid var(--border-color);
+    flex-shrink: 0;
+    max-height: 300px;
+    overflow-y: auto;
+    box-sizing: border-box;
 }
 
 .notes-attachments-header {

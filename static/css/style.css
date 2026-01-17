@@ -1655,13 +1655,15 @@ fieldset legend {
     padding: 10px;
     align-items: center;
     justify-content: center;
+    overflow: hidden !important;
 }
 
 #notesModal .modal-content.notes-modal-content {
     margin: 0;
     align-self: center;
-    max-height: calc(100vh - 20px);
-    height: calc(100vh - 20px);
+    max-height: calc(100vh - 20px) !important;
+    height: calc(100vh - 20px) !important;
+    overflow: hidden !important;
 }
 .modal-content {
     background: var(--bg-secondary);
