@@ -336,11 +336,12 @@ class NotesManager {
             }
             
             // If it's a bare filename (not a full URL), convert to note attachment URL
-            if (!src.startsWith('http') && !src.startsWith('/api/') && !src.startsWith('data:') && !src.startsWith('/') && !src.startsWith(':/')) {
+            // BUT skip data URLs (placeholders) and make sure it's not already a data URL
+            if (!src.startsWith('http') && !src.startsWith('/api/') && !src.startsWith('data:') && !src.startsWith('/') && !src.startsWith(':/') && !src.includes('base64,')) {
                 // It's likely a filename - convert to proper URL
                 const filename = src.split('/').pop().split('?')[0]; // Remove path and query params
-                // Make sure it's not a resource ID (32 hex chars)
-                if (!/^[a-f0-9]{32}$/i.test(filename) && noteId && username) {
+                // Make sure it's not a resource ID (32 hex chars) and not a data URL
+                if (!/^[a-f0-9]{32}$/i.test(filename) && !filename.startsWith('data:') && noteId && username) {
                     const properUrl = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
                     return `<img${before} src="${properUrl}"${after}>`;
                 }
@@ -363,10 +364,13 @@ class NotesManager {
         });
         
         // Also replace bare resource IDs that might be in URLs (like /api/files/view/[resource-id])
+        // But don't replace with placeholder data URL - instead replace the whole URL or just remove the resource ID
         rendered = rendered.replace(/(\/api\/[^"'\s]*\/)([a-f0-9]{32})([^"'\s]*)/gi, (match, prefix, id, suffix) => {
             // If the ID is exactly 32 hex chars and appears to be a Joplin resource ID
+            // Replace the entire URL path with the placeholder (not as part of a URL)
             if (/^[a-f0-9]{32}$/i.test(id)) {
-                return prefix + placeholder + suffix;
+                // Replace the entire match with just the placeholder (not as part of a URL)
+                return placeholder;
             }
             return match;
         });
@@ -395,11 +399,12 @@ class NotesManager {
                     // Prevent the browser from trying to load it
                     img.removeAttribute('srcset');
                 }
-            } else if (!src.startsWith('http') && !src.startsWith('/api/') && !src.startsWith('data:') && !src.startsWith('/') && !src.startsWith(':/')) {
+            } else if (!src.startsWith('http') && !src.startsWith('/api/') && !src.startsWith('data:') && !src.startsWith('/') && !src.startsWith(':/') && !src.includes('base64,')) {
                 // Bare filename - convert to proper URL
+                // BUT skip data URLs (placeholders)
                 const filename = src.split('/').pop().split('?')[0];
-                // Make sure it's not a resource ID (32 hex chars)
-                if (!/^[a-f0-9]{32}$/i.test(filename) && noteId && username) {
+                // Make sure it's not a resource ID (32 hex chars) and not a data URL
+                if (!/^[a-f0-9]{32}$/i.test(filename) && !filename.startsWith('data:') && !src.includes('base64,') && noteId && username) {
                     const properUrl = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
                     img.src = properUrl;
                     img.setAttribute('src', properUrl);
