@@ -248,11 +248,32 @@ def update_external_storage(
     if data.is_active is not None:
         mount.is_active = data.is_active
     
+    # Update allowed users if provided
+    if data.allowed_user_ids is not None:
+        users = db.query(User).filter(User.id.in_(data.allowed_user_ids)).all()
+        mount.allowed_users = users
+    
     db.commit()
     db.refresh(mount)
     
     logger.info(f"Updated external storage mount: {mount.name}")
-    return mount
+    
+    # Return with user info
+    return {
+        "id": mount.id,
+        "name": mount.name,
+        "mount_path": mount.mount_path,
+        "mount_point": mount.mount_point,
+        "description": mount.description,
+        "is_active": mount.is_active,
+        "created_at": mount.created_at,
+        "updated_at": mount.updated_at,
+        "allowed_user_ids": [user.id for user in mount.allowed_users],
+        "allowed_users": [
+            {"id": user.id, "username": user.username, "email": user.email}
+            for user in mount.allowed_users
+        ]
+    }
 
 
 @router.delete("/external-storage/{mount_id}")

@@ -226,7 +226,8 @@ async def list_files(
                 ExternalStorage.is_active == True
             ).first()
             
-            if external_storage:
+            # Check if user has access to this external storage
+            if external_storage and current_user in external_storage.allowed_users:
                 # This is an external storage path
                 # Build path relative to mount
                 if len(path_parts) > 1:
@@ -371,22 +372,28 @@ async def get_external_storage_mounts(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get list of active external storage mounts for file manager."""
-    mounts = db.query(ExternalStorage).filter(
+    """Get list of active external storage mounts that the current user has access to."""
+    # Get all active mounts
+    all_mounts = db.query(ExternalStorage).filter(
         ExternalStorage.is_active == True
     ).order_by(ExternalStorage.name).all()
     
-    return {
-        "mounts": [
-            {
+    # Filter mounts where user is in allowed_users list
+    # If allowed_users is empty, no one has access (admin must explicitly grant access)
+    accessible_mounts = []
+    for mount in all_mounts:
+        # Check if user is in allowed_users
+        if current_user in mount.allowed_users:
+            accessible_mounts.append({
                 "id": mount.id,
                 "name": mount.name,
                 "mount_point": mount.mount_point,
                 "description": mount.description,
                 "mount_path": mount.mount_path
-            }
-            for mount in mounts
-        ]
+            })
+    
+    return {
+        "mounts": accessible_mounts
     }
 
 
@@ -412,7 +419,8 @@ async def view_file(
             ExternalStorage.is_active == True
         ).first()
         
-        if external_storage:
+        # Check if user has access to this external storage
+        if external_storage and current_user in external_storage.allowed_users:
             # This is an external storage file
             if len(path_parts) > 1:
                 relative_parts = path_parts[1:]
@@ -431,6 +439,9 @@ async def view_file(
                 raise HTTPException(status_code=404, detail="File not found")
             
             full_path = external_file_path
+        elif external_storage:
+            # User doesn't have access
+            raise HTTPException(status_code=403, detail="Access denied: you don't have permission to access this storage")
         else:
             # Regular user storage path
             try:
@@ -491,7 +502,8 @@ async def get_thumbnail(
             ExternalStorage.is_active == True
         ).first()
         
-        if external_storage:
+        # Check if user has access to this external storage
+        if external_storage and current_user in external_storage.allowed_users:
             # This is an external storage file
             if len(path_parts) > 1:
                 from urllib.parse import unquote
@@ -511,6 +523,9 @@ async def get_thumbnail(
                 raise HTTPException(status_code=404, detail="File not found")
             
             full_path = external_file_path
+        elif external_storage:
+            # User doesn't have access
+            raise HTTPException(status_code=403, detail="Access denied: you don't have permission to access this storage")
         else:
             # Regular user storage path
             try:

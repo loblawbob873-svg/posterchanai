@@ -262,6 +262,13 @@
                         </label>
                         <small>Enable/disable this mount</small>
                     </div>
+                    <div class="form-group">
+                        <label for="externalStorageUsers">Allowed Users *</label>
+                        <select id="externalStorageUsers" multiple style="width: 100%; min-height: 120px; padding: 8px;">
+                            <!-- Users will be loaded here -->
+                        </select>
+                        <small>Select users who can access this external storage. Hold Ctrl/Cmd to select multiple users.</small>
+                    </div>
                     <div id="externalStorageError" class="error-message" style="display: none;"></div>
                 </div>
                 <div class="modal-footer">

@@ -1565,6 +1565,25 @@ document.getElementById('saveAndReindex').addEventListener('click', () => saveCo
 loadSettings();
 
 // External Storage Management
+let allUsers = [];
+
+async function loadUsersForExternalStorage() {
+    try {
+        const response = await csrfFetch('/api/admin/users');
+        if (response.ok) {
+            allUsers = await response.json();
+            const userSelect = document.getElementById('externalStorageUsers');
+            if (userSelect) {
+                userSelect.innerHTML = allUsers.map(user => 
+                    `<option value="${user.id}">${escapeHtml(user.username || user.email || `User ${user.id}`)}</option>`
+                ).join('');
+            }
+        }
+    } catch (err) {
+        console.error('Failed to load users:', err);
+    }
+}
+
 async function loadExternalStorage() {
     try {
         const response = await csrfFetch('/api/admin/external-storage');
@@ -1589,6 +1608,9 @@ async function loadExternalStorage() {
                         <div class="external-storage-details">
                             <div><strong>Path:</strong> <code>${escapeHtml(mount.mount_path)}</code></div>
                             ${mount.description ? `<div><strong>Description:</strong> ${escapeHtml(mount.description)}</div>` : ''}
+                            <div><strong>Allowed Users:</strong> ${mount.allowed_users && mount.allowed_users.length > 0 
+                                ? mount.allowed_users.map(u => escapeHtml(u.username || u.email || `User ${u.id}`)).join(', ')
+                                : '<span style="color: var(--text-secondary);">None (no access granted)</span>'}</div>
                         </div>
                     </div>
                     <div class="external-storage-actions">
