@@ -306,21 +306,31 @@ class NotesManager {
         
         // After rendering, fix any remaining old Joplin resource URLs in img tags
         // This handles cases where HTML img tags might have been in the original content
-        const imgs = contentPreview.querySelectorAll('img');
-        imgs.forEach(img => {
-            const src = img.getAttribute('src');
-            if (src && /^[a-f0-9]{32}$/.test(src)) {
-                // Bare resource ID - replace with placeholder
-                console.error('Found bare Joplin resource ID in img tag:', src);
-                img.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
-                img.alt = 'Image not found (old Joplin resource)';
-            } else if (src && src.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(src)) {
-                // Old Joplin resource format with :/ prefix
-                console.error('Found old Joplin resource URL in img tag:', src);
-                img.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
-                img.alt = 'Image not found (old Joplin resource)';
-            }
-        });
+        // Use setTimeout to ensure DOM is fully updated
+        setTimeout(() => {
+            const imgs = contentPreview.querySelectorAll('img');
+            const placeholder = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+            
+            imgs.forEach(img => {
+                const src = img.getAttribute('src') || img.src;
+                if (!src) return;
+                
+                // Check for old Joplin resource format (:/[32-char-hex] or bare [32-char-hex])
+                const isOldFormat = src.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(src);
+                const isBareFormat = /^[a-f0-9]{32}$/.test(src);
+                
+                if (isOldFormat || isBareFormat) {
+                    console.error('Found old Joplin resource URL in img tag:', src);
+                    // Replace with placeholder immediately - use both methods for reliability
+                    img.src = placeholder;
+                    img.setAttribute('src', placeholder);
+                    img.setAttribute('alt', 'Image not found (old Joplin resource)');
+                    img.removeAttribute('onerror'); // Remove any error handlers
+                    img.onerror = null; // Clear error handler
+                    console.log('✓ Replaced old Joplin resource URL with placeholder:', src);
+                }
+            });
+        }, 0);
     }
     
     renderMarkdown(text) {
@@ -371,14 +381,10 @@ class NotesManager {
                 // External URL, use as-is
                 mediaSrc = src;
                 console.log('Using external URL:', mediaSrc);
-            } else if (src.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(src)) {
-                // Old Joplin resource format - this should have been converted during migration
+            } else if ((src.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(src)) || /^[a-f0-9]{32}$/.test(src)) {
+                // Old Joplin resource format - check both :/ prefix and bare format
                 console.error('Old Joplin resource URL found in image:', src, '- This should have been converted during migration');
-                // Return placeholder or broken image - the resource doesn't exist in new format
-                mediaSrc = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
-            } else if (/^[a-f0-9]{32}$/.test(src)) {
-                // Bare resource ID (without :/ prefix) - old Joplin format
-                console.error('Old Joplin resource ID found (bare format):', src, '- This should have been converted during migration');
+                // Return placeholder - the resource doesn't exist in new format
                 mediaSrc = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
             } else {
                 // Relative path or filename - convert to note attachment URL
