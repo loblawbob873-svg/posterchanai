@@ -3126,8 +3126,24 @@ Return ONLY valid JSON, no other text. If this is not a bill or invoice, return 
                 temp_file_path = user_temp_dir / safe_filename
                 
                 # Save attachment
-                with open(temp_file_path, "wb") as f:
-                    f.write(attachment.data)
+                try:
+                    with open(temp_file_path, "wb") as f:
+                        f.write(attachment.data)
+                    logger.info(f"Saved mail attachment: {temp_file_path} ({len(attachment.data)} bytes)")
+                except Exception as e:
+                    logger.error(f"Failed to save mail attachment to {temp_file_path}: {e}", exc_info=True)
+                    return {
+                        "type": "text",
+                        "content": f"❌ Error saving attachment: {str(e)}"
+                    }
+                
+                # Verify file was saved
+                if not temp_file_path.exists():
+                    logger.error(f"Mail attachment file not found after save: {temp_file_path}")
+                    return {
+                        "type": "text",
+                        "content": f"❌ Error: Attachment file was not saved successfully."
+                    }
                 
                 # Generate URL to open in browser - URL-encode both username and filename
                 from urllib.parse import quote

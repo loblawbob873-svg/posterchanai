@@ -209,11 +209,13 @@ async def get_notes(
                 query = query.filter(Note.folder_id == folder_id)
         
         if search:
-            search_term = f"%{search}%"
+            # Make search case-insensitive by converting both search term and fields to lowercase
+            # This works across all databases (SQLite, PostgreSQL, MySQL)
+            search_term = f"%{search.lower()}%"
             query = query.filter(
                 or_(
-                    Note.title.ilike(search_term),
-                    Note.content.ilike(search_term)
+                    func.lower(Note.title).like(search_term),
+                    func.lower(Note.content).like(search_term)
                 )
             )
         
@@ -520,16 +522,90 @@ async def serve_note_file(
                 try:
                     files_in_dir = [f.name for f in base_path.iterdir() if f.is_file()]
                     logger.warning(f"Files in note directory: {files_in_dir[:10]}")
-                    # Try case-insensitive match
+                    
+                    # Try multiple matching strategies:
+                    # 1. Case-insensitive exact match
                     for f in files_in_dir:
                         if f.lower() == safe_filename.lower():
                             logger.warning(f"Found case-insensitive match: {f} vs {safe_filename}")
                             file_path = base_path / f
                             break
+                    
+                    # 2. If still not found, try matching by base filename (without extension)
+                    # This handles cases where files were saved with timestamps
+                    # e.g., "image.png" -> "image_20260116_203122_329081.png"
+                    if not file_path.exists():
+                        safe_base = Path(safe_filename).stem  # filename without extension
+                        safe_ext = Path(safe_filename).suffix.lower()  # extension
+                        
+                        for f in files_in_dir:
+                            f_base = Path(f).stem
+                            f_ext = Path(f).suffix.lower()
+                            
+                            # Match if:
+                            # 1. Base name exactly matches (case-insensitive)
+                            # 2. Actual file starts with requested base name + underscore (timestamped)
+                            # 3. Requested base name starts with actual base name + underscore (reverse)
+                            # 4. Extension must match
+                            if f_ext == safe_ext:
+                                if (f_base.lower() == safe_base.lower() or 
+                                    f_base.lower().startswith(safe_base.lower() + '_') or
+                                    safe_base.lower().startswith(f_base.lower() + '_')):
+                                    logger.warning(f"Found base name match: {f} vs {safe_filename} (base: {safe_base})")
+                                    file_path = base_path / f
+                                    break
+                    
+                    # 3. If still not found, try partial match (filename contains the requested name)
+                    # This handles cases where files were saved with additional timestamps
+                    # e.g., "20220415_123623.jpg" -> "20220415_123623_20260116_203124_299386.jpg"
+                    if not file_path.exists():
+                        safe_base = Path(safe_filename).stem.lower()
+                        safe_ext = Path(safe_filename).suffix.lower()
+                        
+                        # Try to find a file that starts with the base name (for timestamped files)
+                        best_match = None
+                        best_match_score = 0
+                        
+                        for f in files_in_dir:
+                            f_base = Path(f).stem.lower()
+                            f_ext = Path(f).suffix.lower()
+                            
+                            if f_ext != safe_ext:
+                                continue
+                            
+                            # Score matches based on how well they match
+                            # Exact match gets highest score
+                            if f_base == safe_base:
+                                best_match = f
+                                best_match_score = 100
+                                break
+                            # Starts with requested base + underscore (timestamped) gets high score
+                            elif f_base.startswith(safe_base + '_'):
+                                score = len(safe_base) / len(f_base) * 90  # Prefer shorter matches
+                                if score > best_match_score:
+                                    best_match = f
+                                    best_match_score = score
+                            # Requested starts with file base (reverse) gets medium score
+                            elif safe_base.startswith(f_base + '_'):
+                                score = len(f_base) / len(safe_base) * 70
+                                if score > best_match_score:
+                                    best_match = f
+                                    best_match_score = score
+                            # Contains match gets lower score
+                            elif safe_base in f_base or f_base in safe_base:
+                                score = min(len(safe_base), len(f_base)) / max(len(safe_base), len(f_base)) * 50
+                                if score > best_match_score:
+                                    best_match = f
+                                    best_match_score = score
+                        
+                        if best_match and best_match_score >= 50:  # Only use if score is reasonable
+                            logger.warning(f"Found partial match (score: {best_match_score:.1f}): {best_match} vs {safe_filename}")
+                            file_path = base_path / best_match
+                                
                 except Exception as e:
                     logger.warning(f"Error listing directory: {e}")
             
-            # If still not found after case-insensitive check, raise 404
+            # If still not found after all matching attempts, raise 404
             if not file_path.exists():
                 raise HTTPException(status_code=404, detail=f"File not found: {safe_filename}")
         

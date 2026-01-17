@@ -1,6 +1,7 @@
 """
 Mail Router - API endpoints for email functionality.
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, RedirectResponse, FileResponse
 from sqlalchemy.orm import Session
@@ -13,6 +14,8 @@ from app.auth import get_current_user
 from app.models import User
 from app.services.mail_service import get_attachment, get_user_mail_accounts, sanitize_filename
 from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/mail", tags=["mail"])
 
@@ -73,7 +76,9 @@ async def serve_saved_attachment(
     from urllib.parse import unquote
     try:
         decoded_username = unquote(username)
-    except:
+        logger.debug(f"Serving mail attachment: username={username} (decoded={decoded_username}), filename={filename}")
+    except Exception as e:
+        logger.warning(f"Error decoding username {username}: {e}")
         decoded_username = username
     
     # Verify user owns this file (username must match after decoding)
@@ -103,11 +108,50 @@ async def serve_saved_attachment(
     
     # Validate path is within expected directory
     base_path = Path(storage.upload_path) / decoded_username / "temp" / "mail_attachments"
+    logger.debug(f"Looking for mail attachment: file_path={file_path}, base_path={base_path}, base_exists={base_path.exists()}")
+    
     if not _validate_path_within_base(file_path, base_path):
+        logger.error(f"Invalid file path (path traversal attempt?): {file_path} not within {base_path}")
         raise HTTPException(status_code=403, detail="Invalid file path")
     
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Attachment not found")
+        # Try to find the file with case-insensitive or partial matching
+        if base_path.exists():
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Mail attachment not found: {safe_filename}, checking directory: {base_path}")
+            
+            try:
+                files_in_dir = [f.name for f in base_path.iterdir() if f.is_file()]
+                logger.warning(f"Files in mail_attachments directory: {files_in_dir[:10]}")
+                
+                # Try case-insensitive match
+                for f in files_in_dir:
+                    if f.lower() == safe_filename.lower():
+                        logger.warning(f"Found case-insensitive match: {f} vs {safe_filename}")
+                        file_path = base_path / f
+                        break
+                
+                # If still not found, try partial match (filename contains the requested name)
+                if not file_path.exists():
+                    safe_base = Path(safe_filename).stem.lower()
+                    safe_ext = Path(safe_filename).suffix.lower()
+                    
+                    for f in files_in_dir:
+                        f_base = Path(f).stem.lower()
+                        f_ext = Path(f).suffix.lower()
+                        
+                        # Match if extension matches and base name is contained
+                        if f_ext == safe_ext and (safe_base in f_base or f_base in safe_base):
+                            logger.warning(f"Found partial match: {f} vs {safe_filename}")
+                            file_path = base_path / f
+                            break
+            except Exception as e:
+                logger.error(f"Error listing mail_attachments directory: {e}", exc_info=True)
+        
+        # If still not found after matching attempts, raise 404
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"Attachment not found: {safe_filename}")
     
     # Determine content type
     suffix = file_path.suffix.lower()
