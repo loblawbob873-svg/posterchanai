@@ -178,11 +178,11 @@
 .file-manager-search {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     flex: 1;
-    min-width: 200px;
-    max-width: 400px;
-    margin: 0 8px;
+    min-width: 120px;
+    max-width: 300px;
+    margin: 0 4px;
     flex-shrink: 1;
 }
 
@@ -207,20 +207,21 @@
 }
 
 .file-manager-toolbar {
-    padding: 12px 20px;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--border-color);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     flex-wrap: wrap;
-    min-height: 60px;
+    min-height: auto;
 }
 
 .file-toolbar-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
+    flex-shrink: 0;
 }
 
 .btn-icon {
@@ -253,28 +254,27 @@
 .file-selection-controls {
     display: flex;
     align-items: center;
-    gap: 6px;
-    flex: 1;
-    justify-content: flex-end;
-    flex-wrap: wrap;
+    gap: 4px;
+    flex-wrap: nowrap;
 }
 
 .file-selection-controls .btn-icon-only {
-    min-width: 32px;
-    height: 32px;
-    padding: 6px;
-    font-size: 16px;
+    min-width: 28px;
+    height: 28px;
+    padding: 4px;
+    font-size: 14px;
 }
 
 .selection-count {
     color: var(--text-secondary);
-    font-size: 12px;
-    margin-left: 4px;
-    padding: 4px 8px;
+    font-size: 11px;
+    margin-left: 2px;
+    padding: 2px 6px;
     background: var(--bg-secondary);
     border-radius: 4px;
-    min-width: 24px;
+    min-width: 20px;
     text-align: center;
+    flex-shrink: 0;
 }
 
 .btn-danger {
@@ -393,16 +393,38 @@
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
-/* Responsive styles for medium and small windows */
+/* Responsive styles for medium windows (laptops, small screens) */
+@media (max-width: 1400px) {
+    .file-manager-toolbar {
+        padding: 8px 12px;
+        gap: 6px;
+    }
+    
+    .file-manager-search {
+        min-width: 100px;
+        max-width: 200px;
+    }
+    
+    .file-search-input {
+        font-size: 13px;
+        padding: 6px 10px;
+    }
+    
+    .tab-btn {
+        padding: 5px 10px;
+        font-size: 12px;
+    }
+}
+
+/* Tablet / small laptop */
 @media (max-width: 1200px) {
     #fileManagerOverlay .modal-header {
-        padding: 12px 16px;
-        gap: 8px;
-        grid-template-columns: auto 1fr auto;
+        padding: 10px 14px;
+        gap: 6px;
     }
     
     #fileManagerOverlay .modal-header h2 {
-        font-size: 18px;
+        font-size: 16px;
     }
     
     .file-manager-header-actions {
@@ -410,37 +432,45 @@
     }
     
     .file-manager-header-actions .btn-icon-only {
-        min-width: 32px;
-        height: 32px;
-        padding: 6px;
-        font-size: 16px;
+        min-width: 30px;
+        height: 30px;
+        padding: 5px;
+        font-size: 15px;
     }
     
     .file-manager-toolbar {
-        gap: 8px;
-        padding: 10px 16px;
-    }
-    
-    .file-selection-controls {
-        gap: 4px;
+        gap: 6px;
+        padding: 6px 10px;
     }
     
     .file-selection-controls .btn-icon-only {
-        min-width: 28px;
-        height: 28px;
+        min-width: 26px;
+        height: 26px;
         padding: 4px;
-        font-size: 14px;
+        font-size: 13px;
     }
     
     .file-manager-search {
-        min-width: 150px;
-        max-width: 300px;
-        margin: 0 6px;
+        min-width: 80px;
+        max-width: 150px;
+        margin: 0 2px;
     }
     
-    .selection-count {
+    .file-search-input {
         font-size: 12px;
-        margin-left: 4px;
+        padding: 5px 8px;
+    }
+    
+    .btn-icon {
+        padding: 6px 10px;
+        min-width: 32px;
+        height: 32px;
+        font-size: 14px;
+    }
+    
+    .tab-btn {
+        padding: 4px 8px;
+        font-size: 11px;
     }
 }
 
@@ -448,13 +478,13 @@
 @media (max-width: 768px) {
     #fileManagerOverlay .modal-header {
         padding: 10px 12px;
-        gap: 8px;
+        gap: 6px;
         grid-template-columns: 1fr auto;
         grid-template-rows: auto auto;
     }
     
     #fileManagerOverlay .modal-header h2 {
-        font-size: 16px;
+        font-size: 15px;
         grid-column: 1;
         grid-row: 1;
     }
@@ -474,10 +504,10 @@
     }
     
     .file-manager-header-actions .btn-icon-only {
-        min-width: 40px;
-        height: 40px;
-        padding: 8px;
-        font-size: 18px;
+        min-width: 36px;
+        height: 36px;
+        padding: 6px;
+        font-size: 16px;
         flex: 0 0 auto;
     }
     
@@ -486,6 +516,7 @@
         max-width: 100%;
         border-right: none;
         border-bottom: 1px solid var(--border-color);
+        padding: 12px;
     }
     
     .file-manager-body {
@@ -493,40 +524,59 @@
     }
     
     .file-manager-toolbar {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 12px;
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+        padding: 8px;
+        flex-wrap: wrap;
     }
     
     .file-manager-tabs {
-        width: 100%;
-        justify-content: flex-start;
+        order: 1;
+        flex: 0 0 auto;
     }
     
-    .file-selection-controls {
-        flex-wrap: wrap;
-        gap: 8px;
-        width: 100%;
-        justify-content: flex-start;
-    }
-    
-    .file-selection-controls .btn-secondary,
-    .file-selection-controls .btn-danger {
-        font-size: 12px;
+    .tab-btn {
         padding: 6px 10px;
-        flex: 1 1 auto;
-        min-width: calc(50% - 4px);
+        font-size: 11px;
     }
     
     .file-manager-search {
-        width: 100%;
-        max-width: 100%;
+        order: 2;
+        flex: 1 1 auto;
+        min-width: 100px;
+        max-width: none;
         margin: 0;
     }
     
+    .file-search-input {
+        font-size: 12px;
+        padding: 6px 8px;
+    }
+    
+    .file-selection-controls {
+        order: 3;
+        flex: 0 0 auto;
+        flex-wrap: nowrap;
+        gap: 4px;
+    }
+    
+    .file-selection-controls .btn-icon-only {
+        min-width: 32px;
+        height: 32px;
+        padding: 6px;
+        font-size: 14px;
+    }
+    
     .file-toolbar-actions {
-        width: 100%;
-        justify-content: flex-end;
+        order: 4;
+        flex: 0 0 auto;
+    }
+    
+    .btn-icon {
+        min-width: 32px;
+        height: 32px;
+        padding: 6px 8px;
     }
     
     .mobile-upload-area {
@@ -545,6 +595,48 @@
     .mobile-upload-btn {
         padding: 10px 20px;
         font-size: 13px;
+    }
+}
+
+/* Very small mobile screens */
+@media (max-width: 480px) {
+    .file-manager-toolbar {
+        padding: 6px;
+        gap: 4px;
+    }
+    
+    .file-manager-tabs {
+        width: 100%;
+        order: 1;
+    }
+    
+    .tab-btn {
+        flex: 1;
+        padding: 6px 8px;
+        font-size: 10px;
+    }
+    
+    .file-manager-search {
+        width: 100%;
+        order: 2;
+        margin: 4px 0;
+    }
+    
+    .file-selection-controls {
+        order: 3;
+        justify-content: space-between;
+        width: 100%;
+    }
+    
+    .file-selection-controls .btn-icon-only {
+        min-width: 36px;
+        height: 36px;
+    }
+    
+    .file-toolbar-actions {
+        order: 4;
+        justify-content: flex-end;
+        margin-left: auto;
     }
 }
 
@@ -1094,19 +1186,20 @@
 /* File Manager Tabs */
 .file-manager-tabs {
     display: flex;
-    gap: 8px;
-    margin-right: auto;
+    gap: 4px;
+    flex-shrink: 0;
 }
 
 .tab-btn {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     color: var(--text-primary);
-    padding: 8px 16px;
+    padding: 6px 12px;
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.2s;
-    font-size: 14px;
+    font-size: 13px;
+    white-space: nowrap;
 }
 
 .tab-btn:hover {
