@@ -532,13 +532,16 @@ async def list_files(
         
         return {
             "items": items,
-            "path": path,
-            "usage": {
+            "path": path if path else "",
+            "is_external": False,
+            "external_name": None,
+            "storage": {
                 "used": current_usage,
-                "quota": user_quota
-            },
-            "current_usage": current_usage,  # Keep for backward compatibility
-            "quota": user_quota  # Keep for backward compatibility
+                "quota": user_quota,
+                "quota_mb": user_quota / (1024 * 1024) if user_quota > 0 else 0,
+                "used_mb": current_usage / (1024 * 1024),
+                "unlimited": user_quota == 0
+            }
         }
     except Exception as e:
         logger.error(f"Error listing files: {e}", exc_info=True)
