@@ -1351,54 +1351,49 @@ class NotesManager {
         const name = prompt('Enter folder name:');
         if (!name) return;
         
-        // Use csrfFetch if available, otherwise use fetch with manual CSRF token
+        // Always manually get and send CSRF token to ensure it's sent
         try {
-            let response;
-            if (typeof csrfFetch !== 'undefined' && typeof window.csrfFetch !== 'undefined') {
-                // Use csrfFetch which handles CSRF automatically
-                console.log('Using csrfFetch for folder creation');
-                console.log('csrfFetch type:', typeof csrfFetch);
-                console.log('window.csrfFetch type:', typeof window.csrfFetch);
-                response = await csrfFetch('/api/notes/folders', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({ name: name.trim() })
-                });
-            } else {
-                // Fallback: manually get and send CSRF token
-                console.log('csrfFetch not available, using manual CSRF token');
-                let csrfToken = null;
+            let csrfToken = null;
+            if (typeof getCSRFToken !== 'undefined') {
+                csrfToken = getCSRFToken();
+            } else if (typeof window.getCSRFToken !== 'undefined') {
+                csrfToken = window.getCSRFToken();
+            }
+            
+            // If no token, try to get it by making a GET request first
+            if (!csrfToken) {
+                console.log('CSRF token not found, fetching...');
+                await fetch('/', { method: 'GET', credentials: 'include' });
+                await new Promise(resolve => setTimeout(resolve, 300));
                 if (typeof getCSRFToken !== 'undefined') {
                     csrfToken = getCSRFToken();
+                } else if (typeof window.getCSRFToken !== 'undefined') {
+                    csrfToken = window.getCSRFToken();
                 }
-                
-                // If no token, try to get it by making a GET request first
-                if (!csrfToken) {
-                    console.log('CSRF token not found, fetching...');
-                    await fetch('/', { method: 'GET', credentials: 'include' });
-                    await new Promise(resolve => setTimeout(resolve, 200));
-                    if (typeof getCSRFToken !== 'undefined') {
-                        csrfToken = getCSRFToken();
-                    }
-                }
-                
-                if (!csrfToken) {
-                    this.showToast('Error: CSRF token not available. Please refresh the page.', 'error');
-                    return;
-                }
-                
-                const headers = new Headers();
-                headers.set('Content-Type', 'application/json');
-                headers.set('X-CSRF-Token', csrfToken);
-                
-                response = await fetch('/api/notes/folders', {
-                    method: 'POST',
-                    headers: headers,
-                    credentials: 'include',
-                    body: JSON.stringify({ name: name.trim() })
-                });
             }
+            
+            if (!csrfToken) {
+                console.log('CSRF token found:', csrfToken.substring(0, 8) + '...');
+            } else {
+                console.error('CSRF token still not available after retry');
+                console.error('Available cookies:', document.cookie);
+                this.showToast('Error: CSRF token not available. Please refresh the page.', 'error');
+                return;
+            }
+            
+            // Build headers with CSRF token
+            const headers = new Headers();
+            headers.set('Content-Type', 'application/json');
+            headers.set('X-CSRF-Token', csrfToken);
+            
+            console.log('Sending request with headers:', Object.fromEntries(headers.entries()));
+            
+            const response = await fetch('/api/notes/folders', {
+                method: 'POST',
+                headers: headers,
+                credentials: 'include',
+                body: JSON.stringify({ name: name.trim() })
+            });
             
             if (response.ok) {
                 this.loadFolders();
