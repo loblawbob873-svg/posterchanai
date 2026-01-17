@@ -79,7 +79,12 @@ async def proxy_storage_request(
         headers["Range"] = request.headers["range"]
     
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        # Configure httpx client with proper connection settings
+        async with httpx.AsyncClient(
+            timeout=60.0,
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+            http2=False  # Disable HTTP/2 to avoid connection issues
+        ) as client:
             # Determine auth method for logging
             if storage_server_token and storage_server_token.value:
                 auth_method = 'server-token'
@@ -182,6 +187,8 @@ async def proxy_storage_request(
         raise HTTPException(status_code=504, detail="Storage server timeout")
     except httpx.ConnectError as e:
         logger.error(f"[STORAGE] Cannot connect to storage server: {e}")
+        logger.error(f"[STORAGE] Attempted URL: {url}")
+        logger.error(f"[STORAGE] Error details: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=503, detail=f"Cannot reach storage server: {e}")
     except HTTPException:
         raise
