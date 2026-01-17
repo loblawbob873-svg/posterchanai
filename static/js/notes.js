@@ -301,36 +301,45 @@ class NotesManager {
         if (!contentInput || !contentPreview) return;
         
         const markdown = contentInput.value;
-        const rendered = this.renderMarkdown(markdown);
+        let rendered = this.renderMarkdown(markdown);
+        
+        // Fix old Joplin resource URLs in the HTML string BEFORE setting innerHTML
+        // This prevents the browser from trying to load them
+        const placeholder = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+        
+        // Replace old Joplin resource URLs in img src attributes in the HTML string
+        rendered = rendered.replace(/<img([^>]*)\ssrc=["']([^"']+)["']([^>]*)>/gi, (match, before, src, after) => {
+            // Check for old Joplin resource format (:/[32-char-hex] or bare [32-char-hex])
+            const isOldFormat = src.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(src);
+            const isBareFormat = /^[a-f0-9]{32}$/.test(src);
+            
+            if (isOldFormat || isBareFormat) {
+                return `<img${before} src="${placeholder}"${after}>`;
+            }
+            return match;
+        });
+        
+        // Also replace any remaining :/[resource-id] patterns that might be in the HTML
+        rendered = rendered.replace(/:\/([a-f0-9]{32})/g, () => placeholder);
+        
         contentPreview.innerHTML = rendered;
         
-        // After rendering, fix any remaining old Joplin resource URLs in img tags
-        // This handles cases where HTML img tags might have been in the original content
-        // Use setTimeout to ensure DOM is fully updated
-        setTimeout(() => {
-            const imgs = contentPreview.querySelectorAll('img');
-            const placeholder = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+        // Double-check after rendering to catch any that slipped through
+        const imgs = contentPreview.querySelectorAll('img');
+        imgs.forEach(img => {
+            const src = img.getAttribute('src') || img.src;
+            if (!src) return;
             
-            imgs.forEach(img => {
-                const src = img.getAttribute('src') || img.src;
-                if (!src) return;
-                
-                // Check for old Joplin resource format (:/[32-char-hex] or bare [32-char-hex])
-                const isOldFormat = src.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(src);
-                const isBareFormat = /^[a-f0-9]{32}$/.test(src);
-                
-                if (isOldFormat || isBareFormat) {
-                    console.error('Found old Joplin resource URL in img tag:', src);
-                    // Replace with placeholder immediately - use both methods for reliability
-                    img.src = placeholder;
-                    img.setAttribute('src', placeholder);
-                    img.setAttribute('alt', 'Image not found (old Joplin resource)');
-                    img.removeAttribute('onerror'); // Remove any error handlers
-                    img.onerror = null; // Clear error handler
-                    console.log('✓ Replaced old Joplin resource URL with placeholder:', src);
-                }
-            });
-        }, 0);
+            const isOldFormat = src.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(src);
+            const isBareFormat = /^[a-f0-9]{32}$/.test(src);
+            
+            if (isOldFormat || isBareFormat) {
+                img.src = placeholder;
+                img.setAttribute('src', placeholder);
+                img.setAttribute('alt', 'Image not found (old Joplin resource)');
+                img.onerror = null;
+            }
+        });
     }
     
     renderMarkdown(text) {
@@ -350,10 +359,7 @@ class NotesManager {
             }
         }
         
-        // Validate username (basic check)
-        if (!username || username === 'user' || username.length === 0) {
-            console.warn('Could not determine username for image URLs, using fallback');
-        }
+        // Validate username (basic check - fallback to 'user' if not found)
         
         const noteId = this.currentNoteId;
         
@@ -370,32 +376,25 @@ class NotesManager {
         const videos = [];
         processed = processed.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, src) => {
             let mediaSrc = src;
-            console.log('Processing media reference:', { alt, src, noteId, username, match });
             
             // If it's already an /api/ URL, use it as-is (might be from migration)
             if (src.startsWith('/api/notes/files/')) {
                 // Already a proper URL, use it
                 mediaSrc = src;
-                console.log('Using existing /api/ URL:', mediaSrc);
             } else if (src.startsWith('http://') || src.startsWith('https://')) {
                 // External URL, use as-is
                 mediaSrc = src;
-                console.log('Using external URL:', mediaSrc);
             } else if ((src.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(src)) || /^[a-f0-9]{32}$/.test(src)) {
-                // Old Joplin resource format - check both :/ prefix and bare format
-                console.error('Old Joplin resource URL found in image:', src, '- This should have been converted during migration');
-                // Return placeholder - the resource doesn't exist in new format
+                // Old Joplin resource format - return placeholder
                 mediaSrc = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
             } else {
                 // Relative path or filename - convert to note attachment URL
                 const filename = src.replace(/^\.\//, '').split('/').pop();
                 if (noteId) {
                     mediaSrc = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
-                    console.log('Converted relative path to URL:', { original: src, filename, mediaSrc });
                 } else {
-                    console.warn('Cannot convert media URL - noteId is missing', { src, username });
-                    // Try to extract noteId from existing /api/ URLs in the content as fallback
-                    mediaSrc = src; // Keep original, might work if it's already a valid path
+                    // Keep original, might work if it's already a valid path
+                    mediaSrc = src;
                 }
             }
             
@@ -420,9 +419,7 @@ class NotesManager {
             const index = links.length;
             // Check if this is an old Joplin resource URL (:/[resource-id])
             if (url.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(url)) {
-                // Old Joplin resource format - log warning but don't convert (migration should have handled this)
-                console.warn('Old Joplin resource URL found in note content:', url, '- This should have been converted during migration');
-                // Return as-is (will result in 404, but that's expected for unmigrated resources)
+                // Old Joplin resource format - return as-is (will result in 404, but that's expected for unmigrated resources)
                 links.push({ text, url, external: false });
             } else {
                 const isExternal = url.startsWith('http') || url.startsWith('//');
@@ -542,24 +539,21 @@ class NotesManager {
         html = html.replace(/\x00VIDEO(\d+)\x00/g, (match, index) => {
             const vidIndex = parseInt(index);
             if (!videos || !videos[vidIndex]) {
-                console.error('Video not found in array:', { index: vidIndex, videosLength: videos ? videos.length : 0 });
                 return `[Video ${vidIndex} not found]`;
             }
             const vid = videos[vidIndex];
             if (!vid || !vid.src) {
-                console.error('Video object invalid:', { vidIndex, vid, videos });
                 return `[Video ${vidIndex} invalid]`;
             }
             const safeAlt = this.escapeHtml(vid.alt || '');
             const safeSrc = vid.src; // Don't escape URL - it's already a valid URL string
-            console.log('Rendering video:', { index: vidIndex, alt: safeAlt, src: safeSrc });
             
             // Add cache busting
             const cacheBust = safeSrc.includes('?') ? '&' : '?';
             const vidSrc = `${safeSrc}${cacheBust}t=${Date.now()}`;
             
             // Create HTML5 video player with controls
-            return `<video src="${vidSrc}" controls style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);" onerror="console.error('Failed to load video:', this.src);" onloadstart="console.log('Loading video:', this.src);">Your browser does not support the video tag.</video>`;
+            return `<video src="${vidSrc}" controls style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);">Your browser does not support the video tag.</video>`;
         });
         
         // Restore images as HTML img tags (after escaping, so they're not escaped)
@@ -567,23 +561,14 @@ class NotesManager {
         html = html.replace(/\x00IMAGE(\d+)\x00/g, (match, index) => {
             const imgIndex = parseInt(index);
             if (!images || !images[imgIndex]) {
-                console.error('Image not found in array:', { 
-                    index: imgIndex, 
-                    imagesLength: images ? images.length : 0, 
-                    images,
-                    match,
-                    htmlSnippet: html.substring(Math.max(0, html.indexOf(match) - 50), Math.min(html.length, html.indexOf(match) + 50))
-                });
                 return `[Image ${imgIndex} not found]`;
             }
             const img = images[imgIndex];
             if (!img || !img.src) {
-                console.error('Image object invalid:', { imgIndex, img, images });
                 return `[Image ${imgIndex} invalid]`;
             }
             const safeAlt = this.escapeHtml(img.alt || '');
             const safeSrc = img.src; // Don't escape URL - it's already a valid URL string
-            console.log('Rendering image:', { index: imgIndex, alt: safeAlt, src: safeSrc, img, imagesLength: images.length });
             
             // Add cache busting and error handling
             const cacheBust = safeSrc.includes('?') ? '&' : '?';
@@ -596,7 +581,7 @@ class NotesManager {
             // For GIFs, ensure they can animate properly and don't get optimized away
             // Add loading="lazy" for better performance, but ensure GIFs animate
             const gifStyle = isGif ? ' image-rendering: auto;' : '';
-            return `<img src="${imgSrc}" alt="${safeAlt}" loading="lazy" style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);${gifStyle}" onerror="console.error('Failed to load image:', this.src); this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iIzJhMmEzZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM4ODg4YWEiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';" onload="console.log('Image loaded successfully:', this.src);">`;
+            return `<img src="${imgSrc}" alt="${safeAlt}" loading="lazy" style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);${gifStyle}" onerror="this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iIzJhMmEzZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM4ODg4YWEiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';">`;
         });
         
         // Restore links (after escaping, so they're not escaped)
@@ -859,20 +844,18 @@ class NotesManager {
         
         // Ensure csrfFetch is available
         if (typeof csrfFetch === 'undefined') {
-            console.error('csrfFetch is not available, falling back to fetch');
+            // csrfFetch not available, fallback to fetch
             alert('Error: CSRF protection not loaded. Please refresh the page.');
             return;
         }
         
         try {
-            console.log('Creating folder:', name.trim());
             const response = await csrfFetch('/api/notes/folders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: name.trim() })
             });
             
-            console.log('Folder creation response status:', response.status);
             
             if (response.ok) {
                 this.loadFolders();
@@ -908,7 +891,6 @@ class NotesManager {
             editBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                console.log('Edit button clicked');
                 this.setEditorMode('edit');
             });
             editBtn.dataset.listenerAttached = 'true';
@@ -918,7 +900,6 @@ class NotesManager {
             previewBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                console.log('Preview button clicked');
                 this.setEditorMode('preview');
             });
             previewBtn.dataset.listenerAttached = 'true';
@@ -930,7 +911,6 @@ class NotesManager {
             attachBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                console.log('Attach button clicked');
                 this.showAttachmentDialog();
             });
             attachBtn.dataset.listenerAttached = 'true';
@@ -940,14 +920,12 @@ class NotesManager {
     async handlePaste(e) {
         const items = e.clipboardData?.items;
         if (!items) {
-            console.log('No clipboard items found');
             return;
         }
         
         // Check if we're in the note content input
         const contentInput = document.getElementById('noteContentInput');
         if (!contentInput || document.activeElement !== contentInput) {
-            console.log('Not pasting into note editor');
             return; // Not pasting into note editor
         }
         
@@ -961,19 +939,16 @@ class NotesManager {
         }
         
         if (!hasImage) {
-            console.log('No image in clipboard');
             return; // Not an image, allow normal paste
         }
         
         // Prevent default paste behavior for images
         e.preventDefault();
-        console.log('Processing pasted image...');
         
         // Check if we have a note open
         if (!this.currentNoteId) {
             // If no note is open, create a new one in the database first
             try {
-                console.log('Creating new note for pasted image...');
                 // Create a new note with a default title
                 const title = 'Untitled Note';
                 const content = '';
@@ -1006,7 +981,6 @@ class NotesManager {
                     document.getElementById('notesEditor').style.display = 'block';
                     this.setEditorMode('edit');
                     
-                    console.log('Note created, processing paste...');
                     // Now process the paste
                     await this.processPastedImage(items);
                 } else {
@@ -1019,7 +993,6 @@ class NotesManager {
             }
         } else {
             // Note exists, process paste normally
-            console.log('Note exists, processing paste...');
             await this.processPastedImage(items);
         }
     }
@@ -1030,7 +1003,6 @@ class NotesManager {
             if (item.type.indexOf('image') !== -1) {
                 const file = item.getAsFile();
                 if (file) {
-                    console.log('Pasted image:', file.name || 'pasted-image', file.type, file.size);
                     // Generate a filename if none exists
                     if (!file.name) {
                         const ext = file.type.split('/')[1] || 'png';
@@ -1162,11 +1134,8 @@ class NotesManager {
     }
     
     showAttachmentDialog() {
-        console.log('showAttachmentDialog called', { currentNoteId: this.currentNoteId });
-        
         const fileInput = document.getElementById('noteFileInput');
         if (!fileInput) {
-            console.error('File input not found!');
             this.showToast('File input not found', 'error');
             return;
         }
@@ -1174,21 +1143,17 @@ class NotesManager {
         // Check if we have a note open
         if (!this.currentNoteId) {
             // Create a new note first
-            console.log('No note open, creating new note...');
             this.createNote();
             // Wait a moment for the note to be created, then show dialog
             setTimeout(() => {
                 if (this.currentNoteId) {
-                    console.log('Note created, opening file picker...');
                     fileInput.click();
                 } else {
-                    console.error('Failed to create note for attachment');
                     this.showToast('Please create or open a note first', 'error');
                 }
             }, 200);
         } else {
             // Note exists, show file picker
-            console.log('Note exists, opening file picker...');
             fileInput.click();
         }
     }
@@ -1236,7 +1201,6 @@ function initNotesModal() {
     const closeBtn = document.getElementById('closeNotesModal');
     
     if (!notesModal) {
-        console.log('Notes modal not found');
         return;
     }
     
