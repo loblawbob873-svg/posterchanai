@@ -183,12 +183,13 @@ class NotesManager {
         let html = '<div class="notes-folder-item active" data-folder-id="0"><span class="folder-icon">📁</span><span class="folder-name">All Notes</span></div>';
         
         // Render folders (simple flat list for now)
-        this.folders.forEach(folder => {
+        // Filter out empty folders (folders with 0 notes)
+        this.folders.filter(folder => folder.notes_count > 0).forEach(folder => {
             html += `
                 <div class="notes-folder-item" data-folder-id="${folder.id}">
                     <span class="folder-icon">📂</span>
                     <span class="folder-name">${this.escapeHtml(folder.name)}</span>
-                    ${folder.notes_count > 0 ? `<span class="folder-count">${folder.notes_count}</span>` : ''}
+                    <span class="folder-count">${folder.notes_count}</span>
                 </div>
             `;
         });
@@ -492,9 +493,63 @@ class NotesManager {
                 }
             }
             
+            // Add cache busting to existing /api/notes/files/ URLs and ensure proper encoding
+            if (src.startsWith('/api/notes/files/')) {
+                // Parse the URL to check encoding
+                const urlParts = src.split('/');
+                if (urlParts.length >= 6) {
+                    const usernamePart = urlParts[4];
+                    const noteIdPart = urlParts[5];
+                    const filenamePart = urlParts[6]?.split('?')[0] || '';
+                    
+                    // Check if username needs encoding (has @ but not %40)
+                    if (usernamePart.includes('@') && !usernamePart.includes('%40')) {
+                        const encodedUsername = encodeURIComponent(decodeURIComponent(usernamePart));
+                        const newUrl = `/api/notes/files/${encodedUsername}/${noteIdPart}/${filenamePart}`;
+                        img.src = newUrl;
+                        img.setAttribute('src', newUrl);
+                    }
+                    
+                    // Check if filename needs encoding (has special chars but not encoded)
+                    if (filenamePart && !filenamePart.includes('%') && /[^a-zA-Z0-9._-]/.test(filenamePart)) {
+                        const encodedFilename = encodeURIComponent(filenamePart);
+                        const encodedUsername = urlParts[4].includes('%40') ? urlParts[4] : encodeURIComponent(decodeURIComponent(urlParts[4]));
+                        const newUrl = `/api/notes/files/${encodedUsername}/${noteIdPart}/${encodedFilename}`;
+                        img.src = newUrl;
+                        img.setAttribute('src', newUrl);
+                    }
+                }
+                
+                // Add cache busting if not present
+                const currentSrc = img.getAttribute('src') || img.src;
+                if (!currentSrc.includes('?t=') && !currentSrc.includes('&t=')) {
+                    const cacheBust = currentSrc.includes('?') ? '&' : '?';
+                    const newSrc = `${currentSrc}${cacheBust}t=${Date.now()}`;
+                    img.src = newSrc;
+                    img.setAttribute('src', newSrc);
+                }
+            }
+            
             // Add error handler to log failures
             img.onerror = function() {
                 console.error('Image failed to load:', this.src);
+                // Try to fix URL encoding if it failed
+                const failedSrc = this.src;
+                if (failedSrc.startsWith('/api/notes/files/')) {
+                    const urlParts = failedSrc.split('/');
+                    if (urlParts.length >= 6) {
+                        const usernamePart = urlParts[4];
+                        const noteIdPart = urlParts[5];
+                        const filenamePart = urlParts[6]?.split('?')[0] || '';
+                        
+                        // Re-encode everything properly
+                        const encodedUsername = encodeURIComponent(decodeURIComponent(usernamePart));
+                        const encodedFilename = encodeURIComponent(decodeURIComponent(filenamePart));
+                        const fixedUrl = `/api/notes/files/${encodedUsername}/${noteIdPart}/${encodedFilename}?t=${Date.now()}`;
+                        console.log('Attempting to fix image URL:', { original: failedSrc, fixed: fixedUrl });
+                        this.src = fixedUrl;
+                    }
+                }
             };
         });
         
