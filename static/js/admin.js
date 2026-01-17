@@ -127,6 +127,7 @@ async function loadUsers() {
                                placeholder="MB (0=unlimited)">
                         <button class="btn-secondary btn-small" onclick="updateStorageQuota(${u.id}, '${escapeHtml(u.username)}')">Set</button>
                         <button class="btn-secondary btn-small" onclick="rescanUserStorage(${u.id}, '${escapeHtml(u.username)}')" title="Rescan this user's file storage">🔄 Rescan</button>
+                        <button class="btn-secondary btn-small" onclick="generateThumbnailsForUser(${u.id}, '${escapeHtml(u.username)}')" title="Generate thumbnails for this user's images">🖼️ Thumbnails</button>
                     </div>
                     <button class="btn-secondary btn-small" onclick="resetPassword(${u.id}, '${escapeHtml(u.username)}')">Reset Password</button>
                     <button class="btn-danger btn-small" onclick="deleteUser(${u.id})">Delete</button>
@@ -308,6 +309,115 @@ document.getElementById('rescanUserStorageBtn')?.addEventListener('click', async
     }
 });
 
+// Thumbnail generation functionality
+document.getElementById('generateThumbnailsAllBtn')?.addEventListener('click', async () => {
+    if (!confirm('Generate thumbnails for all users? This may take a while for users with many images.')) {
+        return;
+    }
+    
+    const statusDiv = document.getElementById('thumbnailGenerationStatus');
+    statusDiv.style.display = 'block';
+    statusDiv.innerHTML = '<div style="color: #4a9eff;">⏳ Generating thumbnails for all users...</div>';
+    
+    try {
+        const response = await csrfFetch('/api/admin/generate-thumbnails', {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            let html = `<div style="color: #4ade80; margin-bottom: 12px;">✅ ${data.message}</div>`;
+            
+            if (data.summary) {
+                html += `<div style="background: #1a1a2e; padding: 12px; border-radius: 6px; margin-top: 8px;">
+                    <strong>Summary:</strong><br>
+                    • Total users: ${data.summary.total_users}<br>
+                    • Successful: ${data.summary.successful_users}<br>
+                    • Failed: ${data.summary.failed_users}<br>
+                    • Thumbnails generated: ${data.summary.total_thumbnails_generated.toLocaleString()}<br>
+                    • Failed: ${data.summary.total_failed.toLocaleString()}
+                </div>`;
+            }
+            
+            if (data.results && data.results.length > 0) {
+                html += `<details style="margin-top: 12px;">
+                    <summary style="cursor: pointer; color: #888; user-select: none;">View detailed results</summary>
+                    <div style="margin-top: 8px; max-height: 300px; overflow-y: auto; background: #1a1a2e; padding: 12px; border-radius: 6px;">
+                `;
+                for (const result of data.results) {
+                    if (result.status === 'success') {
+                        html += `<div style="color: #4ade80; margin-bottom: 4px;">
+                            ${result.username}: ${result.successful} generated, ${result.failed} failed
+                        </div>`;
+                    } else {
+                        html += `<div style="color: #ff6b6b; margin-bottom: 4px;">
+                            ${result.username}: Error - ${result.error || 'Unknown error'}
+                        </div>`;
+                    }
+                }
+                html += `</div></details>`;
+            }
+            
+            statusDiv.innerHTML = html;
+        } else {
+            const error = await response.json();
+            statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${error.detail || 'Failed to generate thumbnails'}</div>`;
+        }
+    } catch (err) {
+        console.error('Thumbnail generation error:', err);
+        statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${err.message}</div>`;
+    }
+});
+
+// Generate thumbnails for specific user (will be shown when a user is selected)
+document.getElementById('generateThumbnailsUserBtn')?.addEventListener('click', async () => {
+    const selectedUserId = window.selectedUserIdForThumbnails;
+    if (!selectedUserId) {
+        alert('Please select a user first');
+        return;
+    }
+    
+    if (!confirm(`Generate thumbnails for selected user? This may take a moment if there are many images.`)) {
+        return;
+    }
+    
+    const statusDiv = document.getElementById('thumbnailGenerationStatus');
+    statusDiv.style.display = 'block';
+    statusDiv.innerHTML = '<div style="color: #4a9eff;">⏳ Generating thumbnails...</div>';
+    
+    try {
+        const response = await csrfFetch(`/api/admin/generate-thumbnails?user_id=${selectedUserId}`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            let html = `<div style="color: #4ade80; margin-bottom: 12px;">✅ ${data.message}</div>`;
+            
+            if (data.results && data.results.length > 0) {
+                const result = data.results[0];
+                if (result.status === 'success') {
+                    html += `<div style="background: #1a1a2e; padding: 12px; border-radius: 6px; margin-top: 8px;">
+                        <strong>Results for ${result.username}:</strong><br>
+                        • Thumbnails generated: ${result.successful.toLocaleString()}<br>
+                        • Failed: ${result.failed.toLocaleString()}
+                    </div>`;
+                } else {
+                    html += `<div style="color: #ff6b6b; margin-top: 8px;">Error: ${result.error || 'Unknown error'}</div>`;
+                }
+            }
+            
+            statusDiv.innerHTML = html;
+        } else {
+            const error = await response.json();
+            statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${error.detail || 'Failed to generate thumbnails'}</div>`;
+        }
+    } catch (err) {
+        console.error('Thumbnail generation error:', err);
+        statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${err.message}</div>`;
+    }
+});
+
 async function updateStorageQuota(userId, username) {
     const quotaInput = document.getElementById(`quota_${userId}`);
     const quota_mb = parseFloat(quotaInput.value);
@@ -353,6 +463,37 @@ async function rescanUserStorage(userId, username) {
                 if (result.status === 'success') {
                     alert(`Storage rescanned for ${username}:\n• ${result.files.toLocaleString()} files\n• ${result.directories.toLocaleString()} directories`);
                 } else {
+                    alert(`Error: ${result.error || 'Unknown error'}`);
+                }
+            } else {
+                alert('Rescan completed');
+            }
+        } else {
+            const error = await response.json();
+            alert(`Failed: ${error.detail || 'Unknown error'}`);
+        }
+    } catch (err) {
+        alert(`Error: ${err.message}`);
+    }
+}
+
+async function generateThumbnailsForUser(userId, username) {
+    if (!confirm(`Generate thumbnails for all images for user "${username}"? This may take a moment if there are many images.`)) {
+        return;
+    }
+    
+    try {
+        const response = await csrfFetch(`/api/admin/generate-thumbnails?user_id=${userId}`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.results && data.results.length > 0) {
+                const result = data.results[0];
+                if (result.status === 'success') {
+                    alert(`Thumbnails generated for ${username}:\n• ${result.successful.toLocaleString()} generated\n• ${result.failed.toLocaleString()} failed`);
+                } else {
                     alert(`Error rescanning storage for ${username}: ${result.error || 'Unknown error'}`);
                 }
             } else {
@@ -364,6 +505,39 @@ async function rescanUserStorage(userId, username) {
         }
     } catch (err) {
         console.error('Storage rescan error:', err);
+        alert(`Error: ${err.message}`);
+    }
+}
+
+// Generate thumbnails for a specific user
+async function generateThumbnailsForUser(userId, username) {
+    if (!confirm(`Generate thumbnails for all images for user "${username}"? This may take a moment if there are many images.`)) {
+        return;
+    }
+    
+    try {
+        const response = await csrfFetch(`/api/admin/generate-thumbnails?user_id=${userId}`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.results && data.results.length > 0) {
+                const result = data.results[0];
+                if (result.status === 'success') {
+                    alert(`Thumbnails generated for ${username}:\n• ${result.successful.toLocaleString()} generated\n• ${result.failed.toLocaleString()} failed`);
+                } else {
+                    alert(`Error generating thumbnails for ${username}: ${result.error || 'Unknown error'}`);
+                }
+            } else {
+                alert(data.message || 'Thumbnail generation completed');
+            }
+        } else {
+            const error = await response.json();
+            alert(`Error: ${error.detail || 'Failed to generate thumbnails'}`);
+        }
+    } catch (err) {
+        console.error('Thumbnail generation error:', err);
         alert(`Error: ${err.message}`);
     }
 }

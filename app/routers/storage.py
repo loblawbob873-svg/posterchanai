@@ -63,6 +63,24 @@ async def save_image(
     
     file_path = await asyncio.to_thread(_save_image_sync)
     
+    # Generate thumbnail for uploaded image asynchronously (don't block response)
+    try:
+        from app.services.thumbnail_service import is_image_file, generate_thumbnail_for_image
+        from pathlib import Path
+        
+        image_path = Path(file_path)
+        if image_path.exists() and is_image_file(image_path):
+            storage = StorageService(db)
+            user_path = storage.get_user_path(username)
+            
+            # Schedule thumbnail generation in background
+            asyncio.create_task(
+                asyncio.to_thread(generate_thumbnail_for_image, user_path, image_path)
+            )
+            logger.debug(f"Scheduled thumbnail generation for uploaded chat image: {image_path}")
+    except Exception as e:
+        logger.warning(f"Failed to schedule thumbnail generation for {file_path}: {e}")
+    
     # Invalidate file cache for conversations directory (non-blocking)
     # Images are stored in: {upload_path}/{username}/conversations/{conversation_id}/img/
     try:
@@ -233,6 +251,26 @@ async def save_note_attachment(
         # No running event loop - we're likely in a thread pool
         # Just run synchronously since we're already in a separate thread
         filename = _save_attachment_sync()
+    
+    # Generate thumbnail for note attachment images asynchronously (don't block response)
+    try:
+        from app.services.thumbnail_service import is_image_file, generate_thumbnail_for_image
+        from pathlib import Path
+        
+        storage = StorageService(db)
+        note_path = storage.get_note_path(username, note_id)
+        attachment_path = note_path / filename
+        
+        if attachment_path.exists() and is_image_file(attachment_path):
+            user_path = storage.get_user_path(username)
+            
+            # Schedule thumbnail generation in background
+            asyncio.create_task(
+                asyncio.to_thread(generate_thumbnail_for_image, user_path, attachment_path)
+            )
+            logger.debug(f"Scheduled thumbnail generation for note attachment: {attachment_path}")
+    except Exception as e:
+        logger.warning(f"Failed to schedule thumbnail generation for note attachment {filename}: {e}")
     
     # Invalidate file cache for notes directory (non-blocking)
     try:

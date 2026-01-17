@@ -229,6 +229,15 @@
             <small>Rescan file storage to ensure database consistency. Invalidates file cache and recalculates file counts. Use this if files appear missing or storage usage is incorrect.</small>
             <div id="storageRescanStatus" style="margin-top: 12px; display: none;"></div>
         </div>
+        <div class="form-group" style="margin-top: 12px;">
+            <label>Generate Thumbnails</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" class="btn-secondary" id="generateThumbnailsAllBtn">Generate All Users</button>
+                <button type="button" class="btn-secondary" id="generateThumbnailsUserBtn" style="display: none;">Generate Selected User</button>
+            </div>
+            <small>Generate thumbnails for all images in user storage. Thumbnails are stored in <code>.thumbnails</code> folders within user directories. Use this to regenerate thumbnails after changes or if thumbnails are missing.</small>
+            <div id="thumbnailGenerationStatus" style="margin-top: 12px; display: none;"></div>
+        </div>
         <div class="form-group" style="margin-top: 12px; padding: 10px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;">
             <small style="color: #aaa; display: block;">
                 <strong style="color: #4a9eff;">ℹ️ Note:</strong> Rescanning walks through all user files and directories, invalidates the file cache, and ensures the database is consistent with actual file storage. This may take a moment for users with many files.
