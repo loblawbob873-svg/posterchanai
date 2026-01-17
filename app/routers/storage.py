@@ -525,11 +525,20 @@ async def list_files(
         
         current_usage = await asyncio.to_thread(calculate_directory_size, user_path)
         
+        # Get user quota from database
+        from app.models import User
+        user = db.query(User).filter(User.username == username).first()
+        user_quota = user.storage_quota if user else 0
+        
         return {
             "items": items,
             "path": path,
-            "current_usage": current_usage,
-            "quota": 0  # Will be set by the calling endpoint
+            "usage": {
+                "used": current_usage,
+                "quota": user_quota
+            },
+            "current_usage": current_usage,  # Keep for backward compatibility
+            "quota": user_quota  # Keep for backward compatibility
         }
     except Exception as e:
         logger.error(f"Error listing files: {e}", exc_info=True)
