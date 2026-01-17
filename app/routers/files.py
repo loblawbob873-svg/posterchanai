@@ -407,13 +407,14 @@ async def get_all_images(
                     # PIL Image.open() is very slow when scanning thousands of files
                     # We rely on file extension, size checks, and thumbnail_service.is_image_file() instead
                     
+                    # Ensure all values are JSON serializable
                     image_info = {
-                        "name": item.name,
-                        "path": relative_path,
-                        "size": stat.st_size,
+                        "name": str(item.name),
+                        "path": str(relative_path),
+                        "size": int(stat.st_size),
                         "modified": float(modified_time),  # CRITICAL: Ensure it's a float, not string
-                        "modified_date": datetime.fromtimestamp(modified_time).isoformat(),
-                        "type": "image" if is_image else "video" if is_video else "unknown",
+                        "modified_date": str(datetime.fromtimestamp(modified_time).isoformat()),
+                        "type": str("image" if is_image else "video" if is_video else "unknown"),
                     }
                     
                     # Skip loading thumbnails during initial scan for performance
