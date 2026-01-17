@@ -427,6 +427,125 @@ async def delete_note_attachments(
 
 @router.get("/list-files")
 async def list_files(
+    username: str = Query(...),
+    path: str = Query(""),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """
+    List files in user's storage. Called by client nodes when proxying file listings.
+    Only accessible on storage server node.
+    """
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        from fastapi import Request as FastAPIRequest
+        request = FastAPIRequest
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    # Sanitize and validate path
+    target_path = user_path
+    if path:
+        try:
+            safe_path = Path(*[_sanitize_path_component(p) for p in path.split('/') if p])
+            target_path = user_path / safe_path
+            
+            # Validate path is within user directory
+            if not _validate_path_within_base(target_path, user_path):
+                raise HTTPException(status_code=403, detail="Access denied")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    
+    if not target_path.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+    
+    if not target_path.is_dir():
+        raise HTTPException(status_code=400, detail="Path is not a directory")
+    
+    # Run directory listing in thread pool
+    def _list_directory_sync():
+        """Synchronous directory listing function."""
+        items = []
+        try:
+            for item in sorted(target_path.iterdir()):
+                try:
+                    stat = item.stat()
+                    is_dir = item.is_dir()
+                    item_path = str(item.relative_to(user_path))
+                    
+                    item_info = {
+                        "name": item.name,
+                        "path": item_path,
+                        "is_directory": is_dir,
+                        "size": stat.st_size if not is_dir else 0,
+                        "modified": stat.st_mtime,
+                        "is_external": False,
+                    }
+                    
+                    # Generate thumbnail for images
+                    if not is_dir and item.suffix.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
+                        try:
+                            from app.routers.files import generate_thumbnail
+                            thumbnail = generate_thumbnail(item, max_size=(200, 200))
+                            if thumbnail:
+                                item_info["thumbnail"] = thumbnail
+                        except Exception as e:
+                            logger.warning(f"Failed to generate thumbnail for {item}: {e}")
+                    
+                    items.append(item_info)
+                except Exception as e:
+                    logger.warning(f"Error reading item {item}: {e}")
+                    continue
+        except Exception as e:
+            raise Exception(f"Error listing directory: {e}")
+        return items
+    
+    try:
+        items = await asyncio.to_thread(_list_directory_sync)
+        
+        # Calculate storage usage
+        def calculate_directory_size(directory):
+            total = 0
+            try:
+                for item in Path(directory).rglob('*'):
+                    if item.is_file():
+                        try:
+                            total += item.stat().st_size
+                        except (OSError, PermissionError):
+                            pass
+            except Exception:
+                pass
+            return total
+        
+        current_usage = await asyncio.to_thread(calculate_directory_size, user_path)
+        
+        return {
+            "items": items,
+            "path": path,
+            "current_usage": current_usage,
+            "quota": 0  # Will be set by the calling endpoint
+        }
+    except Exception as e:
+        logger.error(f"Error listing files: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/list-files")
+async def list_files(
     username: str = Query(..., description="Username"),
     path: str = Query("", description="Directory path relative to user root"),
     db: Session = Depends(get_db),
