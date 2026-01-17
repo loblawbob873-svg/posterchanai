@@ -3116,39 +3116,31 @@ Return ONLY valid JSON, no other text. If this is not a bill or invoice, return 
                 from app.services.storage_service import StorageService
                 
                 storage = StorageService(self.db)
-                user_temp_dir = Path(storage.upload_path) / self.user.username / "temp" / "mail_attachments"
-                user_temp_dir.mkdir(parents=True, exist_ok=True)
                 
                 # Create a unique filename based on account, uid, and index to avoid conflicts
                 unique_id = hashlib.md5(f"{account_email}_{uid}_{att_index}".encode()).hexdigest()[:8]
                 _, ext = os.path.splitext(attachment.filename)
                 safe_filename = f"{unique_id}_{attachment.filename}"
-                temp_file_path = user_temp_dir / safe_filename
                 
-                # Save attachment
+                # Save attachment using StorageService (will proxy to storage server if configured)
                 try:
-                    with open(temp_file_path, "wb") as f:
-                        f.write(attachment.data)
-                    logger.info(f"Saved mail attachment: {temp_file_path} ({len(attachment.data)} bytes)")
+                    saved_filename = storage.save_mail_attachment(
+                        self.user.username,
+                        attachment.data,
+                        safe_filename
+                    )
+                    logger.info(f"Saved mail attachment: {saved_filename} ({len(attachment.data)} bytes)")
                 except Exception as e:
-                    logger.error(f"Failed to save mail attachment to {temp_file_path}: {e}", exc_info=True)
+                    logger.error(f"Failed to save mail attachment: {e}", exc_info=True)
                     return {
                         "type": "text",
                         "content": f"❌ Error saving attachment: {str(e)}"
                     }
                 
-                # Verify file was saved
-                if not temp_file_path.exists():
-                    logger.error(f"Mail attachment file not found after save: {temp_file_path}")
-                    return {
-                        "type": "text",
-                        "content": f"❌ Error: Attachment file was not saved successfully."
-                    }
-                
                 # Generate URL to open in browser - URL-encode both username and filename
                 from urllib.parse import quote
                 encoded_username = quote(self.user.username, safe='')
-                encoded_filename = quote(safe_filename, safe='')
+                encoded_filename = quote(saved_filename, safe='')
                 attachment_url = f"/api/mail/attachment/{encoded_username}/{encoded_filename}"
                 
                 # Return HTML with clickable link that opens in new tab

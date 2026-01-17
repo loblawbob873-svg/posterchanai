@@ -243,6 +243,37 @@ async def save_note_attachment(
     return {"filename": filename}
 
 
+@router.post("/save-mail-attachment")
+async def save_mail_attachment(
+    file: UploadFile = File(...),
+    username: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Save a mail attachment file. Called by client nodes when proxying mail attachment saves.
+    Only accessible on storage server node.
+    """
+    # Verify username matches
+    if current_user.username != username:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Read file content
+    content = await file.read()
+    
+    # Get original filename from form or file
+    original_name = file.filename or "attachment"
+    
+    # Run blocking file I/O in thread pool to prevent blocking other requests
+    def _save_mail_attachment_sync():
+        storage = StorageService(db)
+        return storage.save_mail_attachment(username, content, original_name, bypass_proxy=True)
+    
+    filename = await asyncio.to_thread(_save_mail_attachment_sync)
+    
+    return {"filename": filename}
+
+
 @router.post("/delete-note-attachments")
 async def delete_note_attachments(
     username: str = Form(...),

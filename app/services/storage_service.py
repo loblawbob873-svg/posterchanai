@@ -567,6 +567,76 @@ class StorageService:
             logger.error(f"[STORAGE] Error proxying note attachment: {e}", exc_info=True)
             raise
 
+    def save_mail_attachment(self, username: str, file_data: bytes, original_name: str, bypass_proxy: bool = False) -> str:
+        """Save a mail attachment file to temp/mail_attachments and return the filename. Proxies to storage server if configured."""
+        # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
+        if not bypass_proxy:
+            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+            if storage_server_url and storage_server_url.value:
+                # Validate URL has protocol before proxying
+                url = storage_server_url.value.strip()
+                if url.startswith(('http://', 'https://')):
+                    try:
+                        # Proxy to storage server
+                        return self._proxy_save_mail_attachment(url, username, file_data, original_name)
+                    except Exception as e:
+                        # If proxy fails, fall back to local storage
+                        logger.warning(f"[STORAGE] Failed to proxy save_mail_attachment, falling back to local: {e}")
+                        # Fall through to local storage below
+                else:
+                    # Invalid URL - log but fall back to local storage
+                    logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
+                    # Fall through to local storage below
+        
+        # Local file saving (storage server node or when bypassing proxy)
+        try:
+            user_path = self.get_user_path(username)
+            mail_attachments_dir = user_path / "temp" / "mail_attachments"
+            mail_attachments_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Use the original filename (already sanitized by caller)
+            filepath = mail_attachments_dir / original_name
+            
+            with open(filepath, "wb") as f:
+                f.write(file_data)
+            
+            return original_name
+        except Exception as e:
+            logger.error(f"[STORAGE] Error saving mail attachment locally: {e}", exc_info=True)
+            raise
+    
+    def _proxy_save_mail_attachment(self, storage_server_url: str, username: str, file_data: bytes, original_name: str) -> str:
+        """Proxy mail attachment save to storage server - uses synchronous requests to avoid event loop issues"""
+        import requests
+        try:
+            # Get server-to-server API token
+            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
+            
+            url = f"{storage_server_url.rstrip('/')}/api/storage/save-mail-attachment"
+            headers = {}
+            if storage_server_token and storage_server_token.value:
+                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            
+            files = {
+                "file": (original_name, file_data, "application/octet-stream")
+            }
+            data = {
+                "username": username
+            }
+            
+            # Use synchronous requests instead of async httpx to avoid event loop issues
+            response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("filename", original_name)
+            else:
+                logger.error(f"[STORAGE] Failed to proxy save_mail_attachment: {response.status_code} - {response.text}")
+                raise Exception(f"Storage server error: {response.status_code}")
+        except Exception as e:
+            logger.error(f"[STORAGE] Error proxying mail attachment: {e}", exc_info=True)
+            raise
+
     def delete_note_attachment(self, username: str, note_id: int, filename: str) -> bool:
         """Delete a specific attachment file for a note"""
         try:

@@ -691,6 +691,8 @@ class NotesManager {
         html = result.join('\n');
         
         // Convert remaining single newlines to <br> (but not inside HTML tags)
+        // We'll do this after HTML escaping to avoid issues
+        // For now, just convert all newlines - we'll handle HTML tags separately
         html = html.replace(/\n/g, '<br>');
         
         // NOW escape HTML for text content (but preserve placeholders and already-inserted HTML tags)
@@ -702,9 +704,10 @@ class NotesManager {
         let htmlTagIndex = 0;
         
         // Replace HTML tags with placeholders (this won't affect \x00IMAGE or \x00VIDEO placeholders)
-        html = html.replace(/<[^>]+>/g, (match) => {
-            // Skip if this is an image or video placeholder (shouldn't happen, but be safe)
-            if (match.includes('\x00IMAGE') || match.includes('\x00VIDEO')) {
+        // Match HTML tags more carefully - including self-closing tags and tags with attributes
+        html = html.replace(/<\/?[a-zA-Z][^>]*>/g, (match) => {
+            // Skip if this is already a placeholder (shouldn't happen, but be safe)
+            if (match.includes('\x00IMAGE') || match.includes('\x00VIDEO') || match.includes('\x00HTMLTAG') || match.includes('\x00CODEBLOCK') || match.includes('\x00LINK')) {
                 return match;
             }
             const placeholder = `\x00HTMLTAG${htmlTagIndex}\x00`;
@@ -722,9 +725,14 @@ class NotesManager {
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
         
-        // Restore HTML tags
+        // Restore HTML tags (must happen before restoring images/videos/links)
         html = html.replace(/\x00HTMLTAG(\d+)\x00/g, (match, index) => {
-            return htmlTagPlaceholders[parseInt(index)];
+            const idx = parseInt(index);
+            if (idx >= 0 && idx < htmlTagPlaceholders.length) {
+                return htmlTagPlaceholders[idx];
+            }
+            console.warn('HTML tag placeholder index out of range:', idx);
+            return '';
         });
         
         // Restore videos as HTML5 video tags (before images, so they're processed first)

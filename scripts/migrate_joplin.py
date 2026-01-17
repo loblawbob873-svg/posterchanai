@@ -20,6 +20,7 @@ import json
 import shutil
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import quote
 import re
 
 # Add parent directory to path to import app modules
@@ -440,61 +441,52 @@ def migrate_joplin(joplin_db_path, user_id, dry_run=False):
                                             if file_ext:
                                                 original_name = f"{original_name}{file_ext}"
                                         
-                                        # Save attachment directly to local storage (bypass proxy) - ONE BY ONE
+                                        # Save attachment using StorageService (will proxy to storage server if configured)
                                         print(f"    [{attachments_migrated + 1}/{len(resource_ids)}] Processing: {original_name}")
                                         try:
-                                            # Get note path and create directory if needed
-                                            note_path = storage_service.get_note_path(user.username, note.id)
-                                            if not note_path.exists():
-                                                note_path.mkdir(parents=True, exist_ok=True)
+                                            # Use StorageService.save_note_attachment which handles proxying
+                                            # This will automatically proxy to storage server if storage_server_url is configured
+                                            filename = storage_service.save_note_attachment(
+                                                user.username,
+                                                note.id,
+                                                file_data,
+                                                original_name,
+                                                bypass_proxy=False  # Use proxy if configured
+                                            )
                                             
-                                            # Generate filename with timestamp to avoid conflicts
-                                            from datetime import datetime
-                                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                                            safe_name = "".join(c for c in Path(original_name).stem if c.isalnum() or c in "-_")[:50]
-                                            ext = Path(original_name).suffix or ""
-                                            filename = f"{safe_name}_{timestamp}{ext}"
-                                            filepath = note_path / filename
-                                            
-                                            # Write file directly - ONE BY ONE with verification
-                                            print(f"      Writing {len(file_data)} bytes to {filepath.name}...")
-                                            with open(filepath, "wb") as f:
-                                                f.write(file_data)
-                                            
-                                            # Verify file was written correctly
-                                            if not filepath.exists():
-                                                raise Exception(f"File was not created at {filepath}")
-                                            
-                                            actual_size = filepath.stat().st_size
-                                            if actual_size != len(file_data):
-                                                raise Exception(f"File size mismatch: expected {len(file_data)}, got {actual_size}")
+                                            print(f"      ✓ Saved {len(file_data)} bytes as {filename}")
                                             
                                             attachment_filenames.append(filename)
                                             attachments_migrated += 1
                                             
-                                            # Update note content to reference new file
+                                            # Update note content to reference new file with URL-encoded paths
+                                            from urllib.parse import quote
+                                            encoded_username = quote(user.username, safe='')
+                                            encoded_filename = quote(filename, safe='')
+                                            api_url = f"/api/notes/files/{encoded_username}/{note.id}/{encoded_filename}"
+                                            
                                             # Replace ](:/resource_id) with ](/api/notes/files/username/note_id/filename)
                                             old_ref = f"](:/{resource_id})"
-                                            new_ref = f"](/api/notes/files/{user.username}/{note.id}/{filename})"
+                                            new_ref = f"]{api_url}"
                                             updated_content = updated_content.replace(old_ref, new_ref)
                                             
                                             # Also replace in HTML img tags
                                             updated_content = updated_content.replace(
                                                 f'src=":/{resource_id}"',
-                                                f'src="/api/notes/files/{user.username}/{note.id}/{filename}"'
+                                                f'src="{api_url}"'
                                             )
                                             updated_content = updated_content.replace(
                                                 f"src=':/{resource_id}'",
-                                                f"src='/api/notes/files/{user.username}/{note.id}/{filename}'"
+                                                f"src='{api_url}'"
                                             )
                                             # Also handle bare resource IDs in img tags
                                             updated_content = updated_content.replace(
                                                 f'src="{resource_id}"',
-                                                f'src="/api/notes/files/{user.username}/{note.id}/{filename}"'
+                                                f'src="{api_url}"'
                                             )
                                             updated_content = updated_content.replace(
                                                 f"src='{resource_id}'",
-                                                f"src='/api/notes/files/{user.username}/{note.id}/{filename}'"
+                                                f"src='{api_url}'"
                                             )
                                             
                                             # Get file size for display
@@ -528,7 +520,10 @@ def migrate_joplin(joplin_db_path, user_id, dry_run=False):
                 # Fix HTML img tags for all successfully migrated resources
                 for resource_id, filename in resource_to_filename.items():
                     if filename:
-                        api_url = f'/api/notes/files/{user.username}/{note.id}/{filename}'
+                        # URL-encode username and filename for proper API URLs
+                        encoded_username = quote(user.username, safe='')
+                        encoded_filename = quote(filename, safe='')
+                        api_url = f'/api/notes/files/{encoded_username}/{note.id}/{encoded_filename}'
                         # Fix HTML img tags with various quote styles and formats
                         patterns = [
                             (rf'src=":/{resource_id}"', f'src="{api_url}"'),
