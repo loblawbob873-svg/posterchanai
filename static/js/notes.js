@@ -1351,31 +1351,52 @@ class NotesManager {
         const name = prompt('Enter folder name:');
         if (!name) return;
         
-        // Ensure csrfFetch is available, wait a bit if needed
-        if (typeof csrfFetch === 'undefined') {
-            // Try to wait for it to load
-            await new Promise(resolve => setTimeout(resolve, 100));
-            if (typeof csrfFetch === 'undefined') {
-                this.showToast('Error: CSRF protection not loaded. Please refresh the page.', 'error');
-                return;
+        // Ensure we have CSRF token - fetch it if needed
+        let csrfToken = null;
+        if (typeof getCSRFToken !== 'undefined') {
+            csrfToken = getCSRFToken();
+        }
+        
+        // If no token, try to get it by making a GET request first
+        if (!csrfToken) {
+            console.log('CSRF token not found, fetching...');
+            try {
+                // Make a GET request to trigger CSRF cookie setting
+                await fetch('/', { method: 'GET', credentials: 'include' });
+                // Wait a moment for cookie to be set
+                await new Promise(resolve => setTimeout(resolve, 200));
+                if (typeof getCSRFToken !== 'undefined') {
+                    csrfToken = getCSRFToken();
+                }
+            } catch (e) {
+                console.error('Failed to fetch CSRF token:', e);
             }
         }
         
-        // Get CSRF token explicitly
-        const csrfToken = typeof getCSRFToken !== 'undefined' ? getCSRFToken() : null;
         if (!csrfToken) {
-            console.warn('CSRF token not found in cookies, request may fail');
+            this.showToast('Error: CSRF token not available. Please refresh the page.', 'error');
+            console.error('CSRF token still not available after retry');
+            console.log('Available cookies:', document.cookie);
+            return;
         }
+        
+        console.log('Using CSRF token:', csrfToken.substring(0, 8) + '...');
+        console.log('Token length:', csrfToken.length);
+        
+        // Build headers object
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrfToken
+        };
+        
+        console.log('Request headers:', headers);
+        console.log('Request will include credentials:', true);
         
         try {
-            const headers = { 'Content-Type': 'application/json' };
-            if (csrfToken) {
-                headers['X-CSRF-Token'] = csrfToken;
-            }
-            
-            const response = await (csrfFetch || fetch)('/api/notes/folders', {
+            const response = await fetch('/api/notes/folders', {
                 method: 'POST',
                 headers: headers,
+                credentials: 'include', // Important: include cookies
                 body: JSON.stringify({ name: name.trim() })
             });
             

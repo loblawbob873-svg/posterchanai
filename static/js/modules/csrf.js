@@ -14,7 +14,12 @@ function getCSRFToken() {
     for (const cookie of cookies) {
         const [name, value] = cookie.trim().split('=');
         if (name === CSRF_COOKIE_NAME) {
-            return decodeURIComponent(value);
+            // Handle URL-encoded values
+            try {
+                return decodeURIComponent(value);
+            } catch (e) {
+                return value;
+            }
         }
     }
     return null;
@@ -35,14 +40,17 @@ async function csrfFetch(url, options = {}) {
     if (!options.headers) {
         options.headers = {};
     }
+    
+    // Ensure credentials are included
+    if (!options.credentials) {
+        options.credentials = 'include';
+    }
 
     // Add CSRF token for all authenticated requests
-    // (Even GET requests may need it if the middleware expects it)
     const token = getCSRFToken();
     if (token) {
         // Always include CSRF token for state-changing methods
-        // For GET requests, include it if available (some endpoints may require it)
-        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method) || token) {
+        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
             options.headers[CSRF_HEADER_NAME] = token;
         }
     } else {
@@ -53,16 +61,16 @@ async function csrfFetch(url, options = {}) {
             
             // Try to fetch the token by making a GET request to trigger cookie setting
             try {
-                const tokenResponse = await fetch('/', { method: 'GET', credentials: 'include' });
-                // The server should set the CSRF cookie in the response
-                // Try again after a short delay
-                await new Promise(resolve => setTimeout(resolve, 100));
+                await fetch('/', { method: 'GET', credentials: 'include' });
+                // Wait for cookie to be set
+                await new Promise(resolve => setTimeout(resolve, 200));
                 const retryToken = getCSRFToken();
                 if (retryToken) {
                     options.headers[CSRF_HEADER_NAME] = retryToken;
                     console.log('CSRF token retrieved after retry');
                 } else {
                     console.error('CSRF token still not available after retry');
+                    console.error('Cookies after retry:', document.cookie);
                 }
             } catch (e) {
                 console.error('Failed to retrieve CSRF token:', e);
@@ -123,4 +131,6 @@ window.csrfFetch = csrfFetch;
 window.csrfPost = csrfPost;
 window.csrfPut = csrfPut;
 window.csrfDelete = csrfDelete;
+window.getCSRFToken = getCSRFToken;
+// Also export as getCSRFToken for compatibility
 window.getCSRFToken = getCSRFToken;

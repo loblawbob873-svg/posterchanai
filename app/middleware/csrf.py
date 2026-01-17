@@ -7,10 +7,13 @@ Implements Double Submit Cookie pattern:
 3. Server validates that header token matches cookie token
 """
 import secrets
+import logging
 from fastapi import Request, HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from typing import Callable, Set
+
+logger = logging.getLogger(__name__)
 
 CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "X-CSRF-Token"
@@ -88,18 +91,23 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                     csrf_header = request.headers.get(CSRF_HEADER_NAME)
 
                     if not csrf_cookie:
+                        # Log for debugging
+                        logger.warning(f"CSRF token missing from cookies for {request.method} {request.url.path}")
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="CSRF token missing from cookies"
                         )
 
                     if not csrf_header:
+                        # Log for debugging
+                        logger.warning(f"CSRF token missing from header for {request.method} {request.url.path}. Cookie present: {bool(csrf_cookie)}")
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="CSRF token missing from header"
                         )
 
                     if not secrets.compare_digest(csrf_cookie, csrf_header):
+                        logger.warning(f"CSRF token mismatch for {request.method} {request.url.path}")
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="CSRF token mismatch"
@@ -108,14 +116,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # Process the request
         response = await call_next(request)
 
-        # Set CSRF cookie if not present (for GET requests primarily)
+        # Set CSRF cookie if not present (for all requests to ensure cookie is always available)
         if not csrf_cookie:
             new_token = generate_csrf_token()
             response.set_cookie(
                 key=CSRF_COOKIE_NAME,
                 value=new_token,
                 httponly=False,  # JS needs to read it for the header
-                samesite="strict",
+                samesite="lax",  # Changed from "strict" to "lax" for better compatibility
                 secure=request.url.scheme == "https",
                 max_age=86400 * 7,  # 7 days
                 path="/"
