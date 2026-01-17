@@ -560,16 +560,23 @@ async def serve_note_file(
     }
     media_type = media_types.get(suffix, "application/octet-stream")
     
+    # For images, set Content-Disposition to inline so they display instead of downloading
+    headers = {}
+    image_extensions = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".tiff", ".tif", ".ico"]
+    if suffix in image_extensions:
+        headers["Content-Disposition"] = "inline"
+    
     # For HEAD requests, return headers only (no body)
     if request.method == "HEAD":
         from fastapi.responses import Response
-        headers = {
+        response_headers = {
             "Content-Type": media_type,
             "Content-Length": str(file_path.stat().st_size),
         }
-        return Response(headers=headers, status_code=200)
+        response_headers.update(headers)
+        return Response(headers=response_headers, status_code=200)
     
-    return FileResponse(file_path, media_type=media_type)
+    return FileResponse(file_path, media_type=media_type, headers=headers)
 
 
 @router.post("/{note_id}/attachments")
