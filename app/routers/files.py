@@ -352,16 +352,14 @@ async def get_all_images(
                     relative_path = str(item.relative_to(user_path))
                     
                     # Get modification time for sorting
-                    # CRITICAL: Use mtime (modification time) - this is when file content was last modified
-                    # For uploaded files, mtime reflects when they were uploaded
-                    # For copied files, mtime might be preserved, but that's OK - we want to sort by when file was last modified
-                    modified_time = stat.st_mtime
+                    # CRITICAL: Use the MAXIMUM of mtime and ctime to get the most recent timestamp
+                    # This handles cases where:
+                    # - Files uploaded via file manager get current mtime
+                    # - Files copied/moved might have old mtime but new ctime
+                    # - We want to show files by when they were added to the system, not when originally created
+                    modified_time = max(stat.st_mtime, stat.st_ctime) if stat.st_mtime > 0 and stat.st_ctime > 0 else (stat.st_mtime if stat.st_mtime > 0 else stat.st_ctime)
                     
-                    # Fallback to ctime only if mtime is invalid (0 or negative)
-                    if modified_time <= 0:
-                        modified_time = stat.st_ctime if stat.st_ctime > 0 else time.time()
-                    
-                    # Ensure we have a valid timestamp
+                    # Fallback to current time if both are invalid
                     if modified_time <= 0:
                         logger.warning(f"Invalid timestamp for {item}: mtime={stat.st_mtime}, ctime={stat.st_ctime}, using current time")
                         modified_time = time.time()  # Use current time as fallback

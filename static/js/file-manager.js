@@ -1993,8 +1993,8 @@ class FileManager {
             
             const data = await response.json();
             
-            // Backend returns images already sorted (newest first), so we should preserve that order
-            // When resetting, just use the backend data directly
+            // Backend returns images already sorted (newest first), but we always re-sort to be safe
+            // This ensures correct order even if backend has issues or pagination mixes things up
             if (reset) {
                 this.allImages = data.images || [];
             } else {
@@ -2026,6 +2026,20 @@ class FileManager {
                     return true;
                 });
             }
+            
+            // ALWAYS re-sort after loading to ensure correct order (newest first)
+            // This is critical because backend might have issues or pagination might mix things up
+            this.allImages.sort((a, b) => {
+                const timeA = Number(a.modified) || 0;
+                const timeB = Number(b.modified) || 0;
+                if (timeB !== timeA) {
+                    return timeB - timeA; // Descending: newer (higher) timestamps first
+                }
+                // Tie-breaker: sort by path for stability
+                const pathA = (a.path || '').toLowerCase();
+                const pathB = (b.path || '').toLowerCase();
+                return pathA.localeCompare(pathB);
+            });
             
             this.hasMoreImages = data.has_more || false;
             this.imageLoadOffset += data.images?.length || 0;
