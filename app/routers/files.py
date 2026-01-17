@@ -191,10 +191,14 @@ async def search_files(
                                         # Also save thumbnail for future use
                                         try:
                                             generate_thumbnail_for_image(user_path, item)
-                                        except Exception:
-                                            pass  # Ignore errors when saving thumbnail
+                                        except Exception as save_error:
+                                            # Don't log "cannot identify" errors
+                                            if "cannot identify" not in str(save_error).lower():
+                                                logger.debug(f"Failed to save thumbnail for {item}: {save_error}")
                             except Exception as e:
-                                logger.debug(f"Failed to generate thumbnail for {item}: {e}")
+                                # Only log if it's not a "cannot identify" error
+                                if "cannot identify" not in str(e).lower():
+                                    logger.debug(f"Failed to generate thumbnail for {item}: {e}")
                         
                         results.append(item_info)
                 except Exception as e:

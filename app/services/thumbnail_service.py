@@ -107,12 +107,26 @@ def generate_thumbnail_file(
         # Create thumbnail directory if it doesn't exist
         thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
         
+        # Check if file is readable and not empty
+        try:
+            if not image_path.exists():
+                logger.debug(f"Image file does not exist: {image_path}")
+                return False
+            
+            if image_path.stat().st_size == 0:
+                logger.debug(f"Image file is empty: {image_path}")
+                return False
+        except OSError as e:
+            logger.debug(f"Cannot access image file: {image_path}: {e}")
+            return False
+        
         # Verify image is valid before processing
         try:
             with Image.open(image_path) as verify_img:
                 verify_img.verify()
         except Exception as e:
-            logger.error(f"Invalid or corrupted image file: {image_path}: {e}")
+            # Log as debug instead of error - these are expected for corrupted files
+            logger.debug(f"Invalid or corrupted image file (skipping): {image_path.name}: {e}")
             return False
         
         # Reopen for processing (verify() closes the file)
@@ -366,15 +380,32 @@ def generate_thumbnails_for_user(
     
     for i, image_path in enumerate(image_files):
         try:
+            # Quick check: skip if file doesn't exist or is empty
+            try:
+                if not image_path.exists() or image_path.stat().st_size == 0:
+                    failed += 1
+                    if progress_callback:
+                        progress_callback(i + 1, total)
+                    continue
+            except OSError:
+                failed += 1
+                if progress_callback:
+                    progress_callback(i + 1, total)
+                continue
+            
             thumbnail_path = get_thumbnail_path(user_path, image_path)
             
             # Skip if thumbnail already exists and is newer than image
             if thumbnail_path.exists():
-                if thumbnail_path.stat().st_mtime >= image_path.stat().st_mtime:
-                    successful += 1
-                    if progress_callback:
-                        progress_callback(i + 1, total)
-                    continue
+                try:
+                    if thumbnail_path.stat().st_mtime >= image_path.stat().st_mtime:
+                        successful += 1
+                        if progress_callback:
+                            progress_callback(i + 1, total)
+                        continue
+                except OSError:
+                    # If we can't check thumbnail, regenerate it
+                    pass
             
             if generate_thumbnail_file(image_path, thumbnail_path, max_size):
                 successful += 1
@@ -382,7 +413,11 @@ def generate_thumbnails_for_user(
                 failed += 1
                 
         except Exception as e:
-            logger.error(f"Error processing {image_path}: {e}")
+            # Log as debug for corrupted files, error for unexpected issues
+            if "cannot identify image file" in str(e).lower() or "corrupted" in str(e).lower():
+                logger.debug(f"Skipping corrupted image: {image_path.name}")
+            else:
+                logger.error(f"Error processing {image_path}: {e}")
             failed += 1
         
         if progress_callback:

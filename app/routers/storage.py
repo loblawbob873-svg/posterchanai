@@ -759,6 +759,10 @@ async def get_all_images(
                         def _generate_thumbnail(file_path: Path, max_size: tuple = (300, 300)):
                             """Generate base64-encoded thumbnail for an image."""
                             try:
+                                # Quick validation: skip if file is empty or doesn't exist
+                                if not file_path.exists() or file_path.stat().st_size == 0:
+                                    return None
+                                
                                 with Image.open(file_path) as img:
                                     original_mode = img.mode
                                     
@@ -816,7 +820,9 @@ async def get_all_images(
                                     thumbnail_b64 = base64.b64encode(buffer.read()).decode('utf-8')
                                     return f"data:image/jpeg;base64,{thumbnail_b64}"
                             except Exception as e:
-                                logger.debug(f"Error generating thumbnail for {file_path}: {e}")
+                                # Don't log "cannot identify" errors as they're expected for corrupted files
+                                if "cannot identify" not in str(e).lower():
+                                    logger.debug(f"Error generating thumbnail for {file_path}: {e}")
                                 return None
                         
                         thumbnail_path = get_thumbnail_if_exists(user_path, item)
@@ -849,11 +855,15 @@ async def get_all_images(
                                 except Exception as video_error:
                                     logger.debug(f"Failed to generate video thumbnail for {item}: {video_error}")
                     except Exception as e:
-                        logger.debug(f"Failed to generate thumbnail for {item}: {e}")
+                        # Only log if it's not a "cannot identify" error
+                        if "cannot identify" not in str(e).lower():
+                            logger.debug(f"Failed to generate thumbnail for {item}: {e}")
                     
                     images.append(image_info)
                 except Exception as e:
-                    logger.warning(f"Error processing image {item}: {e}")
+                    # Don't log "cannot identify" errors as warnings
+                    if "cannot identify" not in str(e).lower():
+                        logger.warning(f"Error processing image {item}: {e}")
                     continue
         except Exception as e:
             logger.error(f"Error getting all images: {e}")
