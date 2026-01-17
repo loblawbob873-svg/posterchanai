@@ -259,6 +259,7 @@ async def get_all_images(
                         try:
                             # Get the JSON response from storage server
                             data = response.json()
+                            
                             # Clean it to ensure no bytes slipped through
                             def _clean_proxy_response(obj, depth=0):
                                 if depth > 10:
@@ -266,7 +267,11 @@ async def get_all_images(
                                 if obj is None:
                                     return None
                                 elif isinstance(obj, bytes):
+                                    logger.warning(f"[FILES] Found bytes in proxy response at depth {depth}, converting")
                                     return obj.decode('utf-8', errors='ignore')
+                                elif isinstance(obj, Path):
+                                    logger.warning(f"[FILES] Found Path in proxy response at depth {depth}, converting")
+                                    return str(obj)
                                 elif isinstance(obj, (dict,)):
                                     return {str(k): _clean_proxy_response(v, depth+1) for k, v in obj.items()}
                                 elif isinstance(obj, (list, tuple)):
@@ -274,11 +279,40 @@ async def get_all_images(
                                 elif isinstance(obj, (str, int, float, bool)):
                                     return obj
                                 else:
+                                    # Unknown type - convert to string
+                                    logger.debug(f"[FILES] Converting unknown type {type(obj)} to string at depth {depth}")
                                     return str(obj)
+                            
                             cleaned_data = _clean_proxy_response(data)
+                            
+                            # Test serialization before returning
+                            try:
+                                import json
+                                test_json = json.dumps(cleaned_data)
+                                logger.debug(f"[FILES] Proxy response cleaned and validated: {len(cleaned_data.get('images', []))} images")
+                            except (TypeError, ValueError) as test_err:
+                                logger.error(f"[FILES] Proxy response still has serialization issues after cleaning: {test_err}")
+                                # Try to find the problem
+                                def find_problem(obj, path="root", depth=0):
+                                    if depth > 5:
+                                        return
+                                    if isinstance(obj, bytes):
+                                        logger.error(f"[FILES] Found bytes at {path}")
+                                    elif isinstance(obj, Path):
+                                        logger.error(f"[FILES] Found Path at {path}")
+                                    elif isinstance(obj, dict):
+                                        for k, v in obj.items():
+                                            find_problem(v, f"{path}.{k}", depth+1)
+                                    elif isinstance(obj, (list, tuple)):
+                                        for i, item in enumerate(obj[:5]):
+                                            find_problem(item, f"{path}[{i}]", depth+1)
+                                find_problem(cleaned_data)
+                                # Return safe empty response
+                                return {"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False}
+                            
                             return cleaned_data
                         except Exception as json_err:
-                            logger.error(f"[FILES] Error parsing/cleaning storage server response: {json_err}")
+                            logger.error(f"[FILES] Error parsing/cleaning storage server response: {json_err}", exc_info=True)
                             raise
                     else:
                         # Try to get error details from response
@@ -699,8 +733,53 @@ async def get_all_images(
                 final_result[str(key)] = value
             cleaned_result = final_result
         
-        # Return as JSONResponse - FastAPI will serialize automatically
-        return JSONResponse(content=cleaned_result)
+        # Custom JSON encoder for testing
+        class BytesSafeEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, bytes):
+                    return obj.decode('utf-8', errors='ignore')
+                elif isinstance(obj, Path):
+                    return str(obj)
+                return super().default(obj)
+        
+        # CRITICAL: Test serialization BEFORE returning to catch any remaining bytes
+        try:
+            test_json = json.dumps(cleaned_result, cls=BytesSafeEncoder)
+            # If successful, parse it back to ensure it's valid
+            json.loads(test_json)
+            logger.debug(f"[FILES] Successfully serialized result: {len(cleaned_result.get('images', []))} images")
+        except TypeError as json_err:
+            # Find the problematic value
+            logger.error(f"[FILES] JSON serialization test failed: {json_err}")
+            # Try to find which field has bytes
+            def find_bytes(obj, path="root", depth=0):
+                if depth > 5:
+                    return
+                if isinstance(obj, bytes):
+                    logger.error(f"[FILES] Found bytes at path: {path}, value: {obj[:50] if len(obj) > 50 else obj}")
+                    return path
+                elif isinstance(obj, dict):
+                    for k, v in obj.items():
+                        find_bytes(v, f"{path}.{k}", depth+1)
+                elif isinstance(obj, (list, tuple)):
+                    for i, item in enumerate(obj[:10]):  # Check first 10 items
+                        find_bytes(item, f"{path}[{i}]", depth+1)
+            find_bytes(cleaned_result)
+            # Return minimal safe response
+            return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False})
+        
+        # Return as JSONResponse - use custom encoder to handle any edge cases
+        try:
+            return JSONResponse(content=cleaned_result)
+        except Exception as final_err:
+            logger.error(f"[FILES] JSONResponse failed even after cleaning: {final_err}")
+            # Last resort: manually serialize with our encoder
+            try:
+                json_str = json.dumps(cleaned_result, cls=BytesSafeEncoder, ensure_ascii=False)
+                return JSONResponse(content=json.loads(json_str))
+            except Exception as last_err:
+                logger.error(f"[FILES] Manual JSON encoding also failed: {last_err}")
+                return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False})
     except Exception as e:
         logger.error(f"[FILES] Error in get_all_images: {e}", exc_info=True)
         # Ensure error message is also JSON serializable

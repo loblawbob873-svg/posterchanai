@@ -1069,21 +1069,117 @@ async def get_all_images(
         cleaned_result = _clean_for_json(result)
         
         # Double-check: ensure the result dict itself is clean
+        # This is a final aggressive pass to convert everything to basic types
         if isinstance(cleaned_result, dict):
-            # Ensure all top-level values are serializable
             final_result = {}
             for key, value in cleaned_result.items():
+                # Ensure key is string
                 if isinstance(key, bytes):
                     key = key.decode('utf-8', errors='ignore')
-                if isinstance(value, bytes):
-                    value = value.decode('utf-8', errors='ignore')
+                key_str = str(key)
+                
+                # Ensure value is a basic JSON-serializable type
+                if value is None:
+                    final_result[key_str] = None
+                elif isinstance(value, bytes):
+                    final_result[key_str] = value.decode('utf-8', errors='ignore')
                 elif isinstance(value, Path):
-                    value = str(value)
-                final_result[str(key)] = value
+                    final_result[key_str] = str(value)
+                elif isinstance(value, (str, int, float, bool)):
+                    final_result[key_str] = value
+                elif isinstance(value, (list, tuple)):
+                    # Recursively clean list items
+                    final_result[key_str] = [
+                        (item.decode('utf-8', errors='ignore') if isinstance(item, bytes) else
+                         str(item) if isinstance(item, Path) else
+                         item if isinstance(item, (str, int, float, bool, type(None))) else
+                         str(item)) for item in value
+                    ]
+                elif isinstance(value, dict):
+                    # Recursively clean dict - this should have been done by _clean_for_json, but be safe
+                    final_result[key_str] = _clean_for_json(value, depth=0)
+                else:
+                    # Unknown type - convert to string
+                    logger.warning(f"[STORAGE] Converting unknown type {type(value)} to string for key {key_str}")
+                    final_result[key_str] = str(value)
             cleaned_result = final_result
         
-        # Return as JSONResponse - FastAPI will serialize automatically
-        return JSONResponse(content=cleaned_result)
+        # Custom JSON encoder for testing
+        class BytesSafeEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, bytes):
+                    return obj.decode('utf-8', errors='ignore')
+                elif isinstance(obj, Path):
+                    return str(obj)
+                return super().default(obj)
+        
+        # CRITICAL: Test serialization BEFORE returning to catch any remaining bytes
+        # Use the same encoder that FastAPI will use (via our global encoder in main.py)
+        try:
+            # First, try with our custom encoder
+            test_json = json.dumps(cleaned_result, cls=BytesSafeEncoder, ensure_ascii=False)
+            # If successful, parse it back to ensure it's valid
+            parsed = json.loads(test_json)
+            logger.debug(f"[STORAGE] Successfully serialized result: {len(cleaned_result.get('images', []))} images")
+        except (TypeError, ValueError) as json_err:
+            # Find the problematic value with detailed logging
+            logger.error(f"[STORAGE] JSON serialization test failed: {json_err}")
+            logger.error(f"[STORAGE] Error type: {type(json_err).__name__}")
+            
+            # Try to find which field has bytes or other non-serializable types
+            problematic_paths = []
+            def find_problematic(obj, path="root", depth=0):
+                if depth > 10:  # Prevent infinite recursion
+                    return
+                try:
+                    if isinstance(obj, bytes):
+                        problematic_paths.append(f"{path} (bytes: {obj[:50] if len(obj) > 50 else obj})")
+                        return
+                    elif isinstance(obj, Path):
+                        problematic_paths.append(f"{path} (Path: {obj})")
+                        return
+                    elif isinstance(obj, dict):
+                        for k, v in obj.items():
+                            find_problematic(v, f"{path}.{k}", depth+1)
+                    elif isinstance(obj, (list, tuple)):
+                        for i, item in enumerate(obj[:20]):  # Check first 20 items
+                            find_problematic(item, f"{path}[{i}]", depth+1)
+                    else:
+                        # Try to serialize this value alone to see if it's the problem
+                        try:
+                            json.dumps(obj, cls=BytesSafeEncoder)
+                        except (TypeError, ValueError) as e:
+                            problematic_paths.append(f"{path} (type {type(obj).__name__}: {e})")
+                except Exception as e:
+                    problematic_paths.append(f"{path} (error checking: {e})")
+            
+            find_problematic(cleaned_result)
+            
+            if problematic_paths:
+                logger.error(f"[STORAGE] Found {len(problematic_paths)} problematic paths:")
+                for path in problematic_paths[:10]:  # Log first 10
+                    logger.error(f"[STORAGE]   - {path}")
+            else:
+                logger.error(f"[STORAGE] Could not identify problematic path, but serialization failed")
+                logger.error(f"[STORAGE] Result type: {type(cleaned_result)}, keys: {list(cleaned_result.keys()) if isinstance(cleaned_result, dict) else 'N/A'}")
+            
+            # Return minimal safe response instead of crashing
+            logger.warning(f"[STORAGE] Returning empty response due to serialization error")
+            return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False})
+        
+        # Return as JSONResponse - use custom encoder to handle any edge cases
+        # FastAPI's JSONResponse will use our custom encoder if we provide it
+        try:
+            return JSONResponse(content=cleaned_result)
+        except Exception as final_err:
+            logger.error(f"[STORAGE] JSONResponse failed even after cleaning: {final_err}")
+            # Last resort: manually serialize with our encoder
+            try:
+                json_str = json.dumps(cleaned_result, cls=BytesSafeEncoder, ensure_ascii=False)
+                return JSONResponse(content=json.loads(json_str))
+            except Exception as last_err:
+                logger.error(f"[STORAGE] Manual JSON encoding also failed: {last_err}")
+                return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False})
     except Exception as e:
         logger.error(f"[STORAGE] Error in get_all_images: {e}", exc_info=True)
         # Ensure error message is also JSON serializable
