@@ -497,21 +497,38 @@ class StorageService:
         if not bypass_proxy:
             storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
             if storage_server_url and storage_server_url.value:
-                # Proxy to storage server
-                return self._proxy_save_note_attachment(storage_server_url.value, username, note_id, file_data, original_name)
+                # Validate URL has protocol before proxying
+                url = storage_server_url.value.strip()
+                if url.startswith(('http://', 'https://')):
+                    try:
+                        # Proxy to storage server
+                        return self._proxy_save_note_attachment(url, username, note_id, file_data, original_name)
+                    except Exception as e:
+                        # If proxy fails, fall back to local storage
+                        logger.warning(f"[STORAGE] Failed to proxy save_note_attachment, falling back to local: {e}")
+                        # Fall through to local storage below
+                else:
+                    # Invalid URL - log but fall back to local storage
+                    logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
+                    # Fall through to local storage below
         
         # Local file saving (storage server node or when bypassing proxy)
-        note_path = self.get_note_path(username, note_id)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        ext = Path(original_name).suffix or ""
-        safe_name = "".join(c for c in Path(original_name).stem if c.isalnum() or c in "-_")[:50]
-        filename = f"{safe_name}_{timestamp}{ext}"
-        filepath = note_path / filename
+        try:
+            note_path = self.get_note_path(username, note_id)
+            note_path.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            ext = Path(original_name).suffix or ""
+            safe_name = "".join(c for c in Path(original_name).stem if c.isalnum() or c in "-_")[:50]
+            filename = f"{safe_name}_{timestamp}{ext}"
+            filepath = note_path / filename
 
-        with open(filepath, "wb") as f:
-            f.write(file_data)
+            with open(filepath, "wb") as f:
+                f.write(file_data)
 
-        return filename
+            return filename
+        except Exception as e:
+            logger.error(f"[STORAGE] Error saving note attachment locally: {e}", exc_info=True)
+            raise
     
     def _proxy_save_note_attachment(self, storage_server_url: str, username: str, note_id: int, file_data: bytes, original_name: str) -> str:
         """Proxy note attachment save to storage server - uses synchronous requests to avoid event loop issues"""
