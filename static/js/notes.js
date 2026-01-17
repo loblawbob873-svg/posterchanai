@@ -240,15 +240,15 @@ class NotesManager {
                 document.getElementById('pinNoteBtn').textContent = note.is_pinned ? '📌' : '📍';
                 document.getElementById('pinNoteBtn').dataset.pinned = note.is_pinned;
                 
-                // Render attachments if any
+                // Show editor, hide list FIRST (before rendering attachments)
+                document.getElementById('notesList').style.display = 'none';
+                document.getElementById('notesEditor').style.display = 'block';
+                
+                // Render attachments if any (after editor is visible)
                 this.renderAttachments(note);
                 
                 // Update preview if in preview mode
                 this.updatePreview();
-                
-                // Show editor, hide list
-                document.getElementById('notesList').style.display = 'none';
-                document.getElementById('notesEditor').style.display = 'block';
                 
                 // Re-attach event listeners in case they weren't attached
                 const contentInput = document.getElementById('noteContentInput');
@@ -268,6 +268,11 @@ class NotesManager {
                 
                 // Start in preview mode (default action)
                 this.setEditorMode('preview');
+                
+                // Re-render attachments after mode is set (in case it was removed)
+                setTimeout(() => {
+                    this.renderAttachments(note);
+                }, 100);
             }
         } catch (error) {
             console.error('Error loading note:', error);
@@ -699,7 +704,9 @@ class NotesManager {
         const existing = document.getElementById('noteAttachments');
         if (existing) existing.remove();
         
-        if (!note.attachments) return;
+        if (!note.attachments) {
+            return;
+        }
         
         let attachments;
         try {
@@ -707,10 +714,13 @@ class NotesManager {
                 ? JSON.parse(note.attachments) 
                 : note.attachments;
         } catch (e) {
+            console.error('Failed to parse attachments:', e);
             return; // Invalid JSON
         }
         
-        if (!attachments || attachments.length === 0) return;
+        if (!attachments || attachments.length === 0) {
+            return;
+        }
         
         const editor = document.getElementById('notesEditor');
         const attachmentsDiv = document.createElement('div');
@@ -785,7 +795,12 @@ class NotesManager {
         
         // Insert before editor footer
         const footer = editor.querySelector('.notes-editor-footer');
-        editor.insertBefore(attachmentsDiv, footer);
+        if (!footer) {
+            // If footer doesn't exist, append to editor
+            editor.appendChild(attachmentsDiv);
+        } else {
+            editor.insertBefore(attachmentsDiv, footer);
+        }
     }
     
     cancelEdit() {
