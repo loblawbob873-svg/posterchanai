@@ -2027,6 +2027,15 @@ class FileManager {
             
             const data = await response.json();
             
+            // Debug: log first image structure to verify data format
+            if (data.images && data.images.length > 0) {
+                console.log('Photo Gallery - First image data structure:', data.images[0]);
+                // Check if name field exists
+                if (!data.images[0].name) {
+                    console.warn('Photo Gallery - WARNING: First image missing "name" field:', data.images[0]);
+                }
+            }
+            
             // Backend returns images already sorted (newest first), but we always re-sort to be safe
             // This ensures correct order even if backend has issues or pagination mixes things up
             if (reset) {
@@ -2098,7 +2107,12 @@ class FileManager {
                 this.allImages.slice(0, 10).forEach((img, idx) => {
                     const timestamp = Number(img.modified) || 0;
                     const date = timestamp > 0 ? new Date(timestamp * 1000).toLocaleString() : 'N/A';
-                    console.log(`    ${idx + 1}. ${img.name} - ${date} (timestamp: ${timestamp})`);
+                    const name = img.name || (img.path ? img.path.split('/').pop() : 'Unknown');
+                    console.log(`    ${idx + 1}. ${name} - ${date} (timestamp: ${timestamp})`);
+                    // Debug: log if name is missing
+                    if (!img.name) {
+                        console.warn(`      ⚠️ Image at index ${idx} missing "name" field, using path fallback: ${img.path}`);
+                    }
                 });
                 
                 // Verify sorting is correct
@@ -2112,8 +2126,10 @@ class FileManager {
                         if (!firstError) {
                             firstError = i;
                             console.error(`❌ Sorting error at index ${i}:`);
-                            console.error(`  Previous: ${this.allImages[i - 1].name} (${prev})`);
-                            console.error(`  Current: ${this.allImages[i].name} (${curr})`);
+                            const prevName = this.allImages[i - 1].name || (this.allImages[i - 1].path ? this.allImages[i - 1].path.split('/').pop() : 'Unknown');
+                            const currName = this.allImages[i].name || (this.allImages[i].path ? this.allImages[i].path.split('/').pop() : 'Unknown');
+                            console.error(`  Previous: ${prevName} (${prev})`);
+                            console.error(`  Current: ${currName} (${curr})`);
                         }
                     }
                 }
@@ -2196,10 +2212,14 @@ class FileManager {
         grid.innerHTML = '';
         
         this.allImages.forEach((image, index) => {
+            // Extract filename from path if name is not available
+            const imageName = image.name || (image.path ? image.path.split('/').pop() : 'Unknown');
+            const imagePath = image.path || '';
+            
             const item = document.createElement('div');
             item.className = 'cyberpunk-gallery-item';
             item.dataset.index = index;
-            item.dataset.path = image.path;
+            item.dataset.path = imagePath;
             // Store timestamp in dataset for debugging
             item.dataset.modified = image.modified || '0';
             
@@ -2212,34 +2232,38 @@ class FileManager {
                 img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23111" width="200" height="200"/%3E%3Ctext fill="%2300ffff" font-family="monospace" font-size="12" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3ELOADING...%3C/text%3E%3C/svg%3E';
                 
                 // Try to load thumbnail
-                fetch(`/api/files/thumbnail/${encodeURIComponent(image.path)}?size=300`)
-                    .then(response => {
-                        if (response.ok) {
-                            return response.json();
-                        }
-                        throw new Error('Thumbnail not available');
-                    })
-                    .then(data => {
-                        if (data && data.thumbnail) {
-                            img.src = data.thumbnail;
-                        } else {
-                            // Fallback to full image
-                            img.src = `/api/files/view/${encodeURIComponent(image.path)}`;
-                        }
-                    })
-                    .catch(() => {
-                        // Fallback to full image if thumbnail fails
-                        img.src = `/api/files/view/${encodeURIComponent(image.path)}`;
-                    });
+                if (imagePath) {
+                    fetch(`/api/files/thumbnail/${encodeURIComponent(imagePath)}?size=300`)
+                        .then(response => {
+                            if (response.ok) {
+                                return response.json();
+                            }
+                            throw new Error('Thumbnail not available');
+                        })
+                        .then(data => {
+                            if (data && data.thumbnail) {
+                                img.src = data.thumbnail;
+                            } else {
+                                // Fallback to full image
+                                img.src = `/api/files/view/${encodeURIComponent(imagePath)}`;
+                            }
+                        })
+                        .catch(() => {
+                            // Fallback to full image if thumbnail fails
+                            img.src = `/api/files/view/${encodeURIComponent(imagePath)}`;
+                        });
+                }
             }
-            img.alt = image.name;
+            img.alt = imageName;
             img.loading = 'lazy';
             
             // Add error handler to try full image if thumbnail fails
             img.onerror = () => {
                 if (img.src.includes('data:image/svg+xml') || img.src.includes('/thumbnail/')) {
                     // If thumbnail failed, try full image
-                    img.src = `/api/files/view/${encodeURIComponent(image.path)}`;
+                    if (imagePath) {
+                        img.src = `/api/files/view/${encodeURIComponent(imagePath)}`;
+                    }
                 } else if (!img.src.includes('/view/')) {
                     // If full image also failed, show placeholder
                     img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23333" width="200" height="200"/%3E%3Ctext fill="%23ff0066" font-family="monospace" font-size="12" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3EERROR%3C/text%3E%3C/svg%3E';
@@ -2248,13 +2272,13 @@ class FileManager {
             
             const overlay = document.createElement('div');
             overlay.className = 'cyberpunk-gallery-item-overlay';
-            overlay.textContent = image.name;
+            overlay.textContent = imageName;
             
             item.appendChild(img);
             item.appendChild(overlay);
             
             // Add play button overlay for videos
-            const isVideo = image.type === 'video' || /\.(mp4|avi|mov|mkv|webm|flv|wmv|m4v|3gp|ogv)$/i.test(image.name);
+            const isVideo = image.type === 'video' || /\.(mp4|avi|mov|mkv|webm|flv|wmv|m4v|3gp|ogv)$/i.test(imageName);
             if (isVideo) {
                 item.dataset.type = 'video';
                 const playButton = document.createElement('div');
@@ -2302,7 +2326,11 @@ class FileManager {
         const media = this.allImages[index];
         if (!media) return;
         
-        const isVideo = media.type === 'video' || /\.(mp4|avi|mov|mkv|webm|flv|wmv|m4v|3gp|ogv)$/i.test(media.name);
+        // Extract filename from path if name is not available
+        const mediaName = media.name || (media.path ? media.path.split('/').pop() : 'Unknown');
+        const mediaPath = media.path || '';
+        
+        const isVideo = media.type === 'video' || /\.(mp4|avi|mov|mkv|webm|flv|wmv|m4v|3gp|ogv)$/i.test(mediaName);
         
         // Hide/show image or video element
         if (img) {
@@ -2310,14 +2338,14 @@ class FileManager {
         }
         if (video) {
             video.style.display = isVideo ? 'block' : 'none';
-            if (isVideo) {
-                video.src = `/api/files/view/${encodeURIComponent(media.path)}`;
+            if (isVideo && mediaPath) {
+                video.src = `/api/files/view/${encodeURIComponent(mediaPath)}`;
                 video.load(); // Reload video
             } else {
                 video.pause();
                 video.src = '';
             }
-        } else if (isVideo) {
+        } else if (isVideo && mediaPath) {
             // Create video element if it doesn't exist
             const videoContainer = fullscreen.querySelector('.cyberpunk-fullscreen-content');
             if (videoContainer) {
@@ -2325,19 +2353,19 @@ class FileManager {
                 newVideo.id = 'cyberpunkFullscreenVideo';
                 newVideo.className = 'cyberpunk-fullscreen-media';
                 newVideo.controls = true;
-                newVideo.src = `/api/files/view/${encodeURIComponent(media.path)}`;
+                newVideo.src = `/api/files/view/${encodeURIComponent(mediaPath)}`;
                 videoContainer.appendChild(newVideo);
             }
         }
         
-        if (!isVideo && img) {
-            img.src = `/api/files/view/${encodeURIComponent(media.path)}`;
+        if (!isVideo && img && mediaPath) {
+            img.src = `/api/files/view/${encodeURIComponent(mediaPath)}`;
         }
         
         if (info) {
-            const date = new Date(media.modified * 1000).toLocaleString();
+            const date = media.modified ? new Date(media.modified * 1000).toLocaleString() : 'N/A';
             const typeLabel = isVideo ? 'VIDEO' : 'IMAGE';
-            info.textContent = `${index + 1} / ${this.allImages.length} - ${media.name} [${typeLabel}] [${date}]`;
+            info.textContent = `${index + 1} / ${this.allImages.length} - ${mediaName} [${typeLabel}] [${date}]`;
         }
         
         if (prevBtn) prevBtn.style.display = index > 0 ? 'flex' : 'none';

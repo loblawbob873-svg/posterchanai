@@ -272,24 +272,34 @@ async def get_all_images(
                                 elif isinstance(obj, Path):
                                     logger.warning(f"[FILES] Found Path in proxy response at depth {depth}, converting")
                                     return str(obj)
-                                elif isinstance(obj, (dict,)):
-                                    return {str(k): _clean_proxy_response(v, depth+1) for k, v in obj.items()}
+                                elif isinstance(obj, dict):
+                                    # Preserve all dictionary keys and values
+                                    cleaned = {}
+                                    for k, v in obj.items():
+                                        key_str = str(k) if not isinstance(k, (str, int, float, bool)) else k
+                                        cleaned[key_str] = _clean_proxy_response(v, depth+1)
+                                    return cleaned
                                 elif isinstance(obj, (list, tuple)):
                                     return [_clean_proxy_response(item, depth+1) for item in obj]
                                 elif isinstance(obj, (str, int, float, bool)):
                                     return obj
-                                elif isinstance(obj, dict):
-                                    # This shouldn't happen if cleaning worked, but handle it
-                                    return {str(k): _clean_proxy_response(v, depth+1) for k, v in obj.items()}
-                                elif isinstance(obj, (list, tuple)):
-                                    # This shouldn't happen if cleaning worked, but handle it
-                                    return [_clean_proxy_response(item, depth+1) for item in obj]
                                 else:
                                     # Unknown type - convert to string only as last resort
                                     logger.debug(f"[FILES] Converting unknown type {type(obj)} to string at depth {depth}")
                                     return str(obj)
                             
                             cleaned_data = _clean_proxy_response(data)
+                            
+                            # Verify that images have required fields
+                            if 'images' in cleaned_data and cleaned_data['images']:
+                                for img in cleaned_data['images'][:5]:  # Check first 5
+                                    if 'name' not in img or not img['name']:
+                                        # Try to extract name from path if missing
+                                        if 'path' in img and img['path']:
+                                            img['name'] = img['path'].split('/').pop()
+                                            logger.debug(f"[FILES] Extracted name from path for image: {img['name']}")
+                                        else:
+                                            logger.warning(f"[FILES] Image missing both 'name' and 'path' fields: {img}")
                             
                             # Test serialization before returning
                             try:
