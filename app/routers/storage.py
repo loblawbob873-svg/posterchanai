@@ -4,6 +4,7 @@ These endpoints are called by client nodes when proxying file operations.
 All blocking I/O operations are run in thread pools to prevent blocking.
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
+from fastapi import Request as FastAPIRequest
 from starlette.requests import Request as StarletteRequest
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -168,7 +169,7 @@ async def save_note_attachment(
     file: UploadFile = File(...),
     username: str = Form(...),
     note_id: int = Form(...),
-    request: StarletteRequest = None,
+    request: FastAPIRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_optional)
 ):
@@ -179,8 +180,18 @@ async def save_note_attachment(
     Note: For proxied requests, current_user may be None if using server token auth.
     In that case, we trust the main server and skip user verification.
     """
-    # Check if this is a server-to-server request (no user, but has server token)
+    # Check if this is a server-to-server request
+    # Either current_user is None OR we have a valid storage_server_token
     is_server_request = current_user is None
+    if not is_server_request:
+        # Check if this is a server token request
+        from app.models import Setting
+        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        if storage_server_token and storage_server_token.value:
+            # Check if the request has the server token
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+                is_server_request = True
     
     if not is_server_request:
         # Verify username matches for user requests
