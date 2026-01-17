@@ -78,17 +78,22 @@ class NotesManager {
         this.folders = [];
         
         try {
-            // Add cache busting to prevent stale data
-            const url = `/api/notes/folders?_t=${Date.now()}`;
+            // Add cache busting to prevent stale data - use random number for stronger cache busting
+            const url = `/api/notes/folders?_t=${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             const response = await fetch(url, {
+                method: 'GET',
                 cache: 'no-store',
                 headers: {
                     'Cache-Control': 'no-cache, no-store, must-revalidate',
-                    'Pragma': 'no-cache'
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
                 }
             });
             if (response.ok) {
-                this.folders = await response.json();
+                const data = await response.json();
+                // Always set folders to the response, even if empty array
+                this.folders = Array.isArray(data) ? data : [];
+                console.log(`Loaded ${this.folders.length} folders from API`);
                 // Force re-render even if folders array is empty
                 this.renderFolders();
             }
@@ -114,18 +119,23 @@ class NotesManager {
             if (this.searchQuery) {
                 url += `search=${encodeURIComponent(this.searchQuery)}&`;
             }
-            // Add cache busting to prevent stale data
-            url += `_t=${Date.now()}`;
+            // Add cache busting to prevent stale data - use random number for stronger cache busting
+            url += `_t=${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             
             const response = await fetch(url, {
+                method: 'GET',
                 cache: 'no-store',
                 headers: {
                     'Cache-Control': 'no-cache, no-store, must-revalidate',
-                    'Pragma': 'no-cache'
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
                 }
             });
             if (response.ok) {
-                this.notes = await response.json();
+                const data = await response.json();
+                // Always set notes to the response, even if empty array
+                this.notes = Array.isArray(data) ? data : [];
+                console.log(`Loaded ${this.notes.length} notes from API`);
                 // Force re-render even if notes array is empty
                 this.renderNotes();
             } else {
