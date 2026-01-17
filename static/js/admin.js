@@ -1646,6 +1646,15 @@ window.editExternalStorage = async function(id) {
             document.getElementById('externalStorageMountPoint').value = mount.mount_point;
             document.getElementById('externalStorageDescription').value = mount.description || '';
             document.getElementById('externalStorageActive').checked = mount.is_active;
+            
+            // Set allowed users
+            const userSelect = document.getElementById('externalStorageUsers');
+            if (userSelect && mount.allowed_user_ids) {
+                Array.from(userSelect.options).forEach(option => {
+                    option.selected = mount.allowed_user_ids.includes(parseInt(option.value));
+                });
+            }
+            
             document.getElementById('externalStorageModalTitle').textContent = 'Edit External Storage';
             document.getElementById('externalStorageModal').style.display = 'flex';
         }
@@ -1675,13 +1684,27 @@ window.deleteExternalStorage = async function(id) {
     }
 }
 
-document.getElementById('addExternalStorageBtn')?.addEventListener('click', () => {
+document.getElementById('addExternalStorageBtn')?.addEventListener('click', async () => {
     document.getElementById('externalStorageId').value = '';
     document.getElementById('externalStorageName').value = '';
     document.getElementById('externalStorageMountPath').value = '';
     document.getElementById('externalStorageMountPoint').value = '';
     document.getElementById('externalStorageDescription').value = '';
     document.getElementById('externalStorageActive').checked = true;
+    
+    // Clear user selection
+    const userSelect = document.getElementById('externalStorageUsers');
+    if (userSelect) {
+        Array.from(userSelect.options).forEach(option => {
+            option.selected = false;
+        });
+    }
+    
+    // Load users if not already loaded
+    if (allUsers.length === 0) {
+        await loadUsersForExternalStorage();
+    }
+    
     document.getElementById('externalStorageModalTitle').textContent = 'Add External Storage';
     document.getElementById('externalStorageError').style.display = 'none';
     document.getElementById('externalStorageModal').style.display = 'flex';
@@ -1694,10 +1717,21 @@ document.getElementById('saveExternalStorageBtn')?.addEventListener('click', asy
     const mountPoint = document.getElementById('externalStorageMountPoint').value.trim();
     const description = document.getElementById('externalStorageDescription').value.trim();
     const isActive = document.getElementById('externalStorageActive').checked;
+    const userSelect = document.getElementById('externalStorageUsers');
     
     if (!name || !mountPath || !mountPoint) {
         const errorDiv = document.getElementById('externalStorageError');
         errorDiv.textContent = 'Please fill in all required fields';
+        errorDiv.style.display = 'block';
+        return;
+    }
+    
+    // Get selected user IDs
+    const allowedUserIds = userSelect ? Array.from(userSelect.selectedOptions).map(opt => parseInt(opt.value)) : [];
+    
+    if (allowedUserIds.length === 0) {
+        const errorDiv = document.getElementById('externalStorageError');
+        errorDiv.textContent = 'Please select at least one user who can access this storage';
         errorDiv.style.display = 'block';
         return;
     }
@@ -1711,7 +1745,8 @@ document.getElementById('saveExternalStorageBtn')?.addEventListener('click', asy
             mount_path: mountPath,
             mount_point: mountPoint,
             description: description || null,
-            is_active: isActive
+            is_active: isActive,
+            allowed_user_ids: allowedUserIds
         };
         
         let response;
@@ -1747,13 +1782,14 @@ document.getElementById('saveExternalStorageBtn')?.addEventListener('click', asy
 });
 
 // Load external storage when services tab is opened
-document.querySelector('[data-tab="services"]')?.addEventListener('click', () => {
+document.querySelector('[data-tab="services"]')?.addEventListener('click', async () => {
+    await loadUsersForExternalStorage();
     setTimeout(loadExternalStorage, 100);
 });
 
 // Load on page load if services tab is active
 if (document.getElementById('tab-services')?.classList.contains('active')) {
-    loadExternalStorage();
+    loadUsersForExternalStorage().then(() => loadExternalStorage());
 }
 loadUsers();
 loadUsersForPlugins().then(() => loadPlugins());
