@@ -31,26 +31,42 @@ function getCSRFToken() {
 async function csrfFetch(url, options = {}) {
     const method = (options.method || 'GET').toUpperCase();
 
+    // Ensure headers object exists
+    if (!options.headers) {
+        options.headers = {};
+    }
+
     // Add CSRF token for all authenticated requests
     // (Even GET requests may need it if the middleware expects it)
     const token = getCSRFToken();
     if (token) {
-        // Ensure headers object exists
-        if (!options.headers) {
-            options.headers = {};
-        }
         // Always include CSRF token for state-changing methods
         // For GET requests, include it if available (some endpoints may require it)
         if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method) || token) {
             options.headers[CSRF_HEADER_NAME] = token;
         }
     } else {
-        // Only warn for state-changing methods
+        // For state-changing methods, try to get token from a GET request first
         if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
             console.warn(`CSRF token not found in cookies for ${method} request to ${url}`);
             console.warn('Available cookies:', document.cookie);
-            // Still make the request - let the server handle the error
-            // This allows for better error messages from the server
+            
+            // Try to fetch the token by making a GET request to trigger cookie setting
+            try {
+                const tokenResponse = await fetch('/', { method: 'GET', credentials: 'include' });
+                // The server should set the CSRF cookie in the response
+                // Try again after a short delay
+                await new Promise(resolve => setTimeout(resolve, 100));
+                const retryToken = getCSRFToken();
+                if (retryToken) {
+                    options.headers[CSRF_HEADER_NAME] = retryToken;
+                    console.log('CSRF token retrieved after retry');
+                } else {
+                    console.error('CSRF token still not available after retry');
+                }
+            } catch (e) {
+                console.error('Failed to retrieve CSRF token:', e);
+            }
         }
     }
 

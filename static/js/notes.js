@@ -1351,17 +1351,31 @@ class NotesManager {
         const name = prompt('Enter folder name:');
         if (!name) return;
         
-        // Ensure csrfFetch is available
+        // Ensure csrfFetch is available, wait a bit if needed
         if (typeof csrfFetch === 'undefined') {
-            // csrfFetch not available, fallback to fetch
-            this.showToast('Error: CSRF protection not loaded. Please refresh the page.', 'error');
-            return;
+            // Try to wait for it to load
+            await new Promise(resolve => setTimeout(resolve, 100));
+            if (typeof csrfFetch === 'undefined') {
+                this.showToast('Error: CSRF protection not loaded. Please refresh the page.', 'error');
+                return;
+            }
+        }
+        
+        // Get CSRF token explicitly
+        const csrfToken = typeof getCSRFToken !== 'undefined' ? getCSRFToken() : null;
+        if (!csrfToken) {
+            console.warn('CSRF token not found in cookies, request may fail');
         }
         
         try {
-            const response = await csrfFetch('/api/notes/folders', {
+            const headers = { 'Content-Type': 'application/json' };
+            if (csrfToken) {
+                headers['X-CSRF-Token'] = csrfToken;
+            }
+            
+            const response = await (csrfFetch || fetch)('/api/notes/folders', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: headers,
                 body: JSON.stringify({ name: name.trim() })
             });
             
