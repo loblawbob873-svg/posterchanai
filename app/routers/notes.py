@@ -82,10 +82,26 @@ async def get_folders(
         
         # Use model_validate for Pydantic v2, fallback to from_orm for v1
         try:
-            folder_dict = NoteFolderResponse.model_validate(folder).model_dump()
-        except AttributeError:
-            # Pydantic v1 fallback
-            folder_dict = NoteFolderResponse.from_orm(folder).dict()
+            # Try with JSON mode to ensure datetime serialization
+            folder_dict = NoteFolderResponse.model_validate(folder).model_dump(mode='json')
+        except (AttributeError, TypeError):
+            # Pydantic v1 fallback or if mode='json' not supported
+            try:
+                folder_dict = NoteFolderResponse.from_orm(folder).dict()
+                # Ensure datetime objects are serialized to strings
+                if isinstance(folder_dict.get('created_at'), datetime):
+                    folder_dict['created_at'] = folder_dict['created_at'].isoformat()
+                if isinstance(folder_dict.get('updated_at'), datetime):
+                    folder_dict['updated_at'] = folder_dict['updated_at'].isoformat()
+            except Exception as e:
+                logger.error(f"Error serializing folder {folder.id}: {e}", exc_info=True)
+                # Fallback: manual dict construction with datetime serialization
+                folder_dict = {
+                    "id": folder.id,
+                    "name": folder.name,
+                    "created_at": folder.created_at.isoformat() if folder.created_at else None,
+                    "updated_at": folder.updated_at.isoformat() if folder.updated_at else None
+                }
         
         result.append({
             **folder_dict,
@@ -93,9 +109,21 @@ async def get_folders(
         })
     
     # Return with no-cache headers to prevent browser caching
-    from fastapi.responses import JSONResponse
-    return JSONResponse(
-        content=result,
+    # Use Response with proper JSON serialization to handle datetime objects
+    from fastapi.responses import Response
+    import json
+    
+    # Custom JSON encoder for datetime objects
+    class DateTimeEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            return super().default(obj)
+    
+    json_content = json.dumps(result, cls=DateTimeEncoder)
+    return Response(
+        content=json_content,
+        media_type="application/json",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
