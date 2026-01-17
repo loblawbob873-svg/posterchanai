@@ -316,22 +316,14 @@ class NotesManager {
         const contentPreview = document.getElementById('noteContentPreview');
         if (!contentInput || !contentPreview) return;
         
-        // Get username and noteId for image URL conversion
-        let username = this.currentUsername;
-        if (!username && this.currentNote && this.currentNote.username) {
-            username = this.currentNote.username;
+        // Ensure we have username and noteId before rendering
+        // These should be set when the note is loaded
+        if (!this.currentNoteId) {
+            console.error('updatePreview: No noteId available');
         }
-        if (!username) {
-            const sidebarUser = document.querySelector('.user-name');
-            if (sidebarUser && sidebarUser.textContent) {
-                username = sidebarUser.textContent.trim();
-            }
+        if (!this.currentUsername && (!this.currentNote || !this.currentNote.username)) {
+            console.error('updatePreview: No username available');
         }
-        if (!username) {
-            username = 'user'; // Fallback
-        }
-        
-        let noteId = this.currentNoteId;
         
         const markdown = contentInput.value;
         let rendered = this.renderMarkdown(markdown);
@@ -423,14 +415,24 @@ class NotesManager {
                 // BUT skip data URLs (placeholders)
                 const filename = src.split('/').pop().split('?')[0];
                 // Make sure it's not a resource ID (32 hex chars) and not a data URL
-                if (!/^[a-f0-9]{32}$/i.test(filename) && !filename.startsWith('data:') && !src.includes('base64,') && noteId && username) {
+                const noteId = this.currentNoteId;
+                const username = this.currentUsername || (this.currentNote && this.currentNote.username);
+                if (!/^[a-f0-9]{32}$/i.test(filename) && !filename.startsWith('data:') && !src.includes('base64,') && noteId && username && username !== 'user') {
                     const encodedUsername = encodeURIComponent(username);
                     const encodedFilename = encodeURIComponent(filename);
                     const properUrl = `/api/notes/files/${encodedUsername}/${noteId}/${encodedFilename}`;
+                    console.log('Fixing bare filename in preview:', { src, filename, properUrl });
                     img.src = properUrl;
                     img.setAttribute('src', properUrl);
+                } else {
+                    console.warn('Cannot fix bare filename:', { src, filename, noteId, username });
                 }
             }
+            
+            // Add error handler to log failures
+            img.onerror = function() {
+                console.error('Image failed to load:', this.src);
+            };
         });
         
         // Also check all links for resource IDs
@@ -455,23 +457,25 @@ class NotesManager {
     renderMarkdown(text) {
         if (!text) return '';
         
-        // Get username and note ID for image URLs
-        // Try multiple methods for reliability
-        let username = 'user';
-        const sidebarUser = document.querySelector('.user-name');
-        if (sidebarUser && sidebarUser.textContent) {
-            username = sidebarUser.textContent.trim();
-        } else {
-            // Fallback: try to get from current note if available
-            // This will be set when note is loaded
-            if (this.currentNote && this.currentNote.username) {
-                username = this.currentNote.username;
+        // Get username and note ID for image URLs - use stored values first
+        let username = this.currentUsername;
+        if (!username && this.currentNote && this.currentNote.username) {
+            username = this.currentNote.username;
+        }
+        if (!username) {
+            const sidebarUser = document.querySelector('.user-name');
+            if (sidebarUser && sidebarUser.textContent) {
+                username = sidebarUser.textContent.trim();
             }
         }
-        
-        // Validate username (basic check - fallback to 'user' if not found)
+        if (!username || username === 'user') {
+            console.warn('renderMarkdown: No valid username found, using fallback');
+        }
         
         const noteId = this.currentNoteId;
+        if (!noteId) {
+            console.warn('renderMarkdown: No noteId available, images may not load');
+        }
         
         // Extract code blocks first
         const codeBlocks = [];
@@ -489,8 +493,9 @@ class NotesManager {
             
             // If it's already an /api/ URL, use it as-is (might be from migration)
             if (src.startsWith('/api/notes/files/')) {
-                // Already a proper URL, use it
+                // Already a proper URL, use it as-is
                 mediaSrc = src;
+                console.log('Using existing API URL:', mediaSrc);
             } else if (src.startsWith('http://') || src.startsWith('https://')) {
                 // External URL, use as-is
                 mediaSrc = src;
@@ -500,12 +505,14 @@ class NotesManager {
             } else {
                 // Relative path or filename - convert to note attachment URL
                 const filename = src.replace(/^\.\//, '').split('/').pop();
-                if (noteId) {
+                if (noteId && username && username !== 'user') {
                     // URL-encode both username and filename
                     const encodedUsername = encodeURIComponent(username);
                     const encodedFilename = encodeURIComponent(filename);
                     mediaSrc = `/api/notes/files/${encodedUsername}/${noteId}/${encodedFilename}`;
+                    console.log('Converted image URL:', { original: src, filename, username, noteId, final: mediaSrc });
                 } else {
+                    console.warn('Cannot convert image URL - missing noteId or username:', { src, noteId, username });
                     // Keep original, might work if it's already a valid path
                     mediaSrc = src;
                 }
@@ -521,6 +528,7 @@ class NotesManager {
                 // It's an image (including GIFs)
                 const index = images.length;
                 images.push({ alt: alt || '', src: mediaSrc });
+                console.log('Added image to array:', { index, alt, src: mediaSrc });
                 return `\x00IMAGE${index}\x00`;
             }
         });
@@ -681,18 +689,35 @@ class NotesManager {
         html = html.replace(/\x00IMAGE(\d+)\x00/g, (match, index) => {
             const imgIndex = parseInt(index);
             if (!images || !images[imgIndex]) {
+                console.error('Image not found in array:', imgIndex, 'Total images:', images ? images.length : 0);
                 return `[Image ${imgIndex} not found]`;
             }
             const img = images[imgIndex];
             if (!img || !img.src) {
+                console.error('Image object invalid:', img);
                 return `[Image ${imgIndex} invalid]`;
             }
             const safeAlt = this.escapeHtml(img.alt || '');
-            const safeSrc = img.src; // Don't escape URL - it's already a valid URL string
+            let safeSrc = img.src; // Don't escape URL - it's already a valid URL string
+            
+            // If the src is still a relative path or filename, try to fix it now
+            if (!safeSrc.startsWith('http') && !safeSrc.startsWith('/api/') && !safeSrc.startsWith('data:')) {
+                const filename = safeSrc.replace(/^\.\//, '').split('/').pop();
+                const noteId = this.currentNoteId;
+                const username = this.currentUsername || (this.currentNote && this.currentNote.username);
+                if (noteId && username && username !== 'user' && !/^[a-f0-9]{32}$/i.test(filename)) {
+                    const encodedUsername = encodeURIComponent(username);
+                    const encodedFilename = encodeURIComponent(filename);
+                    safeSrc = `/api/notes/files/${encodedUsername}/${noteId}/${encodedFilename}`;
+                    console.log('Fixed image URL during restoration:', { original: img.src, fixed: safeSrc });
+                }
+            }
             
             // Add cache busting and error handling
             const cacheBust = safeSrc.includes('?') ? '&' : '?';
             const imgSrc = `${safeSrc}${cacheBust}t=${Date.now()}`;
+            
+            console.log('Creating img tag:', { imgIndex, src: imgSrc, alt: safeAlt });
             
             // Check if it's a GIF (GIFs should animate)
             const isGif = /\.gif$/i.test(safeSrc);
@@ -701,7 +726,8 @@ class NotesManager {
             // For GIFs, ensure they can animate properly and don't get optimized away
             // Add loading="lazy" for better performance, but ensure GIFs animate
             const gifStyle = isGif ? ' image-rendering: auto;' : '';
-            return `<img src="${imgSrc}" alt="${safeAlt}" loading="lazy" style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);${gifStyle}" onerror="this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iIzJhMmEzZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM4ODg4YWEiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';">`;
+            const imgTag = `<img src="${imgSrc}" alt="${safeAlt}" loading="lazy" style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);${gifStyle}" onerror="console.error('Image load failed:', this.src); this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iIzJhMmEzZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM4ODg4YWEiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';">`;
+            return imgTag;
         });
         
         // Restore links (after escaping, so they're not escaped)

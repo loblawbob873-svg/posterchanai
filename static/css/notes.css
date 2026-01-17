@@ -338,6 +338,7 @@
     background: var(--bg-primary);
     overflow: hidden !important;
     box-sizing: border-box;
+    position: relative;
 }
 
 .notes-editor-header {
@@ -446,6 +447,7 @@
     position: relative;
     overflow: hidden !important;
     box-sizing: border-box;
+    height: 0; /* Force flexbox to calculate height properly */
 }
 
 #noteContentInput {
@@ -459,6 +461,7 @@
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'Courier New', monospace;
     resize: none;
     min-height: 0;
+    height: 100% !important;
     max-height: 100% !important;
     overflow-y: auto !important;
     overflow-x: hidden;
@@ -486,6 +489,7 @@
     overflow-y: auto !important;
     overflow-x: hidden !important;
     min-height: 0;
+    height: 100% !important;
     max-height: 100% !important;
     position: relative;
     box-sizing: border-box;

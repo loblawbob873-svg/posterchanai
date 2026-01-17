@@ -426,8 +426,17 @@ async def serve_note_file(
         decoded_username = username
     
     # Verify user owns this file (username must match)
+    # Allow both exact match and URL-encoded match
     if current_user.username != decoded_username:
-        raise HTTPException(status_code=403, detail="Access denied")
+        # Try URL-encoding the current username to see if it matches
+        from urllib.parse import quote
+        encoded_current = quote(current_user.username, safe='')
+        if encoded_current != username and current_user.username != username:
+            logger.warning(
+                f"Username mismatch: current_user={current_user.username}, "
+                f"decoded_username={decoded_username}, url_username={username}"
+            )
+            raise HTTPException(status_code=403, detail="Access denied")
     
     # Check if storage server is configured - but check local file first
     # (Note: When proxying, the main server has already verified the note exists)
@@ -498,9 +507,18 @@ async def serve_note_file(
             try:
                 files_in_dir = [f.name for f in base_path.iterdir() if f.is_file()]
                 logger.warning(f"Files in note directory: {files_in_dir[:10]}")
+                # Try case-insensitive match
+                for f in files_in_dir:
+                    if f.lower() == safe_filename.lower():
+                        logger.warning(f"Found case-insensitive match: {f} vs {safe_filename}")
+                        file_path = base_path / f
+                        break
             except Exception as e:
                 logger.warning(f"Error listing directory: {e}")
-        raise HTTPException(status_code=404, detail=f"File not found: {safe_filename}")
+        
+        # If still not found after case-insensitive check, raise 404
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"File not found: {safe_filename}")
     
     # Determine media type (comprehensive list)
     suffix = file_path.suffix.lower()
