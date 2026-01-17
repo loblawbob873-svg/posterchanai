@@ -638,12 +638,27 @@
     margin-bottom: 16px;
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 6px;
+    transition: background-color 0.2s ease;
+    user-select: none;
 }
 
-.notes-attachments-header::before {
-    content: "📎";
-    font-size: 18px;
+.notes-attachments-header:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.notes-attachments-header.collapsed .collapse-icon {
+    transform: rotate(-90deg);
+}
+
+.collapse-icon {
+    font-size: 12px;
+    transition: transform 0.2s ease;
+    opacity: 0.7;
 }
 
 .notes-attachments-list {
@@ -662,7 +677,6 @@
     border-radius: 8px;
     border: 1px solid var(--border-color);
     transition: all 0.2s ease;
-    cursor: pointer;
     position: relative;
 }
 
@@ -700,10 +714,31 @@
     text-align: center;
     font-weight: 500;
     transition: color 0.2s ease;
+    cursor: pointer;
+    z-index: 1;
+    position: relative;
 }
 
 .attachment-link:hover {
     color: var(--accent-color);
+    text-decoration: underline;
+}
+
+.attachment-preview-link {
+    width: 100%;
+    display: block;
+    cursor: pointer;
+    z-index: 1;
+    position: relative;
+    text-decoration: none;
+}
+
+.attachment-icon-link {
+    width: 100%;
+    display: block;
+    cursor: pointer;
+    z-index: 1;
+    position: relative;
     text-decoration: none;
 }
 

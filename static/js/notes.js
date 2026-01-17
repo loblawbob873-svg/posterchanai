@@ -616,18 +616,34 @@ class NotesManager {
         
         // Process markdown formatting BEFORE escaping HTML
         // Headers (process before other formatting)
-        let html = processed.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-        html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-        html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+        // Match headers that are at the start of a line (after optional whitespace)
+        // But skip if the line contains a placeholder (code block, image, etc.)
+        let html = processed.replace(/^(###)\s+(.+)$/gim, (match, prefix, text) => {
+            // Skip if this line contains a placeholder (it's inside a code block or other extracted content)
+            if (text.includes('\x00')) return match;
+            return `<h3>${text}</h3>`;
+        });
+        html = html.replace(/^(##)\s+(.+)$/gim, (match, prefix, text) => {
+            if (text.includes('\x00')) return match;
+            return `<h2>${text}</h2>`;
+        });
+        html = html.replace(/^(#)\s+(.+)$/gim, (match, prefix, text) => {
+            if (text.includes('\x00')) return match;
+            return `<h1>${text}</h1>`;
+        });
         
         // Horizontal rules
         html = html.replace(/^---$/gim, '<hr>');
         html = html.replace(/^\*\*\*$/gim, '<hr>');
         
         // Lists - wrap consecutive list items
-        html = html.replace(/(?:^[\*\-\+] .+$(?:\n|$))+/gm, (match) => {
+        // Handle lists that may contain placeholders (code blocks, images, etc.)
+        html = html.replace(/(?:^[\*\-\+]\s+.+$(?:\n|$))+/gm, (match) => {
             const items = match.trim().split('\n').map(line => {
-                const text = line.replace(/^[\*\-\+]\s+/, '').trim();
+                // Check if line starts with list marker
+                const listMatch = line.match(/^[\*\-\+]\s+(.+)$/);
+                if (!listMatch) return '';
+                const text = listMatch[1].trim();
                 if (!text) return '';
                 return `<li>${text}</li>`;
             }).filter(item => item).join('');
@@ -635,9 +651,11 @@ class NotesManager {
         });
         
         // Numbered lists
-        html = html.replace(/(?:^\d+\. .+$(?:\n|$))+/gm, (match) => {
+        html = html.replace(/(?:^\d+\.\s+.+$(?:\n|$))+/gm, (match) => {
             const items = match.trim().split('\n').map(line => {
-                const text = line.replace(/^\d+\.\s+/, '').trim();
+                const listMatch = line.match(/^\d+\.\s+(.+)$/);
+                if (!listMatch) return '';
+                const text = listMatch[1].trim();
                 if (!text) return '';
                 return `<li>${text}</li>`;
             }).filter(item => item).join('');
@@ -645,13 +663,34 @@ class NotesManager {
         });
         
         // Bold **text** (after headers to avoid conflicts)
-        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        // Skip if it contains a placeholder (it's inside extracted content)
+        html = html.replace(/\*\*([^*]+)\*\*/g, (match, text) => {
+            if (text.includes('\x00')) return match; // Skip placeholders
+            return `<strong>${text}</strong>`;
+        });
         
         // Italic *text* (after bold to avoid conflicts)
-        html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        // Match single * but not ** (bold) or list markers
+        html = html.replace(/\*([^*\n]+?)\*/g, (match, text) => {
+            if (text.includes('\x00')) return match; // Skip placeholders
+            // Don't match if preceded by * (would be bold) or if it's a list marker
+            const beforeMatch = match;
+            if (beforeMatch.trim().startsWith('* ') || beforeMatch.trim().startsWith('*\t')) return match;
+            // Check if this is actually part of bold (surrounded by **)
+            const matchIndex = html.indexOf(match);
+            if (matchIndex > 0 && html[matchIndex - 1] === '*' && 
+                matchIndex + match.length < html.length && html[matchIndex + match.length] === '*') {
+                return match; // It's part of bold, skip
+            }
+            return `<em>${text}</em>`;
+        });
         
-        // Inline code `text` (but not inside code blocks)
-        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+        // Inline code `text` (but not inside code blocks which are already extracted)
+        // Skip if it contains a placeholder
+        html = html.replace(/`([^`\n]+)`/g, (match, text) => {
+            if (text.includes('\x00')) return match; // Skip placeholders
+            return `<code>${text}</code>`;
+        });
         
         // Handle escaped characters in markdown (like \$ for literal $)
         // Replace common markdown escapes with their literal characters
@@ -662,37 +701,34 @@ class NotesManager {
         
         // Newlines (convert double newlines to paragraphs, single to <br>)
         // But preserve existing HTML structure
-        const lines = html.split('\n');
+        // Split by double newlines first to identify paragraphs
+        const paragraphs = html.split(/\n\n+/);
         let result = [];
-        let currentPara = [];
         
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) {
-                if (currentPara.length > 0) {
-                    result.push(`<p>${currentPara.join(' ')}</p>`);
-                    currentPara = [];
-                }
-                result.push('');
-            } else if (line.startsWith('<') || line.startsWith('</')) {
-                // HTML tag - flush current para and add as-is
-                if (currentPara.length > 0) {
-                    result.push(`<p>${currentPara.join(' ')}</p>`);
-                    currentPara = [];
-                }
-                result.push(line);
+        for (const para of paragraphs) {
+            const lines = para.split('\n');
+            const trimmedLines = lines.map(l => l.trim()).filter(l => l);
+            
+            if (trimmedLines.length === 0) {
+                continue; // Skip empty paragraphs
+            }
+            
+            // Check if this paragraph is already HTML (starts with a tag)
+            const firstLine = trimmedLines[0];
+            if (firstLine.startsWith('<') && (firstLine.startsWith('<h') || firstLine.startsWith('<ul') || 
+                firstLine.startsWith('<ol') || firstLine.startsWith('<pre') || firstLine.startsWith('<hr'))) {
+                // It's already formatted HTML, add as-is
+                result.push(para.trim());
             } else {
-                currentPara.push(line);
+                // Regular paragraph - join lines with spaces and wrap in <p>
+                const paraText = trimmedLines.join(' ');
+                result.push(`<p>${paraText}</p>`);
             }
         }
-        if (currentPara.length > 0) {
-            result.push(`<p>${currentPara.join(' ')}</p>`);
-        }
+        
         html = result.join('\n');
         
         // Convert remaining single newlines to <br> (but not inside HTML tags)
-        // We'll do this after HTML escaping to avoid issues
-        // For now, just convert all newlines - we'll handle HTML tags separately
         html = html.replace(/\n/g, '<br>');
         
         // NOW escape HTML for text content (but preserve placeholders and already-inserted HTML tags)
@@ -895,10 +931,11 @@ class NotesManager {
         }
         
         attachmentsDiv.innerHTML = `
-            <div class="notes-attachments-header">
-                <span>Attachments (${attachments.length})</span>
+            <div class="notes-attachments-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.style.display = this.classList.contains('collapsed') ? 'none' : 'grid';">
+                <span>📎 Attachments (${attachments.length})</span>
+                <span class="collapse-icon">▼</span>
             </div>
-            <div class="notes-attachments-list">
+            <div class="notes-attachments-list" style="display: grid;">
                 ${attachments.map((filename, index) => {
                     const ext = filename.split('.').pop().toLowerCase();
                     const isImage = /^(png|jpg|jpeg|gif|webp|svg|bmp|tiff|ico)$/i.test(ext);
@@ -919,13 +956,15 @@ class NotesManager {
                     
                     if (isImage) {
                         return `<div class="attachment-item" data-filename="${this.escapeHtml(filename)}">
-                            <img src="${fileUrl}?t=${Date.now()}" alt="${this.escapeHtml(filename)}" class="attachment-preview" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                            <div class="attachment-icon" style="display: none;">🖼️</div>
-                            <a href="${fileUrl}" target="_blank" class="attachment-link" onclick="event.stopPropagation()">${this.escapeHtml(shortName)}</a>
+                            <a href="${fileUrl}?t=${Date.now()}" target="_blank" class="attachment-preview-link" onclick="event.stopPropagation(); return true;">
+                                <img src="${fileUrl}?t=${Date.now()}" alt="${this.escapeHtml(filename)}" class="attachment-preview" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                                <div class="attachment-icon" style="display: none;">🖼️</div>
+                            </a>
+                            <a href="${fileUrl}" target="_blank" class="attachment-link" onclick="event.stopPropagation(); return true;" download="${this.escapeHtml(filename)}">${this.escapeHtml(shortName)}</a>
                             <div class="attachment-actions">
-                                <button class="attachment-action-btn" onclick="event.stopPropagation(); window.open('${fileUrl}', '_blank');" title="Open in new tab">🔗</button>
-                                <button class="attachment-action-btn" onclick="event.stopPropagation(); window.notesManager.emailAttachment('${this.escapeHtml(filename)}', '${fileUrl}');" title="Email file">📧</button>
-                                <button class="attachment-remove-btn" onclick="event.stopPropagation(); window.notesManager.removeAttachment('${this.escapeHtml(filename)}');" title="Remove attachment">🗑️</button>
+                                <button class="attachment-action-btn" onclick="event.stopPropagation(); window.open('${fileUrl}', '_blank'); return false;" title="Open in new tab">🔗</button>
+                                <button class="attachment-action-btn" onclick="event.stopPropagation(); window.notesManager.emailAttachment('${this.escapeHtml(filename)}', '${fileUrl}'); return false;" title="Email file">📧</button>
+                                <button class="attachment-remove-btn" onclick="event.stopPropagation(); window.notesManager.removeAttachment('${this.escapeHtml(filename)}'); return false;" title="Remove attachment">🗑️</button>
                             </div>
                         </div>`;
                     } else if (isPdf) {
@@ -942,13 +981,19 @@ class NotesManager {
                         icon = '💻';
                     }
                     
+                    // For non-images, add download attribute for files that should download
+                    const shouldDownload = !canOpenInNewTab && !isVideo && !isAudio;
+                    const downloadAttr = shouldDownload ? `download="${this.escapeHtml(filename)}"` : '';
+                    
                     return `<div class="attachment-item" data-filename="${this.escapeHtml(filename)}">
-                        <div class="attachment-icon">${icon}</div>
-                        <a href="${fileUrl}" target="_blank" class="attachment-link" onclick="event.stopPropagation()">${this.escapeHtml(shortName)}</a>
+                        <a href="${fileUrl}" target="_blank" class="attachment-icon-link" onclick="event.stopPropagation(); return true;" ${downloadAttr} title="Click to ${shouldDownload ? 'download' : 'open'}">
+                            <div class="attachment-icon">${icon}</div>
+                        </a>
+                        <a href="${fileUrl}" target="_blank" class="attachment-link" onclick="event.stopPropagation(); return true;" ${downloadAttr}>${this.escapeHtml(shortName)}</a>
                         <div class="attachment-actions">
-                            ${canOpenInNewTab ? `<button class="attachment-action-btn" onclick="event.stopPropagation(); window.open('${fileUrl}', '_blank');" title="Open in new tab">🔗</button>` : ''}
-                            <button class="attachment-action-btn" onclick="event.stopPropagation(); window.notesManager.emailAttachment('${this.escapeHtml(filename)}', '${fileUrl}');" title="Email file">📧</button>
-                            <button class="attachment-remove-btn" onclick="event.stopPropagation(); window.notesManager.removeAttachment('${this.escapeHtml(filename)}');" title="Remove attachment">🗑️</button>
+                            ${canOpenInNewTab ? `<button class="attachment-action-btn" onclick="event.stopPropagation(); window.open('${fileUrl}', '_blank'); return false;" title="Open in new tab">🔗</button>` : ''}
+                            <button class="attachment-action-btn" onclick="event.stopPropagation(); window.notesManager.emailAttachment('${this.escapeHtml(filename)}', '${fileUrl}'); return false;" title="Email file">📧</button>
+                            <button class="attachment-remove-btn" onclick="event.stopPropagation(); window.notesManager.removeAttachment('${this.escapeHtml(filename)}'); return false;" title="Remove attachment">🗑️</button>
                         </div>
                     </div>`;
                 }).join('')}
