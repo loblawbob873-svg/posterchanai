@@ -571,8 +571,30 @@ async def get_all_images(
     
     try:
         result = await asyncio.to_thread(_get_all_images_sync)
+        # Ensure result is JSON serializable before returning
+        import json
+        try:
+            json.dumps(result)  # Test serialization
+        except (TypeError, ValueError) as json_err:
+            logger.error(f"[FILES] JSON serialization error: {json_err}")
+            logger.error(f"[FILES] Result type: {type(result)}, keys: {result.keys() if isinstance(result, dict) else 'N/A'}")
+            # Try to fix by ensuring all values are serializable
+            if isinstance(result, dict) and "images" in result:
+                fixed_images = []
+                for img in result.get("images", []):
+                    fixed_img = {}
+                    for key, value in img.items():
+                        if isinstance(value, bytes):
+                            fixed_img[key] = value.decode('utf-8', errors='ignore')
+                        elif isinstance(value, (Path, type(None))):
+                            fixed_img[key] = str(value) if value else ""
+                        else:
+                            fixed_img[key] = value
+                    fixed_images.append(fixed_img)
+                result["images"] = fixed_images
         return result
     except Exception as e:
+        logger.error(f"[FILES] Error in get_all_images: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
