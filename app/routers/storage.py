@@ -833,7 +833,7 @@ async def get_all_images(
                         "name": item.name,
                         "path": relative_path,
                         "size": stat.st_size,
-                        "modified": modified_time,
+                        "modified": float(modified_time),  # CRITICAL: Ensure it's a float, not string
                         "modified_date": datetime.fromtimestamp(modified_time).isoformat(),
                         "type": "image" if is_image else "video" if is_video else "unknown",
                     }
@@ -882,7 +882,6 @@ async def get_all_images(
         images = unique_images
         
         # Sort by modified time (newest first)
-        # Ensure modified is a number, not string, and convert to float explicitly
         # CRITICAL: Convert ALL timestamps to float BEFORE sorting to ensure proper numeric comparison
         for img in images:
             if 'modified' in img:
@@ -905,7 +904,16 @@ async def get_all_images(
             # Return tuple: (negative_modified, path) so higher timestamps sort first
             return (-modified, path)
         
+        # Sort the list
         images.sort(key=sort_key)
+        
+        # Double-check: verify sort worked
+        prev_ts = None
+        for i, img in enumerate(images[:10]):
+            curr_ts = float(img.get('modified', 0) or 0)
+            if prev_ts is not None and curr_ts > prev_ts:
+                logger.error(f"[STORAGE] CRITICAL: Sort failed! Image {i} ({img.get('name')}) has timestamp {curr_ts} which is NEWER than previous {prev_ts}")
+            prev_ts = curr_ts
         
         # Debug: log statistics
         total_scanned = len(images) + skipped_count

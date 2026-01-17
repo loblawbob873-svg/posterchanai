@@ -438,7 +438,7 @@ async def get_all_images(
                         "name": item.name,
                         "path": relative_path,
                         "size": stat.st_size,
-                        "modified": modified_time,
+                        "modified": float(modified_time),  # CRITICAL: Ensure it's a float, not string
                         "modified_date": datetime.fromtimestamp(modified_time).isoformat(),
                         "type": "image" if is_image else "video" if is_video else "unknown",
                     }
@@ -500,7 +500,6 @@ async def get_all_images(
                     img['modified'] = 0.0
         
         # Sort by modified time descending (newest first), then by path ascending for stability
-        # Use reverse=True to get descending order (newest first)
         # CRITICAL: Sort by negative timestamp to ensure newest first (higher timestamp = newer)
         # This is more reliable than reverse=True with tuple sorting
         def sort_key(img):
@@ -510,7 +509,16 @@ async def get_all_images(
             # Negative because we want descending order: -1800 < -1700, so 1800 comes before 1700
             return (-modified, path)
         
+        # Sort the list - this MUST work correctly
         images.sort(key=sort_key)
+        
+        # Immediate verification: check first 10 items are in correct order
+        prev_ts = None
+        for i, img in enumerate(images[:10]):
+            curr_ts = float(img.get('modified', 0) or 0)
+            if prev_ts is not None and curr_ts > prev_ts:
+                logger.error(f"[FILES] CRITICAL SORT FAILURE at index {i}: {img.get('name')} (ts={curr_ts}) is NEWER than previous (ts={prev_ts})!")
+            prev_ts = curr_ts
         
         # Debug: log statistics
         total_scanned = len(images) + skipped_count

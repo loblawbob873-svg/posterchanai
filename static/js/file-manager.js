@@ -1993,33 +1993,42 @@ class FileManager {
             
             const data = await response.json();
             
+            // Backend returns images already sorted (newest first), so we should preserve that order
+            // When resetting, just use the backend data directly
             if (reset) {
                 this.allImages = data.images || [];
             } else {
-                this.allImages.push(...(data.images || []));
+                // When loading more, we need to merge while maintaining sort order
+                // Backend returns sorted chunks, but we need to merge them correctly
+                // Since backend sorts newest first, we should merge maintaining that order
+                const newImages = data.images || [];
+                // Combine and re-sort to ensure global order (in case of pagination edge cases)
+                this.allImages = [...this.allImages, ...newImages];
+                // Re-sort to ensure correct order across all loaded images
+                // This is necessary because pagination might have edge cases
+                this.allImages.sort((a, b) => {
+                    const timeA = Number(a.modified) || 0;
+                    const timeB = Number(b.modified) || 0;
+                    if (timeB !== timeA) {
+                        return timeB - timeA; // Descending: newer (higher) timestamps first
+                    }
+                    // Tie-breaker: sort by path for stability
+                    const pathA = (a.path || '').toLowerCase();
+                    const pathB = (b.path || '').toLowerCase();
+                    return pathA.localeCompare(pathB);
+                });
+                // Remove duplicates based on path
+                const seen = new Set();
+                this.allImages = this.allImages.filter(img => {
+                    const path = img.path || '';
+                    if (seen.has(path)) return false;
+                    seen.add(path);
+                    return true;
+                });
             }
             
             this.hasMoreImages = data.has_more || false;
             this.imageLoadOffset += data.images?.length || 0;
-            
-            // Ensure images are sorted by modified time (newest first)
-            // Sort after combining with existing images to maintain correct order
-            // Convert to numbers explicitly to ensure numeric comparison
-            // IMPORTANT: Sort in descending order (newest first) - higher timestamp = newer
-            // timeB - timeA: if B is newer (timeB > timeA), returns positive, B comes before A ✓
-            this.allImages.sort((a, b) => {
-                const timeA = Number(a.modified) || 0;
-                const timeB = Number(b.modified) || 0;
-                // Descending order (newest first) - higher timestamp comes first
-                // timeB - timeA gives us: newer files (higher timestamp) come first
-                if (timeB !== timeA) {
-                    return timeB - timeA; // Positive if B is newer, negative if A is newer
-                }
-                // Timestamps are equal, sort by path for stability
-                const pathA = (a.path || '').toLowerCase();
-                const pathB = (b.path || '').toLowerCase();
-                return pathA.localeCompare(pathB);
-            });
             
             if (countEl) {
                 countEl.textContent = `[${data.total || 0} IMAGES FOUND]`;
