@@ -1971,11 +1971,18 @@ class FileManager {
             
             // Ensure images are sorted by modified time (newest first)
             // Sort after combining with existing images to maintain correct order
+            // Convert to numbers explicitly to ensure numeric comparison
             this.allImages.sort((a, b) => {
-                const timeA = a.modified || 0;
-                const timeB = b.modified || 0;
+                const timeA = Number(a.modified) || 0;
+                const timeB = Number(b.modified) || 0;
                 // Descending order (newest first) - higher timestamp comes first
-                return timeB - timeA;
+                if (timeB !== timeA) {
+                    return timeB - timeA;
+                }
+                // Stable sort: if timestamps are equal, sort by path
+                const pathA = (a.path || '').toLowerCase();
+                const pathB = (b.path || '').toLowerCase();
+                return pathA.localeCompare(pathB);
             });
             
             if (countEl) {
@@ -1994,23 +2001,33 @@ class FileManager {
             if (this.allImages.length > 0) {
                 console.log('Photo Gallery - Sorting verification:');
                 console.log(`  Total images: ${this.allImages.length}`);
-                console.log('  First 5 images (should be newest first):');
-                this.allImages.slice(0, 5).forEach((img, idx) => {
-                    const date = img.modified ? new Date(img.modified * 1000).toLocaleString() : 'N/A';
-                    console.log(`    ${idx + 1}. ${img.name} - Modified: ${date} (timestamp: ${img.modified})`);
+                console.log('  First 10 images (should be newest first):');
+                this.allImages.slice(0, 10).forEach((img, idx) => {
+                    const timestamp = Number(img.modified) || 0;
+                    const date = timestamp > 0 ? new Date(timestamp * 1000).toLocaleString() : 'N/A';
+                    console.log(`    ${idx + 1}. ${img.name} - ${date} (timestamp: ${timestamp})`);
                 });
                 
                 // Verify sorting is correct
                 let isSorted = true;
-                for (let i = 1; i < this.allImages.length; i++) {
-                    if (this.allImages[i].modified > this.allImages[i-1].modified) {
+                let firstError = null;
+                for (let i = 1; i < Math.min(this.allImages.length, 100); i++) {
+                    const prev = Number(this.allImages[i - 1].modified) || 0;
+                    const curr = Number(this.allImages[i].modified) || 0;
+                    if (curr > prev) {
                         isSorted = false;
-                        console.warn(`  ⚠️  Sorting issue: Image ${i} (${this.allImages[i].name}) is newer than image ${i-1} (${this.allImages[i-1].name})`);
-                        break;
+                        if (!firstError) {
+                            firstError = i;
+                            console.error(`❌ Sorting error at index ${i}:`);
+                            console.error(`  Previous: ${this.allImages[i - 1].name} (${prev})`);
+                            console.error(`  Current: ${this.allImages[i].name} (${curr})`);
+                        }
                     }
                 }
                 if (isSorted) {
-                    console.log('  ✓ Images are correctly sorted (newest first)');
+                    console.log('  ✓ Sorting verified: All images are in correct order (newest first)');
+                } else {
+                    console.error(`  ❌ Sorting failed: Found ${firstError ? 'at least one' : 'multiple'} out-of-order images`);
                 }
             }
             
@@ -2036,10 +2053,18 @@ class FileManager {
         }
         
         // Ensure images are sorted before rendering (safety check)
+        // Convert to numbers explicitly to ensure numeric comparison
         this.allImages.sort((a, b) => {
-            const timeA = a.modified || 0;
-            const timeB = b.modified || 0;
-            return timeB - timeA; // Descending order (newest first)
+            const timeA = Number(a.modified) || 0;
+            const timeB = Number(b.modified) || 0;
+            // Descending order (newest first) - higher timestamp comes first
+            if (timeB !== timeA) {
+                return timeB - timeA;
+            }
+            // Stable sort: if timestamps are equal, sort by path
+            const pathA = (a.path || '').toLowerCase();
+            const pathB = (b.path || '').toLowerCase();
+            return pathA.localeCompare(pathB);
         });
         
         grid.innerHTML = '';

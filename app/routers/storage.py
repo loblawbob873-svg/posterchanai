@@ -827,13 +827,28 @@ async def get_all_images(
         
         # Sort by modified time (newest first)
         # Use stable sort to maintain order for items with same timestamp
-        images.sort(key=lambda x: (x.get('modified', 0), x.get('path', '')), reverse=True)
+        # Ensure modified is a number, not string
+        for img in images:
+            if 'modified' in img:
+                img['modified'] = float(img['modified']) if img['modified'] else 0.0
+        
+        images.sort(key=lambda x: (float(x.get('modified', 0) or 0), x.get('path', '')), reverse=True)
         
         # Debug: log first few images to verify sorting
-        if images and logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Sorted {len(images)} images. First 3:")
-            for i, img in enumerate(images[:3]):
-                logger.debug(f"  {i+1}. {img.get('name')} - modified: {img.get('modified')} ({datetime.fromtimestamp(img.get('modified', 0)).isoformat() if img.get('modified') else 'N/A'})")
+        if images:
+            logger.info(f"[STORAGE] Sorted {len(images)} images. First 5 (newest first):")
+            for i, img in enumerate(images[:5]):
+                mod_time = img.get('modified', 0)
+                mod_date = datetime.fromtimestamp(mod_time).isoformat() if mod_time > 0 else 'N/A'
+                logger.info(f"  {i+1}. {img.get('name')} - modified: {mod_time} ({mod_date})")
+            
+            # Verify sorting
+            prev_time = None
+            for i, img in enumerate(images[:10]):
+                curr_time = float(img.get('modified', 0) or 0)
+                if prev_time is not None and curr_time > prev_time:
+                    logger.warning(f"[STORAGE] Sorting error: Image {i} ({img.get('name')}) has newer timestamp ({curr_time}) than previous ({prev_time})")
+                prev_time = curr_time
         
         # Apply pagination
         total = len(images)
