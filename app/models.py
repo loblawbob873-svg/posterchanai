@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey, Index, Table
+from sqlalchemy.orm import relationship
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
@@ -243,6 +244,16 @@ class Note(Base):
     folder = relationship("NoteFolder", back_populates="notes")
 
 
+# Junction table for ExternalStorage and User many-to-many relationship
+external_storage_users = Table(
+    'external_storage_users',
+    Base.metadata,
+    Column('external_storage_id', Integer, ForeignKey('external_storage.id', ondelete='CASCADE'), primary_key=True),
+    Column('user_id', Integer, ForeignKey('users.id', ondelete='CASCADE'), primary_key=True),
+    Index('ix_external_storage_users', 'external_storage_id', 'user_id')
+)
+
+
 class ExternalStorage(Base):
     """External storage mounts for File Manager"""
     __tablename__ = "external_storage"
@@ -255,3 +266,9 @@ class ExternalStorage(Base):
     is_active = Column(Boolean, default=True)  # Enable/disable mount
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Many-to-many relationship with User (users allowed to access this storage)
+    allowed_users = relationship("User", secondary=external_storage_users, backref="external_storage_mounts")
+    
+    # Many-to-many relationship with User
+    allowed_users = relationship("User", secondary=external_storage_users, backref="external_storage_mounts")

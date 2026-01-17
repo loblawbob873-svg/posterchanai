@@ -28,6 +28,7 @@ class ExternalStorageCreate(BaseModel):
     mount_point: str
     description: Optional[str] = None
     is_active: bool = True
+    allowed_user_ids: Optional[List[int]] = None  # List of user IDs allowed to access
 
 
 class ExternalStorageUpdate(BaseModel):
@@ -36,6 +37,7 @@ class ExternalStorageUpdate(BaseModel):
     mount_point: Optional[str] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
+    allowed_user_ids: Optional[List[int]] = None  # List of user IDs allowed to access
 
 
 class ExternalStorageResponse(BaseModel):
@@ -47,6 +49,8 @@ class ExternalStorageResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    allowed_user_ids: List[int] = []
+    allowed_users: List[dict] = []  # User details for admin UI
     
     class Config:
         from_attributes = True
@@ -102,9 +106,27 @@ def get_external_storage(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
-    """Get all external storage mounts."""
+    """Get all external storage mounts with user access info."""
     mounts = db.query(ExternalStorage).order_by(ExternalStorage.name).all()
-    return mounts
+    result = []
+    for mount in mounts:
+        mount_dict = {
+            "id": mount.id,
+            "name": mount.name,
+            "mount_path": mount.mount_path,
+            "mount_point": mount.mount_point,
+            "description": mount.description,
+            "is_active": mount.is_active,
+            "created_at": mount.created_at,
+            "updated_at": mount.updated_at,
+            "allowed_user_ids": [user.id for user in mount.allowed_users],
+            "allowed_users": [
+                {"id": user.id, "username": user.username, "email": user.email}
+                for user in mount.allowed_users
+            ]
+        }
+        result.append(mount_dict)
+    return result
 
 
 @router.post("/external-storage", response_model=ExternalStorageResponse, status_code=status.HTTP_201_CREATED)
@@ -146,12 +168,34 @@ def create_external_storage(
         description=data.description,
         is_active=data.is_active
     )
+    
+    # Set allowed users if provided
+    if data.allowed_user_ids:
+        users = db.query(User).filter(User.id.in_(data.allowed_user_ids)).all()
+        mount.allowed_users = users
+    
     db.add(mount)
     db.commit()
     db.refresh(mount)
     
     logger.info(f"Created external storage mount: {mount.name} -> {mount.mount_path} (mount_point: {mount.mount_point})")
-    return mount
+    
+    # Return with user info
+    return {
+        "id": mount.id,
+        "name": mount.name,
+        "mount_path": mount.mount_path,
+        "mount_point": mount.mount_point,
+        "description": mount.description,
+        "is_active": mount.is_active,
+        "created_at": mount.created_at,
+        "updated_at": mount.updated_at,
+        "allowed_user_ids": [user.id for user in mount.allowed_users],
+        "allowed_users": [
+            {"id": user.id, "username": user.username, "email": user.email}
+            for user in mount.allowed_users
+        ]
+    }
 
 
 @router.put("/external-storage/{mount_id}", response_model=ExternalStorageResponse)
