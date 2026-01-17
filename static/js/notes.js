@@ -1351,21 +1351,8 @@ class NotesManager {
         const name = prompt('Enter folder name:');
         if (!name) return;
         
-        // Use csrfFetch exactly like file manager does (which works)
         try {
-            // Check if csrfFetch is available
-            const fetchFn = (typeof csrfFetch !== 'undefined') ? csrfFetch : 
-                           (typeof window.csrfFetch !== 'undefined') ? window.csrfFetch : 
-                           null;
-            
-            if (!fetchFn) {
-                console.error('csrfFetch not available');
-                this.showToast('Error: CSRF protection not loaded. Please refresh the page.', 'error');
-                return;
-            }
-            
-            console.log('Using csrfFetch for folder creation');
-            const response = await fetchFn('/api/notes/folders', {
+            const response = await fetch('/api/notes/folders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
