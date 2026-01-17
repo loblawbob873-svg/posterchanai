@@ -15,13 +15,38 @@
 #fileManagerOverlay .modal-header {
     flex-wrap: wrap;
     gap: 12px;
+    min-height: 60px;
+    align-items: center;
+    position: relative;
+}
+
+#fileManagerOverlay .modal-header h2 {
+    flex-shrink: 0;
+    margin-right: auto;
+    min-width: 0;
+}
+
+#fileManagerOverlay .modal-header .modal-close {
+    flex-shrink: 0;
+    margin-left: auto;
+    order: 10;
 }
 
 .file-manager-header-actions {
     display: flex;
-    gap: 12px;
+    gap: 8px;
     align-items: center;
     margin-left: auto;
+    flex-wrap: wrap;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.file-manager-header-actions .btn-secondary {
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-size: 13px;
+    padding: 8px 12px;
 }
 
 .file-manager-body {
@@ -114,8 +139,10 @@
     align-items: center;
     gap: 8px;
     flex: 1;
+    min-width: 200px;
     max-width: 400px;
-    margin: 0 16px;
+    margin: 0 8px;
+    flex-shrink: 1;
 }
 
 .file-search-input {
@@ -145,6 +172,8 @@
     justify-content: space-between;
     align-items: center;
     gap: 12px;
+    flex-wrap: wrap;
+    min-height: 60px;
 }
 
 .file-toolbar-actions {
@@ -183,9 +212,19 @@
 .file-selection-controls {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     flex: 1;
     justify-content: flex-end;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.file-selection-controls .btn-secondary,
+.file-selection-controls .btn-danger {
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-size: 13px;
+    padding: 8px 12px;
 }
 
 .selection-count {
@@ -310,16 +349,69 @@
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
+/* Responsive styles for medium and small windows */
+@media (max-width: 1200px) {
+    #fileManagerOverlay .modal-header {
+        padding: 16px 20px;
+    }
+    
+    #fileManagerOverlay .modal-header h2 {
+        font-size: 18px;
+        margin-right: 8px;
+    }
+    
+    .file-manager-header-actions {
+        gap: 6px;
+        order: 2;
+    }
+    
+    .file-manager-header-actions .btn-secondary {
+        font-size: 12px;
+        padding: 7px 10px;
+    }
+    
+    .file-manager-toolbar {
+        gap: 8px;
+        padding: 10px 16px;
+    }
+    
+    .file-selection-controls {
+        gap: 6px;
+    }
+    
+    .file-selection-controls .btn-secondary,
+    .file-selection-controls .btn-danger {
+        font-size: 12px;
+        padding: 7px 10px;
+    }
+    
+    .file-manager-search {
+        min-width: 150px;
+        max-width: 300px;
+        margin: 0 6px;
+    }
+    
+    .selection-count {
+        font-size: 12px;
+        margin-left: 4px;
+    }
+}
+
 /* Mobile-specific styles */
 @media (max-width: 768px) {
     .file-manager-header-actions {
         flex-wrap: wrap;
         gap: 8px;
+        width: 100%;
+        margin-left: 0;
+        margin-top: 8px;
     }
     
     .file-manager-header-actions .btn-secondary {
         font-size: 12px;
         padding: 8px 12px;
+        flex: 1 1 auto;
+        min-width: calc(50% - 4px);
     }
     
     .file-manager-sidebar {
@@ -333,15 +425,41 @@
         flex-direction: column;
     }
     
+    .file-manager-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+    
+    .file-manager-tabs {
+        width: 100%;
+        justify-content: flex-start;
+    }
+    
     .file-selection-controls {
         flex-wrap: wrap;
         gap: 8px;
+        width: 100%;
+        justify-content: flex-start;
     }
     
     .file-selection-controls .btn-secondary,
     .file-selection-controls .btn-danger {
         font-size: 12px;
         padding: 6px 10px;
+        flex: 1 1 auto;
+        min-width: calc(50% - 4px);
+    }
+    
+    .file-manager-search {
+        width: 100%;
+        max-width: 100%;
+        margin: 0;
+    }
+    
+    .file-toolbar-actions {
+        width: 100%;
+        justify-content: flex-end;
     }
     
     .mobile-upload-area {

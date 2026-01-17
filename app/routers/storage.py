@@ -870,14 +870,19 @@ async def get_all_images(
             raise Exception(f"Error getting all images: {e}")
         
         # Sort by modified time (newest first)
-        # Ensure modified is a number, not string
+        # Ensure modified is a number, not string, and convert to float explicitly
         for img in images:
             if 'modified' in img:
-                img['modified'] = float(img['modified']) if img['modified'] else 0.0
+                # Ensure it's a float, handle None/empty cases
+                try:
+                    img['modified'] = float(img['modified']) if img['modified'] is not None and img['modified'] != '' else 0.0
+                except (ValueError, TypeError):
+                    img['modified'] = 0.0
         
         # Sort by modified time descending (newest first), then by path ascending for stability
-        # Use negative modified time for descending sort without reverse=True to ensure correct ordering
-        images.sort(key=lambda x: (-float(x.get('modified', 0) or 0), x.get('path', '').lower()))
+        # Use reverse=True to get descending order (newest first)
+        # Explicitly convert to float in sort key to ensure numeric comparison
+        images.sort(key=lambda x: (float(x.get('modified', 0) or 0), str(x.get('path', '')).lower()), reverse=True)
         
         # Debug: log first few images to verify sorting
         if images:
