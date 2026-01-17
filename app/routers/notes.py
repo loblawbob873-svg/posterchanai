@@ -426,11 +426,19 @@ async def serve_note_file(
     
     # Get file path to check if it exists locally
     from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
+    from urllib.parse import unquote
     storage = StorageService(db)
+    
+    # FastAPI automatically URL-decodes path parameters, but handle both encoded and unencoded filenames
+    # Decode filename if it's URL-encoded (handles cases where frontend sends encoded, but import script might not)
+    try:
+        decoded_filename = unquote(filename)
+    except:
+        decoded_filename = filename
     
     # Sanitize filename to prevent path traversal attacks
     try:
-        safe_filename = _sanitize_path_component(filename)
+        safe_filename = _sanitize_path_component(decoded_filename)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid filename: {str(e)}")
     
