@@ -2855,3 +2855,40 @@ fieldset legend {
     padding: 24px;
     font-style: italic;
 }
+
+/* Ensure file action buttons are visible in chat messages */
+.message-content .file-search-results .file-actions,
+.message-content .file-actions {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    margin-top: 12px !important;
+    padding-top: 12px !important;
+    border-top: 1px solid #2a2a3e !important;
+    position: static !important;
+    align-items: center !important;
+}
+
+.message-content .file-search-results .file-action-btn,
+.message-content .file-action-btn {
+    opacity: 1 !important;
+    visibility: visible !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    margin: 0 !important;
+    padding: 8px 14px !important;
+    gap: 6px !important;
+    white-space: nowrap !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: auto !important;
+    flex-shrink: 0 !important;
+    background: #2a2a3e !important;
+    border: 1px solid #3a3a4e !important;
+    border-radius: 6px !important;
+    color: #e0e0e0 !important;
+    font-size: 0.9em !important;
+    cursor: pointer !important;
+}
