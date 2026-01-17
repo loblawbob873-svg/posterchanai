@@ -80,10 +80,15 @@ async def proxy_storage_request(
     
     try:
         # Configure httpx client with proper connection settings
+        # Use explicit IP address resolution and disable HTTP/2
+        transport = httpx.AsyncHTTPTransport(
+            retries=3,
+            http2=False
+        )
         async with httpx.AsyncClient(
-            timeout=60.0,
+            timeout=httpx.Timeout(60.0, connect=10.0),
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
-            http2=False  # Disable HTTP/2 to avoid connection issues
+            transport=transport
         ) as client:
             # Determine auth method for logging
             if storage_server_token and storage_server_token.value:
