@@ -3338,7 +3338,12 @@ Return ONLY valid JSON, no other text. If this is not a bill or invoice, return 
 
                 # Add to first calendar
                 cal = calendars[0]
-                success = add_todo_to_calendar(cal["url"], cal["username"], cal["password"], summary=param)
+                success = add_todo_to_calendar(
+                    cal["url"], cal["username"], cal["password"], 
+                    summary=param,
+                    user_id=self.user.id,
+                    db=self.db
+                )
 
                 if success:
                     return {"type": "text", "content": f"✅ Todo added: **{param}**"}
@@ -3371,7 +3376,11 @@ Return ONLY valid JSON, no other text. If this is not a bill or invoice, return 
                 # Try to delete from all calendars
                 deleted = False
                 for cal in calendars:
-                    if delete_todo_from_calendar(cal["url"], cal["username"], cal["password"], todo_uid):
+                    if delete_todo_from_calendar(
+                        cal["url"], cal["username"], cal["password"], todo_uid,
+                        user_id=self.user.id,
+                        db=self.db
+                    ):
                         deleted = True
                         break
 

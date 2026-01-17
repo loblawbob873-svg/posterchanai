@@ -103,6 +103,106 @@ def _save_contact_to_builtin(user_id: int, db: Session, vcard_data: str) -> bool
         return False
 
 
+def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: dict) -> bool:
+    """Edit contact directly in built-in CardDAV storage (bypasses network)."""
+    try:
+        from app.models import User
+        from app.services.cardav_server import get_user_cardav_path
+        import vobject
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+        
+        cardav_path = get_user_cardav_path(user, db)
+        vcf_file = cardav_path / f"{contact_uid}.vcf"
+        
+        if not vcf_file.exists():
+            logger.warning(f"Contact file not found: {vcf_file}")
+            return False
+        
+        # Read and parse existing contact
+        with open(vcf_file, 'r', encoding='utf-8') as f:
+            vcard_data = f.read()
+        
+        vcard = vobject.readOne(vcard_data)
+        
+        # Update fields
+        if 'name' in updates:
+            vcard.fn.value = updates['name']
+            name_parts = updates['name'].split()
+            if hasattr(vcard, 'n'):
+                vcard.n.value = vobject.vcard.Name(
+                    family=name_parts[-1] if name_parts else '',
+                    given=name_parts[0] if len(name_parts) > 1 else ''
+                )
+        
+        if 'phone' in updates:
+            if hasattr(vcard, 'tel'):
+                vcard.tel.value = updates['phone']
+            else:
+                vcard.add('tel')
+                vcard.tel.value = updates['phone']
+                vcard.tel.type_param = 'CELL'
+        
+        if 'email' in updates:
+            if hasattr(vcard, 'email'):
+                vcard.email.value = updates['email']
+            else:
+                vcard.add('email')
+                vcard.email.value = updates['email']
+                vcard.email.type_param = 'INTERNET'
+        
+        if 'organization' in updates:
+            if hasattr(vcard, 'org'):
+                vcard.org.value = [updates['organization']]
+            else:
+                vcard.add('org')
+                vcard.org.value = [updates['organization']]
+        
+        if 'note' in updates:
+            if hasattr(vcard, 'note'):
+                vcard.note.value = updates['note']
+            else:
+                vcard.add('note')
+                vcard.note.value = updates['note']
+        
+        # Save updated contact
+        with open(vcf_file, 'w', encoding='utf-8') as f:
+            f.write(vcard.serialize())
+        
+        logger.info(f"Updated contact {contact_uid} in built-in storage")
+        return True
+    except Exception as e:
+        logger.error(f"Error editing contact in built-in storage: {e}")
+        return False
+
+
+def _delete_contact_builtin(user_id: int, db: Session, contact_uid: str) -> bool:
+    """Delete contact directly from built-in CardDAV storage (bypasses network)."""
+    try:
+        from app.models import User
+        from app.services.cardav_server import get_user_cardav_path
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+        
+        cardav_path = get_user_cardav_path(user, db)
+        vcf_file = cardav_path / f"{contact_uid}.vcf"
+        
+        if vcf_file.exists():
+            vcf_file.unlink()
+            logger.info(f"Deleted contact {contact_uid} from built-in storage")
+            return True
+        else:
+            logger.warning(f"Contact file not found: {vcf_file}")
+            return False
+    except Exception as e:
+        logger.error(f"Error deleting contact from built-in storage: {e}")
+        return False
+
+
 def run_with_timeout(func, timeout=CALDAV_OPERATION_TIMEOUT, *args, **kwargs):
     """Run a blocking function with timeout using thread pool."""
     try:
@@ -1783,15 +1883,50 @@ def add_todo_to_calendar(
     summary: str,
     description: str = "",
     due: Optional[datetime] = None,
-    priority: int = 5
+    priority: int = 5,
+    user_id: Optional[int] = None,
+    db: Optional[Session] = None
 ) -> bool:
-    """Add a VTODO item to a CalDAV calendar."""
+    """Add a VTODO item to a CalDAV calendar.
+    
+    Args:
+        user_id: Optional user ID for built-in mode
+        db: Optional database session for built-in mode
+    """
     from icalendar import Calendar as ICalendar, Todo
     import uuid
 
     try:
         logger.info(f"Adding todo '{summary}' to calendar at {url}")
+        
+        # Check if using built-in server (direct file save)
+        if password == "__USE_SESSION_AUTH__" and user_id and db:
+            logger.info("Using built-in CalDAV storage (direct file save for todo)")
+            
+            # Create VTODO
+            cal = ICalendar()
+            cal.add('prodid', '-//Posterchanai//Calendar//EN')
+            cal.add('version', '2.0')
 
+            todo = Todo()
+            todo.add('summary', summary)
+            if description:
+                todo.add('description', description)
+            if due:
+                todo.add('due', due)
+            todo.add('priority', priority)
+            todo.add('status', 'NEEDS-ACTION')
+            todo.add('dtstamp', datetime.now())
+            
+            todo_uid = str(uuid.uuid4())
+            todo.add('uid', todo_uid)
+
+            cal.add_component(todo)
+            ical_data = cal.to_ical().decode('utf-8')
+            
+            return _save_event_to_builtin(user_id, db, ical_data)
+
+        # Otherwise use CalDAV protocol (for external servers)
         client = create_caldav_client(url, username, password)
 
         # Try to get calendar from URL directly
@@ -1839,10 +1974,40 @@ def delete_todo_from_calendar(
     url: str,
     username: str,
     password: str,
-    todo_uid: str
+    todo_uid: str,
+    user_id: Optional[int] = None,
+    db: Optional[Session] = None
 ) -> bool:
-    """Delete a VTODO item from a CalDAV calendar by UID."""
+    """Delete a VTODO item from a CalDAV calendar by UID.
+    
+    Args:
+        user_id: Optional user ID for built-in mode
+        db: Optional database session for built-in mode
+    """
     try:
+        # Check if using built-in server (direct file delete)
+        if password == "__USE_SESSION_AUTH__" and user_id and db:
+            logger.info(f"Using built-in CalDAV storage (direct file delete) for todo {todo_uid}")
+            
+            from app.models import User
+            from app.services.caldav_server import get_user_caldav_path
+            
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return False
+            
+            caldav_path = get_user_caldav_path(user, db)
+            ics_file = caldav_path / f"{todo_uid}.ics"
+            
+            if ics_file.exists():
+                ics_file.unlink()
+                logger.info(f"Deleted todo {todo_uid} from built-in storage")
+                return True
+            else:
+                logger.warning(f"Todo file not found: {ics_file}")
+                return False
+        
+        # Otherwise use CalDAV protocol (for external servers)
         client = create_caldav_client(url, username, password)
 
         # Try to get calendar from URL directly
