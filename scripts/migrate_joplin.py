@@ -446,6 +446,11 @@ def migrate_joplin(joplin_db_path, user_id, dry_run=False):
                                         try:
                                             # Use StorageService.save_note_attachment which handles proxying
                                             # This will automatically proxy to storage server if storage_server_url is configured
+                                            # Check if storage server is configured for better logging
+                                            storage_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+                                            if storage_url and storage_url.value:
+                                                print(f"      → Proxying to storage server: {storage_url.value}")
+                                            
                                             filename = storage_service.save_note_attachment(
                                                 user.username,
                                                 note.id,

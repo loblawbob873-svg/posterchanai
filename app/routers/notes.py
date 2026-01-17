@@ -560,9 +560,22 @@ async def serve_note_file(
                         stream=True
                     )
                 except HTTPException as e:
-                    # If proxy fails, fall back to local file if it exists
-                    logger.warning(f"Failed to proxy note file to storage server: {e.detail}, falling back to local file")
-                    # Fall through to local file serving below
+                    # If proxy fails (e.g., 401, 404, 503), fall back to local file if it exists
+                    logger.warning(f"Failed to proxy note file to storage server: {e.detail} (status: {e.status_code}), checking local file")
+                    # Check if local file exists - if so, serve it locally instead of raising error
+                    if file_path.exists():
+                        logger.info(f"Local file found, serving locally: {file_path}")
+                        # Fall through to local file serving below (don't raise exception)
+                    elif e.status_code == 404:
+                        # Storage server says file doesn't exist, and local doesn't exist either
+                        logger.error(f"File not found on storage server or locally: {file_path}")
+                        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+                    else:
+                        # Other error (401, 503, etc.) - try local file, but if it doesn't exist, return original error
+                        if not file_path.exists():
+                            logger.error(f"Proxy failed and local file not found: {file_path}")
+                            raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+                        # Local file exists, fall through to serve it
             else:
                 # Invalid storage_server_url configuration - log but don't fail the request
                 logger.error(f"Invalid storage_server_url (missing protocol): {base_url}")
