@@ -334,6 +334,11 @@ class NotesManager {
                 // External URL, use as-is
                 imageSrc = src;
                 console.log('Using external URL:', imageSrc);
+            } else if (src.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(src)) {
+                // Old Joplin resource format - this should have been converted during migration
+                console.error('Old Joplin resource URL found in image:', src, '- This should have been converted during migration');
+                // Return placeholder or broken image - the resource doesn't exist in new format
+                imageSrc = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
             } else {
                 // Relative path or filename - convert to note attachment URL
                 const filename = src.replace(/^\.\//, '').split('/').pop();
@@ -352,11 +357,20 @@ class NotesManager {
         });
         
         // Process markdown links (but not images, which we already extracted)
+        // Also handle old Joplin resource format: ](:/[resource-id])
         const links = [];
         processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
             const index = links.length;
-            const isExternal = url.startsWith('http') || url.startsWith('//');
-            links.push({ text, url, external: isExternal });
+            // Check if this is an old Joplin resource URL (:/[resource-id])
+            if (url.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(url)) {
+                // Old Joplin resource format - log warning but don't convert (migration should have handled this)
+                console.warn('Old Joplin resource URL found in note content:', url, '- This should have been converted during migration');
+                // Return as-is (will result in 404, but that's expected for unmigrated resources)
+                links.push({ text, url, external: false });
+            } else {
+                const isExternal = url.startsWith('http') || url.startsWith('//');
+                links.push({ text, url, external: isExternal });
+            }
             return `\x00LINK${index}\x00`;
         });
         
@@ -818,13 +832,37 @@ class NotesManager {
         const items = e.clipboardData?.items;
         if (!items) return;
         
+        // Check if we're in the note content input
+        const contentInput = document.getElementById('noteContentInput');
+        if (!contentInput || document.activeElement !== contentInput) {
+            return; // Not pasting into note editor
+        }
+        
+        // Check if we have a note open
+        if (!this.currentNoteId) {
+            // If no note is open, create a new one first
+            this.createNote();
+            // Wait a bit for the note to be created
+            await new Promise(resolve => setTimeout(resolve, 100));
+            // If still no note ID, show error
+            if (!this.currentNoteId) {
+                this.showToast('Please create or open a note first', 'error');
+                return;
+            }
+        }
+        
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
             if (item.type.indexOf('image') !== -1) {
                 e.preventDefault();
                 const file = item.getAsFile();
-                if (file && this.currentNoteId) {
-                    console.log('Pasted image:', file.name, file.type, file.size);
+                if (file) {
+                    console.log('Pasted image:', file.name || 'pasted-image', file.type, file.size);
+                    // Generate a filename if none exists
+                    if (!file.name) {
+                        const ext = file.type.split('/')[1] || 'png';
+                        file.name = `pasted-image-${Date.now()}.${ext}`;
+                    }
                     await this.uploadAttachment(file);
                 }
             }
@@ -835,6 +873,15 @@ class NotesManager {
         if (!this.currentNoteId) {
             this.showToast('Please create or open a note first', 'error');
             return;
+        }
+        
+        // Get username for the image URL
+        let username = 'user';
+        const sidebarUser = document.querySelector('.user-name');
+        if (sidebarUser && sidebarUser.textContent) {
+            username = sidebarUser.textContent.trim();
+        } else if (this.currentNote && this.currentNote.username) {
+            username = this.currentNote.username;
         }
         
         const formData = new FormData();
@@ -849,19 +896,33 @@ class NotesManager {
             if (response.ok) {
                 const data = await response.json();
                 this.showToast('Attachment uploaded successfully');
-                // Reload note to get updated attachments
-                await this.openNote(this.currentNoteId);
-                // Insert image reference at cursor position
+                
+                // Insert image reference at cursor position with proper API URL
                 const contentInput = document.getElementById('noteContentInput');
                 if (contentInput && data.filename) {
-                    const cursorPos = contentInput.selectionStart;
+                    const cursorPos = contentInput.selectionStart || contentInput.value.length;
                     const textBefore = contentInput.value.substring(0, cursorPos);
                     const textAfter = contentInput.value.substring(cursorPos);
-                    const imageRef = `![${data.filename}](${data.filename})`;
+                    
+                    // Use the full API path for the image
+                    const imageUrl = `/api/notes/files/${username}/${this.currentNoteId}/${encodeURIComponent(data.filename)}`;
+                    const imageRef = `![${data.filename}](${imageUrl})`;
+                    
                     contentInput.value = textBefore + imageRef + textAfter;
-                    contentInput.selectionStart = contentInput.selectionEnd = cursorPos + imageRef.length;
+                    
+                    // Set cursor position after the inserted image reference
+                    const newCursorPos = cursorPos + imageRef.length;
+                    contentInput.selectionStart = contentInput.selectionEnd = newCursorPos;
+                    contentInput.focus();
+                    
+                    // Update preview if in preview mode
+                    this.updatePreview();
+                    
                     // Auto-save
                     this.saveNote(true);
+                } else {
+                    // Reload note to get updated attachments if we couldn't insert
+                    await this.openNote(this.currentNoteId);
                 }
             } else {
                 const error = await response.json();

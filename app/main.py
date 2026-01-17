@@ -116,6 +116,18 @@ app.include_router(notes.router)
 app.include_router(storage.router)
 app.include_router(files.router)
 
+# Handle old Joplin resource URLs (:/[resource-id]) - return 404 with helpful message
+# These are legacy URLs from Joplin that should have been converted during migration
+@app.get("/:/{resource_id}")
+async def handle_old_joplin_resource(resource_id: str, request: Request):
+    """Handle old Joplin resource URLs - these should have been converted during migration."""
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Old Joplin resource URL requested: /:/{resource_id}")
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "Resource not found. This appears to be an old Joplin resource URL. Please check that the migration completed successfully."}
+    )
+
 # Load enabled plugins
 from plugins import load_enabled_plugins
 load_enabled_plugins(app)
