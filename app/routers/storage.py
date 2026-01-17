@@ -1060,47 +1060,19 @@ async def get_all_images(
         cleaned_result = result
         
         # Double-check: ensure the result dict itself is clean
-        # This is a final aggressive pass to convert everything to basic types
+        # Don't over-process - just verify top level structure
         if isinstance(cleaned_result, dict):
-            final_result = {}
-            for key, value in cleaned_result.items():
-                # Ensure key is string
-                if isinstance(key, bytes):
-                    key = key.decode('utf-8', errors='ignore')
-                key_str = str(key)
-                
-                # Ensure value is a basic JSON-serializable type
-                if value is None:
-                    final_result[key_str] = None
-                elif isinstance(value, bytes):
-                    final_result[key_str] = value.decode('utf-8', errors='ignore')
-                elif isinstance(value, Path):
-                    final_result[key_str] = str(value)
-                elif isinstance(value, (str, int, float, bool)):
-                    final_result[key_str] = value
-                elif isinstance(value, (list, tuple)):
-                    # Recursively clean list items
-                    final_result[key_str] = [
-                        (item.decode('utf-8', errors='ignore') if isinstance(item, bytes) else
-                         str(item) if isinstance(item, Path) else
-                         item if isinstance(item, (str, int, float, bool, type(None))) else
-                         str(item)) for item in value
-                    ]
-                elif isinstance(value, dict):
-                    # Recursively clean dict - this should have been done by _clean_for_json, but be safe
-                    final_result[key_str] = _clean_for_json(value, depth=0)
-                elif isinstance(value, (list, tuple)):
-                    # Lists should already be cleaned, but ensure items are clean
-                    final_result[key_str] = [_clean_for_json(item, depth=0) if not isinstance(item, (str, int, float, bool, type(None))) else item for item in value]
-                else:
-                    # Unknown type - try to convert to basic type first
-                    if isinstance(value, (str, int, float, bool, type(None))):
-                        final_result[key_str] = value
-                    else:
-                        # Only convert to string as last resort, and log it
-                        logger.warning(f"[STORAGE] Converting unknown type {type(value)} to string for key {key_str}")
-                        final_result[key_str] = str(value)
-            cleaned_result = final_result
+            # Verify images is a list of dicts, not strings
+            if 'images' in cleaned_result and isinstance(cleaned_result['images'], list):
+                # Check if first image is a string (it shouldn't be)
+                if cleaned_result['images'] and isinstance(cleaned_result['images'][0], str):
+                    logger.error(f"[STORAGE] BUG: Images are strings instead of dicts! First image: {cleaned_result['images'][0][:100]}")
+                    # This shouldn't happen - images should already be dicts from ensure_serializable_image
+                    return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False, "error": "Serialization bug - images are strings"})
+            
+            final_result = cleaned_result
+        else:
+            final_result = cleaned_result
         
         # Custom JSON encoder for testing
         class BytesSafeEncoder(json.JSONEncoder):
