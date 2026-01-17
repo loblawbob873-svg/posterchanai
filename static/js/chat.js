@@ -2030,6 +2030,7 @@ class ChatHandler {
                         <div class="file-actions">
                             <button class="file-action-btn" data-action="open" data-path="${escapedPath}" data-name="${escapedName}" title="Open">👁️ Open</button>
                             <button class="file-action-btn" data-action="download" data-path="${escapedPath}" data-name="${escapedName}" title="Download">⬇️ Download</button>
+                            <button class="file-action-btn" data-action="preview" data-path="${escapedPath}" data-name="${escapedName}" title="Preview URL (Quick Share)">🔍 Preview URL</button>
                             <button class="file-action-btn" data-action="share" data-path="${escapedPath}" data-name="${escapedName}" title="Share Public URL">🔗 Share</button>
                             <button class="file-action-btn" data-action="email" data-path="${escapedPath}" data-name="${escapedName}" title="Email">✉️ Email</button>
                             <button class="file-action-btn file-action-delete" data-action="delete" data-path="${escapedPath}" data-name="${escapedName}" title="Delete">🗑️ Delete</button>
@@ -2089,6 +2090,9 @@ class ChatHandler {
                         break;
                     case 'download':
                         window.chatHandler.downloadFile(filePath, fileName);
+                        break;
+                    case 'preview':
+                        window.chatHandler.previewUrl(filePath, fileName);
                         break;
                     case 'share':
                         window.chatHandler.shareFile(filePath, fileName);
@@ -2562,6 +2566,51 @@ class ChatHandler {
             console.error('Error downloading file:', error);
             this.showToast('Error downloading file', 'error');
         }
+    }
+
+    async previewUrl(filePath, fileName) {
+        // Check for existing share first, then create if needed
+        try {
+            // Check for existing shares
+            const sharesResponse = await fetch('/api/files/shares');
+            if (sharesResponse.ok) {
+                const shares = await sharesResponse.json();
+                const existingShare = shares.find(s => s.file_path === filePath);
+                
+                if (existingShare) {
+                    const url = window.location.origin + existingShare.share_url;
+                    await navigator.clipboard.writeText(url);
+                    this.showUrlPreview(url, fileName, true);
+                    return;
+                }
+            }
+            
+            // Create new share
+            const response = await csrfFetch('/api/files/share', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_path: filePath })
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to create share');
+            }
+            
+            const data = await response.json();
+            const url = window.location.origin + data.share_url;
+            await navigator.clipboard.writeText(url);
+            this.showUrlPreview(url, fileName, false);
+        } catch (error) {
+            console.error('Error getting preview URL:', error);
+            this.showToast('Error getting preview URL', 'error');
+        }
+    }
+    
+    showUrlPreview(url, fileName, isExisting) {
+        const message = isExisting 
+            ? `Existing public URL for "${fileName}" (copied to clipboard):\n\n${url}`
+            : `Public URL for "${fileName}" (copied to clipboard):\n\n${url}`;
+        alert(message);
     }
 
     async shareFile(filePath, fileName) {
