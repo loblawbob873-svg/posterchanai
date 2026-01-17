@@ -1098,10 +1098,17 @@ async def get_all_images(
                 elif isinstance(value, dict):
                     # Recursively clean dict - this should have been done by _clean_for_json, but be safe
                     final_result[key_str] = _clean_for_json(value, depth=0)
+                elif isinstance(value, (list, tuple)):
+                    # Lists should already be cleaned, but ensure items are clean
+                    final_result[key_str] = [_clean_for_json(item, depth=0) if not isinstance(item, (str, int, float, bool, type(None))) else item for item in value]
                 else:
-                    # Unknown type - convert to string
-                    logger.warning(f"[STORAGE] Converting unknown type {type(value)} to string for key {key_str}")
-                    final_result[key_str] = str(value)
+                    # Unknown type - try to convert to basic type first
+                    if isinstance(value, (str, int, float, bool, type(None))):
+                        final_result[key_str] = value
+                    else:
+                        # Only convert to string as last resort, and log it
+                        logger.warning(f"[STORAGE] Converting unknown type {type(value)} to string for key {key_str}")
+                        final_result[key_str] = str(value)
             cleaned_result = final_result
         
         # Custom JSON encoder for testing

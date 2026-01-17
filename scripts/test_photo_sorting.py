@@ -36,7 +36,11 @@ def test_backend_sorting(base_url="http://localhost:8000", username=None, passwo
     }
     
     try:
-        response = requests.post(login_url, data=login_data, timeout=5)
+        # Try JSON first, fall back to form data
+        try:
+            response = requests.post(login_url, json=login_data, timeout=5)
+        except:
+            response = requests.post(login_url, data=login_data, timeout=5)
         if response.status_code != 200:
             print(f"WARNING: Cannot connect to server at {base_url}")
             print(f"  Status: {response.status_code}")
@@ -52,11 +56,23 @@ def test_backend_sorting(base_url="http://localhost:8000", username=None, passwo
         print(f"WARNING: Error connecting to server: {e}")
         print("  Skipping API test - will test file timestamps only")
         return None
-        
+    
+    if response.status_code != 200:
+        print(f"WARNING: Cannot connect to server at {base_url}")
+        print(f"  Status: {response.status_code}")
+        print(f"  Response: {response.text[:200]}")
+        print("  Skipping API test - will test file timestamps only")
+        return None
+    
+    try:
         token = response.json().get("access_token")
         if not token:
             print("ERROR: No access token received")
             return False
+    except Exception as e:
+        print(f"ERROR: Failed to parse login response: {e}")
+        print(f"  Response: {response.text[:200]}")
+        return False
         
         headers = {"Authorization": f"Bearer {token}"}
         
