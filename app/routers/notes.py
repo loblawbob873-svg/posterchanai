@@ -416,8 +416,15 @@ async def serve_note_file(
     Serve an attachment file for a note.
     Proxies to storage server if storage_server_url is configured.
     """
+    # Decode URL-encoded username (handles @ symbols, etc.)
+    from urllib.parse import unquote
+    try:
+        decoded_username = unquote(username)
+    except:
+        decoded_username = username
+    
     # Verify user owns this file (username must match)
-    if current_user.username != username:
+    if current_user.username != decoded_username:
         raise HTTPException(status_code=403, detail="Access denied")
     
     # Check if storage server is configured - but check local file first

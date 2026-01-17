@@ -347,7 +347,10 @@ class NotesManager {
                 const filename = src.split('/').pop().split('?')[0]; // Remove path and query params
                 // Make sure it's not a resource ID (32 hex chars) and not a data URL
                 if (!/^[a-f0-9]{32}$/i.test(filename) && !filename.startsWith('data:') && noteId && username) {
-                    const properUrl = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
+                    // URL-encode both username and filename
+                    const encodedUsername = encodeURIComponent(username);
+                    const encodedFilename = encodeURIComponent(filename);
+                    const properUrl = `/api/notes/files/${encodedUsername}/${noteId}/${encodedFilename}`;
                     return `<img${before} src="${properUrl}"${after}>`;
                 }
             }
@@ -410,7 +413,9 @@ class NotesManager {
                 const filename = src.split('/').pop().split('?')[0];
                 // Make sure it's not a resource ID (32 hex chars) and not a data URL
                 if (!/^[a-f0-9]{32}$/i.test(filename) && !filename.startsWith('data:') && !src.includes('base64,') && noteId && username) {
-                    const properUrl = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
+                    const encodedUsername = encodeURIComponent(username);
+                    const encodedFilename = encodeURIComponent(filename);
+                    const properUrl = `/api/notes/files/${encodedUsername}/${noteId}/${encodedFilename}`;
                     img.src = properUrl;
                     img.setAttribute('src', properUrl);
                 }
@@ -485,7 +490,10 @@ class NotesManager {
                 // Relative path or filename - convert to note attachment URL
                 const filename = src.replace(/^\.\//, '').split('/').pop();
                 if (noteId) {
-                    mediaSrc = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
+                    // URL-encode both username and filename
+                    const encodedUsername = encodeURIComponent(username);
+                    const encodedFilename = encodeURIComponent(filename);
+                    mediaSrc = `/api/notes/files/${encodedUsername}/${noteId}/${encodedFilename}`;
                 } else {
                     // Keep original, might work if it's already a valid path
                     mediaSrc = src;
@@ -758,7 +766,9 @@ class NotesManager {
                     const isDocument = /^(doc|docx|xls|xlsx|ppt|pptx|odt|ods|odp)$/i.test(ext);
                     const isArchive = /^(zip|rar|tar|gz|7z)$/i.test(ext);
                     const isCode = /^(py|java|c|cpp|cs|js|html|css|json|xml|sh)$/i.test(ext);
-                    const fileUrl = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
+                    const encodedUsername = encodeURIComponent(username);
+                    const encodedFilename = encodeURIComponent(filename);
+                    const fileUrl = `/api/notes/files/${encodedUsername}/${noteId}/${encodedFilename}`;
                     const shortName = filename.length > 20 ? filename.substring(0, 17) + '...' : filename;
                     
                     // Choose icon based on file type
@@ -1277,7 +1287,9 @@ class NotesManager {
                     const textAfter = contentInput.value.substring(cursorPos);
                     
                     // Use the full API path for the file
-                    const fileUrl = `/api/notes/files/${username}/${this.currentNoteId}/${encodeURIComponent(data.filename)}`;
+                    const encodedUsername = encodeURIComponent(username);
+                    const encodedFilename = encodeURIComponent(data.filename);
+                    const fileUrl = `/api/notes/files/${encodedUsername}/${this.currentNoteId}/${encodedFilename}`;
                     
                     // Determine if it's an image or other file type
                     const isImage = /\.(jpg|jpeg|png|gif|webp|svg|bmp|tiff|ico)$/i.test(data.filename);
