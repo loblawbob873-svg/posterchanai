@@ -1570,6 +1570,14 @@ class NotesManager {
         
         // Check if we have a note open
         if (!this.currentNoteId) {
+            // Make sure editor is visible and set up
+            const notesEditor = document.getElementById('notesEditor');
+            const notesList = document.getElementById('notesList');
+            if (notesEditor && notesList) {
+                notesEditor.style.display = 'block';
+                notesList.style.display = 'none';
+            }
+            
             // Create a new note first (sets up UI)
             this.createNote();
             
@@ -1588,21 +1596,36 @@ class NotesManager {
             // Save the note to get an ID, then show file picker
             // Use keepOpen=true to keep the editor open after saving
             try {
+                console.log('Saving note before attachment upload...');
                 const saved = await this.saveNote(false, true);
+                console.log('Save result:', saved, 'currentNoteId:', this.currentNoteId);
+                
+                // Double-check that note ID is set
                 if (saved && this.currentNoteId) {
-                    // Note was saved successfully, now show file picker
-                    fileInput.click();
-                    // Reset flag after a short delay (file dialog opens asynchronously)
-                    setTimeout(() => {
+                    // Note was saved successfully, wait a tiny bit to ensure state is updated
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                    
+                    // Verify note ID is still set
+                    if (this.currentNoteId) {
+                        // Note was saved successfully, now show file picker
+                        fileInput.click();
+                        // Reset flag after a short delay (file dialog opens asynchronously)
+                        setTimeout(() => {
+                            this._showingAttachmentDialog = false;
+                        }, 100);
+                    } else {
+                        console.error('Note ID was lost after save');
+                        this.showToast('Failed to create note. Please try again.', 'error');
                         this._showingAttachmentDialog = false;
-                    }, 100);
+                    }
                 } else {
+                    console.error('Note save failed or returned false');
                     this.showToast('Failed to create note. Please try again.', 'error');
                     this._showingAttachmentDialog = false;
                 }
             } catch (error) {
                 console.error('Error creating note for attachment:', error);
-                this.showToast('Failed to create note', 'error');
+                this.showToast('Failed to create note: ' + (error.message || 'Unknown error'), 'error');
                 this._showingAttachmentDialog = false;
             }
         } else {
@@ -1630,11 +1653,59 @@ class NotesManager {
             return;
         }
         
+        // If no note ID, try to create one first (might be a race condition)
         if (!this.currentNoteId) {
-            this.showToast('Please create or open a note first', 'error');
-            e.target.value = '';
-            this._processingFileSelect = false;
-            return;
+            console.warn('No note ID when file selected, attempting to create note...');
+            const titleInput = document.getElementById('noteTitleInput');
+            if (titleInput && titleInput.value.trim()) {
+                // We have a title, try to save the note
+                try {
+                    const title = titleInput.value.trim();
+                    const content = document.getElementById('noteContentInput')?.value || '';
+                    const tags = document.getElementById('noteTagsInput')?.value.trim() || '';
+                    const isPinned = document.getElementById('pinNoteBtn')?.dataset.pinned === 'true';
+                    
+                    const body = {
+                        title: title || 'Untitled',
+                        content: content,
+                        tags: tags || null,
+                        folder_id: this.currentFolderId !== 0 ? this.currentFolderId : null,
+                        is_pinned: isPinned
+                    };
+                    
+                    const response = await csrfFetch('/api/notes', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body)
+                    });
+                    
+                    if (response.ok) {
+                        const note = await response.json();
+                        this.currentNoteId = note.id;
+                        this.currentNote = note;
+                        if (note.username) {
+                            this.currentUsername = note.username;
+                        }
+                        console.log('Note created in handleFileSelect, ID:', this.currentNoteId);
+                    } else {
+                        this.showToast('Please create or open a note first', 'error');
+                        e.target.value = '';
+                        this._processingFileSelect = false;
+                        return;
+                    }
+                } catch (error) {
+                    console.error('Error creating note in handleFileSelect:', error);
+                    this.showToast('Please create or open a note first', 'error');
+                    e.target.value = '';
+                    this._processingFileSelect = false;
+                    return;
+                }
+            } else {
+                this.showToast('Please create or open a note first', 'error');
+                e.target.value = '';
+                this._processingFileSelect = false;
+                return;
+            }
         }
         
         try {
