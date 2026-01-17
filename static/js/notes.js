@@ -817,21 +817,62 @@ class NotesManager {
         
         // Check if we have a note open
         if (!this.currentNoteId) {
-            // If no note is open, create a new one first
-            this.createNote();
-            // Wait a bit for the note to be created
-            await new Promise(resolve => setTimeout(resolve, 100));
-            // If still no note ID, show error
-            if (!this.currentNoteId) {
-                this.showToast('Please create or open a note first', 'error');
-                return;
+            // If no note is open, create a new one in the database first
+            e.preventDefault(); // Prevent default paste behavior
+            try {
+                // Create a new note with a default title
+                const title = 'Untitled Note';
+                const content = '';
+                
+                const response = await csrfFetch('/api/notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: title,
+                        content: content,
+                        folder_id: this.currentFolderId !== 0 ? this.currentFolderId : null,
+                        is_pinned: false
+                    })
+                });
+                
+                if (response.ok) {
+                    const note = await response.json();
+                    this.currentNoteId = note.id;
+                    this.currentNote = note;
+                    
+                    // Update the UI
+                    document.getElementById('noteTitleInput').value = note.title;
+                    document.getElementById('noteContentInput').value = note.content;
+                    document.getElementById('noteTagsInput').value = note.tags || '';
+                    document.getElementById('pinNoteBtn').textContent = note.is_pinned ? '📌' : '📍';
+                    document.getElementById('pinNoteBtn').dataset.pinned = note.is_pinned;
+                    
+                    // Show editor, hide list
+                    document.getElementById('notesList').style.display = 'none';
+                    document.getElementById('notesEditor').style.display = 'block';
+                    this.setEditorMode('edit');
+                    
+                    // Now process the paste
+                    await this.processPastedImage(items);
+                } else {
+                    const error = await response.json();
+                    this.showToast(error.detail || 'Failed to create note', 'error');
+                }
+            } catch (error) {
+                console.error('Error creating note for paste:', error);
+                this.showToast('Failed to create note', 'error');
             }
+        } else {
+            // Note exists, process paste normally
+            await this.processPastedImage(items, e);
         }
-        
+    }
+    
+    async processPastedImage(items, e = null) {
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
             if (item.type.indexOf('image') !== -1) {
-                e.preventDefault();
+                if (e) e.preventDefault();
                 const file = item.getAsFile();
                 if (file) {
                     console.log('Pasted image:', file.name || 'pasted-image', file.type, file.size);
