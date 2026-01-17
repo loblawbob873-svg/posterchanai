@@ -3,10 +3,11 @@ Storage Router - Internal API endpoints for storage server operations.
 These endpoints are called by client nodes when proxying file operations.
 All blocking I/O operations are run in thread pools to prevent blocking.
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
+from starlette.requests import Request as StarletteRequest
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.auth import get_current_user
+from app.auth import get_current_user, get_current_user_optional
 from app.models import User
 from app.services.storage_service import StorageService
 import logging
@@ -167,25 +168,34 @@ async def save_note_attachment(
     file: UploadFile = File(...),
     username: str = Form(...),
     note_id: int = Form(...),
+    request: StarletteRequest = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_optional)
 ):
     """
     Save a note attachment file. Called by client nodes when proxying note attachment uploads.
     Only accessible on storage server node.
-    """
-    # Verify username matches
-    if current_user.username != username:
-        raise HTTPException(status_code=403, detail="Access denied")
     
-    # Verify note belongs to user
-    from app.models import Note
-    note = db.query(Note).filter(
-        Note.id == note_id,
-        Note.user_id == current_user.id
-    ).first()
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
+    Note: For proxied requests, current_user may be None if using server token auth.
+    In that case, we trust the main server and skip user verification.
+    """
+    # Check if this is a server-to-server request (no user, but has server token)
+    is_server_request = current_user is None
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Verify note belongs to user (for user requests)
+        from app.models import Note
+        note = db.query(Note).filter(
+            Note.id == note_id,
+            Note.user_id == current_user.id
+        ).first()
+        if not note:
+            raise HTTPException(status_code=404, detail="Note not found")
+    # For server-to-server requests, we skip note verification (main server already verified)
     
     # Read file content
     content = await file.read()

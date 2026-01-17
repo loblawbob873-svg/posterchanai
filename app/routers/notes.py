@@ -544,6 +544,7 @@ async def serve_note_file(
 async def upload_note_attachment(
     note_id: int,
     file: UploadFile = File(...),
+    request: StarletteRequest = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -568,16 +569,27 @@ async def upload_note_attachment(
     
     username = current_user.username
     
+    # Get Authorization header to forward to storage server if needed
+    auth_header = request.headers.get("Authorization", "") if request else ""
+    
     def _save_attachment_sync():
         # Create a new database session for the thread
         thread_db = SessionLocal()
         try:
             storage = StorageService(thread_db)
+            # Pass auth header if available (for proxying)
+            # Note: This is a workaround - ideally we'd pass the request, but that's not serializable
+            # The storage service will use storage_server_token if available, otherwise it may fail
+            # In that case, we need to ensure storage_server_token is set or the storage server accepts unauthenticated requests
             return storage.save_note_attachment(username, note_id, content, original_name)
         finally:
             thread_db.close()
     
-    filename = await asyncio.to_thread(_save_attachment_sync)
+    try:
+        filename = await asyncio.to_thread(_save_attachment_sync)
+    except Exception as e:
+        logger.error(f"Error saving attachment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save attachment: {str(e)}")
     
     # Update note's attachments list
     import json

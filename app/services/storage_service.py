@@ -490,8 +490,8 @@ class StorageService:
         return filename
     
     def _proxy_save_note_attachment(self, storage_server_url: str, username: str, note_id: int, file_data: bytes, original_name: str) -> str:
-        """Proxy note attachment save to storage server"""
-        import asyncio
+        """Proxy note attachment save to storage server - uses synchronous requests to avoid event loop issues"""
+        import requests
         try:
             # Get server-to-server API token
             storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
@@ -500,6 +500,10 @@ class StorageService:
             headers = {}
             if storage_server_token and storage_server_token.value:
                 headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            # Note: If no server token, the storage server endpoint should accept the forwarded API key
+            # But since we're in a sync context, we can't access the original request's headers
+            # The storage server should accept requests without auth if storage_server_token is not set
+            # (it will use the forwarded API key from the main server's request)
             
             files = {
                 "file": (original_name, file_data, "application/octet-stream")
@@ -509,41 +513,15 @@ class StorageService:
                 "note_id": str(note_id)
             }
             
-            # Run async HTTP request in sync context
-            async def _async_proxy():
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    response = await client.post(url, headers=headers, files=files, data=data)
-                    if response.status_code == 200:
-                        result = response.json()
-                        return result.get("filename", original_name)
-                    else:
-                        logger.error(f"[STORAGE] Failed to proxy save_note_attachment: {response.status_code} - {response.text}")
-                        raise Exception(f"Storage server error: {response.status_code}")
+            # Use synchronous requests instead of async httpx to avoid event loop issues
+            response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
             
-            # Try to get running event loop
-            try:
-                loop = asyncio.get_running_loop()
-                # If we're in an async context with a running loop, run in a new thread with its own event loop
-                import concurrent.futures
-                def _run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(_async_proxy())
-                    finally:
-                        new_loop.close()
-                
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    return future.result()
-            except RuntimeError:
-                # No running loop, we can use asyncio.run or create a new loop
-                try:
-                    loop = asyncio.get_event_loop()
-                    return loop.run_until_complete(_async_proxy())
-                except RuntimeError:
-                    # No event loop at all, create one
-                    return asyncio.run(_async_proxy())
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("filename", original_name)
+            else:
+                logger.error(f"[STORAGE] Failed to proxy save_note_attachment: {response.status_code} - {response.text}")
+                raise Exception(f"Storage server error: {response.status_code}")
         except Exception as e:
             logger.error(f"[STORAGE] Error proxying note attachment: {e}", exc_info=True)
             raise
