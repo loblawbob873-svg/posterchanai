@@ -1196,22 +1196,8 @@ async def upload_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Upload a file to the user's storage. Proxies to storage server if configured."""
+    """Upload a file to the user's storage."""
     storage = get_storage_service(db)
-    
-    # Check if storage server is configured - proxy request if so
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    if storage_server_url and storage_server_url.value:
-        url = storage_server_url.value.strip()
-        if url.startswith(('http://', 'https://')):
-            try:
-                # Proxy to storage server
-                return await _proxy_upload_file(url, current_user.username, file, path, db)
-            except Exception as e:
-                logger.warning(f"[FILES] Failed to proxy upload_file, falling back to local: {e}")
-                # Fall through to local storage below
-    
-    # Local file saving (storage server node or when proxy fails)
     user_path = storage.get_user_path(current_user.username)
     
     # Sanitize and validate target path
