@@ -1714,6 +1714,13 @@ fieldset legend {
 .modal-body {
     padding: 24px;
 }
+.modal-footer {
+    padding: 20px 24px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
 .modal-info {
     color: var(--text-secondary);
     margin-bottom: 20px;

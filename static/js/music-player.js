@@ -38,8 +38,8 @@ class MusicPlayer {
             <div class="music-player-header">
                 <span class="drag-hint">⋮⋮ drag</span>
                 <div class="header-buttons">
-                    <button class="music-toggle" title="Collapse">−</button>
                     <button class="music-close" title="Close">&times;</button>
+                    <button class="music-toggle" title="Collapse">−</button>
                 </div>
             </div>
             <canvas class="music-visualizer"></canvas>

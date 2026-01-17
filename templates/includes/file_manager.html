@@ -99,13 +99,13 @@
 </div>
 
 <!-- Share File Modal -->
-<div class="file-modal" id="fileShareModal" style="display: none;">
-    <div class="file-modal-content">
-        <div class="file-modal-header">
-            <h3>🔗 Share File</h3>
-            <button class="file-modal-close" onclick="document.getElementById('fileShareModal').style.display='none'">&times;</button>
+<div class="modal" id="fileShareModal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>🔗 Share File</h2>
+            <button class="btn-icon modal-close" onclick="document.getElementById('fileShareModal').style.display='none'">&times;</button>
         </div>
-        <div class="file-modal-body">
+        <div class="modal-body">
             <input type="hidden" id="shareFilePath">
             <p><strong>File:</strong> <span id="shareFileName"></span></p>
             <div class="form-group">
@@ -128,7 +128,7 @@
                 ">Copy</button>
             </div>
         </div>
-        <div class="file-modal-footer">
+        <div class="modal-footer">
             <button class="btn-secondary" onclick="document.getElementById('fileShareModal').style.display='none'">Close</button>
             <button class="btn-primary" onclick="fileManager.createShare()">Create Share Link</button>
         </div>
@@ -136,13 +136,13 @@
 </div>
 
 <!-- Move Files Modal -->
-<div class="file-modal" id="fileMoveModal" style="display: none;">
-    <div class="file-modal-content">
-        <div class="file-modal-header">
-            <h3>📦 Move Files</h3>
-            <button class="file-modal-close" onclick="document.getElementById('fileMoveModal').style.display='none'">&times;</button>
+<div class="modal" id="fileMoveModal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>📦 Move Files</h2>
+            <button class="btn-icon modal-close" onclick="document.getElementById('fileMoveModal').style.display='none'">&times;</button>
         </div>
-        <div class="file-modal-body">
+        <div class="modal-body">
             <p><strong>Selected items:</strong> <span id="moveFileCount">0</span></p>
             <div class="form-group">
                 <label for="moveDestination">Destination folder:</label>
@@ -157,7 +157,7 @@
                 </div>
             </div>
         </div>
-        <div class="file-modal-footer">
+        <div class="modal-footer">
             <button class="btn-secondary" onclick="document.getElementById('fileMoveModal').style.display='none'">Cancel</button>
             <button class="btn-primary" onclick="fileManager.executeMove()">Move Files</button>
         </div>
