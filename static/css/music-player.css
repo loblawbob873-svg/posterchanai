@@ -347,7 +347,7 @@
 .music-toggle {
     position: absolute;
     top: 8px;
-    right: 8px;
+    right: 44px;
     width: 28px;
     height: 28px;
     border: 1px solid var(--accent);
@@ -371,7 +371,7 @@
 .music-close {
     position: absolute;
     top: 8px;
-    right: 44px;
+    right: 8px;
     width: 28px;
     height: 28px;
     border: 1px solid var(--danger);

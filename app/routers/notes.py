@@ -420,34 +420,11 @@ async def serve_note_file(
     if current_user.username != username:
         raise HTTPException(status_code=403, detail="Access denied")
     
-    # Check if storage server is configured - proxy request if so
+    # Check if storage server is configured - but check local file first
     # (Note: When proxying, the main server has already verified the note exists)
     storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    if storage_server_url and storage_server_url.value:
-        # Proxy to storage server (stream file response)
-        from app.services.storage_proxy import proxy_storage_request
-        # Use the actual request method (GET or HEAD)
-        method = request.method
-        return await proxy_storage_request(
-            db=db,
-            request=request,
-            endpoint=f"/api/notes/files/{username}/{note_id}/{filename}",
-            method=method,
-            stream=True
-        )
     
-    # Local file serving
-    # Note: For storage servers, we may not have notes in the database.
-    # The main server verifies note ownership before proxying, so we can
-    # serve files if they exist on disk without checking the database.
-    # Optionally verify note exists if we have it in the database (for local setups)
-    note = db.query(Note).filter(
-        Note.id == note_id,
-        Note.user_id == current_user.id
-    ).first()
-    # If note doesn't exist in DB, we'll still try to serve the file if it exists on disk
-    # (This allows storage servers to serve files without notes in their database)
-    # Get file path with sanitization to prevent path traversal
+    # Get file path to check if it exists locally
     from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
     storage = StorageService(db)
     
@@ -465,6 +442,33 @@ async def serve_note_file(
     if not _validate_path_within_base(file_path, base_path):
         raise HTTPException(status_code=403, detail="Invalid file path")
     
+    # If file exists locally, serve it locally (don't proxy)
+    # Only proxy if file doesn't exist locally and storage server is configured
+    if not file_path.exists() and storage_server_url and storage_server_url.value:
+        # File doesn't exist locally, try proxying to storage server
+        from app.services.storage_proxy import proxy_storage_request
+        # Use the actual request method (GET or HEAD)
+        method = request.method
+        return await proxy_storage_request(
+            db=db,
+            request=request,
+            endpoint=f"/api/notes/files/{username}/{note_id}/{filename}",
+            method=method,
+            stream=True
+        )
+    
+    # Local file serving (file exists locally or no storage server configured)
+    # Note: For storage servers, we may not have notes in the database.
+    # The main server verifies note ownership before proxying, so we can
+    # serve files if they exist on disk without checking the database.
+    # Optionally verify note exists if we have it in the database (for local setups)
+    note = db.query(Note).filter(
+        Note.id == note_id,
+        Note.user_id == current_user.id
+    ).first()
+    # If note doesn't exist in DB, we'll still try to serve the file if it exists on disk
+    # (This allows storage servers to serve files without notes in their database)
+    # File path was already constructed above, just verify it exists
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     
