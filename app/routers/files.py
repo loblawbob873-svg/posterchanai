@@ -1420,6 +1420,40 @@ async def _proxy_delete_file(storage_server_url: str, username: str, file_path: 
         raise
 
 
+async def _proxy_mkdir(storage_server_url: str, username: str, path: str, db: Session):
+    """Proxy directory creation to storage server - uses synchronous requests to avoid event loop issues"""
+    from app.models import Setting
+    import requests
+    
+    try:
+        # Get server-to-server API token
+        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        
+        url = f"{storage_server_url.rstrip('/')}/api/storage/mkdir"
+        headers = {}
+        if storage_server_token and storage_server_token.value:
+            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        
+        data = {
+            "username": username,
+            "path": path
+        }
+        
+        # Use synchronous requests in thread pool
+        def _sync_proxy():
+            response = requests.post(url, headers=headers, data=data, timeout=30)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"[FILES] Failed to proxy mkdir: {response.status_code} - {response.text}")
+                raise Exception(f"Storage server error: {response.status_code}")
+        
+        return await asyncio.to_thread(_sync_proxy)
+    except Exception as e:
+        logger.error(f"[FILES] Error proxying mkdir: {e}", exc_info=True)
+        raise
+
+
 @router.post("/mkdir")
 async def create_directory(
     path: str = Form(..., description="Directory path relative to user root"),

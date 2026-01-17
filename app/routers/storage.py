@@ -548,6 +548,81 @@ async def list_files(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/mkdir")
+async def mkdir(
+    request: FastAPIRequest,
+    username: str = Form(...),
+    path: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """
+    Create a directory. Called by client nodes when proxying directory creation.
+    Only accessible on storage server node.
+    """
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    # Sanitize and validate path
+    try:
+        safe_path = Path(*[_sanitize_path_component(p) for p in path.split('/') if p])
+        full_path = user_path / safe_path
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    
+    # Validate path is within user directory
+    if not _validate_path_within_base(full_path, user_path):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if full_path.exists():
+        raise HTTPException(status_code=400, detail="Directory already exists")
+    
+    # Run directory creation in thread pool
+    def _create_dir_sync():
+        try:
+            full_path.mkdir(parents=True, exist_ok=True)
+            return str(full_path.relative_to(user_path))
+        except Exception as e:
+            raise Exception(f"Error creating directory: {e}")
+    
+    try:
+        relative_path = await asyncio.to_thread(_create_dir_sync)
+        
+        # Invalidate file cache
+        try:
+            from app.routers.files import get_file_cache
+            cache = get_file_cache(db)
+            cache.invalidate(f"{username}:")
+            if path:
+                cache.invalidate(f"{username}:{path}")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+        
+        return {
+            "message": "Directory created successfully",
+            "path": relative_path
+        }
+    except Exception as e:
+        logger.error(f"Error creating directory: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/delete-file")
 async def delete_file(
     request: FastAPIRequest,
