@@ -416,6 +416,174 @@ class ChatHandler {
             });
         }
 
+        // Calendar import/export
+        const calendarImportFile = document.getElementById('calendarImportFile');
+        const importCalendarBtn = document.getElementById('importCalendarBtn');
+        const exportCalendarBtn = document.getElementById('exportCalendarBtn');
+        const calendarImportStatus = document.getElementById('calendarImportStatus');
+
+        if (importCalendarBtn && calendarImportFile) {
+            importCalendarBtn.addEventListener('click', () => {
+                calendarImportFile.click();
+            });
+
+            calendarImportFile.addEventListener('change', async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+
+                if (calendarImportStatus) {
+                    calendarImportStatus.textContent = 'Importing...';
+                    calendarImportStatus.className = 'test-result';
+                }
+
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    const response = await fetch('/api/caldav/import', {
+                        method: 'POST',
+                        credentials: 'include',
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (calendarImportStatus) {
+                            calendarImportStatus.textContent = `✓ Imported ${result.count || 0} event(s)`;
+                            calendarImportStatus.className = 'test-result success';
+                        }
+                    } else {
+                        const result = await response.json();
+                        if (calendarImportStatus) {
+                            calendarImportStatus.textContent = result.detail || 'Import failed';
+                            calendarImportStatus.className = 'test-result error';
+                        }
+                    }
+                } catch (err) {
+                    console.error('Calendar import error:', err);
+                    if (calendarImportStatus) {
+                        calendarImportStatus.textContent = 'Import failed';
+                        calendarImportStatus.className = 'test-result error';
+                    }
+                }
+
+                calendarImportFile.value = '';
+            });
+        }
+
+        if (exportCalendarBtn) {
+            exportCalendarBtn.addEventListener('click', async () => {
+                try {
+                    const resp = await fetch('/api/caldav/export', {
+                        method: 'GET',
+                        credentials: 'include'
+                    });
+
+                    if (resp.ok) {
+                        const blob = await resp.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'calendar.ics';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+                    } else {
+                        const result = await resp.json();
+                        alert(result.detail || 'Export failed');
+                    }
+                } catch (err) {
+                    console.error('Calendar export error:', err);
+                    alert('Export failed');
+                }
+            });
+        }
+
+        // Contacts import/export
+        const contactsImportFile = document.getElementById('contactsImportFile');
+        const importContactsBtn = document.getElementById('importContactsBtn');
+        const exportContactsBtn = document.getElementById('exportContactsBtn');
+        const contactsImportStatus = document.getElementById('contactsImportStatus');
+
+        if (importContactsBtn && contactsImportFile) {
+            importContactsBtn.addEventListener('click', () => {
+                contactsImportFile.click();
+            });
+
+            contactsImportFile.addEventListener('change', async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+
+                if (contactsImportStatus) {
+                    contactsImportStatus.textContent = 'Importing...';
+                    contactsImportStatus.className = 'test-result';
+                }
+
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    const response = await fetch('/api/carddav/import', {
+                        method: 'POST',
+                        credentials: 'include',
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (contactsImportStatus) {
+                            contactsImportStatus.textContent = `✓ Imported ${result.count || 0} contact(s)`;
+                            contactsImportStatus.className = 'test-result success';
+                        }
+                    } else {
+                        const result = await response.json();
+                        if (contactsImportStatus) {
+                            contactsImportStatus.textContent = result.detail || 'Import failed';
+                            contactsImportStatus.className = 'test-result error';
+                        }
+                    }
+                } catch (err) {
+                    console.error('Contacts import error:', err);
+                    if (contactsImportStatus) {
+                        contactsImportStatus.textContent = 'Import failed';
+                        contactsImportStatus.className = 'test-result error';
+                    }
+                }
+
+                contactsImportFile.value = '';
+            });
+        }
+
+        if (exportContactsBtn) {
+            exportContactsBtn.addEventListener('click', async () => {
+                try {
+                    const resp = await fetch('/api/carddav/export', {
+                        method: 'GET',
+                        credentials: 'include'
+                    });
+
+                    if (resp.ok) {
+                        const blob = await resp.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'contacts.vcf';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+                    } else {
+                        const result = await resp.json();
+                        alert(result.detail || 'Export failed');
+                    }
+                } catch (err) {
+                    console.error('Contacts export error:', err);
+                    alert('Export failed');
+                }
+            });
+        }
+
         // Calendar & Contacts elements
         const scheduleEnabled = document.getElementById('scheduleEnabled');
         const calendarServerType = document.getElementById('calendarServerType');
@@ -430,7 +598,6 @@ class ChatHandler {
         const carddavUsername = document.getElementById('carddavUsername');
         const carddavPassword = document.getElementById('carddavPassword');
         const importRadicaleBtn = document.getElementById('importRadicaleBtn');
-        const exportCalendarBtn = document.getElementById('exportCalendarBtn');
 
         // Toggle calendar server type
         if (calendarServerType) {

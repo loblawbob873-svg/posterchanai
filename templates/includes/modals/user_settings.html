@@ -161,6 +161,16 @@
                                 <li>CalDAV protocol: See "Storage & Cloud" tab for sync URL</li>
                                 <li>File storage: <code>{storage}/caldav/*.ics</code></li>
                             </ul>
+                            <div class="form-group" style="margin-top: 15px;">
+                                <label>Import/Export Calendar</label>
+                                <div style="display: flex; gap: 10px; margin-top: 8px;">
+                                    <input type="file" id="calendarImportFile" accept=".ics" style="display: none;">
+                                    <button type="button" class="btn-secondary" id="importCalendarBtn">📥 Import .ics</button>
+                                    <button type="button" class="btn-secondary" id="exportCalendarBtn">📤 Export .ics</button>
+                                    <span id="calendarImportStatus" class="test-result"></span>
+                                </div>
+                                <small class="form-hint">Import events from an iCalendar (.ics) file or export your calendar.</small>
+                            </div>
                         </fieldset>
                     </div>
 
@@ -209,6 +219,16 @@
                                 <li>CardDAV protocol: See "Storage & Cloud" tab for sync URL</li>
                                 <li>File storage: <code>{storage}/carddav/*.vcf</code></li>
                             </ul>
+                            <div class="form-group" style="margin-top: 15px;">
+                                <label>Import/Export Contacts</label>
+                                <div style="display: flex; gap: 10px; margin-top: 8px;">
+                                    <input type="file" id="contactsImportFile" accept=".vcf" style="display: none;">
+                                    <button type="button" class="btn-secondary" id="importContactsBtn">📥 Import .vcf</button>
+                                    <button type="button" class="btn-secondary" id="exportContactsBtn">📤 Export .vcf</button>
+                                    <span id="contactsImportStatus" class="test-result"></span>
+                                </div>
+                                <small class="form-hint">Import contacts from a vCard (.vcf) file or export your contacts.</small>
+                            </div>
                         </fieldset>
                     </div>
                 </div>

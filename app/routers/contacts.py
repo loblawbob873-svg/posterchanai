@@ -1,7 +1,7 @@
 """
 Contacts Router - API endpoints for CardDAV contacts management.
 """
-from fastapi import APIRouter, Depends, Request, HTTPException, Form
+from fastapi import APIRouter, Depends, Request, HTTPException, Form, File, UploadFile
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 from typing import List
@@ -171,15 +171,19 @@ async def export_contacts(
 
 @router.post("/import")
 async def import_contacts(
-    vcf_data: str = Form(...),
+    file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Import contacts from vCard (.vcf) data."""
+    """Import contacts from vCard (.vcf) file."""
     try:
         from app.services.cardav_server import get_user_cardav_path
         import vobject
         import uuid
+        
+        # Read uploaded file
+        vcf_data = await file.read()
+        vcf_data = vcf_data.decode('utf-8')
         
         # Get user's CardDAV path
         cardav_path = get_user_cardav_path(current_user, db)
@@ -208,7 +212,7 @@ async def import_contacts(
                 raise HTTPException(status_code=400, detail=f"Invalid vCard data: {str(e)}")
         
         if not vcards:
-            raise HTTPException(status_code=400, detail="No valid vCards found in the data")
+            raise HTTPException(status_code=400, detail="No valid vCards found in the file")
         
         # Import each vCard
         for vcard in vcards:
@@ -241,10 +245,8 @@ async def import_contacts(
         
         return {
             "success": True,
-            "message": f"Imported {imported_count} contacts",
-            "imported": imported_count,
-            "skipped": skipped_count,
-            "errors": error_count
+            "count": imported_count,
+            "message": f"Imported {imported_count} contact(s), skipped {skipped_count}, errors {error_count}"
         }
     except HTTPException:
         raise
