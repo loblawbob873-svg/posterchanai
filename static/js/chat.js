@@ -3035,6 +3035,22 @@ class ChatHandler {
             processed = `\x00CODEBLOCK${index}\x00`;
         }
 
+        // Extract and preserve HTML links BEFORE processing markdown (so they don't get escaped)
+        const htmlLinks = [];
+        processed = processed.replace(/<a\s+([^>]*?)href=["']([^"']+)["']([^>]*?)>(.*?)<\/a>/gi, (match, before, url, after, text) => {
+            const index = htmlLinks.length;
+            // Extract target and rel attributes if present
+            const targetMatch = (before + after).match(/target=["']([^"']+)["']/i);
+            const relMatch = (before + after).match(/rel=["']([^"']+)["']/i);
+            htmlLinks.push({
+                url: url.trim(),
+                text: text.trim(),
+                target: targetMatch ? targetMatch[1] : null,
+                rel: relMatch ? relMatch[1] : null
+            });
+            return `\x00HTMLLINK${index}\x00`;
+        });
+        
         // Process markdown links BEFORE escaping (preserve URLs)
         const links = [];
         // First, fix malformed links where URL is on a new line (most common issue)
@@ -3125,6 +3141,16 @@ class ChatHandler {
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
 
+        // Restore HTML links first (before markdown links)
+        html = html.replace(/\x00HTMLLINK(\d+)\x00/g, (match, index) => {
+            const htmlLink = htmlLinks[parseInt(index)];
+            if (!htmlLink) return '';
+            const target = htmlLink.target ? ` target="${htmlLink.target}"` : '';
+            const rel = htmlLink.rel ? ` rel="${htmlLink.rel}"` : '';
+            const safeUrl = htmlLink.url.startsWith('/') ? htmlLink.url : encodeURI(htmlLink.url);
+            return `<a href="${safeUrl}"${target}${rel}>${this.escapeHtml(htmlLink.text)}</a>`;
+        });
+        
         // Restore markdown links as HTML
         html = html.replace(/\x00LINK(\d+)\x00/g, (match, index) => {
             const link = links[parseInt(index)];

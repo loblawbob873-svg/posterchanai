@@ -13,6 +13,9 @@ class NotesManager {
     }
     
     init() {
+        // Force reload on init to clear any cached data
+        this.notes = [];
+        this.folders = [];
         this.loadFolders();
         this.loadNotes();
         
@@ -1661,6 +1664,9 @@ function initNotesModal() {
             if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
                 if (notesModal.style.display === 'flex' || notesModal.style.display === 'block') {
                     const manager = ensureNotesManager();
+                    // Force clear cache and reload when modal opens
+                    manager.notes = [];
+                    manager.folders = [];
                     manager.loadFolders();
                     manager.loadNotes();
                     // Ensure Edit/Preview buttons are wired up (in case they weren't available during init)
@@ -1675,6 +1681,11 @@ function initNotesModal() {
         notesModal.style.display = 'flex';
         // Ensure manager is ready immediately
         const manager = ensureNotesManager();
+        // Force clear cache and reload when opening modal
+        manager.notes = [];
+        manager.folders = [];
+        manager.loadFolders();
+        manager.loadNotes();
         manager.attachModeButtons();
     };
 }
