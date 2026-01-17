@@ -2621,23 +2621,58 @@ class ChatHandler {
     
     async downloadFile(filePath, fileName) {
         try {
-            const response = await fetch(`/api/files/view/${encodeURIComponent(filePath)}`);
+            // Use the view endpoint to download the file
+            // Encode each path segment separately to preserve slashes
+            const pathSegments = filePath.split('/').map(seg => encodeURIComponent(seg));
+            const encodedPath = pathSegments.join('/');
+            const url = `/api/files/view/${encodedPath}`;
+            
+            console.log('Downloading file:', { filePath, fileName, url });
+            
+            // Use fetch with credentials to include cookies
+            const response = await fetch(url, {
+                credentials: 'include',
+                method: 'GET'
+            });
+            
             if (!response.ok) {
-                throw new Error('Failed to download file');
+                let errorText = 'Unknown error';
+                try {
+                    errorText = await response.text();
+                } catch (e) {
+                    errorText = `${response.status} ${response.statusText}`;
+                }
+                console.error('Download failed:', response.status, errorText);
+                throw new Error(`Failed to download file: ${response.status} ${errorText.substring(0, 100)}`);
             }
+            
+            // Get the file as a blob
             const blob = await response.blob();
-            const url = window.URL.createObjectURL(blob);
+            
+            if (!blob || blob.size === 0) {
+                throw new Error('Received empty file');
+            }
+            
+            // Create download link
+            const url_obj = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url;
+            a.href = url_obj;
             a.download = fileName;
+            a.style.display = 'none';
             document.body.appendChild(a);
             a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
+            
+            // Clean up
+            setTimeout(() => {
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url_obj);
+            }, 100);
+            
             this.showToast('File downloaded');
         } catch (error) {
             console.error('Error downloading file:', error);
-            this.showToast('Error downloading file', 'error');
+            const errorMsg = error.message || 'Unknown error';
+            this.showToast(`Error downloading file: ${errorMsg}`, 'error');
         }
     }
 
@@ -2731,10 +2766,16 @@ class ChatHandler {
 
     async emailFile(filePath, fileName) {
         // Open email modal with file pre-selected
+        // Ensure fileManager is initialized
+        if (typeof FileManager !== 'undefined' && !window.fileManager) {
+            window.fileManager = new FileManager();
+        }
+        
         if (window.fileManager) {
             window.fileManager.emailFile(filePath, fileName);
         } else {
-            // Fallback: prompt for email address
+            // Fallback: prompt for email address (shouldn't happen normally)
+            console.warn('FileManager not available, using fallback prompt');
             const to = prompt('Enter email address:');
             if (!to) return;
             

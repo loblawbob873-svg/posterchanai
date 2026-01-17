@@ -69,18 +69,20 @@
 </div>
 
 <!-- Email File Modal -->
-<div class="file-modal" id="fileEmailModal" style="display: none;">
-    <div class="file-modal-content">
-        <div class="file-modal-header">
-            <h3>📧 Email File</h3>
-            <button class="file-modal-close" onclick="document.getElementById('fileEmailModal').style.display='none'">&times;</button>
+<div class="modal" id="fileEmailModal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>📧 Email File</h2>
+            <button class="btn-icon modal-close" onclick="document.getElementById('fileEmailModal').style.display='none'">&times;</button>
         </div>
-        <div class="file-modal-body">
+        <div class="modal-body">
             <input type="hidden" id="emailFilePath">
             <p><strong>File:</strong> <span id="emailFileName"></span></p>
             <div class="form-group">
                 <label for="emailTo">To:</label>
-                <input type="email" id="emailTo" placeholder="recipient@example.com" required>
+                <input type="text" id="emailTo" list="emailToAutocomplete" placeholder="Start typing email or name..." autocomplete="off" required>
+                <datalist id="emailToAutocomplete"></datalist>
+                <small>Type to see suggestions from your contacts</small>
             </div>
             <div class="form-group">
                 <label for="emailSubject">Subject:</label>
@@ -91,7 +93,7 @@
                 <textarea id="emailBody" rows="4" placeholder="Please find the attached file."></textarea>
             </div>
         </div>
-        <div class="file-modal-footer">
+        <div class="modal-footer">
             <button class="btn-secondary" onclick="document.getElementById('fileEmailModal').style.display='none'">Cancel</button>
             <button class="btn-primary" onclick="fileManager.sendEmail()">Send Email</button>
         </div>

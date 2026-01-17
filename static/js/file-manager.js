@@ -543,10 +543,50 @@ class FileManager {
         if (modal) {
             document.getElementById('emailFilePath').value = filePath;
             document.getElementById('emailFileName').textContent = fileName;
-            document.getElementById('emailTo').value = '';
+            const emailToInput = document.getElementById('emailTo');
+            emailToInput.value = '';
             document.getElementById('emailSubject').value = `Shared file: ${fileName}`;
             document.getElementById('emailBody').value = `Please find the attached file: ${fileName}`;
+            
+            // Load contact emails for autocomplete
+            await this.loadContactEmailsForAutocomplete();
+            
             modal.style.display = 'block';
+            // Focus on email input
+            setTimeout(() => emailToInput.focus(), 100);
+        }
+    }
+    
+    async loadContactEmailsForAutocomplete() {
+        try {
+            const response = await fetch('/api/contacts/emails');
+            if (response.ok) {
+                const contacts = await response.json();
+                const datalist = document.getElementById('emailToAutocomplete');
+                if (datalist && contacts && Array.isArray(contacts)) {
+                    // Clear existing options
+                    datalist.innerHTML = '';
+                    
+                    // Add contact emails to datalist
+                    contacts.forEach(contact => {
+                        const option = document.createElement('option');
+                        // Store email as value (what gets inserted when selected)
+                        option.value = contact.email;
+                        // Show formatted name+email in dropdown (what user sees)
+                        // This allows matching by name or email
+                        if (contact.name && contact.name.toLowerCase() !== contact.email.split('@')[0].toLowerCase()) {
+                            option.textContent = `${contact.name} <${contact.email}>`;
+                        } else {
+                            option.textContent = contact.email;
+                        }
+                        datalist.appendChild(option);
+                    });
+                    
+                    console.log(`Loaded ${contacts.length} contacts for email autocomplete`);
+                }
+            }
+        } catch (e) {
+            console.debug('Could not load contact emails for autocomplete:', e);
         }
     }
     
@@ -566,12 +606,25 @@ class FileManager {
     
     async sendEmail() {
         const filePath = document.getElementById('emailFilePath').value;
-        const to = document.getElementById('emailTo').value.trim();
+        let to = document.getElementById('emailTo').value.trim();
         const subject = document.getElementById('emailSubject').value.trim();
         const body = document.getElementById('emailBody').value.trim();
         
         if (!to) {
             alert('Please enter recipient email address');
+            return;
+        }
+        
+        // Extract email from "Name <email>" format if present
+        const emailMatch = to.match(/<([^>]+)>/);
+        if (emailMatch) {
+            to = emailMatch[1];
+        }
+        
+        // Basic email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(to)) {
+            alert('Please enter a valid email address');
             return;
         }
         
