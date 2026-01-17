@@ -22,7 +22,12 @@ class NotesManager {
         document.getElementById('cancelNoteBtn')?.addEventListener('click', () => this.cancelEdit());
         document.getElementById('deleteNoteBtn')?.addEventListener('click', () => this.deleteNote());
         document.getElementById('pinNoteBtn')?.addEventListener('click', () => this.togglePin());
-        document.getElementById('attachFileBtn')?.addEventListener('click', () => this.showAttachmentDialog());
+        // Attach file button - use once flag to prevent duplicate listeners
+        const attachBtn = document.getElementById('attachFileBtn');
+        if (attachBtn && !attachBtn.dataset.listenerAttached) {
+            attachBtn.addEventListener('click', () => this.showAttachmentDialog());
+            attachBtn.dataset.listenerAttached = 'true';
+        }
         document.getElementById('noteFileInput')?.addEventListener('change', (e) => this.handleFileSelect(e));
         document.getElementById('notesSearchInput')?.addEventListener('input', (e) => {
             this.searchQuery = e.target.value;
@@ -954,16 +959,8 @@ class NotesManager {
             previewBtn.dataset.listenerAttached = 'true';
         }
         
-        // Also attach attach button listener here (in case it wasn't attached in init)
-        const attachBtn = document.getElementById('attachFileBtn');
-        if (attachBtn && !attachBtn.dataset.listenerAttached) {
-            attachBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                this.showAttachmentDialog();
-            });
-            attachBtn.dataset.listenerAttached = 'true';
-        }
+        // Don't re-attach attach button listener - it's already attached in init()
+        // The listener persists and doesn't need to be re-attached
     }
     
     async handlePaste(e) {
@@ -1183,47 +1180,82 @@ class NotesManager {
     }
     
     showAttachmentDialog() {
+        // Prevent multiple simultaneous calls
+        if (this._showingAttachmentDialog) {
+            return;
+        }
+        this._showingAttachmentDialog = true;
+        
         const fileInput = document.getElementById('noteFileInput');
         if (!fileInput) {
             this.showToast('File input not found', 'error');
+            this._showingAttachmentDialog = false;
             return;
         }
         
         // Check if we have a note open
         if (!this.currentNoteId) {
-            // Create a new note first
+            // Create a new note first (sets up UI)
             this.createNote();
-            // Wait a moment for the note to be created, then show dialog
-            setTimeout(() => {
-                if (this.currentNoteId) {
-                    fileInput.click();
-                } else {
-                    this.showToast('Please create or open a note first', 'error');
-                }
-            }, 200);
+            // Save the note to get an ID, then show file picker
+            this.saveNote().then(() => {
+                // Wait a moment for the note to be fully set up
+                setTimeout(() => {
+                    if (this.currentNoteId) {
+                        fileInput.click();
+                    } else {
+                        this.showToast('Please create or open a note first', 'error');
+                    }
+                    this._showingAttachmentDialog = false;
+                }, 100);
+            }).catch((error) => {
+                console.error('Error creating note for attachment:', error);
+                this.showToast('Failed to create note', 'error');
+                this._showingAttachmentDialog = false;
+            });
         } else {
             // Note exists, show file picker
             fileInput.click();
+            // Reset flag after a short delay (file dialog opens asynchronously)
+            setTimeout(() => {
+                this._showingAttachmentDialog = false;
+            }, 100);
         }
     }
     
     async handleFileSelect(e) {
-        const files = e.target.files;
-        if (!files || files.length === 0) return;
+        // Prevent duplicate processing
+        if (this._processingFileSelect) {
+            return;
+        }
+        this._processingFileSelect = true;
         
-        if (!this.currentNoteId) {
-            this.showToast('Please create or open a note first', 'error');
+        const files = e.target.files;
+        if (!files || files.length === 0) {
+            // Reset the file input so the same file can be selected again
+            e.target.value = '';
+            this._processingFileSelect = false;
             return;
         }
         
-        // Upload each file
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            await this.uploadAttachment(file);
+        if (!this.currentNoteId) {
+            this.showToast('Please create or open a note first', 'error');
+            e.target.value = '';
+            this._processingFileSelect = false;
+            return;
         }
         
-        // Clear the input so the same file can be selected again
-        e.target.value = '';
+        try {
+            // Upload each file
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                await this.uploadAttachment(file);
+            }
+        } finally {
+            // Clear the input so the same file can be selected again
+            e.target.value = '';
+            this._processingFileSelect = false;
+        }
     }
     
     escapeHtml(text) {
