@@ -310,10 +310,13 @@ class ChatHandler {
         }
 
         // Toggle RSS settings visibility
+        const rssSkipSettings = document.getElementById('rssSkipSettings');
         if (rssEnabled && rssSettings) {
             rssEnabled.addEventListener('change', () => {
-                rssSettings.style.display = rssEnabled.checked ? 'flex' : 'none';
-                if (rssEnabled.checked && rssFeeds.length === 0) {
+                const isEnabled = rssEnabled.checked;
+                rssSettings.style.display = isEnabled ? 'flex' : 'none';
+                if (rssSkipSettings) rssSkipSettings.style.display = isEnabled ? 'block' : 'none';
+                if (isEnabled && rssFeeds.length === 0) {
                     loadRssFeeds();
                 }
             });
@@ -889,9 +892,11 @@ class ChatHandler {
                         if (newsSources) newsSources.value = data.news_sources || '';
 
                         // Load Native RSS settings
+                        const rssSkipSettings = document.getElementById('rssSkipSettings');
                         if (rssEnabled) {
                             rssEnabled.checked = data.rss_enabled || false;
                             if (rssSettings) rssSettings.style.display = data.rss_enabled ? 'flex' : 'none';
+                            if (rssSkipSettings) rssSkipSettings.style.display = data.rss_enabled ? 'block' : 'none';
                             if (data.rss_enabled) loadRssFeeds();
                         }
                         if (rssSkipSummarization) {
