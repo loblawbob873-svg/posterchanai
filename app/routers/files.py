@@ -1429,48 +1429,18 @@ async def create_directory(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Create a new directory."""
-    storage = get_storage_service(db)
-    user_path = storage.get_user_path(current_user.username)
-    
-    # Sanitize and validate path
-    try:
-        safe_path = Path(*[_sanitize_path_component(p) for p in path.split('/') if p])
-        full_path = user_path / safe_path
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
-    
-    # Validate path is within user directory
-    if not _validate_path_within_base(full_path, user_path):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    if full_path.exists():
-        raise HTTPException(status_code=400, detail="Directory already exists")
-    
-    # Run directory creation in thread pool
-    def _create_dir_sync():
-        try:
-            full_path.mkdir(parents=True, exist_ok=True)
-            return str(full_path.relative_to(user_path))
-        except Exception as e:
-            raise Exception(f"Error creating directory: {e}")
-    
-    try:
-        relative_path = await asyncio.to_thread(_create_dir_sync)
-        
-        # Invalidate file cache
-        try:
-            cache = get_file_cache(db)
-            cache.invalidate(f"{current_user.username}:")
-            if path:
-                parent_path = '/'.join(path.split('/')[:-1]) if '/' in path else ""
-                cache.invalidate(f"{current_user.username}:{parent_path}")
-        except Exception as e:
-            logger.warning(f"Failed to invalidate cache: {e}")
-        
-        return {
-            "message": "Directory created successfully",
-            "path": relative_path
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Create a new directory. Proxies to storage server if configured (NO FALLBACK)."""
+    # Check if storage server is configured - proxy request if so (NO FALLBACK)
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            logger.info(f"[FILES] Proxying mkdir to storage server: {url}")
+            # Proxy to storage server - NO FALLBACK
+            result = await _proxy_mkdir(url, current_user.username, path, db)
+            logger.info(f"[FILES] Successfully proxied mkdir to storage server")
+            return result
+        else:
+            raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
+    else:
+        raise HTTPException(status_code=500, detail="Storage server not configured. Cannot create directory.")
