@@ -18,6 +18,7 @@ from app.database import get_db
 from app.auth import get_current_user, get_current_user_optional
 from app.models import User, Setting
 from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
+from app.utils.image_validation import validate_and_clean_image_data, ensure_serializable_image
 from typing import Optional
 import logging
 import asyncio
@@ -862,7 +863,6 @@ async def get_all_images(
                             image_info[key] = str(value)
                     
                     # Validate and clean image data
-                    from app.utils.image_validation import validate_and_clean_image_data
                     cleaned_image_info = validate_and_clean_image_data(image_info, item_path=item)
                     if not cleaned_image_info:
                         continue
@@ -985,7 +985,6 @@ async def get_all_images(
         paginated_images = images[offset:offset + limit]
         
         # Ensure all data is JSON serializable
-        from app.utils.image_validation import ensure_serializable_image
         serializable_images = [ensure_serializable_image(img) for img in paginated_images]
         
         return {

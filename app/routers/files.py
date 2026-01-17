@@ -26,6 +26,7 @@ from app.database import get_db
 from app.auth import get_current_user
 from app.models import User, Setting, SharedFile, ExternalStorage
 from app.services.storage_service import get_storage_service, _sanitize_path_component, _validate_path_within_base
+from app.utils.image_validation import validate_and_clean_image_data, validate_and_filter_images, ensure_serializable_image
 
 logger = logging.getLogger(__name__)
 
@@ -292,7 +293,6 @@ async def get_all_images(
                             
                             # Verify that images have required fields and filter out invalid ones
                             if 'images' in cleaned_data and cleaned_data['images']:
-                                from app.utils.image_validation import validate_and_filter_images
                                 valid_images = validate_and_filter_images(cleaned_data['images'], source="proxy")
                                 
                                 # Update with filtered valid images
@@ -528,7 +528,6 @@ async def get_all_images(
                             image_info[key] = str(value)
                     
                     # Validate and clean image data
-                    from app.utils.image_validation import validate_and_clean_image_data
                     cleaned_image_info = validate_and_clean_image_data(image_info, item_path=item)
                     if not cleaned_image_info:
                         continue
@@ -664,7 +663,6 @@ async def get_all_images(
         paginated_images = images[offset:offset + limit]
         
         # Ensure all data is JSON serializable
-        from app.utils.image_validation import ensure_serializable_image
         serializable_images = [ensure_serializable_image(img) for img in paginated_images]
         
         return {
