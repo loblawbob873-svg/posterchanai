@@ -244,13 +244,20 @@ class NotesManager {
                 document.getElementById('notesList').style.display = 'none';
                 document.getElementById('notesEditor').style.display = 'block';
                 
-                // Re-attach paste listener in case it wasn't attached
+                // Re-attach event listeners in case they weren't attached
                 const contentInput = document.getElementById('noteContentInput');
                 if (contentInput && !contentInput.dataset.pasteListenerAttached) {
                     contentInput.addEventListener('paste', (e) => {
                         this.handlePaste(e);
                     });
                     contentInput.dataset.pasteListenerAttached = 'true';
+                }
+                
+                // Re-attach attach button listener
+                const attachBtn = document.getElementById('attachFileBtn');
+                if (attachBtn && !attachBtn.dataset.listenerAttached) {
+                    attachBtn.addEventListener('click', () => this.showAttachmentDialog());
+                    attachBtn.dataset.listenerAttached = 'true';
                 }
                 
                 // Start in preview mode (default action)
@@ -693,6 +700,14 @@ class NotesManager {
         this.setEditorMode('edit');
         document.getElementById('notesList').style.display = 'none';
         document.getElementById('notesEditor').style.display = 'block';
+        
+        // Re-attach event listeners in case they weren't attached
+        const attachBtn = document.getElementById('attachFileBtn');
+        if (attachBtn && !attachBtn.dataset.listenerAttached) {
+            attachBtn.addEventListener('click', () => this.showAttachmentDialog());
+            attachBtn.dataset.listenerAttached = 'true';
+        }
+        
         document.getElementById('noteTitleInput').focus();
     }
     
@@ -879,6 +894,18 @@ class NotesManager {
                 this.setEditorMode('preview');
             });
             previewBtn.dataset.listenerAttached = 'true';
+        }
+        
+        // Also attach attach button listener here (in case it wasn't attached in init)
+        const attachBtn = document.getElementById('attachFileBtn');
+        if (attachBtn && !attachBtn.dataset.listenerAttached) {
+            attachBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Attach button clicked');
+                this.showAttachmentDialog();
+            });
+            attachBtn.dataset.listenerAttached = 'true';
         }
     }
     
@@ -1107,21 +1134,34 @@ class NotesManager {
     }
     
     showAttachmentDialog() {
+        console.log('showAttachmentDialog called', { currentNoteId: this.currentNoteId });
+        
+        const fileInput = document.getElementById('noteFileInput');
+        if (!fileInput) {
+            console.error('File input not found!');
+            this.showToast('File input not found', 'error');
+            return;
+        }
+        
         // Check if we have a note open
         if (!this.currentNoteId) {
             // Create a new note first
+            console.log('No note open, creating new note...');
             this.createNote();
             // Wait a moment for the note to be created, then show dialog
             setTimeout(() => {
                 if (this.currentNoteId) {
-                    document.getElementById('noteFileInput').click();
+                    console.log('Note created, opening file picker...');
+                    fileInput.click();
                 } else {
+                    console.error('Failed to create note for attachment');
                     this.showToast('Please create or open a note first', 'error');
                 }
-            }, 100);
+            }, 200);
         } else {
             // Note exists, show file picker
-            document.getElementById('noteFileInput').click();
+            console.log('Note exists, opening file picker...');
+            fileInput.click();
         }
     }
     

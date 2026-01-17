@@ -1652,13 +1652,16 @@ fieldset legend {
 
 /* Notes modal should use minimal padding */
 #notesModal.modal {
-    padding: 5px;
-    align-items: stretch;
+    padding: 10px;
+    align-items: center;
+    justify-content: center;
 }
 
 #notesModal .modal-content.notes-modal-content {
-    margin: 5px;
+    margin: 0;
     align-self: center;
+    max-height: calc(100vh - 20px);
+    height: calc(100vh - 20px);
 }
 .modal-content {
     background: var(--bg-secondary);

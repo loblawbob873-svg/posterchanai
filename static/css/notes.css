@@ -2,8 +2,8 @@
 .notes-modal-content {
     max-width: 1400px;
     width: min(95vw, 1400px);
-    height: min(90vh, 900px);
-    max-height: min(90vh, 900px);
+    height: calc(100vh - 20px);
+    max-height: calc(100vh - 20px);
     border-radius: 12px;
     overflow: hidden;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
@@ -323,17 +323,20 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    padding: 24px;
+    min-height: 0;
+    padding: 20px;
     background: var(--bg-primary);
+    overflow: hidden;
 }
 
 .notes-editor-header {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 20px;
-    padding-bottom: 20px;
+    margin-bottom: 16px;
+    padding-bottom: 16px;
     border-bottom: 2px solid var(--border-color);
+    flex-shrink: 0;
 }
 
 .note-title-input {
@@ -378,7 +381,8 @@
 }
 
 .notes-editor-tags {
-    margin-bottom: 16px;
+    margin-bottom: 12px;
+    flex-shrink: 0;
 }
 
 .notes-editor-tags input {
@@ -402,6 +406,7 @@
     display: flex;
     gap: 8px;
     margin-bottom: 12px;
+    flex-shrink: 0;
 }
 
 .notes-editor-mode-toggle .btn-small {
@@ -424,11 +429,12 @@
     min-height: 0;
     position: relative;
     overflow: hidden;
+    max-height: 100%;
 }
 
 #noteContentInput {
     flex: 1;
-    padding: 20px;
+    padding: 16px;
     background: var(--bg-secondary);
     border: 2px solid var(--border-color);
     border-radius: 10px;
@@ -436,7 +442,8 @@
     font-size: 15px;
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'Courier New', monospace;
     resize: none;
-    min-height: 200px;
+    min-height: 0;
+    max-height: 100%;
     overflow-y: auto;
     overflow-x: hidden;
     line-height: 1.8;
@@ -451,7 +458,7 @@
 
 .notes-content-preview {
     flex: 1;
-    padding: 20px;
+    padding: 16px;
     background: var(--bg-secondary);
     border: 2px solid var(--border-color);
     border-radius: 10px;
@@ -460,7 +467,8 @@
     line-height: 1.8;
     overflow-y: auto;
     overflow-x: hidden;
-    min-height: 200px;
+    min-height: 0;
+    max-height: 100%;
     position: relative;
 }
 
@@ -560,9 +568,10 @@
 .notes-editor-footer {
     display: flex;
     gap: 12px;
-    margin-top: 20px;
-    padding-top: 20px;
+    margin-top: 16px;
+    padding-top: 16px;
     border-top: 2px solid var(--border-color);
+    flex-shrink: 0;
 }
 
 .notes-editor-footer button {
@@ -703,6 +712,7 @@
         height: 100vh;
         max-height: 100vh;
         border-radius: 0;
+        margin: 0;
     }
     
     .notes-modal-body {
@@ -743,15 +753,24 @@
 /* Ensure modal fits on screen */
 @media (max-height: 800px) {
     .notes-modal-content {
-        height: 95vh;
-        max-height: 95vh;
+        height: calc(100vh - 10px);
+        max-height: calc(100vh - 10px);
+    }
+    
+    .notes-editor {
+        padding: 16px;
+    }
+    
+    .notes-editor-header {
+        margin-bottom: 12px;
+        padding-bottom: 12px;
     }
 }
 
 @media (max-height: 600px) {
     .notes-modal-content {
-        height: 98vh;
-        max-height: 98vh;
+        height: calc(100vh - 5px);
+        max-height: calc(100vh - 5px);
     }
     
     .notes-editor {
@@ -759,12 +778,12 @@
     }
     
     .notes-editor-header {
-        margin-bottom: 12px;
-        padding-bottom: 12px;
+        margin-bottom: 8px;
+        padding-bottom: 8px;
     }
     
     .notes-editor-tags {
-        margin-bottom: 12px;
+        margin-bottom: 8px;
     }
     
     .notes-editor-mode-toggle {
@@ -772,8 +791,13 @@
     }
     
     .notes-editor-footer {
-        margin-top: 12px;
-        padding-top: 12px;
+        margin-top: 8px;
+        padding-top: 8px;
+    }
+    
+    .note-title-input {
+        font-size: 18px;
+        padding: 10px 14px;
     }
 }
 
