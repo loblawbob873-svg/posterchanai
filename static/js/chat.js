@@ -2014,7 +2014,20 @@ class ChatHandler {
             html += '</div>';
         } else if (data.type === 'files' && data.files) {
             // For files, put content first, then file results in a separate container
-            html = contentHtml;
+            // Ensure contentHtml doesn't break the structure - extract text from p tags if needed
+            let cleanContent = contentHtml || '';
+            // If contentHtml is wrapped in p tags, extract the content to avoid nesting issues
+            if (cleanContent.trim().startsWith('<p') && cleanContent.trim().endsWith('</p>')) {
+                const pMatch = cleanContent.match(/^<p[^>]*>(.*?)<\/p>$/s);
+                if (pMatch) {
+                    cleanContent = pMatch[1].trim();
+                }
+            }
+            // Build HTML with proper structure - content and file results in separate containers
+            html = '';
+            if (cleanContent) {
+                html += `<div class="file-command-content">${cleanContent}</div>`;
+            }
             html += '<div class="file-search-results">';
             if (data.files.length === 0) {
                 html += '<p class="no-results">No files found.</p>';
@@ -2079,47 +2092,53 @@ class ChatHandler {
         // Attach event listeners to file action buttons using event delegation
         // This is more reliable than attaching to individual buttons
         if (messageEl && data.type === 'files') {
-            // Use event delegation on the message element
-            messageEl.addEventListener('click', (e) => {
-                const btn = e.target.closest('.file-action-btn[data-action]');
-                if (!btn) return;
+            // Wait a tick to ensure DOM is fully rendered
+            setTimeout(() => {
+                // Use event delegation on the message element
+                messageEl.addEventListener('click', (e) => {
+                    const btn = e.target.closest('.file-action-btn[data-action]');
+                    if (!btn) return;
+                    
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    const action = btn.dataset.action;
+                    const filePath = btn.dataset.path;
+                    const fileName = btn.dataset.name;
+                    
+                    console.log('File action clicked:', action, filePath, fileName);
+                    
+                    if (!window.chatHandler) {
+                        console.error('chatHandler not available');
+                        return;
+                    }
+                    
+                    switch(action) {
+                        case 'open':
+                            window.chatHandler.openFile(filePath, fileName);
+                            break;
+                        case 'download':
+                            window.chatHandler.downloadFile(filePath, fileName);
+                            break;
+                        case 'preview':
+                            window.chatHandler.previewUrl(filePath, fileName);
+                            break;
+                        case 'share':
+                            window.chatHandler.shareFile(filePath, fileName);
+                            break;
+                        case 'email':
+                            window.chatHandler.emailFile(filePath, fileName);
+                            break;
+                        case 'delete':
+                            window.chatHandler.deleteFile(filePath, fileName);
+                            break;
+                    }
+                });
                 
-                e.preventDefault();
-                e.stopPropagation();
-                
-                const action = btn.dataset.action;
-                const filePath = btn.dataset.path;
-                const fileName = btn.dataset.name;
-                
-                console.log('File action clicked:', action, filePath, fileName);
-                
-                if (!window.chatHandler) {
-                    console.error('chatHandler not available');
-                    return;
-                }
-                
-                switch(action) {
-                    case 'open':
-                        window.chatHandler.openFile(filePath, fileName);
-                        break;
-                    case 'download':
-                        window.chatHandler.downloadFile(filePath, fileName);
-                        break;
-                    case 'preview':
-                        window.chatHandler.previewUrl(filePath, fileName);
-                        break;
-                    case 'share':
-                        window.chatHandler.shareFile(filePath, fileName);
-                        break;
-                    case 'email':
-                        window.chatHandler.emailFile(filePath, fileName);
-                        break;
-                    case 'delete':
-                        window.chatHandler.deleteFile(filePath, fileName);
-                        break;
-                }
-            });
-            console.log('Attached event delegation listener for file action buttons');
+                // Debug: Check if buttons exist
+                const buttons = messageEl.querySelectorAll('.file-action-btn');
+                console.log(`Attached event delegation listener for file action buttons. Found ${buttons.length} buttons.`);
+            }, 0);
         }
         
         // Ensure UI is updated and scroll to bottom
