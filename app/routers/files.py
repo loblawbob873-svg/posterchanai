@@ -414,13 +414,14 @@ async def get_all_images(
             raise Exception(f"Error getting all images: {e}")
         
         # Sort by modified time (newest first)
-        # Use stable sort to maintain order for items with same timestamp
         # Ensure modified is a number, not string
         for img in images:
             if 'modified' in img:
                 img['modified'] = float(img['modified']) if img['modified'] else 0.0
         
-        images.sort(key=lambda x: (float(x.get('modified', 0) or 0), x.get('path', '')), reverse=True)
+        # Sort by modified time descending (newest first), then by path ascending for stability
+        # Use negative modified time for descending sort without reverse=True to ensure correct ordering
+        images.sort(key=lambda x: (-float(x.get('modified', 0) or 0), x.get('path', '').lower()))
         
         # Debug: log first few images to verify sorting
         if images:
@@ -894,7 +895,20 @@ async def get_thumbnail(
     
     # Try to use stored thumbnail first, then generate if needed
     try:
-        from app.services.thumbnail_service import get_thumbnail_if_exists, generate_thumbnail_for_image
+        from app.services.thumbnail_service import (
+            get_thumbnail_if_exists, 
+            generate_thumbnail_for_image, 
+            generate_thumbnail_for_video_file,
+            is_image_file,
+            is_video_file
+        )
+        
+        # Check if file is image or video
+        is_image = is_image_file(full_path)
+        is_video = is_video_file(full_path)
+        
+        if not is_image and not is_video:
+            raise HTTPException(status_code=400, detail="File is not an image or video")
         
         # For user storage (not external), check for stored thumbnail
         if not external_storage:
@@ -906,17 +920,37 @@ async def get_thumbnail(
                     return JSONResponse({"thumbnail": thumbnail_data})
         
         # Generate thumbnail on-the-fly (and save it for future use)
-        thumbnail_data = await asyncio.to_thread(generate_thumbnail, full_path, (size, size))
-        if thumbnail_data:
-            # Save thumbnail for future use (only for user storage)
+        if is_video:
+            # For videos, generate thumbnail file first, then load it
             if not external_storage:
-                try:
-                    await asyncio.to_thread(generate_thumbnail_for_image, user_path, full_path)
-                except Exception:
-                    pass  # Ignore errors when saving thumbnail
-            return JSONResponse({"thumbnail": thumbnail_data})
+                # Generate and save video thumbnail
+                video_thumbnail_path = await asyncio.to_thread(
+                    generate_thumbnail_for_video_file, user_path, full_path, (size, size)
+                )
+                if video_thumbnail_path and video_thumbnail_path.exists():
+                    # Load the generated thumbnail
+                    thumbnail_data = await asyncio.to_thread(generate_thumbnail, video_thumbnail_path, (size, size))
+                    if thumbnail_data:
+                        return JSONResponse({"thumbnail": thumbnail_data})
+            else:
+                # For external storage, try to generate thumbnail directly (may not work without ffmpeg)
+                # This is a limitation - external storage videos may not have thumbnails
+                raise HTTPException(status_code=400, detail="Video thumbnails not supported for external storage")
         else:
-            raise HTTPException(status_code=400, detail="File is not an image")
+            # For images, use existing logic
+            thumbnail_data = await asyncio.to_thread(generate_thumbnail, full_path, (size, size))
+            if thumbnail_data:
+                # Save thumbnail for future use (only for user storage)
+                if not external_storage:
+                    try:
+                        await asyncio.to_thread(generate_thumbnail_for_image, user_path, full_path)
+                    except Exception:
+                        pass  # Ignore errors when saving thumbnail
+                return JSONResponse({"thumbnail": thumbnail_data})
+        
+        raise HTTPException(status_code=400, detail="Could not generate thumbnail")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating thumbnail: {e}")
 
