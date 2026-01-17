@@ -1354,9 +1354,11 @@ class NotesManager {
         // Use csrfFetch if available, otherwise use fetch with manual CSRF token
         try {
             let response;
-            if (typeof csrfFetch !== 'undefined') {
+            if (typeof csrfFetch !== 'undefined' && typeof window.csrfFetch !== 'undefined') {
                 // Use csrfFetch which handles CSRF automatically
                 console.log('Using csrfFetch for folder creation');
+                console.log('csrfFetch type:', typeof csrfFetch);
+                console.log('window.csrfFetch type:', typeof window.csrfFetch);
                 response = await csrfFetch('/api/notes/folders', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

@@ -88,11 +88,16 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 auth_header = request.headers.get("Authorization")
                 if not auth_header:
                     # Validate CSRF token - check both case variations and common variations
+                    # HTTP headers are case-insensitive, but Starlette normalizes them to lowercase
+                    # So we need to check lowercase version
                     csrf_header = (
                         request.headers.get(CSRF_HEADER_NAME) or 
                         request.headers.get(CSRF_HEADER_NAME.lower()) or
                         request.headers.get("x-csrf-token") or
-                        request.headers.get("X-Csrf-Token")
+                        request.headers.get("X-Csrf-Token") or
+                        # Also check the raw headers dict (case-sensitive)
+                        dict(request.headers).get(CSRF_HEADER_NAME) or
+                        dict(request.headers).get("X-CSRF-Token")
                     )
                     
                     # Log all headers for debugging
@@ -109,7 +114,17 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
                     if not csrf_header:
                         # Log for debugging - show all headers to help diagnose
-                        logger.warning(f"CSRF token missing from header for {request.method} {request.url.path}. Cookie present: {bool(csrf_cookie)}. Headers: {list(request.headers.keys())}")
+                        all_header_names = list(request.headers.keys())
+                        all_headers_dict = dict(request.headers)
+                        logger.error(f"CSRF token missing from header for {request.method} {request.url.path}")
+                        logger.error(f"  Cookie present: {bool(csrf_cookie)}")
+                        logger.error(f"  All header names: {all_header_names}")
+                        logger.error(f"  All headers: {all_headers_dict}")
+                        logger.error(f"  Looking for: {CSRF_HEADER_NAME}")
+                        # Print to stderr as well for immediate visibility
+                        import sys
+                        print(f"ERROR: CSRF token missing from header for {request.method} {request.url.path}", file=sys.stderr)
+                        print(f"  Headers received: {all_header_names}", file=sys.stderr)
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="CSRF token missing from header"

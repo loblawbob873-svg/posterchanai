@@ -47,15 +47,11 @@ async function csrfFetch(url, options = {}) {
     }
 
     // Add CSRF token for all authenticated requests
-    const token = getCSRFToken();
-    if (token) {
-        // Always include CSRF token for state-changing methods
-        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
-            options.headers[CSRF_HEADER_NAME] = token;
-        }
-    } else {
-        // For state-changing methods, try to get token from a GET request first
-        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+    let token = getCSRFToken();
+    
+    // For state-changing methods, ensure we have a token
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+        if (!token) {
             console.warn(`CSRF token not found in cookies for ${method} request to ${url}`);
             console.warn('Available cookies:', document.cookie);
             
@@ -63,10 +59,9 @@ async function csrfFetch(url, options = {}) {
             try {
                 await fetch('/', { method: 'GET', credentials: 'include' });
                 // Wait for cookie to be set
-                await new Promise(resolve => setTimeout(resolve, 200));
-                const retryToken = getCSRFToken();
-                if (retryToken) {
-                    options.headers[CSRF_HEADER_NAME] = retryToken;
+                await new Promise(resolve => setTimeout(resolve, 300));
+                token = getCSRFToken();
+                if (token) {
                     console.log('CSRF token retrieved after retry');
                 } else {
                     console.error('CSRF token still not available after retry');
@@ -75,6 +70,14 @@ async function csrfFetch(url, options = {}) {
             } catch (e) {
                 console.error('Failed to retrieve CSRF token:', e);
             }
+        }
+        
+        // Always set the header for state-changing methods if we have a token
+        if (token) {
+            options.headers[CSRF_HEADER_NAME] = token;
+            console.log(`CSRF token added to ${method} request: ${token.substring(0, 8)}...`);
+        } else {
+            console.error(`WARNING: No CSRF token available for ${method} request to ${url}`);
         }
     }
 
