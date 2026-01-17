@@ -33,6 +33,7 @@
                     <div class="notes-editor-header">
                         <input type="text" id="noteTitleInput" placeholder="Untitled Note" class="note-title-input">
                         <div class="notes-editor-actions">
+                            <button class="btn-icon" id="attachFileBtn" title="Attach File">📎</button>
                             <button class="btn-icon" id="pinNoteBtn" title="Pin/Unpin Note">📌</button>
                             <button class="btn-icon" id="deleteNoteBtn" title="Delete Note">🗑️</button>
                         </div>
@@ -53,6 +54,9 @@
                         <button class="btn-secondary" id="cancelNoteBtn">Cancel</button>
                     </div>
                 </div>
+                
+                <!-- Hidden file input for attachments -->
+                <input type="file" id="noteFileInput" multiple style="display: none;" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.zip,.rar,.tar,.gz">
             </div>
         </div>
     </div>

@@ -22,6 +22,8 @@ class NotesManager {
         document.getElementById('cancelNoteBtn')?.addEventListener('click', () => this.cancelEdit());
         document.getElementById('deleteNoteBtn')?.addEventListener('click', () => this.deleteNote());
         document.getElementById('pinNoteBtn')?.addEventListener('click', () => this.togglePin());
+        document.getElementById('attachFileBtn')?.addEventListener('click', () => this.showAttachmentDialog());
+        document.getElementById('noteFileInput')?.addEventListener('change', (e) => this.handleFileSelect(e));
         document.getElementById('notesSearchInput')?.addEventListener('input', (e) => {
             this.searchQuery = e.target.value;
             this.loadNotes();
@@ -328,41 +330,52 @@ class NotesManager {
             return `\x00CODEBLOCK${index}\x00`;
         });
         
-        // Extract and preserve markdown images - convert relative paths to note attachment URLs
+        // Extract and preserve markdown images/videos - convert relative paths to note attachment URLs
         const images = [];
+        const videos = [];
         processed = processed.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, src) => {
-            let imageSrc = src;
-            console.log('Processing image reference:', { alt, src, noteId, username, match });
+            let mediaSrc = src;
+            console.log('Processing media reference:', { alt, src, noteId, username, match });
             
             // If it's already an /api/ URL, use it as-is (might be from migration)
             if (src.startsWith('/api/notes/files/')) {
                 // Already a proper URL, use it
-                imageSrc = src;
-                console.log('Using existing /api/ URL:', imageSrc);
+                mediaSrc = src;
+                console.log('Using existing /api/ URL:', mediaSrc);
             } else if (src.startsWith('http://') || src.startsWith('https://')) {
                 // External URL, use as-is
-                imageSrc = src;
-                console.log('Using external URL:', imageSrc);
+                mediaSrc = src;
+                console.log('Using external URL:', mediaSrc);
             } else if (src.startsWith(':/') && /^:\/[a-f0-9]{32}$/.test(src)) {
                 // Old Joplin resource format - this should have been converted during migration
                 console.error('Old Joplin resource URL found in image:', src, '- This should have been converted during migration');
                 // Return placeholder or broken image - the resource doesn't exist in new format
-                imageSrc = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+                mediaSrc = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
             } else {
                 // Relative path or filename - convert to note attachment URL
                 const filename = src.replace(/^\.\//, '').split('/').pop();
                 if (noteId) {
-                    imageSrc = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
-                    console.log('Converted relative path to URL:', { original: src, filename, imageSrc });
+                    mediaSrc = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
+                    console.log('Converted relative path to URL:', { original: src, filename, mediaSrc });
                 } else {
-                    console.warn('Cannot convert image URL - noteId is missing', { src, username });
+                    console.warn('Cannot convert media URL - noteId is missing', { src, username });
                     // Try to extract noteId from existing /api/ URLs in the content as fallback
-                    imageSrc = src; // Keep original, might work if it's already a valid path
+                    mediaSrc = src; // Keep original, might work if it's already a valid path
                 }
             }
-            const index = images.length;
-            images.push({ alt: alt || '', src: imageSrc });
-            return `\x00IMAGE${index}\x00`;
+            
+            // Check if this is a video file
+            const isVideo = /\.(mp4|mpeg|mov|avi|webm|mkv|flv|wmv|3gp|ogv)$/i.test(mediaSrc);
+            if (isVideo) {
+                const index = videos.length;
+                videos.push({ alt: alt || '', src: mediaSrc });
+                return `\x00VIDEO${index}\x00`;
+            } else {
+                // It's an image (including GIFs)
+                const index = images.length;
+                images.push({ alt: alt || '', src: mediaSrc });
+                return `\x00IMAGE${index}\x00`;
+            }
         });
         
         // Process markdown links (but not images, which we already extracted)
@@ -466,10 +479,10 @@ class NotesManager {
         const htmlTagPlaceholders = [];
         let htmlTagIndex = 0;
         
-        // Replace HTML tags with placeholders (this won't affect \x00IMAGE placeholders)
+        // Replace HTML tags with placeholders (this won't affect \x00IMAGE or \x00VIDEO placeholders)
         html = html.replace(/<[^>]+>/g, (match) => {
-            // Skip if this is an image placeholder (shouldn't happen, but be safe)
-            if (match.includes('\x00IMAGE')) {
+            // Skip if this is an image or video placeholder (shouldn't happen, but be safe)
+            if (match.includes('\x00IMAGE') || match.includes('\x00VIDEO')) {
                 return match;
             }
             const placeholder = `\x00HTMLTAG${htmlTagIndex}\x00`;
@@ -478,7 +491,7 @@ class NotesManager {
             return placeholder;
         });
         
-        // Escape HTML in text content (this won't affect \x00IMAGE placeholders since they use null bytes)
+        // Escape HTML in text content (this won't affect \x00IMAGE or \x00VIDEO placeholders since they use null bytes)
         html = html
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
@@ -487,6 +500,31 @@ class NotesManager {
         // Restore HTML tags
         html = html.replace(/\x00HTMLTAG(\d+)\x00/g, (match, index) => {
             return htmlTagPlaceholders[parseInt(index)];
+        });
+        
+        // Restore videos as HTML5 video tags (before images, so they're processed first)
+        // Videos must be restored AFTER HTML escaping but BEFORE images
+        html = html.replace(/\x00VIDEO(\d+)\x00/g, (match, index) => {
+            const vidIndex = parseInt(index);
+            if (!videos || !videos[vidIndex]) {
+                console.error('Video not found in array:', { index: vidIndex, videosLength: videos ? videos.length : 0 });
+                return `[Video ${vidIndex} not found]`;
+            }
+            const vid = videos[vidIndex];
+            if (!vid || !vid.src) {
+                console.error('Video object invalid:', { vidIndex, vid, videos });
+                return `[Video ${vidIndex} invalid]`;
+            }
+            const safeAlt = this.escapeHtml(vid.alt || '');
+            const safeSrc = vid.src; // Don't escape URL - it's already a valid URL string
+            console.log('Rendering video:', { index: vidIndex, alt: safeAlt, src: safeSrc });
+            
+            // Add cache busting
+            const cacheBust = safeSrc.includes('?') ? '&' : '?';
+            const vidSrc = `${safeSrc}${cacheBust}t=${Date.now()}`;
+            
+            // Create HTML5 video player with controls
+            return `<video src="${vidSrc}" controls style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);" onerror="console.error('Failed to load video:', this.src);" onloadstart="console.log('Loading video:', this.src);">Your browser does not support the video tag.</video>`;
         });
         
         // Restore images as HTML img tags (after escaping, so they're not escaped)
@@ -515,8 +553,15 @@ class NotesManager {
             // Add cache busting and error handling
             const cacheBust = safeSrc.includes('?') ? '&' : '?';
             const imgSrc = `${safeSrc}${cacheBust}t=${Date.now()}`;
+            
+            // Check if it's a GIF (GIFs should animate)
+            const isGif = /\.gif$/i.test(safeSrc);
+            
             // Use proper error handling - show placeholder if image fails to load
-            return `<img src="${imgSrc}" alt="${safeAlt}" style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);" onerror="console.error('Failed to load image:', this.src); this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iIzJhMmEzZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM4ODg4YWEiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';" onload="console.log('Image loaded successfully:', this.src);">`;
+            // For GIFs, ensure they can animate properly and don't get optimized away
+            // Add loading="lazy" for better performance, but ensure GIFs animate
+            const gifStyle = isGif ? ' image-rendering: auto;' : '';
+            return `<img src="${imgSrc}" alt="${safeAlt}" loading="lazy" style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);${gifStyle}" onerror="console.error('Failed to load image:', this.src); this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iIzJhMmEzZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM4ODg4YWEiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';" onload="console.log('Image loaded successfully:', this.src);">`;
         });
         
         // Restore links (after escaping, so they're not escaped)
@@ -948,7 +993,7 @@ class NotesManager {
             return;
         }
         
-        // Get username for the image URL
+        // Get username for the file URL
         let username = 'user';
         const sidebarUser = document.querySelector('.user-name');
         if (sidebarUser && sidebarUser.textContent) {
@@ -968,28 +1013,42 @@ class NotesManager {
             
             if (response.ok) {
                 const data = await response.json();
-                this.showToast('Attachment uploaded successfully');
+                this.showToast(`Attachment "${data.filename}" uploaded successfully`);
                 
-                // Insert image reference at cursor position with proper API URL
+                // Insert file reference at cursor position with proper API URL
                 const contentInput = document.getElementById('noteContentInput');
                 if (contentInput && data.filename) {
                     const cursorPos = contentInput.selectionStart || contentInput.value.length;
                     const textBefore = contentInput.value.substring(0, cursorPos);
                     const textAfter = contentInput.value.substring(cursorPos);
                     
-                    // Use the full API path for the image
-                    const imageUrl = `/api/notes/files/${username}/${this.currentNoteId}/${encodeURIComponent(data.filename)}`;
-                    const imageRef = `![${data.filename}](${imageUrl})`;
+                    // Use the full API path for the file
+                    const fileUrl = `/api/notes/files/${username}/${this.currentNoteId}/${encodeURIComponent(data.filename)}`;
                     
-                    contentInput.value = textBefore + imageRef + textAfter;
+                    // Determine if it's an image or other file type
+                    const isImage = /\.(jpg|jpeg|png|gif|webp|svg|bmp|tiff|ico)$/i.test(data.filename);
                     
-                    // Set cursor position after the inserted image reference
-                    const newCursorPos = cursorPos + imageRef.length;
+                    let fileRef;
+                    if (isImage) {
+                        // For images, use markdown image syntax
+                        fileRef = `![${data.filename}](${fileUrl})`;
+                    } else {
+                        // For other files, use markdown link syntax
+                        fileRef = `[${data.filename}](${fileUrl})`;
+                    }
+                    
+                    contentInput.value = textBefore + fileRef + textAfter;
+                    
+                    // Set cursor position after the inserted file reference
+                    const newCursorPos = cursorPos + fileRef.length;
                     contentInput.selectionStart = contentInput.selectionEnd = newCursorPos;
                     contentInput.focus();
                     
                     // Update preview if in preview mode
                     this.updatePreview();
+                    
+                    // Reload note to get updated attachments list
+                    await this.openNote(this.currentNoteId);
                     
                     // Auto-save
                     this.saveNote(true);
@@ -1045,6 +1104,44 @@ class NotesManager {
             toast.style.transition = 'opacity 0.3s';
             setTimeout(() => toast.remove(), 300);
         }, 3000);
+    }
+    
+    showAttachmentDialog() {
+        // Check if we have a note open
+        if (!this.currentNoteId) {
+            // Create a new note first
+            this.createNote();
+            // Wait a moment for the note to be created, then show dialog
+            setTimeout(() => {
+                if (this.currentNoteId) {
+                    document.getElementById('noteFileInput').click();
+                } else {
+                    this.showToast('Please create or open a note first', 'error');
+                }
+            }, 100);
+        } else {
+            // Note exists, show file picker
+            document.getElementById('noteFileInput').click();
+        }
+    }
+    
+    async handleFileSelect(e) {
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+        
+        if (!this.currentNoteId) {
+            this.showToast('Please create or open a note first', 'error');
+            return;
+        }
+        
+        // Upload each file
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            await this.uploadAttachment(file);
+        }
+        
+        // Clear the input so the same file can be selected again
+        e.target.value = '';
     }
     
     escapeHtml(text) {

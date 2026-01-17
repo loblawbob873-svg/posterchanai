@@ -1,20 +1,25 @@
 /* Notes Modal Styles - Modern & Beautiful UI */
 .notes-modal-content {
     max-width: 1400px;
-    width: 95%;
-    height: 90vh;
-    max-height: 900px;
+    width: min(95vw, 1400px);
+    height: min(90vh, 900px);
+    max-height: min(90vh, 900px);
     border-radius: 12px;
     overflow: hidden;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    display: flex;
+    flex-direction: column;
+    margin: auto;
 }
 
 .notes-modal-body {
     display: flex;
-    height: calc(100% - 70px);
+    flex: 1;
+    min-height: 0;
     gap: 0;
     padding: 0;
     background: var(--bg-primary);
+    overflow: hidden;
 }
 
 /* Sidebar Styles */
@@ -416,8 +421,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    min-height: 400px;
-    max-height: calc(90vh - 400px);
+    min-height: 0;
     position: relative;
     overflow: hidden;
 }
@@ -432,8 +436,7 @@
     font-size: 15px;
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'Courier New', monospace;
     resize: none;
-    min-height: 400px;
-    max-height: calc(90vh - 400px);
+    min-height: 200px;
     overflow-y: auto;
     overflow-x: hidden;
     line-height: 1.8;
@@ -457,8 +460,7 @@
     line-height: 1.8;
     overflow-y: auto;
     overflow-x: hidden;
-    min-height: 400px;
-    max-height: calc(90vh - 400px);
+    min-height: 200px;
     position: relative;
 }
 
@@ -697,7 +699,7 @@
 /* Responsive Design */
 @media (max-width: 768px) {
     .notes-modal-content {
-        width: 100%;
+        width: 100vw;
         height: 100vh;
         max-height: 100vh;
         border-radius: 0;
@@ -705,6 +707,7 @@
     
     .notes-modal-body {
         flex-direction: column;
+        min-height: 0;
     }
     
     .notes-sidebar {
@@ -712,6 +715,7 @@
         max-height: 250px;
         border-right: none;
         border-bottom: 1px solid var(--border-color);
+        flex-shrink: 0;
     }
     
     .notes-list {
@@ -722,6 +726,8 @@
     
     .notes-editor {
         padding: 16px;
+        min-height: 0;
+        overflow: hidden;
     }
     
     .note-title-input {
@@ -731,6 +737,43 @@
     
     .notes-attachments-list {
         grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    }
+}
+
+/* Ensure modal fits on screen */
+@media (max-height: 800px) {
+    .notes-modal-content {
+        height: 95vh;
+        max-height: 95vh;
+    }
+}
+
+@media (max-height: 600px) {
+    .notes-modal-content {
+        height: 98vh;
+        max-height: 98vh;
+    }
+    
+    .notes-editor {
+        padding: 12px;
+    }
+    
+    .notes-editor-header {
+        margin-bottom: 12px;
+        padding-bottom: 12px;
+    }
+    
+    .notes-editor-tags {
+        margin-bottom: 12px;
+    }
+    
+    .notes-editor-mode-toggle {
+        margin-bottom: 8px;
+    }
+    
+    .notes-editor-footer {
+        margin-top: 12px;
+        padding-top: 12px;
     }
 }
 
