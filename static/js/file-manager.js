@@ -174,7 +174,8 @@ class FileManager {
             if (grid) grid.style.display = 'block';
             if (shares) shares.style.display = 'none';
             if (viewToggle) viewToggle.style.display = 'flex';
-            if (selectionControls) selectionControls.style.display = this.selectedFiles.size > 0 ? 'flex' : 'none';
+            // Keep selection controls always visible (user requested)
+            if (selectionControls) selectionControls.style.display = 'flex';
         } else if (tab === 'shares') {
             if (grid) grid.style.display = 'none';
             if (shares) {
@@ -184,7 +185,8 @@ class FileManager {
                 console.error('FileManager: fileManagerShares content area not found!');
             }
             if (viewToggle) viewToggle.style.display = 'none';
-            if (selectionControls) selectionControls.style.display = 'none';
+            // Keep selection controls always visible (user requested)
+            if (selectionControls) selectionControls.style.display = 'flex';
             this.loadSharedFiles();
         }
     }
@@ -1259,7 +1261,8 @@ class FileManager {
         const selectedCount = this.selectedFiles.size;
         
         if (controls) {
-            controls.style.display = selectedCount > 0 ? 'flex' : 'none';
+            // Keep controls always visible (user requested)
+            controls.style.display = 'flex';
         }
         
         if (count) {
