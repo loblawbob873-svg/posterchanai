@@ -372,7 +372,8 @@ def generate_thumbnails_for_user(
     progress_callback: Optional[Callable[[int, int], None]] = None
 ) -> Tuple[int, int]:
     """
-    Generate thumbnails for all images in a user's directory.
+    Generate thumbnails for all images and videos in a user's directory.
+    OPTIMIZATION: Skips files that already have up-to-date thumbnails.
     
     Args:
         user_path: The user's root directory
@@ -386,7 +387,7 @@ def generate_thumbnails_for_user(
         logger.warning(f"User path does not exist: {user_path}")
         return (0, 0)
     
-    # Find all image files (single traversal)
+    # Find all media files (images AND videos) in single traversal
     def _is_in_thumbnails_dir(path: Path, base_path: Path) -> bool:
         """Check if path is within .thumbnails directory."""
         try:
@@ -395,22 +396,23 @@ def generate_thumbnails_for_user(
         except ValueError:
             return False
     
-    image_files = []
+    media_files = []
     for path in user_path.rglob('*'):
-        if path.is_file() and is_image_file(path) and not _is_in_thumbnails_dir(path, user_path):
-            image_files.append(path)
+        if path.is_file() and is_media_file(path) and not _is_in_thumbnails_dir(path, user_path):
+            media_files.append(path)
     
-    total = len(image_files)
+    total = len(media_files)
     successful = 0
     failed = 0
+    skipped = 0  # Track skipped files (already have thumbnails)
     
-    logger.info(f"Generating thumbnails for {total} images in {user_path}")
+    logger.info(f"[Thumbnail] Processing {total} media files in {user_path}")
     
-    for i, image_path in enumerate(image_files):
+    for i, media_path in enumerate(media_files):
         try:
             # Quick check: skip if file doesn't exist or is empty
             try:
-                if not image_path.exists() or image_path.stat().st_size == 0:
+                if not media_path.exists() or media_path.stat().st_size == 0:
                     failed += 1
                     if progress_callback:
                         progress_callback(i + 1, total)
@@ -421,13 +423,15 @@ def generate_thumbnails_for_user(
                     progress_callback(i + 1, total)
                 continue
             
-            thumbnail_path = get_thumbnail_path(user_path, image_path)
+            thumbnail_path = get_thumbnail_path(user_path, media_path)
             
-            # Skip if thumbnail already exists and is newer than image
+            # OPTIMIZATION: Skip if thumbnail already exists and is up-to-date
             if thumbnail_path.exists():
                 try:
-                    if thumbnail_path.stat().st_mtime >= image_path.stat().st_mtime:
+                    # Check if thumbnail is newer than or equal to source file
+                    if thumbnail_path.stat().st_mtime >= media_path.stat().st_mtime:
                         successful += 1
+                        skipped += 1
                         if progress_callback:
                             progress_callback(i + 1, total)
                         continue
@@ -435,7 +439,14 @@ def generate_thumbnails_for_user(
                     # If we can't check thumbnail, regenerate it
                     pass
             
-            if generate_thumbnail_file(image_path, thumbnail_path, max_size):
+            # Generate thumbnail based on file type
+            generation_success = False
+            if is_image_file(media_path):
+                generation_success = generate_thumbnail_file(media_path, thumbnail_path, max_size)
+            elif is_video_file(media_path):
+                generation_success = generate_thumbnail_for_video(media_path, thumbnail_path, max_size)
+            
+            if generation_success:
                 successful += 1
             else:
                 failed += 1
@@ -444,15 +455,15 @@ def generate_thumbnails_for_user(
             # Log as debug for corrupted/truncated files, error for unexpected issues
             error_str = str(e).lower()
             if any(keyword in error_str for keyword in ["cannot identify", "truncated", "broken data stream", "corrupted"]):
-                logger.debug(f"Skipping corrupted/truncated image: {image_path.name}")
+                logger.debug(f"Skipping corrupted/truncated media: {media_path.name}")
             else:
-                logger.error(f"Error processing {image_path}: {e}")
+                logger.error(f"Error processing {media_path}: {e}")
             failed += 1
         
         if progress_callback:
             progress_callback(i + 1, total)
     
-    logger.info(f"Thumbnail generation complete: {successful} successful, {failed} failed")
+    logger.info(f"[Thumbnail] Complete: {successful} successful ({skipped} skipped, already up-to-date), {failed} failed")
     return (successful, failed)
 
 
