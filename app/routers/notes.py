@@ -80,9 +80,7 @@ async def get_folders(
     for folder in folders:
         notes_count = db.query(func.count(Note.id)).filter(Note.folder_id == folder.id).scalar() or 0
         
-        # Skip empty folders (folders with 0 notes)
-        if notes_count == 0:
-            continue
+        # Include all folders, even empty ones (so newly created folders are visible)
         
         # Use model_validate for Pydantic v2, fallback to from_orm for v1
         try:
