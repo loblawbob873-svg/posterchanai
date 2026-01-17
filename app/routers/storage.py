@@ -6,6 +6,7 @@ All blocking I/O operations are run in thread pools to prevent blocking.
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, Query
 from fastapi import Request as FastAPIRequest
 from fastapi.responses import FileResponse, JSONResponse
+import json
 from starlette.requests import Request as StarletteRequest
 from sqlalchemy.orm import Session
 from pathlib import Path
@@ -1027,21 +1028,37 @@ async def get_all_images(
             "has_more": bool(offset + limit < total)
         }
     
-    def _clean_for_json(obj):
+    def _clean_for_json(obj, depth=0):
         """Recursively clean object to ensure JSON serializability."""
-        if isinstance(obj, bytes):
-            return obj.decode('utf-8', errors='ignore')
-        elif isinstance(obj, (Path, type(None))):
-            return str(obj) if obj else ""
+        if depth > 10:  # Prevent infinite recursion
+            return ""
+        
+        if obj is None:
+            return None
+        elif isinstance(obj, bytes):
+            try:
+                return obj.decode('utf-8', errors='ignore')
+            except Exception:
+                return ""
+        elif isinstance(obj, Path):
+            return str(obj)
         elif isinstance(obj, dict):
-            return {str(k): _clean_for_json(v) for k, v in obj.items()}
+            cleaned = {}
+            for k, v in obj.items():
+                # Ensure key is string
+                key_str = str(k) if not isinstance(k, bytes) else k.decode('utf-8', errors='ignore')
+                cleaned[key_str] = _clean_for_json(v, depth + 1)
+            return cleaned
         elif isinstance(obj, (list, tuple)):
-            return [_clean_for_json(item) for item in obj]
-        elif isinstance(obj, (str, int, float, bool, type(None))):
+            return [_clean_for_json(item, depth + 1) for item in obj]
+        elif isinstance(obj, (str, int, float, bool)):
             return obj
         else:
             # Convert anything else to string
             try:
+                # Check if it's a type that might contain bytes
+                if hasattr(obj, '__bytes__'):
+                    return obj.__bytes__().decode('utf-8', errors='ignore')
                 return str(obj)
             except Exception:
                 return ""
@@ -1050,10 +1067,35 @@ async def get_all_images(
         result = await asyncio.to_thread(_get_all_images_sync)
         # Recursively clean the entire result to ensure JSON serializability
         cleaned_result = _clean_for_json(result)
-        return cleaned_result
+        
+        # Test serialization explicitly before returning
+        try:
+            json_str = json.dumps(cleaned_result)
+            # Return as JSONResponse to ensure proper serialization
+            return JSONResponse(content=json.loads(json_str))
+        except (TypeError, ValueError) as json_err:
+            logger.error(f"[STORAGE] JSON serialization failed even after cleaning: {json_err}")
+            logger.error(f"[STORAGE] Result type: {type(cleaned_result)}")
+            if isinstance(cleaned_result, dict):
+                logger.error(f"[STORAGE] Keys: {list(cleaned_result.keys())}")
+                if "images" in cleaned_result:
+                    logger.error(f"[STORAGE] Number of images: {len(cleaned_result['images'])}")
+                    # Try to find the problematic image
+                    for idx, img in enumerate(cleaned_result.get("images", [])[:5]):
+                        try:
+                            json.dumps(img)
+                        except Exception as img_err:
+                            logger.error(f"[STORAGE] Problematic image {idx}: {img_err}")
+                            logger.error(f"[STORAGE] Image data: {img}")
+            # Return empty result rather than crashing
+            return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False})
     except Exception as e:
         logger.error(f"[STORAGE] Error in get_all_images: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        # Ensure error message is also JSON serializable
+        error_msg = str(e)
+        if isinstance(e, bytes):
+            error_msg = e.decode('utf-8', errors='ignore')
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @router.post("/mkdir")
