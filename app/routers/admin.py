@@ -531,12 +531,19 @@ async def rescan_storage(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
-    """Rescan file storage for a user or all users to ensure database consistency."""
+    """
+    Scan file storage for a user or all users. Performs comprehensive file scanning:
+    - Restores EXIF timestamps from photo/video metadata
+    - Generates thumbnails for images and videos
+    - Updates file index and database consistency
+    - Invalidates file caches
+    """
     from app.services.storage_service import get_storage_service
     from app.routers.files import get_file_cache
+    from app.services.thumbnail_service import generate_thumbnails_for_user
     
-    def _rescan_user_files(user: User):
-        """Rescan files for a single user."""
+    def _scan_user_files(user: User):
+        """Scan files for a single user - includes EXIF, thumbnails, and indexing."""
         try:
             from app.utils.exif_utils import batch_restore_timestamps
             
@@ -547,16 +554,26 @@ async def rescan_storage(
             cache = get_file_cache(db)
             cache.invalidate(f"{user.username}:")
             
-            # Walk through all files to ensure they exist and cache is updated
+            # Initialize stats
             file_count = 0
             dir_count = 0
+            exif_stats = {'restored': 0, 'processed': 0}
+            thumbnail_stats = {'successful': 0, 'failed': 0}
             
             if user_path.exists():
-                # First, restore EXIF timestamps for all media files
-                logger.info(f"[Storage Rescan] Restoring EXIF timestamps for user {user.username}")
+                # Step 1: Restore EXIF timestamps for all media files
+                logger.info(f"[File Scan] Step 1/3: Restoring EXIF timestamps for user {user.username}")
                 exif_stats = batch_restore_timestamps(user_path)
+                logger.info(f"[File Scan] EXIF stats: {exif_stats['restored']} restored, {exif_stats['processed']} processed")
                 
-                # Then count files
+                # Step 2: Generate thumbnails
+                logger.info(f"[File Scan] Step 2/3: Generating thumbnails for user {user.username}")
+                successful, failed = generate_thumbnails_for_user(user_path)
+                thumbnail_stats = {'successful': successful, 'failed': failed}
+                logger.info(f"[File Scan] Thumbnail stats: {successful} generated, {failed} failed")
+                
+                # Step 3: Count files for indexing
+                logger.info(f"[File Scan] Step 3/3: Indexing files for user {user.username}")
                 for item in user_path.rglob('*'):
                     try:
                         if item.is_file():
@@ -567,18 +584,20 @@ async def rescan_storage(
                         logger.warning(f"Error processing {item} for user {user.username}: {e}")
                         continue
             
-            logger.info(f"[Storage Rescan] User {user.username}: {file_count} files, {dir_count} directories")
+            logger.info(f"[File Scan] Complete for {user.username}: {file_count} files, {dir_count} directories")
             return {
                 "user_id": user.id,
                 "username": user.username,
                 "files": file_count,
                 "directories": dir_count,
-                "exif_restored": exif_stats.get('restored', 0) if user_path.exists() else 0,
-                "exif_processed": exif_stats.get('processed', 0) if user_path.exists() else 0,
+                "exif_restored": exif_stats.get('restored', 0),
+                "exif_processed": exif_stats.get('processed', 0),
+                "thumbnails_generated": thumbnail_stats.get('successful', 0),
+                "thumbnails_failed": thumbnail_stats.get('failed', 0),
                 "status": "success"
             }
         except Exception as e:
-            logger.error(f"[Storage Rescan] Error rescanning user {user.username}: {e}", exc_info=True)
+            logger.error(f"[File Scan] Error scanning user {user.username}: {e}", exc_info=True)
             return {
                 "user_id": user.id,
                 "username": user.username,
@@ -586,32 +605,32 @@ async def rescan_storage(
                 "error": str(e)
             }
     
-    # Run rescan in thread pool to avoid blocking
+    # Run scan in thread pool to avoid blocking
     if user_id:
-        # Rescan specific user
+        # Scan specific user
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
-        result = await asyncio.to_thread(_rescan_user_files, user)
+        result = await asyncio.to_thread(_scan_user_files, user)
         return {
-            "message": f"Storage rescanned for user {user.username}",
+            "message": f"File scan completed for user {user.username}",
             "results": [result]
         }
     else:
-        # Rescan all users
+        # Scan all users
         users = db.query(User).all()
         results = []
         
-        # Rescan all users in parallel (but in thread pool)
-        tasks = [asyncio.to_thread(_rescan_user_files, user) for user in users]
+        # Scan all users in parallel (but in thread pool)
+        tasks = [asyncio.to_thread(_scan_user_files, user) for user in users]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Handle any exceptions
         processed_results = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                logger.error(f"[Storage Rescan] Exception for user {users[i].username}: {result}")
+                logger.error(f"[File Scan] Exception for user {users[i].username}: {result}")
                 processed_results.append({
                     "user_id": users[i].id,
                     "username": users[i].username,
@@ -621,18 +640,23 @@ async def rescan_storage(
             else:
                 processed_results.append(result)
         
+        # Calculate summary stats
         total_files = sum(r.get("files", 0) for r in processed_results if r.get("status") == "success")
         total_dirs = sum(r.get("directories", 0) for r in processed_results if r.get("status") == "success")
+        total_exif_restored = sum(r.get("exif_restored", 0) for r in processed_results if r.get("status") == "success")
+        total_thumbnails = sum(r.get("thumbnails_generated", 0) for r in processed_results if r.get("status") == "success")
         success_count = sum(1 for r in processed_results if r.get("status") == "success")
         
         return {
-            "message": f"Storage rescanned for {len(users)} user(s)",
+            "message": f"File scan completed for {len(users)} user(s)",
             "summary": {
                 "total_users": len(users),
                 "successful": success_count,
                 "failed": len(users) - success_count,
                 "total_files": total_files,
-                "total_directories": total_dirs
+                "total_directories": total_dirs,
+                "total_exif_restored": total_exif_restored,
+                "total_thumbnails_generated": total_thumbnails
             },
             "results": processed_results
         }
@@ -930,97 +954,12 @@ async def generate_thumbnails(
     admin: User = Depends(get_admin_user)
 ):
     """
-    Generate thumbnails for all images in user storage.
-    Can be run for a specific user or all users.
+    DEPRECATED: Use /storage/rescan instead, which includes thumbnail generation + EXIF restoration.
+    
+    This endpoint is kept for backwards compatibility but just redirects to the unified scan endpoint.
     """
-    from app.services.storage_service import get_storage_service
-    from app.services.thumbnail_service import generate_thumbnails_for_user
-    from app.database import SessionLocal
-    
-    def _generate_for_user(username: str, upload_path: str):
-        """Generate thumbnails for a single user. Thread-safe version."""
-        # Create new database session for this thread
-        thread_db = SessionLocal()
-        try:
-            from app.services.storage_service import StorageService
-            storage = StorageService(thread_db)
-            user_path = storage.get_user_path(username)
-            
-            successful, failed = generate_thumbnails_for_user(user_path)
-            
-            logger.info(f"[Thumbnails] User {username}: {successful} successful, {failed} failed")
-            return {
-                "username": username,
-                "successful": successful,
-                "failed": failed,
-                "status": "success"
-            }
-        except Exception as e:
-            logger.error(f"[Thumbnails] Error generating thumbnails for user {username}: {e}", exc_info=True)
-            return {
-                "username": username,
-                "status": "error",
-                "error": str(e)
-            }
-        finally:
-            thread_db.close()
-    
-    # Get storage service to access upload_path
-    storage = get_storage_service(db)
-    upload_path = storage.upload_path
-    
-    # Run thumbnail generation in thread pool to avoid blocking
-    if user_id:
-        # Generate for specific user
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        result = await asyncio.to_thread(_generate_for_user, user.username, upload_path)
-        result["user_id"] = user.id
-        return {
-            "message": f"Thumbnail generation completed for user {user.username}",
-            "results": [result]
-        }
-    else:
-        # Generate for all users
-        users = db.query(User).all()
-        results = []
-        
-        # Generate thumbnails for all users in parallel (but in thread pool)
-        tasks = [asyncio.to_thread(_generate_for_user, user.username, upload_path) for user in users]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Handle any exceptions and add user_id to results
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"[Thumbnails] Exception for user {users[i].username}: {result}")
-                processed_results.append({
-                    "user_id": users[i].id,
-                    "username": users[i].username,
-                    "status": "error",
-                    "error": str(result)
-                })
-            else:
-                result["user_id"] = users[i].id
-                processed_results.append(result)
-        
-        total_successful = sum(r.get("successful", 0) for r in processed_results if r.get("status") == "success")
-        total_failed = sum(r.get("failed", 0) for r in processed_results if r.get("status") == "success")
-        success_count = sum(1 for r in processed_results if r.get("status") == "success")
-        
-        return {
-            "message": f"Thumbnail generation completed for {len(users)} user(s)",
-            "summary": {
-                "total_users": len(users),
-                "successful_users": success_count,
-                "failed_users": len(users) - success_count,
-                "total_thumbnails_generated": total_successful,
-                "total_failed": total_failed
-            },
-            "results": processed_results
-        }
+    logger.warning("[Thumbnails] /generate-thumbnails endpoint is deprecated, use /storage/rescan instead")
+    return await rescan_storage(user_id=user_id, db=db, admin=admin)
 
 
 @router.post("/transcode-video")

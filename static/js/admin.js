@@ -225,7 +225,9 @@ document.getElementById('scanFilesBtn')?.addEventListener('click', async () => {
                     • Successful: ${data.summary.successful}<br>
                     • Failed: ${data.summary.failed}<br>
                     • Total files found: ${data.summary.total_files.toLocaleString()}<br>
-                    • Total directories: ${data.summary.total_directories.toLocaleString()}</div>`;
+                    • Total directories: ${data.summary.total_directories.toLocaleString()}<br>
+                    • EXIF timestamps restored: ${data.summary.total_exif_restored.toLocaleString()}<br>
+                    • Thumbnails generated: ${data.summary.total_thumbnails_generated.toLocaleString()}</div>`;
             }
             
             if (data.results && data.results.length > 0) {
@@ -235,12 +237,15 @@ document.getElementById('scanFilesBtn')?.addEventListener('click', async () => {
                 `;
                 for (const result of data.results) {
                     if (result.status === 'success') {
-                        let exifInfo = '';
+                        let detailInfo = `${result.files} files, ${result.directories} directories`;
                         if (result.exif_restored !== undefined) {
-                            exifInfo = ` [EXIF: ${result.exif_restored}/${result.exif_processed} restored]`;
+                            detailInfo += ` | EXIF: ${result.exif_restored}/${result.exif_processed}`;
+                        }
+                        if (result.thumbnails_generated !== undefined) {
+                            detailInfo += ` | Thumbnails: ${result.thumbnails_generated} generated`;
                         }
                         html += `<div style="color: #4ade80; margin-bottom: 4px;">
-                            ${result.username}: ${result.files} files, ${result.directories} directories${exifInfo}
+                            ${result.username}: ${detailInfo}
                         </div>`;
                     } else {
                         html += `<div style="color: #ff6b6b; margin-bottom: 4px;">
