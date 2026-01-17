@@ -303,7 +303,9 @@ class FileManager {
             if (response.ok) {
                 const data = await response.json();
                 this.externalStorageMounts = data.mounts || [];
+                console.log('FileManager: Loaded external storage mounts:', this.externalStorageMounts.length);
             } else {
+                console.warn('FileManager: Failed to load external storage mounts:', response.status);
                 this.externalStorageMounts = [];
             }
         } catch (error) {
@@ -331,6 +333,24 @@ class FileManager {
             if (response.ok) {
                 const data = await response.json();
                 this.currentFiles = data.items;
+                
+                // Prepend external storage mounts if at root
+                if (!path && this.externalStorageMounts && this.externalStorageMounts.length > 0) {
+                    console.log('FileManager: Adding external storage mounts to file list:', this.externalStorageMounts.length);
+                    const externalItems = this.externalStorageMounts.map(mount => ({
+                        name: mount.name,
+                        path: mount.mount_point,
+                        is_directory: true,
+                        size: 0,
+                        modified: 0,
+                        is_external: true,
+                        external_name: mount.name,
+                        description: mount.description || ''
+                    }));
+                    this.currentFiles = [...externalItems, ...this.currentFiles];
+                    console.log('FileManager: Total files after adding external mounts:', this.currentFiles.length);
+                }
+                
                 this.filterFiles(); // Apply current search filter if any
                 this.updateBreadcrumb(path);
                 this.updateStorageInfo(data.storage);

@@ -54,6 +54,8 @@ def _serialize_note_response(note: Note, folder_name: Optional[str] = None) -> d
     result = {**note_dict}
     if folder_name is not None:
         result["folder_name"] = folder_name
+    # Add username for frontend attachment rendering
+    result["username"] = note.user.username
     return result
 
 
@@ -485,7 +487,20 @@ async def serve_note_file(
     # (This allows storage servers to serve files without notes in their database)
     # File path was already constructed above, just verify it exists
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
+        # Log detailed error for debugging
+        logger.warning(
+            f"Note file not found: username={current_user.username}, note_id={note_id}, "
+            f"filename={filename}, decoded_filename={decoded_filename}, safe_filename={safe_filename}, "
+            f"file_path={file_path}, base_path={base_path}, base_exists={base_path.exists()}"
+        )
+        if base_path.exists():
+            # List files in the directory to help debug
+            try:
+                files_in_dir = [f.name for f in base_path.iterdir() if f.is_file()]
+                logger.warning(f"Files in note directory: {files_in_dir[:10]}")
+            except Exception as e:
+                logger.warning(f"Error listing directory: {e}")
+        raise HTTPException(status_code=404, detail=f"File not found: {safe_filename}")
     
     # Determine media type (comprehensive list)
     suffix = file_path.suffix.lower()

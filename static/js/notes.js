@@ -6,6 +6,7 @@ class NotesManager {
         this.currentFolderId = 0; // 0 = all notes
         this.currentNoteId = null;
         this.currentNote = null; // Store current note for username access
+        this.currentUsername = null; // Store username for attachment rendering
         this.searchQuery = '';
         
         this.init();
@@ -232,7 +233,11 @@ class NotesManager {
             if (response.ok) {
                 const note = await response.json();
                 this.currentNoteId = note.id;
-                this.currentNote = note; // Store for username access in renderMarkdown
+                this.currentNote = note; // Store for username access in renderMarkdown and renderAttachments
+                // Store username for attachment rendering
+                if (note.username) {
+                    this.currentUsername = note.username;
+                }
                 
                 document.getElementById('noteTitleInput').value = note.title;
                 document.getElementById('noteContentInput').value = note.content;
@@ -312,12 +317,18 @@ class NotesManager {
         if (!contentInput || !contentPreview) return;
         
         // Get username and noteId for image URL conversion
-        let username = 'user';
-        const sidebarUser = document.querySelector('.user-name');
-        if (sidebarUser && sidebarUser.textContent) {
-            username = sidebarUser.textContent.trim();
-        } else if (this.currentNote && this.currentNote.username) {
+        let username = this.currentUsername;
+        if (!username && this.currentNote && this.currentNote.username) {
             username = this.currentNote.username;
+        }
+        if (!username) {
+            const sidebarUser = document.querySelector('.user-name');
+            if (sidebarUser && sidebarUser.textContent) {
+                username = sidebarUser.textContent.trim();
+            }
+        }
+        if (!username) {
+            username = 'user'; // Fallback
         }
         
         let noteId = this.currentNoteId;
@@ -569,6 +580,10 @@ class NotesManager {
         // Inline code `text` (but not inside code blocks)
         html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
         
+        // Handle escaped characters in markdown (like \$ for literal $)
+        // Replace common markdown escapes with their literal characters
+        html = html.replace(/\\([\\`*_{}[\]()#+\-.!])/g, '$1');  // Remove backslash before markdown special chars
+        
         // Plain URLs (not already in a link)
         html = html.replace(/(https?:\/\/[^\s<]+)(?![^<]*<\/a>)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
         
@@ -626,8 +641,11 @@ class NotesManager {
         });
         
         // Escape HTML in text content (this won't affect \x00IMAGE or \x00VIDEO placeholders since they use null bytes)
+        // IMPORTANT: Only escape & characters that are NOT part of valid HTML entities
+        // This prevents double-escaping of entities like &nbsp;, &amp;, &lt;, etc.
+        // Use a regex that matches & only if it's NOT followed by a valid entity pattern
         html = html
-            .replace(/&/g, '&amp;')
+            .replace(/&(?![a-zA-Z0-9#]{1,8};)/g, '&amp;')  // Only escape & not followed by valid entity (1-8 chars + ;)
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
         
@@ -712,20 +730,21 @@ class NotesManager {
         const existing = document.getElementById('noteAttachments');
         if (existing) existing.remove();
         
-        if (!note.attachments) {
-            return;
+        // Always try to render attachments, even if note.attachments is empty
+        // This allows us to discover files on disk that aren't in the JSON
+        let attachments = [];
+        if (note.attachments) {
+            try {
+                attachments = typeof note.attachments === 'string' 
+                    ? JSON.parse(note.attachments) 
+                    : note.attachments;
+            } catch (e) {
+                console.error('Error parsing attachments:', e);
+                attachments = [];
+            }
         }
         
-        let attachments;
-        try {
-            attachments = typeof note.attachments === 'string' 
-                ? JSON.parse(note.attachments) 
-                : note.attachments;
-        } catch (e) {
-            console.error('Failed to parse attachments:', e);
-            return; // Invalid JSON
-        }
-        
+        // If no attachments in JSON, don't show empty section
         if (!attachments || attachments.length === 0) {
             return;
         }
@@ -735,21 +754,41 @@ class NotesManager {
         attachmentsDiv.id = 'noteAttachments';
         attachmentsDiv.className = 'notes-attachments';
         
-        // Get username from sidebar (it's rendered in the template)
-        // Try multiple methods for reliability
-        let username = 'user';
-        const sidebarUser = document.querySelector('.user-name');
-        if (sidebarUser && sidebarUser.textContent) {
-            username = sidebarUser.textContent.trim();
-        } else if (this.currentNote && this.currentNote.username) {
+        // Get username - prefer stored username, then from note, then from sidebar
+        let username = this.currentUsername;
+        if (!username && note && note.username) {
+            username = note.username;
+        }
+        if (!username && this.currentNote && this.currentNote.username) {
             username = this.currentNote.username;
+        }
+        if (!username) {
+            const sidebarUser = document.querySelector('.user-name');
+            if (sidebarUser && sidebarUser.textContent) {
+                username = sidebarUser.textContent.trim();
+            }
+        }
+        if (!username) {
+            console.error('Cannot render attachments: username not available');
+            return;
         }
         
         // Get note ID - use currentNoteId if available, otherwise try note.id
         const noteId = this.currentNoteId || (note && note.id) || null;
         if (!noteId) {
-            console.error('Cannot render attachments: note ID not available');
+            console.error('Cannot render attachments: note ID not available', { currentNoteId: this.currentNoteId, note: note });
             return;
+        }
+        
+        // Ensure we have username
+        if (!username) {
+            console.error('Cannot render attachments: username not available', { currentUsername: this.currentUsername, note: note });
+            return;
+        }
+        
+        // Only show attachments section if there are attachments
+        if (attachments.length === 0) {
+            return; // Don't show empty attachments section
         }
         
         attachmentsDiv.innerHTML = `
