@@ -11,6 +11,9 @@ from app.models import User, Setting, ExternalStorage
 from app.schemas import UserCreate, UserResponse, SettingsUpdate, SettingsResponse
 from app.auth import get_admin_user, get_password_hash
 from app.services.email_service import get_email_service
+from app.services.storage_service import StorageService
+from app.services.video_transcode_service import transcode_video, is_video_already_optimized
+from app.services.thumbnail_service import is_video_file
 from pathlib import Path
 import asyncio
 import os
@@ -1009,3 +1012,163 @@ async def generate_thumbnails(
             },
             "results": processed_results
         }
+
+
+@router.post("/transcode-video")
+async def transcode_video_admin(
+    username: str = Query(..., description="Username to transcode videos for"),
+    file_path: Optional[str] = Query(None, description="Specific file path to transcode (optional, if not provided, transcodes all videos)"),
+    force: bool = Query(False, description="Force re-transcoding even if transcoded version exists"),
+    db: Session = Depends(get_admin_user)
+):
+    """
+    Transcode video(s) for a user. Can transcode a specific video or all videos.
+    Admin only.
+    """
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    if not user_path.exists():
+        raise HTTPException(status_code=404, detail=f"User storage not found: {username}")
+    
+    if file_path:
+        # Transcode specific file
+        try:
+            safe_path = Path(*[p for p in file_path.split('/') if p])
+            video_path = user_path / safe_path
+            
+            if not video_path.exists():
+                raise HTTPException(status_code=404, detail="Video file not found")
+            
+            if not is_video_file(video_path):
+                raise HTTPException(status_code=400, detail="File is not a video")
+            
+            # Check if transcoded version already exists (unless force)
+            from app.services.video_transcode_service import get_transcoded_video_if_exists
+            if not force:
+                existing_transcoded = get_transcoded_video_if_exists(user_path, video_path)
+                if existing_transcoded:
+                    return {
+                        "message": "Transcoded version already exists",
+                        "file": str(video_path.relative_to(user_path)),
+                        "transcoded": str(existing_transcoded.relative_to(user_path)),
+                        "skipped": True
+                    }
+            
+            # Transcode (always transcode to ensure web-optimized format)
+            transcoded_path = await asyncio.to_thread(transcode_video, user_path, video_path)
+            
+            if transcoded_path:
+                return {
+                    "message": "Video transcoded successfully",
+                    "file": str(video_path.relative_to(user_path)),
+                    "transcoded": str(transcoded_path.relative_to(user_path))
+                }
+            else:
+                raise HTTPException(status_code=500, detail="Video transcoding failed")
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error transcoding video {file_path}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error transcoding video: {str(e)}")
+    else:
+        # Transcode all videos for user
+        def _find_all_videos():
+            videos = []
+            for item in user_path.rglob('*'):
+                if item.is_file() and is_video_file(item):
+                    # Skip already transcoded videos
+                    if '.transcoded' not in str(item):
+                        videos.append(item)
+            return videos
+        
+        videos = await asyncio.to_thread(_find_all_videos)
+        
+        if not videos:
+            return {
+                "message": "No videos found to transcode",
+                "count": 0
+            }
+        
+        # Transcode videos in background (don't block response)
+        async def _transcode_all():
+            transcoded = 0
+            failed = 0
+            skipped = 0
+            
+            for video_path in videos:
+                try:
+                    # Check if transcoded version already exists (unless force)
+                    if not force:
+                        from app.services.video_transcode_service import get_transcoded_video_if_exists
+                        existing_transcoded = get_transcoded_video_if_exists(user_path, video_path)
+                        if existing_transcoded:
+                            skipped += 1
+                            continue
+                    
+                    # Always transcode to ensure web-optimized format
+                    transcoded_path = await asyncio.to_thread(transcode_video, user_path, video_path)
+                    if transcoded_path:
+                        transcoded += 1
+                    else:
+                        failed += 1
+                except Exception as e:
+                    logger.error(f"Error transcoding {video_path.name}: {e}")
+                    failed += 1
+            
+            logger.info(f"Video transcoding complete for {username}: {transcoded} transcoded, {failed} failed, {skipped} skipped")
+        
+        # Start transcoding in background
+        asyncio.create_task(_transcode_all())
+        
+        return {
+            "message": f"Started transcoding {len(videos)} video(s) in background",
+            "count": len(videos),
+            "status": "processing"
+        }
+
+
+@router.get("/transcode-status")
+async def get_transcode_status(
+    username: str = Query(..., description="Username to check transcoding status for"),
+    db: Session = Depends(get_admin_user)
+):
+    """
+    Get transcoding status for a user's videos.
+    Admin only.
+    """
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    if not user_path.exists():
+        raise HTTPException(status_code=404, detail=f"User storage not found: {username}")
+    
+    def _get_status():
+        from app.services.video_transcode_service import get_transcoded_video_if_exists
+        
+        all_videos = []
+        transcoded_videos = []
+        optimized_videos = []
+        
+        for item in user_path.rglob('*'):
+            if item.is_file() and is_video_file(item):
+                # Skip transcoded files themselves
+                if '.transcoded' in str(item):
+                    continue
+                
+                all_videos.append(item)
+                
+                # Check if transcoded version exists
+                transcoded_path = get_transcoded_video_if_exists(user_path, item)
+                if transcoded_path:
+                    transcoded_videos.append(item)
+        
+        return {
+            "total_videos": len(all_videos),
+            "transcoded": len(transcoded_videos),
+            "needs_transcoding": len(all_videos) - len(transcoded_videos)
+        }
+    
+    status = await asyncio.to_thread(_get_status)
+    return status
