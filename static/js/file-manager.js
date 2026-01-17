@@ -118,19 +118,28 @@ class FileManager {
     }
     
     switchTab(tab) {
+        console.log('FileManager: Switching to tab:', tab);
         this.currentTab = tab;
         
         // Clear search when switching tabs
         this.clearSearch();
         
-        // Update tab buttons
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.classList.remove('active');
-        });
+        // Update tab buttons - use specific IDs
+        const filesTab = document.getElementById('fileManagerFilesTab');
+        const sharesTab = document.getElementById('fileManagerSharesTab');
+        
+        if (filesTab) filesTab.classList.remove('active');
+        if (sharesTab) sharesTab.classList.remove('active');
+        
         if (tab === 'files') {
-            document.getElementById('fileManagerFilesTab')?.classList.add('active');
-        } else {
-            document.getElementById('fileManagerSharesTab')?.classList.add('active');
+            if (filesTab) filesTab.classList.add('active');
+        } else if (tab === 'shares') {
+            if (sharesTab) {
+                sharesTab.classList.add('active');
+                console.log('FileManager: Shares tab activated');
+            } else {
+                console.error('FileManager: fileManagerSharesTab button not found!');
+            }
         }
         
         // Show/hide content areas
@@ -144,9 +153,14 @@ class FileManager {
             if (shares) shares.style.display = 'none';
             if (viewToggle) viewToggle.style.display = 'flex';
             if (selectionControls) selectionControls.style.display = this.selectedFiles.size > 0 ? 'flex' : 'none';
-        } else {
+        } else if (tab === 'shares') {
             if (grid) grid.style.display = 'none';
-            if (shares) shares.style.display = 'block';
+            if (shares) {
+                shares.style.display = 'block';
+                console.log('FileManager: Shares content area displayed');
+            } else {
+                console.error('FileManager: fileManagerShares content area not found!');
+            }
             if (viewToggle) viewToggle.style.display = 'none';
             if (selectionControls) selectionControls.style.display = 'none';
             this.loadSharedFiles();
@@ -155,17 +169,23 @@ class FileManager {
     
     async loadSharedFiles() {
         const sharesDiv = document.getElementById('fileManagerShares');
-        if (!sharesDiv) return;
+        if (!sharesDiv) {
+            console.error('FileManager: fileManagerShares element not found!');
+            return;
+        }
         
+        console.log('FileManager: Loading shared files...');
         sharesDiv.innerHTML = '<div class="file-manager-loading">Loading shared files...</div>';
         
         try {
             const response = await fetch('/api/files/shares');
             if (response.ok) {
                 const data = await response.json();
-                this.renderSharedFiles(data.shares);
+                console.log('FileManager: Loaded shared files:', data.shares?.length || 0);
+                this.renderSharedFiles(data.shares || []);
             } else {
                 const error = await response.json();
+                console.error('FileManager: Error loading shared files:', error);
                 sharesDiv.innerHTML = `<div class="file-manager-error">Error: ${this.escapeHtml(error.detail || 'Failed to load shared files')}</div>`;
             }
         } catch (error) {
@@ -282,6 +302,10 @@ class FileManager {
         if (overlay) {
             console.log('FileManager: Overlay found, displaying...');
             overlay.style.display = 'flex'; // Use flex for modal
+            
+            // Ensure we're on the files tab by default
+            this.switchTab('files');
+            
             await this.loadFiles('');
             console.log('FileManager: Overlay displayed and files loaded');
         } else {
