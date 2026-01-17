@@ -1055,8 +1055,9 @@ async def get_all_images(
     
     try:
         result = await asyncio.to_thread(_get_all_images_sync)
-        # Recursively clean the entire result to ensure JSON serializability
-        cleaned_result = _clean_for_json(result)
+        # Result is already cleaned by ensure_serializable_image() - don't clean again
+        # to avoid converting dicts to strings
+        cleaned_result = result
         
         # Double-check: ensure the result dict itself is clean
         # This is a final aggressive pass to convert everything to basic types
