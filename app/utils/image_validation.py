@@ -23,40 +23,54 @@ def validate_and_clean_image_data(img: Any, item_path: Any = None) -> Optional[D
     """
     # Ensure img is a dictionary
     if not isinstance(img, dict):
-        logger.warning(f"Filtering out non-dict image item (type: {type(img).__name__}): {img}")
+        logger.error(f"[VALIDATION] Filtering out non-dict image item (type: {type(img).__name__}): {str(img)[:100]}")
         return None
     
     # Ensure path exists - this is required
-    if 'path' not in img or not img['path']:
-        logger.warning(f"Image missing path field, skipping: {item_path or img}")
+    if 'path' not in img:
+        logger.error(f"[VALIDATION] Image missing 'path' key, keys present: {list(img.keys())}, item: {item_path}")
+        return None
+    
+    # Get path value and validate
+    path_value = img.get('path')
+    if path_value is None:
+        logger.error(f"[VALIDATION] Image has None path, item: {item_path}")
         return None
     
     # Convert path to string and validate
-    path_str = str(img['path']).strip()
-    if path_str == '' or path_str == 'undefined':
-        logger.warning(f"Image has invalid path (empty or 'undefined'), skipping: {item_path or img}")
+    path_str = str(path_value).strip()
+    if path_str == '':
+        logger.error(f"[VALIDATION] Image has empty path after strip, item: {item_path}, original: '{path_value}'")
         return None
     
+    if path_str == 'undefined':
+        logger.error(f"[VALIDATION] Image has 'undefined' path, item: {item_path}")
+        return None
+    
+    # Path is valid - update img
     img['path'] = path_str
     
     # Ensure name exists, extract from path if missing
     if 'name' not in img or not img['name']:
         # Extract from path
-        img['name'] = path_str.split('/')[-1]
-        logger.debug(f"Extracted name from path: {img['name']}")
+        img['name'] = path_str.split('/')[-1] if '/' in path_str else path_str
+        logger.debug(f"[VALIDATION] Extracted name from path: {img['name']}")
     else:
         # Validate and convert name to string
         name_str = str(img['name']).strip()
         if name_str == '' or name_str == 'undefined':
             # Use path fallback
-            img['name'] = path_str.split('/')[-1]
-            logger.debug(f"Name was invalid, extracted from path: {img['name']}")
+            img['name'] = path_str.split('/')[-1] if '/' in path_str else path_str
+            logger.debug(f"[VALIDATION] Name was invalid, extracted from path: {img['name']}")
         else:
             img['name'] = name_str
     
     # Ensure both are strings (redundant but safe)
     img['name'] = str(img['name'])
     img['path'] = str(img['path'])
+    
+    # Log successful validation for first few
+    logger.debug(f"[VALIDATION] ✓ Valid image: name={img['name']}, path={img['path'][:50]}...")
     
     return img
 

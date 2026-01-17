@@ -863,9 +863,16 @@ async def get_all_images(
                             image_info[key] = str(value)
                     
                     # Validate and clean image data
+                    logger.debug(f"[STORAGE] Before validation: name={image_info.get('name')}, path={image_info.get('path')}")
                     cleaned_image_info = validate_and_clean_image_data(image_info, item_path=item)
                     if not cleaned_image_info:
+                        logger.error(f"[STORAGE] ❌ Image validation FAILED for: {item.name}")
+                        logger.error(f"[STORAGE]    - path in dict: {'path' in image_info}")
+                        logger.error(f"[STORAGE]    - path value: '{image_info.get('path', 'KEY_MISSING')}'")
+                        logger.error(f"[STORAGE]    - name value: '{image_info.get('name', 'KEY_MISSING')}'")
+                        logger.error(f"[STORAGE]    - All keys: {list(image_info.keys())}")
                         continue
+                    logger.debug(f"[STORAGE] ✓ After validation: name={cleaned_image_info.get('name')}, path={cleaned_image_info.get('path')}")
                     image_info = cleaned_image_info
                     
                     # Skip loading thumbnails during initial scan for performance
@@ -952,6 +959,12 @@ async def get_all_images(
         if skipped_reasons:
             logger.info(f"  - Skip reasons breakdown: {skipped_reasons}")
         logger.info(f"[STORAGE] Final count returned to client: {len(images)} images/videos")
+        
+        # Log first few images for debugging if we have any
+        if len(images) > 0:
+            logger.info(f"[STORAGE] First 3 images: {[(img.get('name', 'NO_NAME'), img.get('path', 'NO_PATH')) for img in images[:3]]}")
+        else:
+            logger.warning(f"[STORAGE] WARNING: No images found after scanning {total_scanned} files!")
         
         # Debug: log first few images to verify sorting
         if images:
