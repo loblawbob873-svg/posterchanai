@@ -290,16 +290,39 @@ async def get_all_images(
                             
                             cleaned_data = _clean_proxy_response(data)
                             
-                            # Verify that images have required fields
+                            # Verify that images have required fields and filter out invalid ones
                             if 'images' in cleaned_data and cleaned_data['images']:
-                                for img in cleaned_data['images'][:5]:  # Check first 5
-                                    if 'name' not in img or not img['name']:
-                                        # Try to extract name from path if missing
+                                valid_images = []
+                                for img in cleaned_data['images']:
+                                    # Ensure path exists and is valid
+                                    if 'path' not in img or not img['path'] or str(img['path']).strip() == '':
+                                        logger.warning(f"[FILES] Filtering out image missing 'path' field: {img}")
+                                        continue
+                                    
+                                    # Ensure name exists, extract from path if missing
+                                    if 'name' not in img or not img['name'] or str(img['name']).strip() == '':
                                         if 'path' in img and img['path']:
-                                            img['name'] = img['path'].split('/').pop()
+                                            img['name'] = str(img['path']).split('/')[-1]
                                             logger.debug(f"[FILES] Extracted name from path for image: {img['name']}")
                                         else:
-                                            logger.warning(f"[FILES] Image missing both 'name' and 'path' fields: {img}")
+                                            logger.warning(f"[FILES] Filtering out image missing both 'name' and 'path' fields: {img}")
+                                            continue
+                                    
+                                    # Ensure path is a string
+                                    if not isinstance(img['path'], str):
+                                        img['path'] = str(img['path'])
+                                    
+                                    # Ensure name is a string
+                                    if not isinstance(img['name'], str):
+                                        img['name'] = str(img['name'])
+                                    
+                                    valid_images.append(img)
+                                
+                                # Update with filtered valid images
+                                cleaned_data['images'] = valid_images
+                                cleaned_data['total'] = len(valid_images)
+                                if len(valid_images) < len(cleaned_data.get('images', [])):
+                                    logger.info(f"[FILES] Filtered {len(cleaned_data.get('images', [])) - len(valid_images)} invalid images from proxy response")
                             
                             # Test serialization before returning
                             try:
@@ -528,6 +551,23 @@ async def get_all_images(
                         elif not isinstance(value, (str, int, float, bool, type(None))):
                             logger.warning(f"[FILES] Found non-serializable type {type(value)} in image_info.{key}, converting")
                             image_info[key] = str(value)
+                    
+                    # CRITICAL: Ensure name and path are strings and not empty
+                    if 'name' not in image_info or not image_info['name'] or str(image_info['name']).strip() == '':
+                        # Extract from path if name is missing
+                        if 'path' in image_info and image_info['path']:
+                            image_info['name'] = str(image_info['path']).split('/')[-1]
+                        else:
+                            logger.warning(f"[FILES] Image missing both name and path, skipping: {item}")
+                            continue
+                    
+                    if 'path' not in image_info or not image_info['path'] or str(image_info['path']).strip() == '':
+                        logger.warning(f"[FILES] Image missing path field, skipping: {item}")
+                        continue
+                    
+                    # Ensure both are strings
+                    image_info['name'] = str(image_info['name'])
+                    image_info['path'] = str(image_info['path'])
                     
                     # Skip loading thumbnails during initial scan for performance
                     # Thumbnails will be loaded on-demand by the frontend via /thumbnail endpoint

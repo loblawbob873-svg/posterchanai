@@ -861,6 +861,23 @@ async def get_all_images(
                             logger.warning(f"[STORAGE] Found non-serializable type {type(value)} in image_info.{key}, converting")
                             image_info[key] = str(value)
                     
+                    # CRITICAL: Ensure name and path are strings and not empty
+                    if 'name' not in image_info or not image_info['name'] or str(image_info['name']).strip() == '':
+                        # Extract from path if name is missing
+                        if 'path' in image_info and image_info['path']:
+                            image_info['name'] = str(image_info['path']).split('/')[-1]
+                        else:
+                            logger.warning(f"[STORAGE] Image missing both name and path, skipping: {item}")
+                            continue
+                    
+                    if 'path' not in image_info or not image_info['path'] or str(image_info['path']).strip() == '':
+                        logger.warning(f"[STORAGE] Image missing path field, skipping: {item}")
+                        continue
+                    
+                    # Ensure both are strings
+                    image_info['name'] = str(image_info['name'])
+                    image_info['path'] = str(image_info['path'])
+                    
                     # Skip loading thumbnails during initial scan for performance
                     # Thumbnails will be loaded on-demand by the frontend via /thumbnail endpoint
                     # This dramatically speeds up the initial scan when there are thousands of files

@@ -2038,15 +2038,37 @@ class FileManager {
             
             // Backend returns images already sorted (newest first), but we always re-sort to be safe
             // This ensures correct order even if backend has issues or pagination mixes things up
+            
+            // Filter out invalid images (missing path or name)
+            const validImages = (data.images || []).filter(img => {
+                if (!img) return false;
+                const hasPath = img.path && img.path !== 'undefined' && img.path.trim() !== '';
+                const hasName = img.name && img.name !== 'undefined' && img.name.trim() !== '';
+                if (!hasPath && !hasName) {
+                    console.warn('Photo Gallery - Filtering out invalid image (no path or name):', img);
+                    return false;
+                }
+                // Ensure path exists, extract from name if needed
+                if (!hasPath && hasName) {
+                    // If we only have name, we can't create a valid path - skip it
+                    console.warn('Photo Gallery - Filtering out image with name but no path:', img);
+                    return false;
+                }
+                // Ensure name exists, extract from path if needed
+                if (hasPath && !hasName) {
+                    img.name = img.path.split('/').pop();
+                }
+                return true;
+            });
+            
             if (reset) {
-                this.allImages = data.images || [];
+                this.allImages = validImages;
             } else {
                 // When loading more, we need to merge while maintaining sort order
                 // Backend returns sorted chunks, but we need to merge them correctly
                 // Since backend sorts newest first, we should merge maintaining that order
-                const newImages = data.images || [];
                 // Combine and re-sort to ensure global order (in case of pagination edge cases)
-                this.allImages = [...this.allImages, ...newImages];
+                this.allImages = [...this.allImages, ...validImages];
                 // Re-sort to ensure correct order across all loaded images
                 // This is necessary because pagination might have edge cases
                 this.allImages.sort((a, b) => {
@@ -2212,9 +2234,21 @@ class FileManager {
         grid.innerHTML = '';
         
         this.allImages.forEach((image, index) => {
+            // Validate image object has required fields
+            if (!image || (!image.path && !image.name)) {
+                console.error('Photo Gallery - Invalid image object at index', index, ':', image);
+                return; // Skip invalid images
+            }
+            
             // Extract filename from path if name is not available
-            const imageName = image.name || (image.path ? image.path.split('/').pop() : 'Unknown');
             const imagePath = image.path || '';
+            const imageName = image.name || (imagePath ? imagePath.split('/').pop() : 'Unknown');
+            
+            // Skip if path is invalid
+            if (!imagePath || imagePath === 'undefined' || imagePath.trim() === '') {
+                console.error('Photo Gallery - Skipping image with invalid path at index', index, ':', image);
+                return;
+            }
             
             const item = document.createElement('div');
             item.className = 'cyberpunk-gallery-item';
@@ -2224,7 +2258,13 @@ class FileManager {
             item.dataset.modified = image.modified || '0';
             
             const img = document.createElement('img');
-            if (image.thumbnail) {
+            
+            // Validate that we have a valid path before proceeding
+            if (!imagePath || imagePath === 'undefined' || imagePath.trim() === '') {
+                console.error('Photo Gallery - Invalid image path:', image);
+                // Show error placeholder
+                img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23333" width="200" height="200"/%3E%3Ctext fill="%23ff0066" font-family="monospace" font-size="12" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3EINVALID%3C/text%3E%3C/svg%3E';
+            } else if (image.thumbnail) {
                 // Use thumbnail from API response (base64 data URL)
                 img.src = image.thumbnail;
             } else {
@@ -2232,41 +2272,42 @@ class FileManager {
                 img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23111" width="200" height="200"/%3E%3Ctext fill="%2300ffff" font-family="monospace" font-size="12" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3ELOADING...%3C/text%3E%3C/svg%3E';
                 
                 // Try to load thumbnail
-                if (imagePath) {
-                    fetch(`/api/files/thumbnail/${encodeURIComponent(imagePath)}?size=300`)
-                        .then(response => {
-                            if (response.ok) {
-                                return response.json();
-                            }
-                            throw new Error('Thumbnail not available');
-                        })
-                        .then(data => {
-                            if (data && data.thumbnail) {
-                                img.src = data.thumbnail;
-                            } else {
-                                // Fallback to full image
-                                img.src = `/api/files/view/${encodeURIComponent(imagePath)}`;
-                            }
-                        })
-                        .catch(() => {
-                            // Fallback to full image if thumbnail fails
+                fetch(`/api/files/thumbnail/${encodeURIComponent(imagePath)}?size=300`)
+                    .then(response => {
+                        if (response.ok) {
+                            return response.json();
+                        }
+                        throw new Error('Thumbnail not available');
+                    })
+                    .then(data => {
+                        if (data && data.thumbnail) {
+                            img.src = data.thumbnail;
+                        } else {
+                            // Fallback to full image
                             img.src = `/api/files/view/${encodeURIComponent(imagePath)}`;
-                        });
-                }
+                        }
+                    })
+                    .catch(() => {
+                        // Fallback to full image if thumbnail fails
+                        img.src = `/api/files/view/${encodeURIComponent(imagePath)}`;
+                    });
             }
             img.alt = imageName;
             img.loading = 'lazy';
             
             // Add error handler to try full image if thumbnail fails
             img.onerror = () => {
-                if (img.src.includes('data:image/svg+xml') || img.src.includes('/thumbnail/')) {
-                    // If thumbnail failed, try full image
-                    if (imagePath) {
+                if (imagePath && imagePath !== 'undefined' && imagePath.trim() !== '') {
+                    if (img.src.includes('data:image/svg+xml') || img.src.includes('/thumbnail/')) {
+                        // If thumbnail failed, try full image
                         img.src = `/api/files/view/${encodeURIComponent(imagePath)}`;
+                    } else if (!img.src.includes('/view/')) {
+                        // If full image also failed, show placeholder
+                        img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23333" width="200" height="200"/%3E%3Ctext fill="%23ff0066" font-family="monospace" font-size="12" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3EERROR%3C/text%3E%3C/svg%3E';
                     }
-                } else if (!img.src.includes('/view/')) {
-                    // If full image also failed, show placeholder
-                    img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23333" width="200" height="200"/%3E%3Ctext fill="%23ff0066" font-family="monospace" font-size="12" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3EERROR%3C/text%3E%3C/svg%3E';
+                } else {
+                    // Invalid path - show error placeholder
+                    img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23333" width="200" height="200"/%3E%3Ctext fill="%23ff0066" font-family="monospace" font-size="12" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3EINVALID%3C/text%3E%3C/svg%3E';
                 }
             };
             
