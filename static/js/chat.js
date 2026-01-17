@@ -2063,6 +2063,16 @@ class ChatHandler {
                 }
             }
             html += '</div>';
+            
+            // Debug: Log HTML structure for files command
+            if (data.files && data.files.length > 0) {
+                console.log('Files command HTML generated:', {
+                    hasFileResults: html.includes('file-search-results'),
+                    hasFileActions: html.includes('file-actions'),
+                    hasButtons: html.includes('file-action-btn'),
+                    htmlPreview: html.substring(0, 1000)
+                });
+            }
         } else if (data.type === 'music_play' && data.track && window.musicPlayer) {
             // Play single track
             window.musicPlayer.play(data.track);
@@ -2137,7 +2147,24 @@ class ChatHandler {
                 
                 // Debug: Check if buttons exist
                 const buttons = messageEl.querySelectorAll('.file-action-btn');
-                console.log(`Attached event delegation listener for file action buttons. Found ${buttons.length} buttons.`);
+                const fileResults = messageEl.querySelectorAll('.file-result-item');
+                const fileActions = messageEl.querySelectorAll('.file-actions');
+                console.log(`File command debug:`, {
+                    buttons: buttons.length,
+                    fileResults: fileResults.length,
+                    fileActions: fileActions.length,
+                    htmlLength: html.length
+                });
+                
+                // If no buttons found, log the actual HTML structure
+                if (buttons.length === 0) {
+                    const fileSearchResults = messageEl.querySelector('.file-search-results');
+                    if (fileSearchResults) {
+                        console.warn('File search results found but no buttons:', fileSearchResults.innerHTML.substring(0, 500));
+                    } else {
+                        console.warn('No file-search-results container found in message');
+                    }
+                }
             }, 0);
         }
         
