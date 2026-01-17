@@ -1966,15 +1966,17 @@ class FileManager {
                 this.allImages.push(...(data.images || []));
             }
             
+            this.hasMoreImages = data.has_more || false;
+            this.imageLoadOffset += data.images?.length || 0;
+            
             // Ensure images are sorted by modified time (newest first)
+            // Sort after combining with existing images to maintain correct order
             this.allImages.sort((a, b) => {
                 const timeA = a.modified || 0;
                 const timeB = b.modified || 0;
-                return timeB - timeA; // Descending order (newest first)
+                // Descending order (newest first) - higher timestamp comes first
+                return timeB - timeA;
             });
-            
-            this.hasMoreImages = data.has_more || false;
-            this.imageLoadOffset += data.images?.length || 0;
             
             if (countEl) {
                 countEl.textContent = `[${data.total || 0} IMAGES FOUND]`;
@@ -1988,23 +1990,28 @@ class FileManager {
                 loadMoreBtn.style.display = this.hasMoreImages ? 'block' : 'none';
             }
             
-            // Ensure images are sorted by modified time (newest first)
-            // This ensures correct order even when loading more images
-            this.allImages.sort((a, b) => {
-                const timeA = a.modified || 0;
-                const timeB = b.modified || 0;
-                return timeB - timeA; // Descending order (newest first)
-            });
-            
-            // Debug: log first image to see if thumbnails are included
+            // Debug: log first few images to verify sorting
             if (this.allImages.length > 0) {
-                console.log('First image data (newest first):', {
-                    name: this.allImages[0].name,
-                    path: this.allImages[0].path,
-                    modified: new Date(this.allImages[0].modified * 1000).toLocaleString(),
-                    hasThumbnail: !!this.allImages[0].thumbnail,
-                    thumbnailLength: this.allImages[0].thumbnail ? this.allImages[0].thumbnail.length : 0
+                console.log('Photo Gallery - Sorting verification:');
+                console.log(`  Total images: ${this.allImages.length}`);
+                console.log('  First 5 images (should be newest first):');
+                this.allImages.slice(0, 5).forEach((img, idx) => {
+                    const date = img.modified ? new Date(img.modified * 1000).toLocaleString() : 'N/A';
+                    console.log(`    ${idx + 1}. ${img.name} - Modified: ${date} (timestamp: ${img.modified})`);
                 });
+                
+                // Verify sorting is correct
+                let isSorted = true;
+                for (let i = 1; i < this.allImages.length; i++) {
+                    if (this.allImages[i].modified > this.allImages[i-1].modified) {
+                        isSorted = false;
+                        console.warn(`  ⚠️  Sorting issue: Image ${i} (${this.allImages[i].name}) is newer than image ${i-1} (${this.allImages[i-1].name})`);
+                        break;
+                    }
+                }
+                if (isSorted) {
+                    console.log('  ✓ Images are correctly sorted (newest first)');
+                }
             }
             
             this.renderImageGrid();
@@ -2027,6 +2034,13 @@ class FileManager {
             grid.innerHTML = '<div class="cyberpunk-loading"><div class="cyberpunk-loading-text">[NO IMAGES FOUND]</div></div>';
             return;
         }
+        
+        // Ensure images are sorted before rendering (safety check)
+        this.allImages.sort((a, b) => {
+            const timeA = a.modified || 0;
+            const timeB = b.modified || 0;
+            return timeB - timeA; // Descending order (newest first)
+        });
         
         grid.innerHTML = '';
         

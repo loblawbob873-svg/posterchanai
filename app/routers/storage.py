@@ -717,12 +717,15 @@ async def get_all_images(
                     stat = item.stat()
                     relative_path = str(item.relative_to(user_path))
                     
+                    # Get modification time (prefer mtime, fallback to ctime if mtime is 0)
+                    modified_time = stat.st_mtime if stat.st_mtime > 0 else stat.st_ctime
+                    
                     image_info = {
                         "name": item.name,
                         "path": relative_path,
                         "size": stat.st_size,
-                        "modified": stat.st_mtime,
-                        "modified_date": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "modified": modified_time,
+                        "modified_date": datetime.fromtimestamp(modified_time).isoformat(),
                     }
                     
                     # Get thumbnail (use stored thumbnail if available)
@@ -823,7 +826,14 @@ async def get_all_images(
             raise Exception(f"Error getting all images: {e}")
         
         # Sort by modified time (newest first)
-        images.sort(key=lambda x: x.get('modified', 0), reverse=True)
+        # Use stable sort to maintain order for items with same timestamp
+        images.sort(key=lambda x: (x.get('modified', 0), x.get('path', '')), reverse=True)
+        
+        # Debug: log first few images to verify sorting
+        if images and logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Sorted {len(images)} images. First 3:")
+            for i, img in enumerate(images[:3]):
+                logger.debug(f"  {i+1}. {img.get('name')} - modified: {img.get('modified')} ({datetime.fromtimestamp(img.get('modified', 0)).isoformat() if img.get('modified') else 'N/A'})")
         
         # Apply pagination
         total = len(images)
