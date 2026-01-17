@@ -1351,49 +1351,23 @@ class NotesManager {
         const name = prompt('Enter folder name:');
         if (!name) return;
         
-        // Always manually get and send CSRF token to ensure it's sent
+        // Use csrfFetch exactly like file manager does (which works)
         try {
-            let csrfToken = null;
-            if (typeof getCSRFToken !== 'undefined') {
-                csrfToken = getCSRFToken();
-            } else if (typeof window.getCSRFToken !== 'undefined') {
-                csrfToken = window.getCSRFToken();
-            }
+            // Check if csrfFetch is available
+            const fetchFn = (typeof csrfFetch !== 'undefined') ? csrfFetch : 
+                           (typeof window.csrfFetch !== 'undefined') ? window.csrfFetch : 
+                           null;
             
-            // If no token, try to get it by making a GET request first
-            if (!csrfToken) {
-                console.log('CSRF token not found, fetching...');
-                await fetch('/', { method: 'GET', credentials: 'include' });
-                await new Promise(resolve => setTimeout(resolve, 300));
-                if (typeof getCSRFToken !== 'undefined') {
-                    csrfToken = getCSRFToken();
-                } else if (typeof window.getCSRFToken !== 'undefined') {
-                    csrfToken = window.getCSRFToken();
-                }
-            }
-            
-            if (!csrfToken) {
-                console.error('CSRF token still not available after retry');
-                console.error('Available cookies:', document.cookie);
-                this.showToast('Error: CSRF token not available. Please refresh the page.', 'error');
+            if (!fetchFn) {
+                console.error('csrfFetch not available');
+                this.showToast('Error: CSRF protection not loaded. Please refresh the page.', 'error');
                 return;
             }
             
-            console.log('CSRF token found:', csrfToken.substring(0, 8) + '...');
-            console.log('Full token length:', csrfToken.length);
-            
-            // Build headers object (plain object, not Headers() to ensure it works)
-            const headers = {
-                'Content-Type': 'application/json',
-                'X-CSRF-Token': csrfToken
-            };
-            
-            console.log('Sending request with headers:', headers);
-            console.log('Header X-CSRF-Token value:', headers['X-CSRF-Token'] ? headers['X-CSRF-Token'].substring(0, 8) + '...' : 'MISSING');
-            
-            const response = await fetch('/api/notes/folders', {
+            console.log('Using csrfFetch for folder creation');
+            const response = await fetchFn('/api/notes/folders', {
                 method: 'POST',
-                headers: headers,
+                headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
                 body: JSON.stringify({ name: name.trim() })
             });
