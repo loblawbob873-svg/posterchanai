@@ -851,26 +851,147 @@
     
     .notes-sidebar {
         width: 100%;
-        max-height: 250px;
+        max-height: 180px;  /* Reduced from 250px */
         border-right: none;
         border-bottom: 1px solid var(--border-color);
         flex-shrink: 0;
+        padding: 12px;  /* Reduced padding */
+        gap: 12px;  /* Reduced gap */
+    }
+    
+    .notes-toolbar {
+        flex-direction: row;  /* Side-by-side on mobile */
+        gap: 8px;
+    }
+    
+    .notes-toolbar .btn-small {
+        flex: 1;  /* Equal width buttons */
+        padding: 10px 12px;  /* Smaller padding */
+        font-size: 13px;  /* Slightly smaller text */
+        white-space: nowrap;
+    }
+    
+    .notes-toolbar .btn-small span {
+        margin-right: 4px !important;  /* Less space after emoji */
+    }
+    
+    .notes-search {
+        order: -1;  /* Move search to top */
+        margin-bottom: 4px;
+    }
+    
+    .notes-search input {
+        padding: 10px 10px 10px 36px;  /* Smaller padding */
+        font-size: 13px;
+    }
+    
+    .notes-folders {
+        gap: 4px;  /* Tighter folder list */
+        max-height: 80px;  /* Limit folder list height */
+        overflow-y: auto;
+    }
+    
+    .notes-folder-item {
+        padding: 8px 10px;  /* Smaller padding */
+        gap: 8px;
+        font-size: 13px;  /* Smaller text */
+    }
+    
+    .notes-folder-item .folder-icon {
+        font-size: 16px;  /* Smaller icons */
+    }
+    
+    .notes-folder-item .folder-name {
+        font-size: 13px;
     }
     
     .notes-list {
         grid-template-columns: 1fr;
-        padding: 16px;
+        padding: 12px;  /* Less padding */
         gap: 12px;
     }
     
+    .notes-item {
+        padding: 16px;  /* Smaller padding */
+    }
+    
+    .notes-item-title {
+        font-size: 16px;  /* Slightly smaller */
+    }
+    
+    .notes-item-preview {
+        font-size: 13px;
+        -webkit-line-clamp: 2;  /* Show less preview on mobile */
+    }
+    
     .notes-editor {
-        padding: 16px;
+        padding: 12px;  /* Less padding */
         min-height: 0;
         overflow: hidden;
     }
     
+    .notes-editor-header {
+        flex-wrap: wrap;  /* Allow wrapping */
+        gap: 8px;
+        margin-bottom: 12px;
+        padding-bottom: 12px;
+    }
+    
     .note-title-input {
-        font-size: 20px;
+        font-size: 18px;  /* Smaller title */
+        padding: 10px 14px;
+        width: 100%;  /* Full width */
+        order: 1;
+    }
+    
+    .notes-editor-actions {
+        width: 100%;  /* Full width row */
+        order: 2;
+        justify-content: space-between;
+        gap: 6px;
+    }
+    
+    .notes-editor-actions .btn-icon {
+        width: auto;  /* Auto width */
+        flex: 1;  /* Equal size buttons */
+        height: 40px;  /* Touch-friendly */
+        font-size: 16px;
+        min-width: 40px;
+    }
+    
+    .notes-editor-tags input {
+        font-size: 13px;
+        padding: 8px 12px;
+    }
+    
+    .notes-editor-mode-toggle {
+        gap: 6px;
+    }
+    
+    .notes-editor-mode-toggle .btn-small {
+        flex: 1;  /* Equal width */
+        padding: 8px 12px;
+        font-size: 12px;
+    }
+    
+    #noteContentInput {
+        padding: 12px;  /* Less padding */
+        font-size: 14px;
+        line-height: 1.6;
+    }
+    
+    .notes-content-preview {
+        padding: 12px;
+        font-size: 14px;
+    }
+    
+    .notes-editor-footer {
+        margin-top: 12px;
+        padding-top: 12px;
+    }
+    
+    .notes-editor-footer button {
+        flex: 1;  /* Equal width buttons */
         padding: 12px 16px;
     }
     
@@ -906,6 +1027,91 @@
     .notes-editor-footer {
         margin-top: 8px;
         padding-top: 8px;
+    }
+}
+
+@media (max-width: 480px) {
+    /* Extra small screens (portrait phones) */
+    .notes-sidebar {
+        max-height: 140px;  /* Even more compact */
+        padding: 10px;
+        gap: 8px;
+    }
+    
+    .notes-toolbar .btn-small {
+        padding: 8px 10px;
+        font-size: 12px;
+    }
+    
+    .notes-search input {
+        padding: 8px 8px 8px 32px;
+        font-size: 12px;
+    }
+    
+    .notes-search::before {
+        left: 10px;
+        font-size: 14px;
+    }
+    
+    .notes-folder-item {
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+    
+    .notes-folder-item .folder-icon {
+        font-size: 14px;
+    }
+    
+    .notes-list {
+        padding: 10px;
+        gap: 10px;
+    }
+    
+    .notes-item {
+        padding: 12px;
+    }
+    
+    .notes-item-title {
+        font-size: 15px;
+    }
+    
+    .notes-item-preview {
+        font-size: 12px;
+    }
+    
+    .notes-item-meta {
+        font-size: 11px;
+    }
+    
+    .notes-editor {
+        padding: 10px;
+    }
+    
+    .note-title-input {
+        font-size: 16px;
+        padding: 8px 12px;
+    }
+    
+    .notes-editor-actions .btn-icon {
+        height: 38px;
+        min-width: 38px;
+        font-size: 15px;
+    }
+    
+    .notes-editor-mode-toggle .btn-small {
+        padding: 6px 10px;
+        font-size: 11px;
+    }
+    
+    #noteContentInput,
+    .notes-content-preview {
+        padding: 10px;
+        font-size: 13px;
+    }
+    
+    .notes-editor-footer button {
+        padding: 10px 14px;
+        font-size: 13px;
     }
 }
 
@@ -965,6 +1171,26 @@
         flex: 1 1 0;
         min-height: 250px; /* Increased minimum height even on small screens */
         max-height: 100%;
+    }
+}
+
+/* Landscape mobile optimization */
+@media (max-width: 768px) and (max-height: 500px) and (orientation: landscape) {
+    .notes-sidebar {
+        max-height: 120px;  /* Very compact in landscape */
+    }
+    
+    .notes-toolbar {
+        gap: 6px;
+    }
+    
+    .notes-toolbar .btn-small {
+        padding: 6px 8px;
+        font-size: 11px;
+    }
+    
+    .notes-folders {
+        max-height: 60px;
     }
 }
 
