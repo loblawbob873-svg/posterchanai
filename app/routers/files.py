@@ -662,27 +662,29 @@ async def get_all_images(
         # Recursively clean the entire result to ensure JSON serializability
         cleaned_result = _clean_for_json(result)
         
-        # Test serialization explicitly before returning
+        # Use custom JSON encoder to handle any remaining edge cases
+        class BytesSafeEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, bytes):
+                    return obj.decode('utf-8', errors='ignore')
+                elif isinstance(obj, Path):
+                    return str(obj)
+                return super().default(obj)
+        
+        # Return as JSONResponse - FastAPI will serialize, but we've cleaned everything
+        # If there's still an issue, the custom encoder will catch it
         try:
-            json_str = json.dumps(cleaned_result)
-            # Return as JSONResponse to ensure proper serialization
-            return JSONResponse(content=json.loads(json_str))
-        except (TypeError, ValueError) as json_err:
-            logger.error(f"[FILES] JSON serialization failed even after cleaning: {json_err}")
-            logger.error(f"[FILES] Result type: {type(cleaned_result)}")
-            if isinstance(cleaned_result, dict):
-                logger.error(f"[FILES] Keys: {list(cleaned_result.keys())}")
-                if "images" in cleaned_result:
-                    logger.error(f"[FILES] Number of images: {len(cleaned_result['images'])}")
-                    # Try to find the problematic image
-                    for idx, img in enumerate(cleaned_result.get("images", [])[:5]):
-                        try:
-                            json.dumps(img)
-                        except Exception as img_err:
-                            logger.error(f"[FILES] Problematic image {idx}: {img_err}")
-                            logger.error(f"[FILES] Image data: {img}")
-            # Return empty result rather than crashing
-            return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False})
+            return JSONResponse(content=cleaned_result)
+        except Exception as json_err:
+            logger.error(f"[FILES] JSONResponse failed: {json_err}")
+            # Try with explicit JSON encoding using custom encoder
+            try:
+                json_str = json.dumps(cleaned_result, cls=BytesSafeEncoder)
+                return JSONResponse(content=json.loads(json_str))
+            except Exception as final_err:
+                logger.error(f"[FILES] Final JSON encoding failed: {final_err}")
+                # Return minimal safe response
+                return JSONResponse(content={"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False})
     except Exception as e:
         logger.error(f"[FILES] Error in get_all_images: {e}", exc_info=True)
         # Ensure error message is also JSON serializable
