@@ -1011,11 +1011,11 @@ class NotesManager {
                     
                     if (isImage) {
                         return `<div class="attachment-item" data-filename="${this.escapeHtml(filename)}">
-                            <a href="${fileUrl}?t=${Date.now()}" target="_blank" class="attachment-preview-link" onclick="event.stopPropagation(); return true;">
+                            <a href="${fileUrl}?t=${Date.now()}" target="_blank" class="attachment-preview-link" onclick="event.stopPropagation(); event.preventDefault(); window.open(this.href, '_blank'); return false;">
                                 <img src="${fileUrl}?t=${Date.now()}" alt="${this.escapeHtml(filename)}" class="attachment-preview" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
                                 <div class="attachment-icon" style="display: none;">🖼️</div>
                             </a>
-                            <a href="${fileUrl}" target="_blank" class="attachment-link" onclick="event.stopPropagation(); return true;" download="${this.escapeHtml(filename)}">${this.escapeHtml(shortName)}</a>
+                            <a href="${fileUrl}" target="_blank" class="attachment-link" onclick="event.stopPropagation(); event.preventDefault(); window.open(this.href, '_blank'); return false;" download="${this.escapeHtml(filename)}">${this.escapeHtml(shortName)}</a>
                             <div class="attachment-actions">
                                 <button class="attachment-action-btn" onclick="event.stopPropagation(); window.open('${fileUrl}', '_blank'); return false;" title="Open in new tab">🔗</button>
                                 <button class="attachment-action-btn" onclick="event.stopPropagation(); window.notesManager.emailAttachment('${this.escapeHtml(filename)}', '${fileUrl}'); return false;" title="Email file">📧</button>
@@ -1039,12 +1039,16 @@ class NotesManager {
                     // For non-images, add download attribute for files that should download
                     const shouldDownload = !canOpenInNewTab && !isVideo && !isAudio;
                     const downloadAttr = shouldDownload ? `download="${this.escapeHtml(filename)}"` : '';
+                    const escapedFilename = this.escapeHtml(filename);
+                    const downloadHandler = shouldDownload 
+                        ? `event.stopPropagation(); event.preventDefault(); const a = document.createElement('a'); a.href = '${fileUrl}'; a.download = '${escapedFilename}'; document.body.appendChild(a); a.click(); document.body.removeChild(a); return false;`
+                        : `event.stopPropagation(); event.preventDefault(); window.open('${fileUrl}', '_blank'); return false;`;
                     
                     return `<div class="attachment-item" data-filename="${this.escapeHtml(filename)}">
-                        <a href="${fileUrl}" target="_blank" class="attachment-icon-link" onclick="event.stopPropagation(); return true;" ${downloadAttr} title="Click to ${shouldDownload ? 'download' : 'open'}">
+                        <a href="${fileUrl}" target="_blank" class="attachment-icon-link" onclick="${downloadHandler}" ${downloadAttr} title="Click to ${shouldDownload ? 'download' : 'open'}">
                             <div class="attachment-icon">${icon}</div>
                         </a>
-                        <a href="${fileUrl}" target="_blank" class="attachment-link" onclick="event.stopPropagation(); return true;" ${downloadAttr}>${this.escapeHtml(shortName)}</a>
+                        <a href="${fileUrl}" target="_blank" class="attachment-link" onclick="${downloadHandler}" ${downloadAttr}>${this.escapeHtml(shortName)}</a>
                         <div class="attachment-actions">
                             ${canOpenInNewTab ? `<button class="attachment-action-btn" onclick="event.stopPropagation(); window.open('${fileUrl}', '_blank'); return false;" title="Open in new tab">🔗</button>` : ''}
                             <button class="attachment-action-btn" onclick="event.stopPropagation(); window.notesManager.emailAttachment('${this.escapeHtml(filename)}', '${fileUrl}'); return false;" title="Email file">📧</button>
