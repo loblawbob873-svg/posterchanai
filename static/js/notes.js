@@ -242,6 +242,15 @@ class NotesManager {
                 document.getElementById('notesList').style.display = 'none';
                 document.getElementById('notesEditor').style.display = 'block';
                 
+                // Re-attach paste listener in case it wasn't attached
+                const contentInput = document.getElementById('noteContentInput');
+                if (contentInput && !contentInput.dataset.pasteListenerAttached) {
+                    contentInput.addEventListener('paste', (e) => {
+                        this.handlePaste(e);
+                    });
+                    contentInput.dataset.pasteListenerAttached = 'true';
+                }
+                
                 // Start in preview mode (default action)
                 this.setEditorMode('preview');
             }
@@ -830,19 +839,41 @@ class NotesManager {
     
     async handlePaste(e) {
         const items = e.clipboardData?.items;
-        if (!items) return;
+        if (!items) {
+            console.log('No clipboard items found');
+            return;
+        }
         
         // Check if we're in the note content input
         const contentInput = document.getElementById('noteContentInput');
         if (!contentInput || document.activeElement !== contentInput) {
+            console.log('Not pasting into note editor');
             return; // Not pasting into note editor
         }
+        
+        // Check if there's an image in the clipboard
+        let hasImage = false;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf('image') !== -1) {
+                hasImage = true;
+                break;
+            }
+        }
+        
+        if (!hasImage) {
+            console.log('No image in clipboard');
+            return; // Not an image, allow normal paste
+        }
+        
+        // Prevent default paste behavior for images
+        e.preventDefault();
+        console.log('Processing pasted image...');
         
         // Check if we have a note open
         if (!this.currentNoteId) {
             // If no note is open, create a new one in the database first
-            e.preventDefault(); // Prevent default paste behavior
             try {
+                console.log('Creating new note for pasted image...');
                 // Create a new note with a default title
                 const title = 'Untitled Note';
                 const content = '';
@@ -875,6 +906,7 @@ class NotesManager {
                     document.getElementById('notesEditor').style.display = 'block';
                     this.setEditorMode('edit');
                     
+                    console.log('Note created, processing paste...');
                     // Now process the paste
                     await this.processPastedImage(items);
                 } else {
@@ -887,15 +919,15 @@ class NotesManager {
             }
         } else {
             // Note exists, process paste normally
-            await this.processPastedImage(items, e);
+            console.log('Note exists, processing paste...');
+            await this.processPastedImage(items);
         }
     }
     
-    async processPastedImage(items, e = null) {
+    async processPastedImage(items) {
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
             if (item.type.indexOf('image') !== -1) {
-                if (e) e.preventDefault();
                 const file = item.getAsFile();
                 if (file) {
                     console.log('Pasted image:', file.name || 'pasted-image', file.type, file.size);
