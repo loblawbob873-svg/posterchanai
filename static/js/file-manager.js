@@ -391,7 +391,10 @@ class FileManager {
                 return `
                     <div class="file-item ${item.is_directory ? 'directory' : 'file'} ${isSelected ? 'selected' : ''}" 
                          data-path="${this.escapeHtml(item.path)}" 
-                         data-is-dir="${item.is_directory}">
+                         data-is-dir="${item.is_directory}"
+                         data-name="${this.escapeHtml(item.name)}"
+                         oncontextmenu="event.preventDefault(); fileManager.showContextMenu(event, '${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}', ${item.is_directory ? 'true' : 'false'});"
+                         onclick="if(event.ctrlKey || event.metaKey) { fileManager.toggleSelection('${this.escapeHtml(item.path)}', !fileManager.selectedFiles.has('${this.escapeHtml(item.path)}')); } else if (!event.target.closest('.file-actions') && !event.target.closest('.file-checkbox')) { ${item.is_directory ? `fileManager.loadFiles('${this.escapeHtml(item.path)}');` : `fileManager.openFile('${this.escapeHtml(item.path)}');`} }">
                         <input type="checkbox" class="file-checkbox" ${isSelected ? 'checked' : ''} 
                                onchange="fileManager.toggleSelection('${this.escapeHtml(item.path)}', this.checked)"
                                onclick="event.stopPropagation();">
@@ -428,7 +431,10 @@ class FileManager {
                             return `
                                 <tr class="file-list-row ${item.is_directory ? 'directory' : 'file'} ${isSelected ? 'selected' : ''}" 
                                     data-path="${this.escapeHtml(item.path)}" 
-                                    data-is-dir="${item.is_directory}">
+                                    data-is-dir="${item.is_directory}"
+                                    data-name="${this.escapeHtml(item.name)}"
+                                    oncontextmenu="event.preventDefault(); fileManager.showContextMenu(event, '${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}', ${item.is_directory ? 'true' : 'false'});"
+                                    onclick="if(event.ctrlKey || event.metaKey) { fileManager.toggleSelection('${this.escapeHtml(item.path)}', !fileManager.selectedFiles.has('${this.escapeHtml(item.path)}')); } else if (!event.target.closest('td:last-child') && !event.target.closest('.file-checkbox')) { ${item.is_directory ? `fileManager.loadFiles('${this.escapeHtml(item.path)}');` : `fileManager.openFile('${this.escapeHtml(item.path)}');`} }">
                                     <td><input type="checkbox" class="file-checkbox" ${isSelected ? 'checked' : ''} 
                                                onchange="fileManager.toggleSelection('${this.escapeHtml(item.path)}', this.checked)"
                                                onclick="event.stopPropagation();"></td>
@@ -651,6 +657,162 @@ class FileManager {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+    
+    showContextMenu(event, filePath, fileName, isDirectory) {
+        const menu = document.getElementById('fileContextMenu');
+        if (!menu) return;
+        
+        // Store context for menu actions
+        this.contextMenuPath = filePath;
+        this.contextMenuName = fileName;
+        this.contextMenuIsDir = isDirectory;
+        
+        // Position menu at cursor
+        menu.style.display = 'block';
+        menu.style.left = event.pageX + 'px';
+        menu.style.top = event.pageY + 'px';
+        
+        // Hide menu when clicking elsewhere
+        const hideMenu = (e) => {
+            if (!menu.contains(e.target)) {
+                menu.style.display = 'none';
+                document.removeEventListener('click', hideMenu);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', hideMenu), 10);
+    }
+    
+    async contextMenuAction(action) {
+        const menu = document.getElementById('fileContextMenu');
+        if (menu) menu.style.display = 'none';
+        
+        const filePath = this.contextMenuPath;
+        const fileName = this.contextMenuName;
+        const isDirectory = this.contextMenuIsDir;
+        
+        if (!filePath) return;
+        
+        switch(action) {
+            case 'delete':
+                if (confirm(`Are you sure you want to delete "${fileName}"?`)) {
+                    await this.deleteFile(filePath);
+                }
+                break;
+            case 'email':
+                if (!isDirectory) {
+                    await this.emailFile(filePath, fileName);
+                } else {
+                    alert('Cannot email directories');
+                }
+                break;
+            case 'share':
+                if (!isDirectory) {
+                    await this.shareFile(filePath, fileName);
+                } else {
+                    alert('Cannot share directories');
+                }
+                break;
+            case 'preview':
+                if (!isDirectory) {
+                    await this.previewUrl(filePath, fileName);
+                } else {
+                    alert('Cannot preview directories');
+                }
+                break;
+        }
+    }
+    
+    async deleteFile(filePath) {
+        try {
+            // Use the same endpoint as deleteSelected but for a single file
+            const response = await csrfFetch('/api/files/delete-bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_paths: [filePath] })
+            });
+            
+            const data = await response.json();
+            if (response.ok) {
+                if (data.errors && data.errors.length > 0) {
+                    alert(`Error: ${data.errors.join(', ')}`);
+                } else {
+                    await this.loadFiles(this.currentPath);
+                }
+            } else {
+                alert('Error: ' + (data.detail || 'Failed to delete file'));
+            }
+        } catch (error) {
+            console.error('Error deleting file:', error);
+            alert('Error deleting file. Please try again.');
+        }
+    }
+    
+    async previewUrl(filePath, fileName) {
+        // Check if file already has a share link
+        try {
+            const sharesResponse = await fetch('/api/files/shares');
+            if (sharesResponse.ok) {
+                const shares = await sharesResponse.json();
+                const existingShare = shares.find(s => s.file_path === filePath);
+                
+                if (existingShare) {
+                    // Show existing share URL
+                    const baseUrl = window.location.origin;
+                    const fullUrl = baseUrl + existingShare.share_url;
+                    this.showUrlPreview(fullUrl, fileName, true);
+                } else {
+                    // Create a quick share link
+                    const response = await csrfFetch('/api/files/share', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            file_path: filePath,
+                            expires_hours: null,
+                            max_accesses: null
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    if (response.ok) {
+                        const baseUrl = window.location.origin;
+                        const fullUrl = baseUrl + data.share_url;
+                        this.showUrlPreview(fullUrl, fileName, false);
+                    } else {
+                        alert('Error: ' + (data.detail || 'Failed to create share link'));
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error getting preview URL:', error);
+            alert('Error getting preview URL. Please try again.');
+        }
+    }
+    
+    showUrlPreview(url, fileName, isExisting) {
+        const message = isExisting 
+            ? `Public URL for "${fileName}":\n\n${url}\n\n(Copied to clipboard)`
+            : `Public URL created for "${fileName}":\n\n${url}\n\n(Copied to clipboard)`;
+        
+        // Copy to clipboard
+        navigator.clipboard.writeText(url).then(() => {
+            alert(message);
+        }).catch(() => {
+            // Fallback for older browsers
+            const textarea = document.createElement('textarea');
+            textarea.value = url;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            alert(message);
+        });
+    }
+    
+    openFile(filePath) {
+        // Open file in new tab or download
+        const url = `/api/files/view/${encodeURIComponent(filePath)}`;
+        window.open(url, '_blank');
     }
     
     showUploadDialog() {

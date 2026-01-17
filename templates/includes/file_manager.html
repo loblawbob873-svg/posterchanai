@@ -159,3 +159,23 @@
         </div>
     </div>
 </div>
+
+<!-- File Context Menu -->
+<div class="file-context-menu" id="fileContextMenu" style="display: none;">
+    <div class="context-menu-item" onclick="fileManager.contextMenuAction('delete')">
+        <span class="context-menu-icon">🗑️</span>
+        <span>Delete</span>
+    </div>
+    <div class="context-menu-item" onclick="fileManager.contextMenuAction('email')">
+        <span class="context-menu-icon">📧</span>
+        <span>Email</span>
+    </div>
+    <div class="context-menu-item" onclick="fileManager.contextMenuAction('share')">
+        <span class="context-menu-icon">🔗</span>
+        <span>Share / Get Public URL</span>
+    </div>
+    <div class="context-menu-item" onclick="fileManager.contextMenuAction('preview')">
+        <span class="context-menu-icon">👁️</span>
+        <span>Preview URL</span>
+    </div>
+</div>

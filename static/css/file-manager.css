@@ -750,3 +750,41 @@
     background: rgba(255, 51, 102, 0.2);
     color: var(--danger, #ff3366);
 }
+
+/* File Context Menu */
+.file-context-menu {
+    position: fixed;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    z-index: 10003;
+    min-width: 200px;
+    padding: 4px 0;
+    display: none;
+}
+
+.context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: background 0.2s;
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.context-menu-item:hover {
+    background: var(--bg-secondary);
+}
+
+.context-menu-item:active {
+    background: var(--bg-tertiary);
+}
+
+.context-menu-icon {
+    font-size: 18px;
+    width: 24px;
+    text-align: center;
+}
