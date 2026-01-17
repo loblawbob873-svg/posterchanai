@@ -288,8 +288,51 @@
         <button class="cyberpunk-fullscreen-nav cyberpunk-fullscreen-prev" id="cyberpunkFullscreenPrev">‹</button>
         <div class="cyberpunk-fullscreen-content">
             <img id="cyberpunkFullscreenImage" src="" alt="">
+            <video id="cyberpunkFullscreenVideo" class="cyberpunk-fullscreen-media" controls style="display: none;"></video>
             <div class="cyberpunk-fullscreen-info" id="cyberpunkFullscreenInfo"></div>
         </div>
         <button class="cyberpunk-fullscreen-nav cyberpunk-fullscreen-next" id="cyberpunkFullscreenNext">›</button>
+    </div>
+</div>
+
+<!-- Audio Player Modal -->
+<div class="modal cyberpunk-audio-player-modal" id="audioPlayerModal" style="display: none;">
+    <div class="modal-content cyberpunk-audio-player-content">
+        <div class="modal-header">
+            <h2>🎵 Audio Player</h2>
+            <button class="btn-icon modal-close" onclick="if(window.fileManager){window.fileManager.closeAudioPlayer();}">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 20px; text-align: center;">
+            <div class="cyberpunk-audio-info" id="audioPlayerTitle" style="color: #00ffff; font-size: 18px; margin-bottom: 20px; font-family: monospace;">
+                Loading...
+            </div>
+            <audio id="audioPlayer" controls style="width: 100%; max-width: 600px; outline: none;">
+                Your browser does not support the audio element.
+            </audio>
+            <div style="margin-top: 20px; color: #00ff88; font-size: 12px; font-family: monospace;">
+                Use controls to play, pause, and seek
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Video Player Modal -->
+<div class="modal cyberpunk-video-player-modal" id="videoPlayerModal" style="display: none;">
+    <div class="modal-content cyberpunk-video-player-content">
+        <div class="modal-header">
+            <h2>🎬 Video Player</h2>
+            <button class="btn-icon modal-close" onclick="if(window.fileManager){window.fileManager.closeVideoPlayer();}">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 20px; text-align: center;">
+            <div class="cyberpunk-video-info" id="videoPlayerTitle" style="color: #00ffff; font-size: 18px; margin-bottom: 20px; font-family: monospace;">
+                Loading...
+            </div>
+            <video id="videoPlayer" controls style="width: 100%; max-width: 900px; max-height: 70vh; outline: none;">
+                Your browser does not support the video element.
+            </video>
+            <div style="margin-top: 20px; color: #00ff88; font-size: 12px; font-family: monospace;">
+                Use controls to play, pause, and seek
+            </div>
+        </div>
     </div>
 </div>

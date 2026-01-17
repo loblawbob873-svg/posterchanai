@@ -1,8 +1,9 @@
 """
-Thumbnail Service - Generates and manages image thumbnails.
+Thumbnail Service - Generates and manages image and video thumbnails.
 Stores thumbnails in .thumbnails folder within user directories.
 """
 import logging
+import subprocess
 from pathlib import Path
 from typing import Optional, List, Tuple, Callable
 from PIL import Image
@@ -13,6 +14,9 @@ logger = logging.getLogger(__name__)
 # Supported image extensions
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif'}
 
+# Supported video extensions
+VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v', '.3gp', '.ogv'}
+
 # Default thumbnail size
 DEFAULT_THUMBNAIL_SIZE = (200, 200)
 
@@ -20,6 +24,16 @@ DEFAULT_THUMBNAIL_SIZE = (200, 200)
 def is_image_file(file_path: Path) -> bool:
     """Check if a file is an image based on its extension."""
     return file_path.suffix.lower() in IMAGE_EXTENSIONS
+
+
+def is_video_file(file_path: Path) -> bool:
+    """Check if a file is a video based on its extension."""
+    return file_path.suffix.lower() in VIDEO_EXTENSIONS
+
+
+def is_media_file(file_path: Path) -> bool:
+    """Check if a file is an image or video."""
+    return is_image_file(file_path) or is_video_file(file_path)
 
 
 def get_thumbnail_path(user_path: Path, image_path: Path) -> Path:
@@ -163,6 +177,70 @@ def generate_thumbnail_file(
         return False
 
 
+def generate_thumbnail_for_video(
+    video_path: Path,
+    thumbnail_path: Path,
+    max_size: Tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
+    time_offset: float = 1.0
+) -> bool:
+    """
+    Generate a thumbnail from a video file using ffmpeg.
+    
+    Args:
+        video_path: Path to the source video
+        thumbnail_path: Path where thumbnail should be saved
+        max_size: Maximum size (width, height) for thumbnail
+        time_offset: Time offset in seconds to extract frame (default 1.0)
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Check if ffmpeg is available
+        try:
+            subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5, check=True)
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+            logger.warning("ffmpeg not available, cannot generate video thumbnail")
+            return False
+        
+        # Create thumbnail directory if it doesn't exist
+        thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Use ffmpeg to extract frame and resize
+        width, height = max_size
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-i', str(video_path),
+            '-ss', str(time_offset),  # Seek to time offset
+            '-vframes', '1',  # Extract 1 frame
+            '-vf', f'scale={width}:{height}:force_original_aspect_ratio=decrease',  # Resize maintaining aspect ratio
+            '-y',  # Overwrite output file
+            str(thumbnail_path)
+        ]
+        
+        result = subprocess.run(
+            ffmpeg_cmd,
+            capture_output=True,
+            timeout=30,  # 30 second timeout
+            check=False
+        )
+        
+        if result.returncode == 0 and thumbnail_path.exists():
+            logger.debug(f"Generated video thumbnail: {thumbnail_path}")
+            return True
+        else:
+            error_msg = result.stderr.decode('utf-8', errors='ignore') if result.stderr else 'Unknown error'
+            logger.warning(f"Failed to generate video thumbnail for {video_path}: {error_msg[:200]}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        logger.error(f"Timeout generating video thumbnail for {video_path}")
+        return False
+    except Exception as e:
+        logger.error(f"Error generating video thumbnail for {video_path}: {e}", exc_info=True)
+        return False
+
+
 def generate_thumbnail_for_image(
     user_path: Path,
     image_path: Path,
@@ -190,6 +268,59 @@ def generate_thumbnail_for_image(
     if generate_thumbnail_file(image_path, thumbnail_path, max_size):
         return thumbnail_path
     
+    return None
+
+
+def generate_thumbnail_for_video_file(
+    user_path: Path,
+    video_path: Path,
+    max_size: Tuple[int, int] = DEFAULT_THUMBNAIL_SIZE
+) -> Optional[Path]:
+    """
+    Generate thumbnail for a single video and return the thumbnail path.
+    
+    Args:
+        user_path: The user's root directory
+        video_path: Full path to the video file
+        max_size: Maximum size for thumbnail
+    
+    Returns:
+        Path to generated thumbnail, or None if failed
+    """
+    if not is_video_file(video_path):
+        return None
+    
+    if not video_path.exists() or not video_path.is_file():
+        return None
+    
+    thumbnail_path = get_thumbnail_path(user_path, video_path)
+    
+    if generate_thumbnail_for_video(video_path, thumbnail_path, max_size):
+        return thumbnail_path
+    
+    return None
+
+
+def generate_thumbnail_for_media(
+    user_path: Path,
+    media_path: Path,
+    max_size: Tuple[int, int] = DEFAULT_THUMBNAIL_SIZE
+) -> Optional[Path]:
+    """
+    Generate thumbnail for an image or video file.
+    
+    Args:
+        user_path: The user's root directory
+        media_path: Full path to the media file (image or video)
+        max_size: Maximum size for thumbnail
+    
+    Returns:
+        Path to generated thumbnail, or None if failed
+    """
+    if is_image_file(media_path):
+        return generate_thumbnail_for_image(user_path, media_path, max_size)
+    elif is_video_file(media_path):
+        return generate_thumbnail_for_video_file(user_path, media_path, max_size)
     return None
 
 

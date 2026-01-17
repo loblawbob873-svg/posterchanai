@@ -226,7 +226,7 @@ async def get_all_images(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get all images from user's storage recursively, sorted by newest first. Supports proxying to storage server."""
+    """Get all images and videos from user's storage recursively, sorted by newest first. Supports proxying to storage server."""
     # Check if storage server is configured - proxy request if so
     storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
     if storage_server_url and storage_server_url.value:
@@ -277,30 +277,49 @@ async def get_all_images(
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
-    # Image extensions
-    image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+    # Image and video extensions
+    from app.services.thumbnail_service import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+    media_extensions = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
     
     def _get_all_images_sync():
-        """Synchronous function to get all images."""
+        """Synchronous function to get all images and videos."""
         images = []
         
         try:
-            # Recursively find all image files
+            # Recursively find all image and video files
             for item in user_path.rglob('*'):
                 try:
-                    # Skip directories and non-image files
-                    if item.is_dir() or item.suffix.lower() not in image_extensions:
+                    # Skip directories and non-media files
+                    if item.is_dir() or item.suffix.lower() not in media_extensions:
                         continue
                     
-                    # Skip thumbnails directory
-                    if '.thumbnails' in str(item):
-                        continue
+                    # Skip thumbnails directory - check path parts, not just string contains
+                    # This avoids false positives like "my.thumbnails.jpg"
+                    try:
+                        relative = item.relative_to(user_path)
+                        if any(part == '.thumbnails' for part in relative.parts):
+                            continue
+                    except ValueError:
+                        # If relative path calculation fails, fall back to string check
+                        if '.thumbnails' in str(item):
+                            continue
                     
                     stat = item.stat()
                     relative_path = str(item.relative_to(user_path))
                     
                     # Get modification time (prefer mtime, fallback to ctime if mtime is 0)
+                    # Use the actual file's mtime, not the directory's mtime
                     modified_time = stat.st_mtime if stat.st_mtime > 0 else stat.st_ctime
+                    
+                    # Ensure we have a valid timestamp
+                    if modified_time <= 0:
+                        logger.warning(f"Invalid timestamp for {item}: mtime={stat.st_mtime}, ctime={stat.st_ctime}")
+                        modified_time = max(stat.st_mtime, stat.st_ctime, 1.0)  # At least use 1.0 as fallback
+                    
+                    from app.services.thumbnail_service import is_image_file, is_video_file
+                    
+                    is_image = is_image_file(item)
+                    is_video = is_video_file(item)
                     
                     image_info = {
                         "name": item.name,
@@ -308,12 +327,13 @@ async def get_all_images(
                         "size": stat.st_size,
                         "modified": modified_time,
                         "modified_date": datetime.fromtimestamp(modified_time).isoformat(),
+                        "type": "image" if is_image else "video" if is_video else "unknown",
                     }
                     
                     # Get thumbnail (use stored thumbnail if available)
                     thumbnail_generated = False
                     try:
-                        from app.services.thumbnail_service import get_thumbnail_if_exists, generate_thumbnail_for_image
+                        from app.services.thumbnail_service import get_thumbnail_if_exists, generate_thumbnail_for_image, generate_thumbnail_for_video_file
                         
                         thumbnail_path = get_thumbnail_if_exists(user_path, item)
                         if thumbnail_path and thumbnail_path.exists():
@@ -324,19 +344,33 @@ async def get_all_images(
                                 thumbnail_generated = True
                         
                         if not thumbnail_generated:
-                            # Generate on-the-fly from original image
-                            thumbnail = generate_thumbnail(item, max_size=(300, 300))
-                            if thumbnail:
-                                image_info["thumbnail"] = thumbnail
-                                thumbnail_generated = True
-                                # Also save thumbnail for future use (async, don't wait)
+                            if is_image:
+                                # Generate on-the-fly from original image
+                                thumbnail = generate_thumbnail(item, max_size=(300, 300))
+                                if thumbnail:
+                                    image_info["thumbnail"] = thumbnail
+                                    thumbnail_generated = True
+                                    # Also save thumbnail for future use (async, don't wait)
+                                    try:
+                                        generate_thumbnail_for_image(user_path, item)
+                                    except Exception as save_error:
+                                        logger.debug(f"Failed to save thumbnail for {item}: {save_error}")
+                            elif is_video:
+                                # For videos, try to generate thumbnail
                                 try:
-                                    generate_thumbnail_for_image(user_path, item)
-                                except Exception as save_error:
-                                    logger.debug(f"Failed to save thumbnail for {item}: {save_error}")
+                                    generate_thumbnail_for_video_file(user_path, item)
+                                    # Try to get the thumbnail we just generated
+                                    thumbnail_path = get_thumbnail_if_exists(user_path, item)
+                                    if thumbnail_path and thumbnail_path.exists():
+                                        thumbnail = generate_thumbnail(thumbnail_path, max_size=(300, 300))
+                                        if thumbnail:
+                                            image_info["thumbnail"] = thumbnail
+                                            thumbnail_generated = True
+                                except Exception as video_error:
+                                    logger.debug(f"Failed to generate video thumbnail for {item}: {video_error}")
                         
-                        # If still no thumbnail, try progressively smaller sizes
-                        if not thumbnail_generated:
+                        # If still no thumbnail, try progressively smaller sizes (images only)
+                        if not thumbnail_generated and is_image:
                             for size in [(200, 200), (150, 150), (100, 100)]:
                                 try:
                                     thumbnail = generate_thumbnail(item, max_size=size)
@@ -350,7 +384,7 @@ async def get_all_images(
                                     continue
                         
                         if not thumbnail_generated:
-                            logger.warning(f"Could not generate thumbnail for {item.name} after all attempts")
+                            logger.debug(f"Could not generate thumbnail for {item.name} after all attempts")
                     except Exception as e:
                         logger.warning(f"Failed to generate thumbnail for {item}: {e}", exc_info=True)
                     
@@ -373,19 +407,30 @@ async def get_all_images(
         
         # Debug: log first few images to verify sorting
         if images:
-            logger.info(f"[FILES] Sorted {len(images)} images. First 5 (newest first):")
-            for i, img in enumerate(images[:5]):
+            logger.info(f"[FILES] Found {len(images)} images total. First 10 (newest first):")
+            for i, img in enumerate(images[:10]):
                 mod_time = img.get('modified', 0)
                 mod_date = datetime.fromtimestamp(mod_time).isoformat() if mod_time > 0 else 'N/A'
-                logger.info(f"  {i+1}. {img.get('name')} - modified: {mod_time} ({mod_date})")
+                path_info = img.get('path', 'unknown')
+                # Check if this looks like a thumbnail file
+                is_thumbnail = '.thumbnails' in path_info.lower()
+                thumb_marker = " [THUMBNAIL?]" if is_thumbnail else ""
+                logger.info(f"  {i+1}. {img.get('name')} - modified: {mod_time} ({mod_date}) - path: {path_info}{thumb_marker}")
             
-            # Verify sorting
+            # Verify sorting - check more images
             prev_time = None
-            for i, img in enumerate(images[:10]):
+            sorting_errors = []
+            for i, img in enumerate(images[:50]):  # Check first 50
                 curr_time = float(img.get('modified', 0) or 0)
                 if prev_time is not None and curr_time > prev_time:
-                    logger.warning(f"[FILES] Sorting error: Image {i} ({img.get('name')}) has newer timestamp ({curr_time}) than previous ({prev_time})")
+                    sorting_errors.append((i, img.get('name'), curr_time, prev_time))
+                    logger.warning(f"[FILES] Sorting error at index {i}: {img.get('name')} (time: {curr_time}) is newer than previous (time: {prev_time})")
                 prev_time = curr_time
+            
+            if not sorting_errors:
+                logger.info(f"[FILES] ✓ Sorting verified: All {min(50, len(images))} checked images are in correct order (newest first)")
+            else:
+                logger.error(f"[FILES] ❌ Found {len(sorting_errors)} sorting errors in first 50 images")
         
         # Apply pagination
         total = len(images)

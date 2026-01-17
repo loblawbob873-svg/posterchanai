@@ -665,6 +665,111 @@
     background: rgba(0, 0, 0, 0.9);
 }
 
+.file-play-btn {
+    background: rgba(0, 255, 136, 0.3) !important;
+    border: 1px solid #00ff88 !important;
+    color: #00ff88 !important;
+}
+
+.file-play-btn:hover {
+    background: rgba(0, 255, 136, 0.5) !important;
+    box-shadow: 0 0 10px rgba(0, 255, 136, 0.6);
+}
+
+/* Audio Player Modal */
+.cyberpunk-audio-player-modal {
+    z-index: 10000;
+}
+
+.cyberpunk-audio-player-content {
+    max-width: 700px;
+    background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+    border: 2px solid #00ffff;
+    box-shadow: 
+        0 0 30px rgba(0, 255, 255, 0.5),
+        inset 0 0 20px rgba(0, 255, 255, 0.1);
+}
+
+.cyberpunk-audio-info {
+    text-shadow: 0 0 10px rgba(0, 255, 255, 0.8);
+    word-break: break-word;
+}
+
+#audioPlayer {
+    filter: drop-shadow(0 0 10px rgba(0, 255, 255, 0.5));
+}
+
+#audioPlayer::-webkit-media-controls-panel {
+    background-color: rgba(0, 0, 0, 0.8);
+}
+
+#audioPlayer::-webkit-media-controls-play-button {
+    background-color: rgba(0, 255, 136, 0.3);
+    border-radius: 50%;
+}
+
+#audioPlayer::-webkit-media-controls-current-time-display,
+#audioPlayer::-webkit-media-controls-time-remaining-display {
+    color: #00ffff;
+    font-family: monospace;
+}
+
+#audioPlayer::-webkit-media-controls-timeline {
+    background-color: rgba(0, 255, 255, 0.2);
+    border-radius: 2px;
+}
+
+#audioPlayer::-webkit-media-controls-volume-slider {
+    background-color: rgba(0, 255, 255, 0.2);
+}
+
+/* Video Player Modal */
+.cyberpunk-video-player-modal {
+    z-index: 10000;
+}
+
+.cyberpunk-video-player-content {
+    max-width: 1000px;
+    background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+    border: 2px solid #00ffff;
+    box-shadow: 
+        0 0 30px rgba(0, 255, 255, 0.5),
+        inset 0 0 20px rgba(0, 255, 255, 0.1);
+}
+
+.cyberpunk-video-info {
+    text-shadow: 0 0 10px rgba(0, 255, 255, 0.8);
+    word-break: break-word;
+}
+
+#videoPlayer {
+    filter: drop-shadow(0 0 10px rgba(0, 255, 255, 0.5));
+}
+
+#videoPlayer::-webkit-media-controls-panel {
+    background-color: rgba(0, 0, 0, 0.8);
+}
+
+#videoPlayer::-webkit-media-controls-play-button {
+    background-color: rgba(0, 255, 136, 0.3);
+    border-radius: 50%;
+}
+
+#videoPlayer::-webkit-media-controls-current-time-display,
+#videoPlayer::-webkit-media-controls-time-remaining-display {
+    color: #00ffff;
+    font-family: monospace;
+}
+
+#videoPlayer::-webkit-media-controls-timeline {
+    background-color: rgba(0, 255, 255, 0.2);
+    border-radius: 2px;
+}
+
+#videoPlayer::-webkit-media-controls-volume-slider {
+    background-color: rgba(0, 255, 255, 0.2);
+}
+
 /* File Modals */
 .file-modal {
     position: fixed;

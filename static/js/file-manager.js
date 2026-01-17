@@ -21,6 +21,7 @@ class FileManager {
         this.imageLoadOffset = 0;
         this.imageLoadLimit = 50;
         this.hasMoreImages = true;
+        this.currentAudioPlayer = null; // Track currently playing audio
         this.init();
     }
     
@@ -649,8 +650,12 @@ class FileManager {
                 const thumbnail = item.thumbnail ? `<img src="${item.thumbnail}" alt="" class="file-thumbnail">` : '';
                 const isSelected = this.selectedFiles.has(item.path);
                 const isExternal = item.is_external || false;
+                const isAudio = !item.is_directory && this.isAudioFile(item.path);
+                const isVideo = !item.is_directory && this.isVideoFile(item.path);
                 const actions = !item.is_directory ? `
                     <div class="file-actions" onclick="event.stopPropagation();">
+                        ${isAudio ? `<button class="file-action-btn file-play-btn" title="Play Audio" onclick="if(window.fileManager && window.fileManager.openAudioPlayer){window.fileManager.openAudioPlayer('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Audio player not available');}">▶</button>` : ''}
+                        ${isVideo ? `<button class="file-action-btn file-play-btn" title="Play Video" onclick="if(window.fileManager && window.fileManager.openVideoPlayer){window.fileManager.openVideoPlayer('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Video player not available');}">▶</button>` : ''}
                         <button class="file-action-btn" title="Email" onclick="if(window.fileManager && window.fileManager.emailFile){window.fileManager.emailFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Email functionality not available');}">📧</button>
                         <button class="file-action-btn" title="Share" onclick="if(window.fileManager && window.fileManager.shareFile){window.fileManager.shareFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Share functionality not available');}">🔗</button>
                     </div>
@@ -695,8 +700,12 @@ class FileManager {
                             const isSelected = this.selectedFiles.has(item.path);
                             const isExternal = item.is_external || false;
                             const icon = isExternal ? '💾' : (item.is_directory ? '📂' : this.getFileIcon(item.name));
+                            const isAudio = !item.is_directory && this.isAudioFile(item.path);
+                            const isVideo = !item.is_directory && this.isVideoFile(item.path);
                             const actions = !item.is_directory ? `
                                 <td>
+                                    ${isAudio ? `<button class="file-action-btn file-play-btn" title="Play Audio" onclick="if(window.fileManager && window.fileManager.openAudioPlayer){window.fileManager.openAudioPlayer('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Audio player not available');}">▶</button>` : ''}
+                                    ${isVideo ? `<button class="file-action-btn file-play-btn" title="Play Video" onclick="if(window.fileManager && window.fileManager.openVideoPlayer){window.fileManager.openVideoPlayer('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Video player not available');}">▶</button>` : ''}
                                     <button class="file-action-btn" title="Email" onclick="if(window.fileManager && window.fileManager.emailFile){window.fileManager.emailFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Email functionality not available');}">📧</button>
                                     <button class="file-action-btn" title="Share" onclick="if(window.fileManager && window.fileManager.shareFile){window.fileManager.shareFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Share functionality not available');}">🔗</button>
                                 </td>
@@ -737,10 +746,14 @@ class FileManager {
                 if (isDir) {
                     this.loadFiles(path);
                 } else {
-                    // Check if it's an image
+                    // Check file type and handle accordingly
                     const ext = path.split('.').pop().toLowerCase();
                     if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext)) {
                         this.openImageViewer(path);
+                    } else if (this.isAudioFile(path)) {
+                        this.openAudioPlayer(path, item.dataset.name);
+                    } else if (this.isVideoFile(path)) {
+                        this.openVideoPlayer(path, item.dataset.name);
                     } else {
                         // Download file
                         window.open(`/api/files/view/${encodeURIComponent(path)}`, '_blank');
@@ -1008,12 +1021,24 @@ class FileManager {
         }
     }
     
+    isAudioFile(filePath) {
+        const ext = filePath.split('.').pop().toLowerCase();
+        const audioExtensions = ['mp3', 'flac', 'ogg', 'wav', 'm4a', 'aac', 'opus', 'wma'];
+        return audioExtensions.includes(ext);
+    }
+    
+    isVideoFile(filePath) {
+        const ext = filePath.split('.').pop().toLowerCase();
+        const videoExtensions = ['mp4', 'avi', 'mov', 'mkv', 'webm', 'flv', 'wmv', 'm4v', '3gp', 'ogv'];
+        return videoExtensions.includes(ext);
+    }
+    
     getFileIcon(filename) {
         const ext = filename.split('.').pop().toLowerCase();
         const icons = {
             'jpg': '🖼️', 'jpeg': '🖼️', 'png': '🖼️', 'gif': '🖼️', 'webp': '🖼️', 'bmp': '🖼️',
             'pdf': '📄', 'doc': '📄', 'docx': '📄',
-            'mp3': '🎵', 'wav': '🎵', 'flac': '🎵',
+            'mp3': '🎵', 'wav': '🎵', 'flac': '🎵', 'ogg': '🎵', 'm4a': '🎵', 'aac': '🎵', 'opus': '🎵', 'wma': '🎵',
             'mp4': '🎬', 'avi': '🎬', 'mkv': '🎬',
             'zip': '📦', 'rar': '📦', 'tar': '📦',
             'txt': '📝', 'md': '📝',
@@ -1199,13 +1224,21 @@ class FileManager {
     }
     
     openFile(filePath) {
-        // Check if it's an image file
+        // Check file type and handle accordingly
         const ext = filePath.split('.').pop().toLowerCase();
         const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
         
         if (imageExts.includes(ext)) {
             // Use image viewer for images
             this.openImageViewer(filePath);
+        } else if (this.isAudioFile(filePath)) {
+            // Extract filename from path for display
+            const fileName = filePath.split('/').pop();
+            this.openAudioPlayer(filePath, fileName);
+        } else if (this.isVideoFile(filePath)) {
+            // Extract filename from path for display
+            const fileName = filePath.split('/').pop();
+            this.openVideoPlayer(filePath, fileName);
         } else {
             // Open other files in new tab
             const url = `/api/files/view/${encodeURIComponent(filePath)}`;
@@ -2069,11 +2102,35 @@ class FileManager {
         
         grid.innerHTML = '';
         
+        // Verify array is sorted before rendering
+        const sortedCopy = [...this.allImages].sort((a, b) => {
+            const timeA = Number(a.modified) || 0;
+            const timeB = Number(b.modified) || 0;
+            if (timeB !== timeA) return timeB - timeA;
+            return (a.path || '').toLowerCase().localeCompare((b.path || '').toLowerCase());
+        });
+        
+        // Check if our array matches the sorted copy
+        let orderMismatch = false;
+        for (let i = 0; i < Math.min(this.allImages.length, 10); i++) {
+            if (this.allImages[i].path !== sortedCopy[i].path) {
+                orderMismatch = true;
+                console.warn(`Order mismatch at index ${i}: expected ${sortedCopy[i].name}, got ${this.allImages[i].name}`);
+                break;
+            }
+        }
+        if (orderMismatch) {
+            console.warn('Array order mismatch detected, re-sorting...');
+            this.allImages = sortedCopy;
+        }
+        
         this.allImages.forEach((image, index) => {
             const item = document.createElement('div');
             item.className = 'cyberpunk-gallery-item';
             item.dataset.index = index;
             item.dataset.path = image.path;
+            // Store timestamp in dataset for debugging
+            item.dataset.modified = image.modified || '0';
             
             const img = document.createElement('img');
             if (image.thumbnail) {
@@ -2125,6 +2182,17 @@ class FileManager {
             item.appendChild(img);
             item.appendChild(overlay);
             
+            // Add play button overlay for videos
+            const isVideo = image.type === 'video' || /\.(mp4|avi|mov|mkv|webm|flv|wmv|m4v|3gp|ogv)$/i.test(image.name);
+            if (isVideo) {
+                item.dataset.type = 'video';
+                const playButton = document.createElement('div');
+                playButton.className = 'cyberpunk-video-play-button';
+                playButton.innerHTML = '▶';
+                playButton.title = 'Play video';
+                item.appendChild(playButton);
+            }
+            
             item.addEventListener('click', () => {
                 this.openFullscreenViewer(index);
             });
@@ -2138,19 +2206,52 @@ class FileManager {
         this.currentImageIndex = index;
         const fullscreen = document.getElementById('cyberpunkFullscreenViewer');
         const img = document.getElementById('cyberpunkFullscreenImage');
+        const video = document.getElementById('cyberpunkFullscreenVideo');
         const info = document.getElementById('cyberpunkFullscreenInfo');
         const prevBtn = document.getElementById('cyberpunkFullscreenPrev');
         const nextBtn = document.getElementById('cyberpunkFullscreenNext');
         
-        if (!fullscreen || !img) return;
+        if (!fullscreen) return;
         
-        const image = this.allImages[index];
-        if (!image) return;
+        const media = this.allImages[index];
+        if (!media) return;
         
-        img.src = `/api/files/view/${encodeURIComponent(image.path)}`;
+        const isVideo = media.type === 'video' || /\.(mp4|avi|mov|mkv|webm|flv|wmv|m4v|3gp|ogv)$/i.test(media.name);
+        
+        // Hide/show image or video element
+        if (img) {
+            img.style.display = isVideo ? 'none' : 'block';
+        }
+        if (video) {
+            video.style.display = isVideo ? 'block' : 'none';
+            if (isVideo) {
+                video.src = `/api/files/view/${encodeURIComponent(media.path)}`;
+                video.load(); // Reload video
+            } else {
+                video.pause();
+                video.src = '';
+            }
+        } else if (isVideo) {
+            // Create video element if it doesn't exist
+            const videoContainer = fullscreen.querySelector('.cyberpunk-fullscreen-content');
+            if (videoContainer) {
+                const newVideo = document.createElement('video');
+                newVideo.id = 'cyberpunkFullscreenVideo';
+                newVideo.className = 'cyberpunk-fullscreen-media';
+                newVideo.controls = true;
+                newVideo.src = `/api/files/view/${encodeURIComponent(media.path)}`;
+                videoContainer.appendChild(newVideo);
+            }
+        }
+        
+        if (!isVideo && img) {
+            img.src = `/api/files/view/${encodeURIComponent(media.path)}`;
+        }
+        
         if (info) {
-            const date = new Date(image.modified * 1000).toLocaleString();
-            info.textContent = `${index + 1} / ${this.allImages.length} - ${image.name} [${date}]`;
+            const date = new Date(media.modified * 1000).toLocaleString();
+            const typeLabel = isVideo ? 'VIDEO' : 'IMAGE';
+            info.textContent = `${index + 1} / ${this.allImages.length} - ${media.name} [${typeLabel}] [${date}]`;
         }
         
         if (prevBtn) prevBtn.style.display = index > 0 ? 'flex' : 'none';
@@ -2163,6 +2264,104 @@ class FileManager {
         this.fullscreenViewerOpen = false;
         const fullscreen = document.getElementById('cyberpunkFullscreenViewer');
         if (fullscreen) fullscreen.style.display = 'none';
+    }
+    
+    openAudioPlayer(filePath, fileName) {
+        const modal = document.getElementById('audioPlayerModal');
+        if (!modal) {
+            console.error('Audio player modal not found');
+            // Fallback: open in new tab
+            window.open(`/api/files/view/${encodeURIComponent(filePath)}`, '_blank');
+            return;
+        }
+        
+        // Stop any currently playing audio
+        if (this.currentAudioPlayer) {
+            this.currentAudioPlayer.pause();
+            this.currentAudioPlayer = null;
+        }
+        
+        const audio = document.getElementById('audioPlayer');
+        const audioTitle = document.getElementById('audioPlayerTitle');
+        
+        if (audio) {
+            audio.src = `/api/files/view/${encodeURIComponent(filePath)}`;
+            audio.load();
+            this.currentAudioPlayer = audio;
+        }
+        
+        if (audioTitle) {
+            audioTitle.textContent = fileName;
+        }
+        
+        modal.style.display = 'flex';
+        
+        // Auto-play (optional - browsers may block this)
+        if (audio) {
+            audio.play().catch(err => {
+                console.log('Auto-play blocked:', err);
+                // User will need to click play manually
+            });
+        }
+    }
+    
+    closeAudioPlayer() {
+        const modal = document.getElementById('audioPlayerModal');
+        if (modal) modal.style.display = 'none';
+        
+        if (this.currentAudioPlayer) {
+            this.currentAudioPlayer.pause();
+            this.currentAudioPlayer = null;
+        }
+    }
+    
+    openVideoPlayer(filePath, fileName) {
+        const modal = document.getElementById('videoPlayerModal');
+        if (!modal) {
+            console.error('Video player modal not found');
+            // Fallback: open in new tab
+            window.open(`/api/files/view/${encodeURIComponent(filePath)}`, '_blank');
+            return;
+        }
+        
+        // Stop any currently playing video
+        if (this.currentAudioPlayer) {
+            this.currentAudioPlayer.pause();
+            this.currentAudioPlayer = null;
+        }
+        
+        const video = document.getElementById('videoPlayer');
+        const videoTitle = document.getElementById('videoPlayerTitle');
+        
+        if (video) {
+            video.src = `/api/files/view/${encodeURIComponent(filePath)}`;
+            video.load();
+            this.currentAudioPlayer = video; // Reuse the same tracking variable
+        }
+        
+        if (videoTitle) {
+            videoTitle.textContent = fileName;
+        }
+        
+        modal.style.display = 'flex';
+        
+        // Auto-play (optional - browsers may block this)
+        if (video) {
+            video.play().catch(err => {
+                console.log('Auto-play blocked:', err);
+                // User will need to click play manually
+            });
+        }
+    }
+    
+    closeVideoPlayer() {
+        const modal = document.getElementById('videoPlayerModal');
+        if (modal) modal.style.display = 'none';
+        
+        if (this.currentAudioPlayer) {
+            this.currentAudioPlayer.pause();
+            this.currentAudioPlayer = null;
+        }
     }
     
     prevFullscreenImage() {
