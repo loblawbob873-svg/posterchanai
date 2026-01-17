@@ -110,6 +110,41 @@ def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]
         close_db = True
 
     try:
+        # First check if user wants to use built-in CalDAV
+        use_builtin = db.query(UserSetting).filter(
+            UserSetting.user_id == user_id,
+            UserSetting.key == "use_builtin_caldav"
+        ).first()
+        
+        if use_builtin and use_builtin.value == "true":
+            # Return built-in CalDAV config
+            from app.models import User
+            from app.models import Setting
+            
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                # Get the CalDAV server URL from settings
+                caldav_port = db.query(Setting).filter(Setting.key == "caldav_port").first()
+                port = caldav_port.value if caldav_port else "8081"
+                
+                caldav_base_url = db.query(Setting).filter(Setting.key == "caldav_base_url").first()
+                if caldav_base_url and caldav_base_url.value:
+                    url = f"{caldav_base_url.value.rstrip('/')}/caldav/{user.username}/"
+                else:
+                    # Auto-detect URL (use localhost for built-in)
+                    import socket
+                    hostname = socket.gethostname()
+                    url = f"http://{hostname}:{port}/caldav/{user.username}/"
+                
+                return [{
+                    "name": "Built-in Calendar",
+                    "url": url,
+                    "username": user.username,
+                    "password": "",  # Built-in uses same credentials
+                    "builtin": True
+                }]
+        
+        # Otherwise, use external CalDAV calendars
         calendars = []
         # Get calendar settings (stored as caldav_calendars JSON)
         setting = db.query(UserSetting).filter(
@@ -121,6 +156,9 @@ def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]
             import json
             try:
                 calendars = json.loads(setting.value)
+                # Mark as external
+                for cal in calendars:
+                    cal["builtin"] = False
             except json.JSONDecodeError:
                 logger.error(f"Invalid caldav_calendars JSON for user {user_id}")
 
@@ -138,6 +176,43 @@ def get_user_contacts_config(user_id: int, db: Session = None) -> Optional[Dict[
         close_db = True
 
     try:
+        # First check if user wants to use built-in CardDAV
+        use_builtin = db.query(UserSetting).filter(
+            UserSetting.user_id == user_id,
+            UserSetting.key == "use_builtin_cardav"
+        ).first()
+        
+        if use_builtin and use_builtin.value == "true":
+            # Return built-in CardDAV config
+            from app.models import User
+            from app.services.storage_service import get_storage_service
+            from app.database import get_db as get_db_generator
+            
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                # Get the CardDAV server URL from settings
+                from app.models import Setting
+                cardav_port = db.query(Setting).filter(Setting.key == "cardav_port").first()
+                port = cardav_port.value if cardav_port else "8082"
+                
+                cardav_base_url = db.query(Setting).filter(Setting.key == "caldav_base_url").first()
+                if cardav_base_url and cardav_base_url.value:
+                    url = f"{cardav_base_url.value.rstrip('/')}/carddav/{user.username}/"
+                else:
+                    # Auto-detect URL (use localhost for built-in)
+                    import socket
+                    hostname = socket.gethostname()
+                    url = f"http://{hostname}:{port}/carddav/{user.username}/"
+                
+                return {
+                    "url": url,
+                    "username": user.username,
+                    "password": "",  # Built-in uses same credentials
+                    "name": "Built-in CardDAV",
+                    "builtin": True
+                }
+        
+        # Otherwise, use external CardDAV config
         setting = db.query(UserSetting).filter(
             UserSetting.user_id == user_id,
             UserSetting.key == "carddav_config"
@@ -146,7 +221,9 @@ def get_user_contacts_config(user_id: int, db: Session = None) -> Optional[Dict[
         if setting and setting.value:
             import json
             try:
-                return json.loads(setting.value)
+                config = json.loads(setting.value)
+                config["builtin"] = False
+                return config
             except json.JSONDecodeError:
                 logger.error(f"Invalid carddav_config JSON for user {user_id}")
 
