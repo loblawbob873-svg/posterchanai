@@ -1961,10 +1961,17 @@ class ChatHandler {
         this.isStreaming = false;
         this.streamingMessage = null;
 
-        let html = this.formatMessage(data.content || '');
+        let html = '';
+        let contentHtml = '';
+
+        // Format content separately - don't mix with structured data
+        if (data.content) {
+            contentHtml = this.formatMessage(data.content);
+        }
 
         // Handle different response types
         if (data.type === 'images' && data.images) {
+            html = contentHtml;
             html += '<div class="image-grid">';
             for (const img of data.images) {
                 const safeSrc = this.escapeUrl(img.img_src);
@@ -1978,6 +1985,7 @@ class ChatHandler {
             }
             html += '</div>';
         } else if (data.type === 'generated_image' && data.image) {
+            html = contentHtml;
             const imageId = 'img_' + Date.now();
             html += `<div class="image-wrapper">
                 <img src="data:image/png;base64,${data.image}" alt="Generated image" class="generated-image" id="${imageId}">
@@ -1992,6 +2000,7 @@ class ChatHandler {
                 window.mascotController.onResponse(true);
             }
         } else if (data.type === 'search' && data.results) {
+            html = contentHtml;
             html += '<div class="search-results">';
             for (const r of data.results) {
                 const safeUrl = this.escapeUrl(r.url);
@@ -2004,6 +2013,8 @@ class ChatHandler {
             }
             html += '</div>';
         } else if (data.type === 'files' && data.files) {
+            // For files, put content first, then file results in a separate container
+            html = contentHtml;
             html += '<div class="file-search-results">';
             if (data.files.length === 0) {
                 html += '<p class="no-results">No files found.</p>';
@@ -2058,6 +2069,9 @@ class ChatHandler {
         } else if (data.type === 'music_stop' && window.musicPlayer) {
             // Stop playback
             window.musicPlayer.stop();
+        } else {
+            // Default: just use formatted content
+            html = contentHtml;
         }
 
         const messageEl = this.addMessage('assistant', html, true);
