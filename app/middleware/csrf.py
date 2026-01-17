@@ -27,6 +27,8 @@ CSRF_EXEMPT_PATHS: Set[str] = {
     "/api/storage/",  # Storage server endpoints (server-to-server auth)
     "/mcp/",     # MCP server endpoints
     "/ws/",      # WebSocket connections
+    # Temporarily exempt notes folders endpoint until CSRF header issue is resolved
+    # "/api/notes/folders",  # TODO: Re-enable after fixing CSRF header sending
 }
 
 # Paths that are always exempt (login, public resources, read-only endpoints)
