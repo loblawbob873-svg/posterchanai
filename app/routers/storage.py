@@ -814,20 +814,9 @@ async def get_all_images(
                         except ValueError:
                             pass
                     
-                    # For images, do a lightweight validation (skip corrupted files)
-                    if is_image:
-                        try:
-                            from PIL import Image
-                            # Quick check - just try to open (don't verify, too slow)
-                            with Image.open(item) as img:
-                                _ = img.format  # This will fail if file is completely invalid
-                                # Also check that image has valid dimensions
-                                if img.size[0] == 0 or img.size[1] == 0:
-                                    raise ValueError("Invalid image dimensions")
-                        except Exception as img_error:
-                            skipped_count += 1
-                            skipped_reasons['invalid_image'] = skipped_reasons.get('invalid_image', 0) + 1
-                            continue
+                    # Skip PIL validation for performance - trust file extension and size checks
+                    # PIL Image.open() is very slow when scanning thousands of files
+                    # We rely on file extension, size checks, and thumbnail_service.is_image_file() instead
                     
                     image_info = {
                         "name": item.name,
@@ -838,25 +827,9 @@ async def get_all_images(
                         "type": "image" if is_image else "video" if is_video else "unknown",
                     }
                     
-                    # Get thumbnail (ONLY use stored thumbnail - never generate on gallery load!)
-                    # Thumbnails should be generated during upload, not when viewing gallery
-                    # This prevents ffmpeg from running every time the gallery loads
-                    try:
-                        from app.services.thumbnail_service import get_thumbnail_if_exists
-                        from app.routers.files import generate_thumbnail
-                        
-                        thumbnail_path = get_thumbnail_if_exists(user_path, item)
-                        if thumbnail_path and thumbnail_path.exists():
-                            # Use stored thumbnail only
-                            thumbnail = generate_thumbnail(thumbnail_path, max_size=(300, 300))
-                            if thumbnail:
-                                image_info["thumbnail"] = thumbnail
-                        # If no thumbnail exists, that's OK - it will be generated on upload
-                        # Don't generate here as it's too slow and causes performance issues
-                    except Exception as e:
-                        # Silently skip thumbnail if it doesn't exist or can't be loaded
-                        # This is expected for files that haven't had thumbnails generated yet
-                        pass
+                    # Skip loading thumbnails during initial scan for performance
+                    # Thumbnails will be loaded on-demand by the frontend via /thumbnail endpoint
+                    # This dramatically speeds up the initial scan when there are thousands of files
                     
                     images.append(image_info)
                 except Exception as e:
