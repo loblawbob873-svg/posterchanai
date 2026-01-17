@@ -543,12 +543,29 @@ async def get_all_images(
         total = len(images)
         paginated_images = images[offset:offset + limit]
         
+        # Ensure all data is JSON serializable
+        # Convert any datetime objects to strings, ensure all numbers are floats/ints
+        serializable_images = []
+        for img in paginated_images:
+            serializable_img = {
+                "name": str(img.get("name", "")),
+                "path": str(img.get("path", "")),
+                "size": int(img.get("size", 0)),
+                "modified": float(img.get("modified", 0) or 0),
+                "modified_date": str(img.get("modified_date", "")),
+                "type": str(img.get("type", "unknown"))
+            }
+            # Only include thumbnail if it's a string (base64 data URL)
+            if "thumbnail" in img and isinstance(img["thumbnail"], str):
+                serializable_img["thumbnail"] = img["thumbnail"]
+            serializable_images.append(serializable_img)
+        
         return {
-            "images": paginated_images,
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-            "has_more": offset + limit < total
+            "images": serializable_images,
+            "total": int(total),
+            "limit": int(limit),
+            "offset": int(offset),
+            "has_more": bool(offset + limit < total)
         }
     
     try:
