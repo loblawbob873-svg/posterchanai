@@ -418,6 +418,14 @@ async def upload_file(
         with open(full_file_path, 'wb') as f:
             f.write(content)
         
+        # Restore EXIF timestamp if it's a media file
+        try:
+            from app.utils.exif_utils import restore_exif_timestamp
+            if restore_exif_timestamp(full_file_path):
+                logger.info(f"[UPLOAD] ✓ Restored EXIF timestamp for: {full_file_path.name}")
+        except Exception as e:
+            logger.debug(f"[UPLOAD] Could not restore EXIF timestamp for {full_file_path.name}: {e}")
+        
         return str(full_file_path.relative_to(user_path)), safe_filename, full_file_path
     
     relative_path, safe_filename, full_file_path = await asyncio.to_thread(_upload_file_sync)

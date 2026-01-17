@@ -538,6 +538,8 @@ async def rescan_storage(
     def _rescan_user_files(user: User):
         """Rescan files for a single user."""
         try:
+            from app.utils.exif_utils import batch_restore_timestamps
+            
             storage = get_storage_service(db)
             user_path = storage.get_user_path(user.username)
             
@@ -550,6 +552,11 @@ async def rescan_storage(
             dir_count = 0
             
             if user_path.exists():
+                # First, restore EXIF timestamps for all media files
+                logger.info(f"[Storage Rescan] Restoring EXIF timestamps for user {user.username}")
+                exif_stats = batch_restore_timestamps(user_path)
+                
+                # Then count files
                 for item in user_path.rglob('*'):
                     try:
                         if item.is_file():
@@ -566,6 +573,8 @@ async def rescan_storage(
                 "username": user.username,
                 "files": file_count,
                 "directories": dir_count,
+                "exif_restored": exif_stats.get('restored', 0) if user_path.exists() else 0,
+                "exif_processed": exif_stats.get('processed', 0) if user_path.exists() else 0,
                 "status": "success"
             }
         except Exception as e:
