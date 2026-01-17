@@ -178,7 +178,7 @@ class FileManager {
         sharesDiv.innerHTML = '<div class="file-manager-loading">Loading shared files...</div>';
         
         try {
-            const response = await fetch('/api/files/shares');
+            const response = await csrfFetch('/api/files/shares');
             if (response.ok) {
                 const data = await response.json();
                 console.log('FileManager: Loaded shared files:', data.shares?.length || 0);
@@ -190,7 +190,7 @@ class FileManager {
             }
         } catch (error) {
             console.error('Error loading shared files:', error);
-            sharesDiv.innerHTML = '<div class="file-manager-error">Error loading shared files</div>';
+            sharesDiv.innerHTML = '<div class="file-manager-error">Error loading shared files: ' + this.escapeHtml(error.message || 'Network error') + '</div>';
         }
     }
     
@@ -968,7 +968,7 @@ class FileManager {
     async previewUrl(filePath, fileName) {
         // Check if file already has a share link
         try {
-            const sharesResponse = await fetch('/api/files/shares');
+            const sharesResponse = await csrfFetch('/api/files/shares');
             if (sharesResponse.ok) {
                 const shares = await sharesResponse.json();
                 const existingShare = shares.find(s => s.file_path === filePath);

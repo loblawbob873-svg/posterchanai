@@ -31,16 +31,22 @@ function getCSRFToken() {
 async function csrfFetch(url, options = {}) {
     const method = (options.method || 'GET').toUpperCase();
 
-    // Add CSRF token for state-changing methods
-    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
-        const token = getCSRFToken();
-        if (token) {
-            // Ensure headers object exists
-            if (!options.headers) {
-                options.headers = {};
-            }
+    // Add CSRF token for all authenticated requests
+    // (Even GET requests may need it if the middleware expects it)
+    const token = getCSRFToken();
+    if (token) {
+        // Ensure headers object exists
+        if (!options.headers) {
+            options.headers = {};
+        }
+        // Always include CSRF token for state-changing methods
+        // For GET requests, include it if available (some endpoints may require it)
+        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method) || token) {
             options.headers[CSRF_HEADER_NAME] = token;
-        } else {
+        }
+    } else {
+        // Only warn for state-changing methods
+        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
             console.warn(`CSRF token not found in cookies for ${method} request to ${url}`);
             console.warn('Available cookies:', document.cookie);
             // Still make the request - let the server handle the error
