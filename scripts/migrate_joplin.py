@@ -440,12 +440,35 @@ def migrate_joplin(joplin_db_path, user_id, dry_run=False):
                                             if file_ext:
                                                 original_name = f"{original_name}{file_ext}"
                                         
-                                        # Save attachment
-                                        print(f"    Saving attachment to: {user.username}/notes/{note.id}/")
+                                        # Save attachment directly to local storage (bypass proxy) - ONE BY ONE
+                                        print(f"    [{attachments_migrated + 1}/{len(resource_ids)}] Processing: {original_name}")
                                         try:
-                                            filename = storage_service.save_note_attachment(
-                                                user.username, note.id, file_data, original_name
-                                            )
+                                            # Get note path and create directory if needed
+                                            note_path = storage_service.get_note_path(user.username, note.id)
+                                            if not note_path.exists():
+                                                note_path.mkdir(parents=True, exist_ok=True)
+                                            
+                                            # Generate filename with timestamp to avoid conflicts
+                                            from datetime import datetime
+                                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                                            safe_name = "".join(c for c in Path(original_name).stem if c.isalnum() or c in "-_")[:50]
+                                            ext = Path(original_name).suffix or ""
+                                            filename = f"{safe_name}_{timestamp}{ext}"
+                                            filepath = note_path / filename
+                                            
+                                            # Write file directly - ONE BY ONE with verification
+                                            print(f"      Writing {len(file_data)} bytes to {filepath.name}...")
+                                            with open(filepath, "wb") as f:
+                                                f.write(file_data)
+                                            
+                                            # Verify file was written correctly
+                                            if not filepath.exists():
+                                                raise Exception(f"File was not created at {filepath}")
+                                            
+                                            actual_size = filepath.stat().st_size
+                                            if actual_size != len(file_data):
+                                                raise Exception(f"File size mismatch: expected {len(file_data)}, got {actual_size}")
+                                            
                                             attachment_filenames.append(filename)
                                             attachments_migrated += 1
                                             
@@ -455,17 +478,30 @@ def migrate_joplin(joplin_db_path, user_id, dry_run=False):
                                             new_ref = f"](/api/notes/files/{user.username}/{note.id}/{filename})"
                                             updated_content = updated_content.replace(old_ref, new_ref)
                                             
+                                            # Also replace in HTML img tags
+                                            updated_content = updated_content.replace(
+                                                f'src=":/{resource_id}"',
+                                                f'src="/api/notes/files/{user.username}/{note.id}/{filename}"'
+                                            )
+                                            updated_content = updated_content.replace(
+                                                f"src=':/{resource_id}'",
+                                                f"src='/api/notes/files/{user.username}/{note.id}/{filename}'"
+                                            )
+                                            # Also handle bare resource IDs in img tags
+                                            updated_content = updated_content.replace(
+                                                f'src="{resource_id}"',
+                                                f'src="/api/notes/files/{user.username}/{note.id}/{filename}"'
+                                            )
+                                            updated_content = updated_content.replace(
+                                                f"src='{resource_id}'",
+                                                f"src='/api/notes/files/{user.username}/{note.id}/{filename}'"
+                                            )
+                                            
                                             # Get file size for display
                                             file_size = len(file_data)
                                             size_str = f"{file_size / 1024:.1f} KB" if file_size < 1024 * 1024 else f"{file_size / (1024 * 1024):.1f} MB"
                                             
-                                            # Verify file was actually written
-                                            note_path = storage_service.get_note_path(user.username, note.id)
-                                            saved_file = note_path / filename
-                                            if saved_file.exists():
-                                                print(f"    ✓ Migrated: {original_name} ({size_str}) -> {saved_file}")
-                                            else:
-                                                print(f"    ⚠ WARNING: File saved but not found at {saved_file}")
+                                            print(f"      ✓ Success: {original_name} ({size_str}) -> {filename}")
                                         except Exception as save_error:
                                             print(f"    ERROR saving attachment: {save_error}")
                                             import traceback
@@ -481,6 +517,41 @@ def migrate_joplin(joplin_db_path, user_id, dry_run=False):
                                 print(f"    WARNING: Resource file not found: {resource_file}")
                         else:
                             print(f"    WARNING: Resource {resource_id} not found in resources table")
+                
+                # Post-process: Fix any remaining HTML img tags with resource IDs
+                # Create a mapping of resource_id -> filename for all successfully migrated files
+                resource_to_filename = {}
+                for i, resource_id in enumerate(resource_ids):
+                    if i < len(attachment_filenames) and attachment_filenames[i]:
+                        resource_to_filename[resource_id] = attachment_filenames[i]
+                
+                # Fix HTML img tags for all successfully migrated resources
+                for resource_id, filename in resource_to_filename.items():
+                    if filename:
+                        api_url = f'/api/notes/files/{user.username}/{note.id}/{filename}'
+                        # Fix HTML img tags with various quote styles and formats
+                        patterns = [
+                            (rf'src=":/{resource_id}"', f'src="{api_url}"'),
+                            (rf"src=':/{resource_id}'", f"src='{api_url}'"),
+                            (rf'src="{resource_id}"', f'src="{api_url}"'),
+                            (rf"src='{resource_id}'", f"src='{api_url}'"),
+                        ]
+                        for old_pattern, new_pattern in patterns:
+                            updated_content = updated_content.replace(old_pattern, new_pattern)
+                        
+                        # Use regex for more complex cases (img tags with other attributes)
+                        updated_content = re.sub(
+                            rf'<img([^>]*)\ssrc=["\']:/{re.escape(resource_id)}["\']([^>]*)>',
+                            f'<img\\1 src="{api_url}"\\2>',
+                            updated_content,
+                            flags=re.IGNORECASE
+                        )
+                        updated_content = re.sub(
+                            rf'<img([^>]*)\ssrc=["\']{re.escape(resource_id)}["\']([^>]*)>',
+                            f'<img\\1 src="{api_url}"\\2>',
+                            updated_content,
+                            flags=re.IGNORECASE
+                        )
                 
                 # Update note content with migrated attachment references
                 if not dry_run and updated_content != note_content:

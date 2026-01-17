@@ -98,7 +98,11 @@ templates_path = os.path.join(os.path.dirname(__file__), "..", "templates")
 templates = Jinja2Templates(directory=templates_path)
 
 # Include routers
+# IMPORTANT: files.router must come before chat.router to avoid route conflicts
+# chat.router has /api/files/{username}/{conversation_id}/{filename} which could match
+# files.router has /api/files/view/{file_path:path} which should take precedence for /view/ paths
 app.include_router(auth.router)
+app.include_router(files.router)  # Register files router first to avoid conflicts
 app.include_router(chat.router)
 app.include_router(admin.router)
 app.include_router(tts.router)
@@ -114,7 +118,6 @@ app.include_router(music.router)
 app.include_router(torrent.router)
 app.include_router(notes.router)
 app.include_router(storage.router)
-app.include_router(files.router)
 
 # Handle old Joplin resource URLs (:/[resource-id]) - return 404 with helpful message
 # These are legacy URLs from Joplin that should have been converted during migration

@@ -727,6 +727,13 @@ class NotesManager {
             username = this.currentNote.username;
         }
         
+        // Get note ID - use currentNoteId if available, otherwise try note.id
+        const noteId = this.currentNoteId || (note && note.id) || null;
+        if (!noteId) {
+            console.error('Cannot render attachments: note ID not available');
+            return;
+        }
+        
         attachmentsDiv.innerHTML = `
             <div class="notes-attachments-header">
                 <span>Attachments (${attachments.length})</span>
@@ -741,7 +748,7 @@ class NotesManager {
                     const isDocument = /^(doc|docx|xls|xlsx|ppt|pptx|odt|ods|odp)$/i.test(ext);
                     const isArchive = /^(zip|rar|tar|gz|7z)$/i.test(ext);
                     const isCode = /^(py|java|c|cpp|cs|js|html|css|json|xml|sh)$/i.test(ext);
-                    const fileUrl = `/api/notes/files/${username}/${note.id}/${encodeURIComponent(filename)}`;
+                    const fileUrl = `/api/notes/files/${username}/${noteId}/${encodeURIComponent(filename)}`;
                     const shortName = filename.length > 20 ? filename.substring(0, 17) + '...' : filename;
                     
                     // Choose icon based on file type
