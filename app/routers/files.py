@@ -228,12 +228,8 @@ async def list_files(
                         is_external = True
             
             if not is_external:
-                # Proxy to storage server
-                try:
-                    return await _proxy_list_files(url, current_user.username, path, db)
-                except Exception as e:
-                    logger.warning(f"[FILES] Failed to proxy list_files, falling back to local: {e}")
-                    # Fall through to local storage below
+                # Proxy to storage server - no fallback
+                return await _proxy_list_files(url, current_user.username, path, db)
     
     # Local file listing (storage server node or when proxy fails or external storage)
     storage = get_storage_service(db)
@@ -1070,54 +1066,21 @@ async def delete_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Delete a file or directory."""
-    storage = get_storage_service(db)
-    user_path = storage.get_user_path(current_user.username)
-    
-    # Sanitize and validate path
-    try:
-        safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
-        full_path = user_path / safe_path
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
-    
-    # Validate path is within user directory
-    if not _validate_path_within_base(full_path, user_path):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    if not full_path.exists():
-        raise HTTPException(status_code=404, detail="File or directory not found")
-    
-    # Run deletion in thread pool
-    def _delete_file_sync():
-        try:
-            if full_path.is_file():
-                full_path.unlink()
-            elif full_path.is_dir():
-                import shutil
-                shutil.rmtree(full_path)
-            else:
-                raise Exception("Path is neither file nor directory")
-        except Exception as e:
-            raise Exception(f"Error deleting: {e}")
-    
-    try:
-        await asyncio.to_thread(_delete_file_sync)
-        
-        # Invalidate file cache
-        try:
-            cache = get_file_cache(db)
-            cache.invalidate(f"{current_user.username}:")
-            # Invalidate parent directory cache
-            if file_path:
-                parent_path = '/'.join(file_path.split('/')[:-1]) if '/' in file_path else ""
-                cache.invalidate(f"{current_user.username}:{parent_path}")
-        except Exception as e:
-            logger.warning(f"Failed to invalidate cache: {e}")
-        
-        return {"message": "File deleted successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Delete a file or directory. Proxies to storage server if configured (NO FALLBACK)."""
+    # Check if storage server is configured - proxy request if so (NO FALLBACK)
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            logger.info(f"[FILES] Proxying delete to storage server: {url}")
+            # Proxy to storage server - NO FALLBACK
+            result = await _proxy_delete_file(url, current_user.username, file_path, db)
+            logger.info(f"[FILES] Successfully proxied delete to storage server")
+            return result
+        else:
+            raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
+    else:
+        raise HTTPException(status_code=500, detail="Storage server not configured. Cannot delete files.")
 
 
 class MoveFilesRequest(BaseModel):
@@ -1235,18 +1198,16 @@ async def upload_file(
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
             logger.info(f"[FILES] Proxying upload to storage server: {url}")
-            try:
-                # Proxy to storage server (pass content directly to avoid re-reading)
-                result = await _proxy_upload_file(url, current_user.username, filename, content, content_type, path, db)
-                logger.info(f"[FILES] Successfully proxied upload to storage server")
-                return result
-            except Exception as e:
-                logger.warning(f"[FILES] Failed to proxy upload_file, falling back to local: {e}")
-                # Fall through to local storage below (content already read)
+            # Proxy to storage server (pass content directly to avoid re-reading)
+            result = await _proxy_upload_file(url, current_user.username, filename, content, content_type, path, db)
+            logger.info(f"[FILES] Successfully proxied upload to storage server")
+            return result
+        else:
+            raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
     else:
-        logger.info(f"[FILES] No storage_server_url configured, saving locally")
+        raise HTTPException(status_code=500, detail="Storage server not configured. Cannot upload files.")
     
-    # Local file saving (storage server node or when proxy fails)
+    # Local file saving (only on storage server node - should never reach here on client node)
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
