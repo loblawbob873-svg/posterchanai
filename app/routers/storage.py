@@ -1053,6 +1053,16 @@ async def get_all_images(
             return [_clean_for_json(item, depth + 1) for item in obj]
         elif isinstance(obj, (str, int, float, bool)):
             return obj
+        elif isinstance(obj, dict):
+            # Nested dict - clean recursively
+            cleaned = {}
+            for k, v in obj.items():
+                key_str = str(k) if not isinstance(k, bytes) else k.decode('utf-8', errors='ignore')
+                cleaned[key_str] = _clean_for_json(v, depth + 1)
+            return cleaned
+        elif isinstance(obj, (list, tuple)):
+            # Nested list - clean recursively
+            return [_clean_for_json(item, depth + 1) for item in obj]
         else:
             # Convert anything else to string
             try:

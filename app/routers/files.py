@@ -278,8 +278,14 @@ async def get_all_images(
                                     return [_clean_proxy_response(item, depth+1) for item in obj]
                                 elif isinstance(obj, (str, int, float, bool)):
                                     return obj
+                                elif isinstance(obj, dict):
+                                    # This shouldn't happen if cleaning worked, but handle it
+                                    return {str(k): _clean_proxy_response(v, depth+1) for k, v in obj.items()}
+                                elif isinstance(obj, (list, tuple)):
+                                    # This shouldn't happen if cleaning worked, but handle it
+                                    return [_clean_proxy_response(item, depth+1) for item in obj]
                                 else:
-                                    # Unknown type - convert to string
+                                    # Unknown type - convert to string only as last resort
                                     logger.debug(f"[FILES] Converting unknown type {type(obj)} to string at depth {depth}")
                                     return str(obj)
                             
