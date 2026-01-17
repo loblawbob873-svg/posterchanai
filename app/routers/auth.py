@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import List
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Request, Form
 from starlette.requests import Request as StarletteRequest
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -1135,3 +1135,146 @@ async def get_calendar_event(
             }
 
     raise HTTPException(status_code=404, detail="Event not found")
+
+
+@router.post("/calendar/import/radicale")
+async def import_from_radicale(
+    radicale_url: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Import calendars from a Radicale server."""
+    try:
+        import caldav
+    except ImportError:
+        raise HTTPException(status_code=500, detail="caldav library not installed. Install with: pip install caldav")
+    
+    from app.services.caldav_server import get_user_caldav_path
+    from icalendar import Calendar as ICalendar
+    import asyncio
+    
+    try:
+        # Connect to Radicale server
+        client = caldav.DAVClient(
+            url=radicale_url.rstrip('/'),
+            username=username,
+            password=password
+        )
+        
+        # Get user's principal (calendar home)
+        principal = client.principal()
+        
+        # Get all calendars
+        calendars = principal.calendars()
+        
+        imported_count = 0
+        error_count = 0
+        
+        # Get user's CalDAV path
+        caldav_path = get_user_caldav_path(current_user, db)
+        
+        # Import each calendar
+        for calendar in calendars:
+            try:
+                # Fetch all events from this calendar
+                events = calendar.events()
+                
+                for event in events:
+                    try:
+                        # Get the iCalendar data
+                        ical_data = event.data
+                        
+                        # Parse to extract UID
+                        cal = ICalendar.from_ical(ical_data)
+                        event_uid = None
+                        for component in cal.walk():
+                            if component.name == "VEVENT":
+                                event_uid = str(component.get('uid'))
+                                break
+                        
+                        if not event_uid:
+                            # Generate UID if missing
+                            import uuid
+                            event_uid = str(uuid.uuid4())
+                        
+                        # Save to user's CalDAV directory
+                        ics_file = caldav_path / f"{event_uid}.ics"
+                        with open(ics_file, 'wb') as f:
+                            f.write(ical_data)
+                        
+                        imported_count += 1
+                    except Exception as e:
+                        logger.warning(f"Error importing event: {e}")
+                        error_count += 1
+                        continue
+            except Exception as e:
+                logger.warning(f"Error importing calendar {calendar.name}: {e}")
+                error_count += 1
+                continue
+        
+        return {
+            "success": True,
+            "message": f"Imported {imported_count} events from Radicale",
+            "imported": imported_count,
+            "errors": error_count
+        }
+    except Exception as e:
+        logger.error(f"Error importing from Radicale: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to import from Radicale: {str(e)}")
+
+
+@router.get("/calendar/export")
+async def export_calendar(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Export all calendar events as a single iCalendar (.ics) file."""
+    from app.services.caldav_server import get_user_caldav_path
+    from icalendar import Calendar as ICalendar
+    from fastapi.responses import Response
+    import asyncio
+    
+    try:
+        # Get user's CalDAV path
+        caldav_path = get_user_caldav_path(current_user, db)
+        
+        # Create a new calendar
+        combined_calendar = ICalendar()
+        combined_calendar.add('prodid', '-//Posterchanai//Calendar Export//EN')
+        combined_calendar.add('version', '2.0')
+        combined_calendar.add('calscale', 'GREGORIAN')
+        combined_calendar.add('method', 'PUBLISH')
+        
+        # Read all .ics files
+        event_count = 0
+        for ics_file in caldav_path.glob("*.ics"):
+            try:
+                with open(ics_file, 'r', encoding='utf-8') as f:
+                    ical_data = f.read()
+                
+                # Parse and add components to combined calendar
+                cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+                for component in cal.walk():
+                    if component.name in ("VEVENT", "VTODO", "VJOURNAL"):
+                        combined_calendar.add_component(component)
+                        event_count += 1
+            except Exception as e:
+                logger.warning(f"Error reading {ics_file}: {e}")
+                continue
+        
+        # Generate .ics file content
+        ics_content = combined_calendar.to_ical().decode('utf-8')
+        
+        # Return as downloadable file
+        return Response(
+            content=ics_content,
+            media_type="text/calendar; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="calendar_{current_user.username}_{datetime.utcnow().strftime("%Y%m%d")}.ics"'
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error exporting calendar: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to export calendar: {str(e)}")

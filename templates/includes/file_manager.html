@@ -7,6 +7,7 @@
                 <button class="btn-secondary" id="fileManagerUploadBtn">📤 Upload</button>
                 <button class="btn-secondary" id="fileManagerUploadDirBtn">📁 Upload Directory</button>
                 <button class="btn-secondary" id="fileManagerNewFolderBtn">📂 New Folder</button>
+                <button class="btn-secondary" id="fileManagerPictureViewerBtn" title="View All Pictures">🖼️ Gallery</button>
             </div>
             <button class="btn-icon modal-close" id="fileManagerCloseBtn">&times;</button>
         </div>
@@ -239,5 +240,56 @@
     <div class="context-menu-item" onclick="fileManager.contextMenuAction('preview')">
         <span class="context-menu-icon">👁️</span>
         <span>Preview URL</span>
+    </div>
+</div>
+
+<!-- Cyberpunk Picture Viewer -->
+<div class="cyberpunk-picture-viewer" id="cyberpunkPictureViewer" style="display: none;">
+    <div class="cyberpunk-viewer-overlay"></div>
+    <div class="cyberpunk-viewer-container">
+        <div class="cyberpunk-viewer-header">
+            <div class="cyberpunk-header-left">
+                <div class="cyberpunk-title">
+                    <span class="cyberpunk-title-text">[IMAGE_GALLERY.exe]</span>
+                    <span class="cyberpunk-title-subtitle" id="pictureViewerCount">Loading...</span>
+                </div>
+            </div>
+            <div class="cyberpunk-header-right">
+                <button class="cyberpunk-btn cyberpunk-btn-secondary" id="pictureViewerRefreshBtn" title="Refresh">
+                    <span class="cyberpunk-icon">⟳</span>
+                </button>
+                <button class="cyberpunk-btn cyberpunk-btn-close" id="pictureViewerCloseBtn" title="Close">
+                    <span class="cyberpunk-icon">✕</span>
+                </button>
+            </div>
+        </div>
+        <div class="cyberpunk-viewer-body">
+            <div class="cyberpunk-gallery-grid" id="cyberpunkGalleryGrid">
+                <div class="cyberpunk-loading">
+                    <div class="cyberpunk-scanline"></div>
+                    <div class="cyberpunk-loading-text">[SCANNING_STORAGE...]</div>
+                </div>
+            </div>
+        </div>
+        <div class="cyberpunk-viewer-footer">
+            <div class="cyberpunk-footer-info">
+                <span id="pictureViewerInfo">Ready</span>
+            </div>
+            <button class="cyberpunk-btn cyberpunk-btn-primary" id="pictureViewerLoadMoreBtn" style="display: none;">
+                <span class="cyberpunk-icon">↓</span> Load More
+            </button>
+        </div>
+    </div>
+    
+    <!-- Fullscreen Image Viewer -->
+    <div class="cyberpunk-fullscreen-viewer" id="cyberpunkFullscreenViewer" style="display: none;">
+        <div class="cyberpunk-fullscreen-overlay"></div>
+        <button class="cyberpunk-fullscreen-close" id="cyberpunkFullscreenClose">✕</button>
+        <button class="cyberpunk-fullscreen-nav cyberpunk-fullscreen-prev" id="cyberpunkFullscreenPrev">‹</button>
+        <div class="cyberpunk-fullscreen-content">
+            <img id="cyberpunkFullscreenImage" src="" alt="">
+            <div class="cyberpunk-fullscreen-info" id="cyberpunkFullscreenInfo"></div>
+        </div>
+        <button class="cyberpunk-fullscreen-nav cyberpunk-fullscreen-next" id="cyberpunkFullscreenNext">›</button>
     </div>
 </div>

@@ -10,6 +10,7 @@ from starlette.requests import Request as StarletteRequest
 from sqlalchemy.orm import Session
 from pathlib import Path
 from typing import List
+from datetime import datetime
 import os
 from app.database import get_db
 from app.auth import get_current_user, get_current_user_optional
@@ -658,6 +659,153 @@ async def list_files(
         }
     except Exception as e:
         logger.error(f"Error listing files: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/all-images")
+async def get_all_images(
+    request: FastAPIRequest,
+    username: str = Query(...),
+    limit: int = Query(1000, description="Maximum number of images to return"),
+    offset: int = Query(0, description="Offset for pagination"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """
+    Get all images from user's storage recursively, sorted by newest first.
+    Called by client nodes when proxying image requests.
+    Only accessible on storage server node.
+    """
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    # Image extensions
+    image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+    
+    def _get_all_images_sync():
+        """Synchronous function to get all images."""
+        images = []
+        
+        try:
+            # Recursively find all image files
+            for item in user_path.rglob('*'):
+                try:
+                    # Skip directories and non-image files
+                    if item.is_dir() or item.suffix.lower() not in image_extensions:
+                        continue
+                    
+                    # Skip thumbnails directory
+                    if '.thumbnails' in str(item):
+                        continue
+                    
+                    stat = item.stat()
+                    relative_path = str(item.relative_to(user_path))
+                    
+                    image_info = {
+                        "name": item.name,
+                        "path": relative_path,
+                        "size": stat.st_size,
+                        "modified": stat.st_mtime,
+                        "modified_date": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    }
+                    
+                    # Get thumbnail (use stored thumbnail if available)
+                    try:
+                        from app.services.thumbnail_service import get_thumbnail_if_exists, generate_thumbnail_for_image
+                        from PIL import Image
+                        import base64
+                        import io
+                        
+                        def _generate_thumbnail(file_path: Path, max_size: tuple = (300, 300)):
+                            """Generate base64-encoded thumbnail for an image."""
+                            try:
+                                with Image.open(file_path) as img:
+                                    img.thumbnail(max_size, Image.Resampling.LANCZOS)
+                                    
+                                    # Convert to RGB if necessary
+                                    if img.mode in ('RGBA', 'LA', 'P'):
+                                        background = Image.new('RGB', img.size, (255, 255, 255))
+                                        if img.mode == 'P':
+                                            img = img.convert('RGBA')
+                                        background.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                                        img = background
+                                    elif img.mode != 'RGB':
+                                        img = img.convert('RGB')
+                                    
+                                    # Save to bytes
+                                    buffer = io.BytesIO()
+                                    img.save(buffer, format='JPEG', quality=85)
+                                    buffer.seek(0)
+                                    
+                                    # Encode as base64
+                                    thumbnail_b64 = base64.b64encode(buffer.read()).decode('utf-8')
+                                    return f"data:image/jpeg;base64,{thumbnail_b64}"
+                            except Exception as e:
+                                logger.debug(f"Error generating thumbnail: {e}")
+                                return None
+                        
+                        thumbnail_path = get_thumbnail_if_exists(user_path, item)
+                        if thumbnail_path and thumbnail_path.exists():
+                            # Use stored thumbnail
+                            thumbnail = _generate_thumbnail(thumbnail_path, max_size=(300, 300))
+                            if thumbnail:
+                                image_info["thumbnail"] = thumbnail
+                        else:
+                            # Generate on-the-fly
+                            thumbnail = _generate_thumbnail(item, max_size=(300, 300))
+                            if thumbnail:
+                                image_info["thumbnail"] = thumbnail
+                                # Also save thumbnail for future use
+                                try:
+                                    generate_thumbnail_for_image(user_path, item)
+                                except Exception:
+                                    pass  # Ignore errors when saving thumbnail
+                    except Exception as e:
+                        logger.debug(f"Failed to generate thumbnail for {item}: {e}")
+                    
+                    images.append(image_info)
+                except Exception as e:
+                    logger.warning(f"Error processing image {item}: {e}")
+                    continue
+        except Exception as e:
+            logger.error(f"Error getting all images: {e}")
+            raise Exception(f"Error getting all images: {e}")
+        
+        # Sort by modified time (newest first)
+        images.sort(key=lambda x: x.get('modified', 0), reverse=True)
+        
+        # Apply pagination
+        total = len(images)
+        paginated_images = images[offset:offset + limit]
+        
+        return {
+            "images": paginated_images,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < total
+        }
+    
+    try:
+        result = await asyncio.to_thread(_get_all_images_sync)
+        return result
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 

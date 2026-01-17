@@ -14,6 +14,13 @@ class FileManager {
         this.uploadQueue = []; // Upload queue
         this.uploadMonitorVisible = false;
         this.uploadMonitorMinimized = false;
+        this.pictureViewerOpen = false;
+        this.fullscreenViewerOpen = false;
+        this.allImages = [];
+        this.currentImageIndex = 0;
+        this.imageLoadOffset = 0;
+        this.imageLoadLimit = 50;
+        this.hasMoreImages = true;
         this.init();
     }
     
@@ -96,6 +103,11 @@ class FileManager {
             this.createNewFolder();
         });
         
+        // Picture viewer button
+        attachButtonListener('fileManagerPictureViewerBtn', () => {
+            this.openPictureViewer();
+        });
+        
         // Selection controls
         attachButtonListener('fileManagerSelectAllBtn', () => this.selectAll());
         attachButtonListener('fileManagerSelectNoneBtn', () => this.selectNone());
@@ -105,6 +117,31 @@ class FileManager {
         // Tab switching
         document.getElementById('fileManagerFilesTab')?.addEventListener('click', () => this.switchTab('files'));
         document.getElementById('fileManagerSharesTab')?.addEventListener('click', () => this.switchTab('shares'));
+        
+        // Picture viewer buttons
+        attachButtonListener('pictureViewerCloseBtn', () => this.closePictureViewer());
+        attachButtonListener('pictureViewerRefreshBtn', () => this.loadAllImages());
+        attachButtonListener('pictureViewerLoadMoreBtn', () => this.loadMoreImages());
+        attachButtonListener('cyberpunkFullscreenClose', () => this.closeFullscreenViewer());
+        attachButtonListener('cyberpunkFullscreenPrev', () => this.prevFullscreenImage());
+        attachButtonListener('cyberpunkFullscreenNext', () => this.nextFullscreenImage());
+        
+        // Keyboard shortcuts for picture viewer
+        document.addEventListener('keydown', (e) => {
+            if (this.pictureViewerOpen) {
+                if (e.key === 'Escape') {
+                    if (this.fullscreenViewerOpen) {
+                        this.closeFullscreenViewer();
+                    } else {
+                        this.closePictureViewer();
+                    }
+                } else if (e.key === 'ArrowLeft' && this.fullscreenViewerOpen) {
+                    this.prevFullscreenImage();
+                } else if (e.key === 'ArrowRight' && this.fullscreenViewerOpen) {
+                    this.nextFullscreenImage();
+                }
+            }
+        });
         
         // Refresh button
         attachButtonListener('fileManagerRefreshBtn', (e) => {
@@ -1869,6 +1906,222 @@ class FileManager {
                 }
             }, 300);
         }, 3000);
+    }
+    
+    // ============================================
+    // CYBERPUNK PICTURE VIEWER
+    // ============================================
+    
+    openPictureViewer() {
+        this.pictureViewerOpen = true;
+        const viewer = document.getElementById('cyberpunkPictureViewer');
+        if (viewer) {
+            viewer.style.display = 'block';
+            this.loadAllImages();
+        }
+    }
+    
+    closePictureViewer() {
+        this.pictureViewerOpen = false;
+        this.fullscreenViewerOpen = false;
+        const viewer = document.getElementById('cyberpunkPictureViewer');
+        const fullscreen = document.getElementById('cyberpunkFullscreenViewer');
+        if (viewer) viewer.style.display = 'none';
+        if (fullscreen) fullscreen.style.display = 'none';
+        this.allImages = [];
+        this.currentImageIndex = 0;
+        this.imageLoadOffset = 0;
+        this.hasMoreImages = true;
+    }
+    
+    async loadAllImages(reset = true) {
+        if (reset) {
+            this.allImages = [];
+            this.imageLoadOffset = 0;
+            this.hasMoreImages = true;
+        }
+        
+        const grid = document.getElementById('cyberpunkGalleryGrid');
+        const countEl = document.getElementById('pictureViewerCount');
+        const infoEl = document.getElementById('pictureViewerInfo');
+        const loadMoreBtn = document.getElementById('pictureViewerLoadMoreBtn');
+        
+        if (!grid) return;
+        
+        if (reset) {
+            grid.innerHTML = '<div class="cyberpunk-loading"><div class="cyberpunk-scanline"></div><div class="cyberpunk-loading-text">[SCANNING_STORAGE...]</div></div>';
+            if (countEl) countEl.textContent = 'Loading...';
+            if (infoEl) infoEl.textContent = '[SCANNING...]';
+        }
+        
+        try {
+            const response = await fetch(`/api/files/all-images?limit=${this.imageLoadLimit}&offset=${this.imageLoadOffset}`);
+            if (!response.ok) throw new Error('Failed to load images');
+            
+            const data = await response.json();
+            
+            if (reset) {
+                this.allImages = data.images || [];
+            } else {
+                this.allImages.push(...(data.images || []));
+            }
+            
+            this.hasMoreImages = data.has_more || false;
+            this.imageLoadOffset += data.images?.length || 0;
+            
+            if (countEl) {
+                countEl.textContent = `[${data.total || 0} IMAGES FOUND]`;
+            }
+            
+            if (infoEl) {
+                infoEl.textContent = `[LOADED: ${this.allImages.length}/${data.total || 0}]`;
+            }
+            
+            if (loadMoreBtn) {
+                loadMoreBtn.style.display = this.hasMoreImages ? 'block' : 'none';
+            }
+            
+            // Debug: log first image to see if thumbnails are included
+            if (this.allImages.length > 0) {
+                console.log('First image data:', {
+                    name: this.allImages[0].name,
+                    path: this.allImages[0].path,
+                    hasThumbnail: !!this.allImages[0].thumbnail,
+                    thumbnailLength: this.allImages[0].thumbnail ? this.allImages[0].thumbnail.length : 0
+                });
+            }
+            
+            this.renderImageGrid();
+        } catch (error) {
+            console.error('Error loading images:', error);
+            grid.innerHTML = `<div class="cyberpunk-loading"><div class="cyberpunk-loading-text" style="color: #ff0066;">[ERROR: ${error.message}]</div></div>`;
+            if (infoEl) infoEl.textContent = '[ERROR LOADING IMAGES]';
+        }
+    }
+    
+    async loadMoreImages() {
+        await this.loadAllImages(false);
+    }
+    
+    renderImageGrid() {
+        const grid = document.getElementById('cyberpunkGalleryGrid');
+        if (!grid) return;
+        
+        if (this.allImages.length === 0) {
+            grid.innerHTML = '<div class="cyberpunk-loading"><div class="cyberpunk-loading-text">[NO IMAGES FOUND]</div></div>';
+            return;
+        }
+        
+        grid.innerHTML = '';
+        
+        this.allImages.forEach((image, index) => {
+            const item = document.createElement('div');
+            item.className = 'cyberpunk-gallery-item';
+            item.dataset.index = index;
+            item.dataset.path = image.path;
+            
+            const img = document.createElement('img');
+            if (image.thumbnail) {
+                // Use thumbnail from API response (base64 data URL)
+                img.src = image.thumbnail;
+            } else {
+                // Fallback: load thumbnail asynchronously
+                img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23111" width="200" height="200"/%3E%3Ctext fill="%2300ffff" font-family="monospace" font-size="12" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3ELOADING...%3C/text%3E%3C/svg%3E';
+                
+                // Try to load thumbnail
+                fetch(`/api/files/thumbnail/${encodeURIComponent(image.path)}?size=300`)
+                    .then(response => {
+                        if (response.ok) {
+                            return response.json();
+                        }
+                        throw new Error('Thumbnail not available');
+                    })
+                    .then(data => {
+                        if (data && data.thumbnail) {
+                            img.src = data.thumbnail;
+                        } else {
+                            // Fallback to full image
+                            img.src = `/api/files/view/${encodeURIComponent(image.path)}`;
+                        }
+                    })
+                    .catch(() => {
+                        // Fallback to full image if thumbnail fails
+                        img.src = `/api/files/view/${encodeURIComponent(image.path)}`;
+                    });
+            }
+            img.alt = image.name;
+            img.loading = 'lazy';
+            
+            // Add error handler to try full image if thumbnail fails
+            img.onerror = () => {
+                if (img.src.includes('data:image/svg+xml') || img.src.includes('/thumbnail/')) {
+                    // If thumbnail failed, try full image
+                    img.src = `/api/files/view/${encodeURIComponent(image.path)}`;
+                } else if (!img.src.includes('/view/')) {
+                    // If full image also failed, show placeholder
+                    img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23333" width="200" height="200"/%3E%3Ctext fill="%23ff0066" font-family="monospace" font-size="12" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3EERROR%3C/text%3E%3C/svg%3E';
+                }
+            };
+            
+            const overlay = document.createElement('div');
+            overlay.className = 'cyberpunk-gallery-item-overlay';
+            overlay.textContent = image.name;
+            
+            item.appendChild(img);
+            item.appendChild(overlay);
+            
+            item.addEventListener('click', () => {
+                this.openFullscreenViewer(index);
+            });
+            
+            grid.appendChild(item);
+        });
+    }
+    
+    openFullscreenViewer(index) {
+        this.fullscreenViewerOpen = true;
+        this.currentImageIndex = index;
+        const fullscreen = document.getElementById('cyberpunkFullscreenViewer');
+        const img = document.getElementById('cyberpunkFullscreenImage');
+        const info = document.getElementById('cyberpunkFullscreenInfo');
+        const prevBtn = document.getElementById('cyberpunkFullscreenPrev');
+        const nextBtn = document.getElementById('cyberpunkFullscreenNext');
+        
+        if (!fullscreen || !img) return;
+        
+        const image = this.allImages[index];
+        if (!image) return;
+        
+        img.src = `/api/files/view/${encodeURIComponent(image.path)}`;
+        if (info) {
+            const date = new Date(image.modified * 1000).toLocaleString();
+            info.textContent = `${index + 1} / ${this.allImages.length} - ${image.name} [${date}]`;
+        }
+        
+        if (prevBtn) prevBtn.style.display = index > 0 ? 'flex' : 'none';
+        if (nextBtn) nextBtn.style.display = index < this.allImages.length - 1 ? 'flex' : 'none';
+        
+        fullscreen.style.display = 'flex';
+    }
+    
+    closeFullscreenViewer() {
+        this.fullscreenViewerOpen = false;
+        const fullscreen = document.getElementById('cyberpunkFullscreenViewer');
+        if (fullscreen) fullscreen.style.display = 'none';
+    }
+    
+    prevFullscreenImage() {
+        if (this.currentImageIndex > 0) {
+            this.currentImageIndex--;
+            this.openFullscreenViewer(this.currentImageIndex);
+        }
+    }
+    
+    nextFullscreenImage() {
+        if (this.currentImageIndex < this.allImages.length - 1) {
+            this.currentImageIndex++;
+            this.openFullscreenViewer(this.currentImageIndex);
+        }
     }
 }
 

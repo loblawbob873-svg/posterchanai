@@ -420,6 +420,8 @@ class ChatHandler {
         const carddavUrl = document.getElementById('carddavUrl');
         const carddavUsername = document.getElementById('carddavUsername');
         const carddavPassword = document.getElementById('carddavPassword');
+        const importRadicaleBtn = document.getElementById('importRadicaleBtn');
+        const exportCalendarBtn = document.getElementById('exportCalendarBtn');
 
         // Calendar list management
         let caldavCalendars = [];
@@ -460,6 +462,96 @@ class ChatHandler {
             });
         }
 
+        // Import from Radicale button
+        if (importRadicaleBtn) {
+            importRadicaleBtn.addEventListener('click', async () => {
+                const radicaleUrl = prompt('Enter Radicale server URL (e.g., http://radicale.example.com:5232):');
+                if (!radicaleUrl) return;
+                
+                const username = prompt('Enter Radicale username:');
+                if (!username) return;
+                
+                const password = prompt('Enter Radicale password:');
+                if (!password) return;
+                
+                try {
+                    importRadicaleBtn.disabled = true;
+                    importRadicaleBtn.textContent = 'Importing...';
+                    
+                    const formData = new FormData();
+                    formData.append('radicale_url', radicaleUrl.trim());
+                    formData.append('username', username.trim());
+                    formData.append('password', password);
+                    
+                    const response = await csrfFetch('/api/auth/calendar/import/radicale', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok && data.success) {
+                        alert(`Successfully imported ${data.imported} events from Radicale${data.errors > 0 ? ` (${data.errors} errors)` : ''}`);
+                    } else {
+                        alert(data.detail || data.message || 'Import failed');
+                    }
+                } catch (error) {
+                    console.error('Radicale import error:', error);
+                    alert('Failed to import from Radicale: ' + (error.message || 'Unknown error'));
+                } finally {
+                    importRadicaleBtn.disabled = false;
+                    importRadicaleBtn.textContent = '📥 Import from Radicale';
+                }
+            });
+        }
+        
+        // Export Calendar button
+        if (exportCalendarBtn) {
+            exportCalendarBtn.addEventListener('click', async () => {
+                try {
+                    exportCalendarBtn.disabled = true;
+                    exportCalendarBtn.textContent = 'Exporting...';
+                    
+                    const response = await fetch('/api/auth/calendar/export', {
+                        method: 'GET',
+                        credentials: 'include'
+                    });
+                    
+                    if (response.ok) {
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        
+                        // Get filename from Content-Disposition header or use default
+                        const contentDisposition = response.headers.get('Content-Disposition');
+                        let filename = 'calendar.ics';
+                        if (contentDisposition) {
+                            const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+                            if (filenameMatch) {
+                                filename = filenameMatch[1];
+                            }
+                        }
+                        
+                        a.download = filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+                    } else {
+                        const errorData = await response.json();
+                        alert(errorData.detail || 'Export failed');
+                    }
+                } catch (error) {
+                    console.error('Calendar export error:', error);
+                    alert('Failed to export calendar: ' + (error.message || 'Unknown error'));
+                } finally {
+                    exportCalendarBtn.disabled = false;
+                    exportCalendarBtn.textContent = '📤 Export Calendar';
+                }
+            });
+        }
+        
         if (addCaldavCalendar) {
             addCaldavCalendar.addEventListener('click', () => {
                 caldavCalendars.push({ name: '', url: '', username: '', password: '' });
@@ -813,6 +905,11 @@ class ChatHandler {
                 } catch (e) {
                     console.error('Failed to load settings:', e);
                 }
+                
+                // Load storage addresses and usage when opening settings (in case storage tab is already active)
+                this.loadStorageAddresses();
+                this.loadStorageUsage();
+                
                 settingsModal.style.display = 'flex';
                 // Close the user menu
                 document.getElementById('userMenu').classList.remove('active');
@@ -855,6 +952,13 @@ class ChatHandler {
                     }
                 });
             });
+            
+            // Also load storage addresses if storage tab is already active when modal opens
+            const activeTab = settingsModal.querySelector('.user-tab-btn.active');
+            if (activeTab && activeTab.dataset.tab === 'storage') {
+                this.loadStorageAddresses();
+                this.loadStorageUsage();
+            }
 
             settingsModal.addEventListener('click', (e) => {
                 if (e.target === settingsModal) {
@@ -1086,11 +1190,20 @@ class ChatHandler {
                 if (webdavInput) {
                     if (data.webdav_url) {
                         // Replace localhost with actual hostname
-                        const webdavUrl = data.webdav_url.replace('localhost', hostname).replace('http://', `${protocol}//`);
+                        let webdavUrl = data.webdav_url;
+                        // Only replace localhost if it's actually localhost
+                        if (webdavUrl.includes('localhost')) {
+                            webdavUrl = webdavUrl.replace('localhost', hostname);
+                        }
+                        // Ensure protocol matches current page
+                        if (webdavUrl.startsWith('http://') && protocol === 'https:') {
+                            webdavUrl = webdavUrl.replace('http://', 'https://');
+                        }
                         webdavInput.value = webdavUrl;
                         console.log('Set WebDAV URL:', webdavUrl);
                     } else {
                         webdavInput.value = '';
+                        webdavInput.placeholder = 'WebDAV server not enabled (enable in Admin → Site Settings)';
                         console.log('WebDAV URL is empty (server not enabled?)');
                     }
                 }
@@ -1106,11 +1219,20 @@ class ChatHandler {
                 
                 if (caldavInput) {
                     if (data.caldav_url) {
-                        const caldavUrl = data.caldav_url.replace('localhost', hostname).replace('http://', `${protocol}//`);
+                        let caldavUrl = data.caldav_url;
+                        // Only replace localhost if it's actually localhost
+                        if (caldavUrl.includes('localhost')) {
+                            caldavUrl = caldavUrl.replace('localhost', hostname);
+                        }
+                        // Ensure protocol matches current page
+                        if (caldavUrl.startsWith('http://') && protocol === 'https:') {
+                            caldavUrl = caldavUrl.replace('http://', 'https://');
+                        }
                         caldavInput.value = caldavUrl;
                         console.log('Set CalDAV URL:', caldavUrl);
                     } else {
                         caldavInput.value = '';
+                        caldavInput.placeholder = 'CalDAV server not enabled (enable in Admin → Site Settings)';
                         console.log('CalDAV URL is empty (server not enabled?)');
                     }
                 }
@@ -1126,11 +1248,20 @@ class ChatHandler {
                 
                 if (carddavInput) {
                     if (data.carddav_url) {
-                        const carddavUrl = data.carddav_url.replace('localhost', hostname).replace('http://', `${protocol}//`);
+                        let carddavUrl = data.carddav_url;
+                        // Only replace localhost if it's actually localhost
+                        if (carddavUrl.includes('localhost')) {
+                            carddavUrl = carddavUrl.replace('localhost', hostname);
+                        }
+                        // Ensure protocol matches current page
+                        if (carddavUrl.startsWith('http://') && protocol === 'https:') {
+                            carddavUrl = carddavUrl.replace('http://', 'https://');
+                        }
                         carddavInput.value = carddavUrl;
                         console.log('Set CardDAV URL:', carddavUrl);
                     } else {
                         carddavInput.value = '';
+                        carddavInput.placeholder = 'CardDAV server not enabled (enable in Admin → Site Settings)';
                         console.log('CardDAV URL is empty (server not enabled?)');
                     }
                 }

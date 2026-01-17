@@ -88,6 +88,21 @@ class App {
 
         // Logout button
         document.getElementById('logoutBtn').addEventListener('click', () => this.logout());
+        
+        // Picture viewer button
+        const pictureViewerBtn = document.getElementById('pictureViewerBtn');
+        if (pictureViewerBtn) {
+            pictureViewerBtn.addEventListener('click', () => {
+                if (window.fileManager) {
+                    window.fileManager.openPictureViewer();
+                    // Close the user menu
+                    const userMenuContainer = document.querySelector('.user-menu-container');
+                    if (userMenuContainer) {
+                        userMenuContainer.classList.remove('open');
+                    }
+                }
+            });
+        }
 
         // Mobile menu
         document.getElementById('menuBtn').addEventListener('click', () => this.toggleSidebar());

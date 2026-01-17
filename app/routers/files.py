@@ -219,6 +219,153 @@ async def search_files(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/all-images")
+async def get_all_images(
+    limit: int = Query(1000, description="Maximum number of images to return"),
+    offset: int = Query(0, description="Offset for pagination"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all images from user's storage recursively, sorted by newest first. Supports proxying to storage server."""
+    # Check if storage server is configured - proxy request if so
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            logger.info(f"[FILES] Proxying get_all_images to storage server: {url}")
+            # Proxy to storage server
+            try:
+                import httpx
+                storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+                
+                headers = {}
+                if storage_server_token and storage_server_token.value:
+                    headers["Authorization"] = f"Bearer {storage_server_token.value}"
+                
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.get(
+                        f"{url}/api/storage/all-images",
+                        params={"username": current_user.username, "limit": limit, "offset": offset},
+                        headers=headers
+                    )
+                    if response.status_code == 200:
+                        return response.json()
+                    else:
+                        raise HTTPException(status_code=response.status_code, detail=response.text)
+            except Exception as e:
+                logger.error(f"[FILES] Failed to proxy get_all_images: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to get images from storage server: {e}")
+        else:
+            raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
+    
+    # Local file listing (storage server node)
+    storage = get_storage_service(db)
+    user_path = storage.get_user_path(current_user.username)
+    
+    # Image extensions
+    image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+    
+    def _get_all_images_sync():
+        """Synchronous function to get all images."""
+        images = []
+        
+        try:
+            # Recursively find all image files
+            for item in user_path.rglob('*'):
+                try:
+                    # Skip directories and non-image files
+                    if item.is_dir() or item.suffix.lower() not in image_extensions:
+                        continue
+                    
+                    # Skip thumbnails directory
+                    if '.thumbnails' in str(item):
+                        continue
+                    
+                    stat = item.stat()
+                    relative_path = str(item.relative_to(user_path))
+                    
+                    image_info = {
+                        "name": item.name,
+                        "path": relative_path,
+                        "size": stat.st_size,
+                        "modified": stat.st_mtime,
+                        "modified_date": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    }
+                    
+                    # Get thumbnail (use stored thumbnail if available)
+                    thumbnail_generated = False
+                    try:
+                        from app.services.thumbnail_service import get_thumbnail_if_exists, generate_thumbnail_for_image
+                        
+                        thumbnail_path = get_thumbnail_if_exists(user_path, item)
+                        if thumbnail_path and thumbnail_path.exists():
+                            # Use stored thumbnail
+                            thumbnail = generate_thumbnail(thumbnail_path, max_size=(300, 300))
+                            if thumbnail:
+                                image_info["thumbnail"] = thumbnail
+                                thumbnail_generated = True
+                        
+                        if not thumbnail_generated:
+                            # Generate on-the-fly from original image
+                            thumbnail = generate_thumbnail(item, max_size=(300, 300))
+                            if thumbnail:
+                                image_info["thumbnail"] = thumbnail
+                                thumbnail_generated = True
+                                # Also save thumbnail for future use (async, don't wait)
+                                try:
+                                    generate_thumbnail_for_image(user_path, item)
+                                except Exception as save_error:
+                                    logger.debug(f"Failed to save thumbnail for {item}: {save_error}")
+                        
+                        # If still no thumbnail, try progressively smaller sizes
+                        if not thumbnail_generated:
+                            for size in [(200, 200), (150, 150), (100, 100)]:
+                                try:
+                                    thumbnail = generate_thumbnail(item, max_size=size)
+                                    if thumbnail:
+                                        image_info["thumbnail"] = thumbnail
+                                        thumbnail_generated = True
+                                        logger.debug(f"Generated thumbnail for {item.name} at size {size}")
+                                        break
+                                except Exception as size_error:
+                                    logger.debug(f"Failed to generate thumbnail at size {size} for {item.name}: {size_error}")
+                                    continue
+                        
+                        if not thumbnail_generated:
+                            logger.warning(f"Could not generate thumbnail for {item.name} after all attempts")
+                    except Exception as e:
+                        logger.warning(f"Failed to generate thumbnail for {item}: {e}", exc_info=True)
+                    
+                    images.append(image_info)
+                except Exception as e:
+                    logger.warning(f"Error processing image {item}: {e}")
+                    continue
+        except Exception as e:
+            logger.error(f"Error getting all images: {e}")
+            raise Exception(f"Error getting all images: {e}")
+        
+        # Sort by modified time (newest first)
+        images.sort(key=lambda x: x.get('modified', 0), reverse=True)
+        
+        # Apply pagination
+        total = len(images)
+        paginated_images = images[offset:offset + limit]
+        
+        return {
+            "images": paginated_images,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < total
+        }
+    
+    try:
+        result = await asyncio.to_thread(_get_all_images_sync)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/list")
 async def list_files(
     path: str = Query("", description="Directory path relative to user root or external storage mount point"),
