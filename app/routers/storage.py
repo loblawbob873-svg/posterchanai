@@ -277,6 +277,7 @@ async def save_mail_attachment(
 
 @router.post("/upload-file")
 async def upload_file(
+    request: FastAPIRequest,
     file: UploadFile = File(...),
     username: str = Form(...),
     path: str = Form(""),
@@ -293,9 +294,19 @@ async def upload_file(
     # Check if this is a server-to-server request
     is_server_request = current_user is None
     if not is_server_request:
-        # Verify username matches for user requests
-        if current_user.username != username:
-            raise HTTPException(status_code=403, detail="Access denied")
+        # Check if this is a server token request
+        from app.models import Setting
+        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        if storage_server_token and storage_server_token.value:
+            # Check if the request has the server token
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+                is_server_request = True
+        
+        if not is_server_request:
+            # Verify username matches for user requests
+            if current_user.username != username:
+                raise HTTPException(status_code=403, detail="Access denied")
     
     # Read file content
     content = await file.read()
