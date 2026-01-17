@@ -1305,8 +1305,16 @@ async def _proxy_upload_file(storage_server_url: str, username: str, file: Uploa
             "path": path
         }
         
-        # Use async httpx client
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        # Use async httpx client with explicit transport (same as storage_proxy.py)
+        transport = httpx.AsyncHTTPTransport(
+            retries=3,
+            http2=False
+        )
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(300.0, connect=10.0),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+            transport=transport
+        ) as client:
             response = await client.post(url, headers=headers, files=files, data=data)
             if response.status_code == 200:
                 return response.json()
