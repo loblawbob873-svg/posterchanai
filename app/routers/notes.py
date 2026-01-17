@@ -540,13 +540,14 @@ async def serve_note_file(
         if not _validate_path_within_base(file_path, base_path):
             raise HTTPException(status_code=403, detail="Invalid file path")
         
-        # If file exists locally, serve it locally (don't proxy)
-        # Only proxy if file doesn't exist locally and storage server is configured
-        if not file_path.exists() and storage_server_url and storage_server_url.value:
+        # If storage server is configured, prefer proxying to it
+        # This ensures we always get the latest files from the storage server
+        # Only serve locally if no storage server is configured or if proxy fails
+        if storage_server_url and storage_server_url.value:
             # Validate storage_server_url has protocol before proxying
             base_url = storage_server_url.value.strip()
             if base_url.startswith(('http://', 'https://')):
-                # File doesn't exist locally, try proxying to storage server
+                # Try proxying to storage server first
                 from app.services.storage_proxy import proxy_storage_request
                 # Use the actual request method (GET or HEAD)
                 method = request.method
@@ -559,13 +560,13 @@ async def serve_note_file(
                         stream=True
                     )
                 except HTTPException as e:
-                    # If proxy fails, log and fall through to 404
-                    logger.warning(f"Failed to proxy note file to storage server: {e.detail}")
-                    # Fall through to return 404 below
+                    # If proxy fails, fall back to local file if it exists
+                    logger.warning(f"Failed to proxy note file to storage server: {e.detail}, falling back to local file")
+                    # Fall through to local file serving below
             else:
                 # Invalid storage_server_url configuration - log but don't fail the request
                 logger.error(f"Invalid storage_server_url (missing protocol): {base_url}")
-                # Fall through to return 404 below
+                # Fall through to local file serving below
         
         # Local file serving (file exists locally or no storage server configured)
         # Note: For storage servers, we may not have notes in the database.
