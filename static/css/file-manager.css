@@ -109,6 +109,35 @@
     overflow: hidden;
 }
 
+.file-manager-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    max-width: 400px;
+    margin: 0 16px;
+}
+
+.file-search-input {
+    flex: 1;
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 14px;
+    transition: border-color 0.2s;
+}
+
+.file-search-input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+}
+
+.file-search-input::placeholder {
+    color: var(--text-secondary);
+}
+
 .file-manager-toolbar {
     padding: 12px 20px;
     border-bottom: 1px solid var(--border-color);

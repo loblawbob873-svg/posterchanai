@@ -4,10 +4,12 @@ class FileManager {
         this.currentPath = '';
         this.currentView = 'grid';
         this.currentFiles = [];
+        this.filteredFiles = []; // Filtered files based on search
         this.imageFiles = [];
         this.currentImageIndex = 0;
         this.selectedFiles = new Set(); // Track selected file paths
         this.currentTab = 'files'; // 'files' or 'shares'
+        this.searchQuery = ''; // Current search query
         this.init();
     }
     
@@ -86,6 +88,28 @@ class FileManager {
             });
         });
         
+        // Search input
+        const searchInput = document.getElementById('fileManagerSearchInput');
+        const clearSearchBtn = document.getElementById('fileManagerClearSearchBtn');
+        
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                this.searchQuery = e.target.value.trim().toLowerCase();
+                this.filterFiles();
+                clearSearchBtn.style.display = this.searchQuery ? 'block' : 'none';
+            });
+            
+            searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    this.clearSearch();
+                }
+            });
+        }
+        
+        if (clearSearchBtn) {
+            clearSearchBtn.addEventListener('click', () => this.clearSearch());
+        }
+        
         // Image viewer
         document.getElementById('imageViewerClose')?.addEventListener('click', () => this.closeImageViewer());
         document.getElementById('imageViewerPrev')?.addEventListener('click', () => this.prevImage());
@@ -94,6 +118,9 @@ class FileManager {
     
     switchTab(tab) {
         this.currentTab = tab;
+        
+        // Clear search when switching tabs
+        this.clearSearch();
         
         // Update tab buttons
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -284,6 +311,7 @@ class FileManager {
             if (response.ok) {
                 const data = await response.json();
                 this.currentFiles = data.items;
+                this.filterFiles(); // Apply current search filter if any
                 this.updateBreadcrumb(path);
                 this.updateStorageInfo(data.storage);
                 this.renderFiles();
@@ -366,19 +394,50 @@ class FileManager {
         `;
     }
     
+    filterFiles() {
+        if (!this.searchQuery) {
+            this.filteredFiles = [...this.currentFiles]; // Copy array
+        } else {
+            const query = this.searchQuery.toLowerCase();
+            this.filteredFiles = this.currentFiles.filter(item => {
+                const name = item.name.toLowerCase();
+                const path = item.path.toLowerCase();
+                return name.includes(query) || path.includes(query);
+            });
+        }
+        this.renderFiles();
+    }
+    
+    clearSearch() {
+        const searchInput = document.getElementById('fileManagerSearchInput');
+        const clearSearchBtn = document.getElementById('fileManagerClearSearchBtn');
+        if (searchInput) {
+            searchInput.value = '';
+            this.searchQuery = '';
+            this.filterFiles();
+        }
+        if (clearSearchBtn) {
+            clearSearchBtn.style.display = 'none';
+        }
+    }
+    
     renderFiles() {
+        const filesToRender = this.searchQuery ? this.filteredFiles : this.currentFiles;
         const grid = document.getElementById('fileManagerGrid');
         if (!grid) return;
         
-        if (this.currentFiles.length === 0) {
-            grid.innerHTML = '<div class="file-manager-empty">No files in this directory</div>';
+        if (filesToRender.length === 0) {
+            const message = this.searchQuery 
+                ? `<div class="file-manager-empty">No files found matching "${this.escapeHtml(this.searchQuery)}"</div>`
+                : '<div class="file-manager-empty">No files in this directory</div>';
+            grid.innerHTML = message;
             this.updateSelectionUI();
             return;
         }
         
         if (this.currentView === 'grid') {
             grid.className = 'file-manager-grid';
-            grid.innerHTML = this.currentFiles.map(item => {
+            grid.innerHTML = filesToRender.map(item => {
                 const icon = item.is_directory ? '📂' : this.getFileIcon(item.name);
                 const thumbnail = item.thumbnail ? `<img src="${item.thumbnail}" alt="" class="file-thumbnail">` : '';
                 const isSelected = this.selectedFiles.has(item.path);
@@ -419,7 +478,7 @@ class FileManager {
                         </tr>
                     </thead>
                     <tbody>
-                        ${this.currentFiles.map(item => {
+                        ${filesToRender.map(item => {
                             const date = new Date(item.modified * 1000);
                             const isSelected = this.selectedFiles.has(item.path);
                             const actions = !item.is_directory ? `
