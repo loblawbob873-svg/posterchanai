@@ -135,6 +135,16 @@ def generate_thumbnail_file(
             original_mode = img.mode
             logger.debug(f"Processing image {image_path.name} with mode: {original_mode}")
             
+            # Try to load the image data to detect truncation early
+            try:
+                img.load()  # Load image data to detect truncation
+            except OSError as load_error:
+                # Handle truncated/corrupted images gracefully
+                if "truncated" in str(load_error).lower() or "broken data stream" in str(load_error).lower():
+                    logger.debug(f"Truncated or corrupted image file (skipping): {image_path.name}: {load_error}")
+                    return False
+                raise  # Re-raise if it's a different OSError
+            
             # Convert to a mode that supports thumbnail operations first
             # Handle palette mode (P) - convert to RGBA first to preserve transparency
             if img.mode == 'P':
@@ -159,7 +169,14 @@ def generate_thumbnail_file(
                         img = img.convert('L').convert('RGB')
             
             # Create thumbnail (maintains aspect ratio) - now safe to call
-            img.thumbnail(max_size, Image.Resampling.LANCZOS)
+            try:
+                img.thumbnail(max_size, Image.Resampling.LANCZOS)
+            except OSError as thumb_error:
+                # Handle truncated images that fail during thumbnail creation
+                if "truncated" in str(thumb_error).lower() or "broken data stream" in str(thumb_error).lower():
+                    logger.debug(f"Truncated image file (skipping): {image_path.name}: {thumb_error}")
+                    return False
+                raise  # Re-raise if it's a different OSError
             
             # Convert to RGB for JPEG saving (handle transparency)
             if img.mode in ('RGBA', 'LA'):
@@ -186,8 +203,19 @@ def generate_thumbnail_file(
             logger.debug(f"Generated thumbnail: {thumbnail_path} (original mode: {original_mode}, final mode: {img.mode})")
             return True
             
+    except OSError as e:
+        # Handle truncated/corrupted images gracefully
+        if "truncated" in str(e).lower() or "broken data stream" in str(e).lower() or "cannot identify" in str(e).lower():
+            logger.debug(f"Corrupted or truncated image file (skipping): {image_path.name}: {e}")
+            return False
+        logger.error(f"OSError generating thumbnail for {image_path}: {e}", exc_info=True)
+        return False
     except Exception as e:
-        logger.error(f"Error generating thumbnail for {image_path}: {e}", exc_info=True)
+        # Only log unexpected errors
+        if "cannot identify" not in str(e).lower():
+            logger.error(f"Error generating thumbnail for {image_path}: {e}", exc_info=True)
+        else:
+            logger.debug(f"Unsupported image format (skipping): {image_path.name}: {e}")
         return False
 
 
@@ -413,9 +441,10 @@ def generate_thumbnails_for_user(
                 failed += 1
                 
         except Exception as e:
-            # Log as debug for corrupted files, error for unexpected issues
-            if "cannot identify image file" in str(e).lower() or "corrupted" in str(e).lower():
-                logger.debug(f"Skipping corrupted image: {image_path.name}")
+            # Log as debug for corrupted/truncated files, error for unexpected issues
+            error_str = str(e).lower()
+            if any(keyword in error_str for keyword in ["cannot identify", "truncated", "broken data stream", "corrupted"]):
+                logger.debug(f"Skipping corrupted/truncated image: {image_path.name}")
             else:
                 logger.error(f"Error processing {image_path}: {e}")
             failed += 1
