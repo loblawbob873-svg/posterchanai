@@ -952,19 +952,58 @@ async def get_all_images(
         
         # Ensure all data is JSON serializable
         # Convert any datetime objects to strings, ensure all numbers are floats/ints
+        # CRITICAL: Handle bytes, Path objects, and any other non-serializable types
         serializable_images = []
         for img in paginated_images:
-            serializable_img = {
-                "name": str(img.get("name", "")),
-                "path": str(img.get("path", "")),
-                "size": int(img.get("size", 0)),
-                "modified": float(img.get("modified", 0) or 0),
-                "modified_date": str(img.get("modified_date", "")),
-                "type": str(img.get("type", "unknown"))
-            }
-            # Only include thumbnail if it's a string (base64 data URL)
-            if "thumbnail" in img and isinstance(img["thumbnail"], str):
-                serializable_img["thumbnail"] = img["thumbnail"]
+            serializable_img = {}
+            for key, value in img.items():
+                if key == "thumbnail":
+                    # Skip thumbnails - they're loaded on-demand
+                    continue
+                elif isinstance(value, bytes):
+                    # Convert bytes to string (shouldn't happen, but be safe)
+                    serializable_img[key] = value.decode('utf-8', errors='ignore')
+                elif isinstance(value, (Path, type(None))):
+                    # Convert Path objects to string
+                    serializable_img[key] = str(value) if value else ""
+                elif isinstance(value, (int, float)):
+                    # Numbers are fine
+                    serializable_img[key] = value
+                elif isinstance(value, bool):
+                    # Booleans are fine
+                    serializable_img[key] = value
+                elif isinstance(value, str):
+                    # Strings are fine
+                    serializable_img[key] = value
+                else:
+                    # Convert anything else to string
+                    try:
+                        serializable_img[key] = str(value)
+                    except Exception:
+                        serializable_img[key] = ""
+            
+            # Ensure required fields exist with correct types
+            if "name" not in serializable_img:
+                serializable_img["name"] = ""
+            if "path" not in serializable_img:
+                serializable_img["path"] = ""
+            if "size" not in serializable_img:
+                serializable_img["size"] = 0
+            if "modified" not in serializable_img:
+                serializable_img["modified"] = 0.0
+            if "modified_date" not in serializable_img:
+                serializable_img["modified_date"] = ""
+            if "type" not in serializable_img:
+                serializable_img["type"] = "unknown"
+            
+            # Ensure types are correct
+            serializable_img["name"] = str(serializable_img["name"])
+            serializable_img["path"] = str(serializable_img["path"])
+            serializable_img["size"] = int(serializable_img["size"])
+            serializable_img["modified"] = float(serializable_img["modified"] or 0)
+            serializable_img["modified_date"] = str(serializable_img["modified_date"])
+            serializable_img["type"] = str(serializable_img["type"])
+            
             serializable_images.append(serializable_img)
         
         return {
@@ -981,24 +1020,46 @@ async def get_all_images(
         # FastAPI will serialize it, but we want to catch any issues early
         import json
         try:
+            # Test serialization - this will catch any bytes or other non-serializable types
             json.dumps(result)  # Test serialization
         except (TypeError, ValueError) as json_err:
             logger.error(f"[STORAGE] JSON serialization error: {json_err}")
-            logger.error(f"[STORAGE] Result type: {type(result)}, keys: {result.keys() if isinstance(result, dict) else 'N/A'}")
-            # Try to fix by ensuring all values are serializable
-            if isinstance(result, dict) and "images" in result:
-                fixed_images = []
-                for img in result.get("images", []):
-                    fixed_img = {}
-                    for key, value in img.items():
-                        if isinstance(value, bytes):
-                            fixed_img[key] = value.decode('utf-8', errors='ignore')
-                        elif isinstance(value, (Path, type(None))):
-                            fixed_img[key] = str(value) if value else ""
-                        else:
-                            fixed_img[key] = value
-                    fixed_images.append(fixed_img)
-                result["images"] = fixed_images
+            logger.error(f"[STORAGE] Result type: {type(result)}")
+            if isinstance(result, dict):
+                logger.error(f"[STORAGE] Result keys: {list(result.keys())}")
+                # Deep clean the result
+                if "images" in result:
+                    logger.error(f"[STORAGE] Found {len(result['images'])} images, cleaning...")
+                    fixed_images = []
+                    for idx, img in enumerate(result.get("images", [])):
+                        try:
+                            fixed_img = {}
+                            for key, value in img.items():
+                                if isinstance(value, bytes):
+                                    logger.warning(f"[STORAGE] Found bytes in image {idx}, key {key}, converting to string")
+                                    fixed_img[key] = value.decode('utf-8', errors='ignore')
+                                elif isinstance(value, (Path, type(None))):
+                                    fixed_img[key] = str(value) if value else ""
+                                elif hasattr(value, '__dict__'):
+                                    # Complex object, convert to string
+                                    fixed_img[key] = str(value)
+                                else:
+                                    fixed_img[key] = value
+                            # Test this image
+                            json.dumps(fixed_img)
+                            fixed_images.append(fixed_img)
+                        except Exception as img_err:
+                            logger.error(f"[STORAGE] Error fixing image {idx}: {img_err}")
+                            # Skip this image if it can't be fixed
+                    result["images"] = fixed_images
+                    # Test again
+                    try:
+                        json.dumps(result)
+                        logger.info(f"[STORAGE] Successfully fixed JSON serialization")
+                    except Exception as still_err:
+                        logger.error(f"[STORAGE] Still can't serialize after fix: {still_err}")
+                        # Return empty result rather than crashing
+                        result = {"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False}
         return result
     except Exception as e:
         logger.error(f"[STORAGE] Error in get_all_images: {e}", exc_info=True)
