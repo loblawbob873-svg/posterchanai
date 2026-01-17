@@ -2575,9 +2575,22 @@ class ChatHandler {
             const sharesResponse = await fetch('/api/files/shares');
             if (sharesResponse.ok) {
                 const sharesData = await sharesResponse.json();
-                // Handle both array and object responses
-                const shares = Array.isArray(sharesData) ? sharesData : (sharesData.shares || []);
-                const existingShare = shares.find(s => s.file_path === filePath);
+                // API returns {"shares": [...]}, so extract the array
+                let shares = [];
+                if (Array.isArray(sharesData)) {
+                    shares = sharesData;
+                } else if (sharesData && typeof sharesData === 'object') {
+                    // API returns {shares: [...]}
+                    shares = sharesData.shares || sharesData.items || [];
+                }
+                
+                // Ensure shares is an array before using .find()
+                if (!Array.isArray(shares)) {
+                    console.warn('Shares response is not an array:', sharesData);
+                    shares = [];
+                }
+                
+                const existingShare = shares.find(s => s && s.file_path === filePath);
                 
                 if (existingShare) {
                     const url = window.location.origin + existingShare.share_url;
