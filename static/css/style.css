@@ -2665,6 +2665,25 @@ fieldset legend {
     gap: 12px;
 }
 
+.file-search-results .file-result-item {
+    background: #1a1a2e;
+    border: 1px solid #2a2a3e;
+    border-radius: 8px;
+    padding: 16px;
+    transition: all 0.2s ease;
+}
+
+.file-search-results .file-actions {
+    display: flex !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+
+.file-search-results .file-action-btn {
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+
 .file-result-item {
     background: #1a1a2e;
     border: 1px solid #2a2a3e;
@@ -2733,6 +2752,8 @@ fieldset legend {
     margin-top: 12px;
     padding-top: 12px;
     border-top: 1px solid #2a2a3e;
+    opacity: 1 !important;
+    visibility: visible !important;
 }
 
 .file-action-btn {
@@ -2748,6 +2769,8 @@ fieldset legend {
     align-items: center;
     gap: 6px;
     white-space: nowrap;
+    opacity: 1 !important;
+    visibility: visible !important;
 }
 
 .file-action-btn:hover {
