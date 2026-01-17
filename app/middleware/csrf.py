@@ -66,70 +66,20 @@ def is_path_exempt(path: str) -> bool:
 
 class CSRFMiddleware(BaseHTTPMiddleware):
     """
-    CSRF protection middleware - DISABLED by default.
+    CSRF protection middleware - COMPLETELY DISABLED.
     
-    With SameSite="lax" cookies and authentication, CSRF protection is less critical.
-    The middleware still sets CSRF cookies for compatibility, but doesn't enforce validation.
+    CSRF protection has been disabled. SameSite="lax" cookies provide sufficient
+    CSRF protection for same-origin requests, and authentication is already required.
     
-    To re-enable CSRF protection, set CSRF_ENABLED environment variable to "true".
+    This middleware is kept for API compatibility but performs no validation.
     """
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Check if CSRF is enabled via environment variable
-        import os
-        csrf_enabled = os.getenv("CSRF_ENABLED", "false").lower() == "true"
-        
-        # Get or generate CSRF token (still set cookie for compatibility)
-        csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
-
-        # Only validate CSRF if explicitly enabled
-        if csrf_enabled and request.method in ("POST", "PUT", "DELETE", "PATCH"):
-            # Skip validation for exempt paths
-            if not is_path_exempt(request.url.path):
-                # Skip if request has Authorization header (API key or Bearer token for server-to-server)
-                auth_header = request.headers.get("Authorization")
-                if not auth_header:
-                    # Validate CSRF token
-                    csrf_header = (
-                        request.headers.get("x-csrf-token") or
-                        request.headers.get(CSRF_HEADER_NAME) or
-                        request.headers.get(CSRF_HEADER_NAME.lower())
-                    )
-
-                    if not csrf_cookie:
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail="CSRF token missing from cookies"
-                        )
-
-                    if not csrf_header:
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail="CSRF token missing from header"
-                        )
-
-                    if not secrets.compare_digest(csrf_cookie, csrf_header):
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail="CSRF token mismatch"
-                        )
-
-        # Process the request
+        # CSRF validation completely disabled - just pass through
+        # Process the request without any CSRF checks
         response = await call_next(request)
-
-        # Set CSRF cookie if not present (for all requests to ensure cookie is always available)
-        if not csrf_cookie:
-            new_token = generate_csrf_token()
-            response.set_cookie(
-                key=CSRF_COOKIE_NAME,
-                value=new_token,
-                httponly=False,  # JS needs to read it for the header
-                samesite="lax",  # Changed from "strict" to "lax" for better compatibility
-                secure=request.url.scheme == "https",
-                max_age=86400 * 7,  # 7 days
-                path="/"
-            )
-
+        
+        # Don't set CSRF cookies either - not needed
         return response
 
 
