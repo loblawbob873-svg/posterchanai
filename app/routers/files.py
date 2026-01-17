@@ -474,10 +474,16 @@ async def view_file(
     }
     media_type = media_types.get(suffix, 'application/octet-stream')
     
+    # For images, set headers to display inline instead of triggering download
+    headers = {}
+    if suffix in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
+        headers['Content-Disposition'] = 'inline'
+    
     return FileResponse(
         full_path,
         media_type=media_type,
-        filename=full_path.name
+        filename=full_path.name,
+        headers=headers
     )
 
 
@@ -705,8 +711,10 @@ async def email_files(
                         
                         attachments.append((filename, file_data, content_type))
                         continue
-                
-                raise HTTPException(status_code=400, detail=f"Invalid file URL format: {file_url}")
+                    else:
+                        raise HTTPException(status_code=400, detail=f"Invalid file URL format: {file_url}")
+                else:
+                    raise HTTPException(status_code=400, detail=f"Invalid file URL format: {file_url}")
             except HTTPException:
                 raise
             except Exception as e:
@@ -717,42 +725,42 @@ async def email_files(
     if request.file_paths:
         for file_path in request.file_paths:
             try:
-            # Sanitize and validate path
-            safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
-            full_path = user_path / safe_path
-            
-            # Validate path is within user directory
-            if not _validate_path_within_base(full_path, user_path):
-                raise HTTPException(status_code=403, detail=f"Access denied: {file_path}")
-            
-            if not full_path.exists() or not full_path.is_file():
-                raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
-            
-            # Read file in thread pool to prevent blocking
-            def _read_file_sync():
-                with open(full_path, 'rb') as f:
-                    return f.read()
-            
-            file_data = await asyncio.to_thread(_read_file_sync)
-            
-            # Determine content type
-            suffix = full_path.suffix.lower()
-            content_types = {
-                '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-                '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
-                '.pdf': 'application/pdf',
-                '.txt': 'text/plain', '.md': 'text/markdown',
-                '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript',
-                '.zip': 'application/zip', '.tar': 'application/x-tar', '.gz': 'application/gzip',
-            }
-            content_type = content_types.get(suffix, 'application/octet-stream')
-            
-            attachments.append((full_path.name, file_data, content_type))
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error reading file {file_path}: {e}")
-            raise HTTPException(status_code=500, detail=f"Error reading file: {file_path}")
+                # Sanitize and validate path
+                safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
+                full_path = user_path / safe_path
+                
+                # Validate path is within user directory
+                if not _validate_path_within_base(full_path, user_path):
+                    raise HTTPException(status_code=403, detail=f"Access denied: {file_path}")
+                
+                if not full_path.exists() or not full_path.is_file():
+                    raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+                
+                # Read file in thread pool to prevent blocking
+                def _read_file_sync():
+                    with open(full_path, 'rb') as f:
+                        return f.read()
+                
+                file_data = await asyncio.to_thread(_read_file_sync)
+                
+                # Determine content type
+                suffix = full_path.suffix.lower()
+                content_types = {
+                    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+                    '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+                    '.pdf': 'application/pdf',
+                    '.txt': 'text/plain', '.md': 'text/markdown',
+                    '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript',
+                    '.zip': 'application/zip', '.tar': 'application/x-tar', '.gz': 'application/gzip',
+                }
+                content_type = content_types.get(suffix, 'application/octet-stream')
+                
+                attachments.append((full_path.name, file_data, content_type))
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error reading file {file_path}: {e}")
+                raise HTTPException(status_code=500, detail=f"Error reading file: {file_path}")
     
     # Validate we have either file_paths or file_urls
     if not request.file_paths and not request.file_urls:

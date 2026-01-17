@@ -968,9 +968,18 @@ class FileManager {
     }
     
     openFile(filePath) {
-        // Open file in new tab or download
-        const url = `/api/files/view/${encodeURIComponent(filePath)}`;
-        window.open(url, '_blank');
+        // Check if it's an image file
+        const ext = filePath.split('.').pop().toLowerCase();
+        const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
+        
+        if (imageExts.includes(ext)) {
+            // Use image viewer for images
+            this.openImageViewer(filePath);
+        } else {
+            // Open other files in new tab
+            const url = `/api/files/view/${encodeURIComponent(filePath)}`;
+            window.open(url, '_blank');
+        }
     }
     
     showUploadDialog() {
