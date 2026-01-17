@@ -297,6 +297,21 @@ class FileManager {
         }
     }
     
+    async loadExternalStorageMounts() {
+        try {
+            const response = await fetch('/api/files/external-storage');
+            if (response.ok) {
+                const data = await response.json();
+                this.externalStorageMounts = data.mounts || [];
+            } else {
+                this.externalStorageMounts = [];
+            }
+        } catch (error) {
+            console.error('Error loading external storage mounts:', error);
+            this.externalStorageMounts = [];
+        }
+    }
+    
     async loadFiles(path) {
         // Load external storage mounts first if at root
         if (!path) {
