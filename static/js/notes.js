@@ -1373,13 +1373,13 @@ class NotesManager {
             }
             
             if (!csrfToken) {
-                console.log('CSRF token found:', csrfToken.substring(0, 8) + '...');
-            } else {
                 console.error('CSRF token still not available after retry');
                 console.error('Available cookies:', document.cookie);
                 this.showToast('Error: CSRF token not available. Please refresh the page.', 'error');
                 return;
             }
+            
+            console.log('CSRF token found:', csrfToken.substring(0, 8) + '...');
             
             // Build headers with CSRF token
             const headers = new Headers();
