@@ -436,14 +436,14 @@ async def upload_file(
                 asyncio.to_thread(generate_thumbnail_for_media, user_path, full_file_path)
             )
             media_type = "image" if is_image_file(full_file_path) else "video"
-            logger.debug(f"Scheduled thumbnail generation for uploaded {media_type}: {full_file_path}")
+            logger.info(f"[UPLOAD] ✓ Scheduled thumbnail generation for {media_type}: {full_file_path.name}")
             
             # For videos, also schedule transcoding for faster playback
             if is_video_file(full_file_path):
                 asyncio.create_task(
                     asyncio.to_thread(transcode_video, user_path, full_file_path)
                 )
-                logger.debug(f"Scheduled video transcoding for: {full_file_path}")
+                logger.info(f"[UPLOAD] ✓ Scheduled video transcoding for: {full_file_path.name}")
     except Exception as e:
         logger.warning(f"Failed to schedule media processing for {full_file_path}: {e}")
     
@@ -944,7 +944,7 @@ async def get_all_images(
                 logger.error(f"[STORAGE] Error {idx}: {name} - current={curr}, previous={prev}, diff={curr-prev}")
             if len(sort_errors) > 10:
                 logger.error("[STORAGE] Too many errors - attempting to fix by re-sorting...")
-                images.sort(key=sort_key)
+                images.sort(key=sort_key, reverse=True)
                 logger.error("[STORAGE] Re-sorted array")
         else:
             logger.info(f"[STORAGE] ✓ Sort verified: First 50 images in correct order (newest first)")
@@ -1530,16 +1530,68 @@ async def view_file(
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     
-    # Check if this is a video file - try to serve transcoded version if available
-    from app.services.video_transcode_service import get_transcoded_video_if_exists, is_video_file
+    # Check if this is a video file - transcode on-the-fly for bandwidth savings
+    from app.services.thumbnail_service import is_video_file
+    import subprocess
+    from starlette.responses import StreamingResponse
     
-    # For videos, check if transcoded version exists
-    video_path_to_serve = full_path
+    # For videos, stream transcoded version on-the-fly (don't save to disk)
     if is_video_file(full_path):
-        transcoded_path = get_transcoded_video_if_exists(user_path, full_path)
-        if transcoded_path:
-            video_path_to_serve = transcoded_path
-            logger.debug(f"Serving transcoded video: {transcoded_path.name} instead of {full_path.name}")
+        logger.info(f"[STORAGE] Streaming transcoded video on-the-fly: {full_path.name}")
+        
+        # Transcode to stdout and stream directly to client
+        # Using H.264 video + AAC audio for web compatibility and bandwidth savings
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-i', str(full_path),
+            '-c:v', 'libx264',           # H.264 codec for video
+            '-preset', 'veryfast',       # Fast encoding for real-time streaming
+            '-crf', '23',                # Quality (18-28, lower = better)
+            '-maxrate', '2M',            # Max bitrate for bandwidth control
+            '-bufsize', '4M',            # Buffer size
+            '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',  # Ensure even dimensions
+            '-c:a', 'aac',               # AAC audio codec
+            '-b:a', '128k',              # Audio bitrate
+            '-movflags', 'frag_keyframe+empty_moov+faststart',  # Enable streaming
+            '-f', 'mp4',                 # MP4 container
+            'pipe:1'                     # Output to stdout
+        ]
+        
+        try:
+            # Start ffmpeg process to transcode and stream
+            process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=10**8  # Large buffer for smooth streaming
+            )
+            
+            # Stream the transcoded output
+            def stream_transcoded():
+                try:
+                    while True:
+                        chunk = process.stdout.read(65536)  # 64KB chunks
+                        if not chunk:
+                            break
+                        yield chunk
+                finally:
+                    process.stdout.close()
+                    process.wait()
+            
+            return StreamingResponse(
+                stream_transcoded(),
+                media_type='video/mp4',
+                headers={
+                    'Accept-Ranges': 'none',  # No range requests for transcoded stream
+                    'Content-Disposition': f'inline; filename="{full_path.stem}.mp4"'
+                }
+            )
+        except Exception as transcode_err:
+            logger.error(f"[STORAGE] On-the-fly transcode error: {transcode_err}, serving original")
+            # Fall through to serve original video if transcoding fails
+    
+    # For images and non-transcoded videos, serve the original file
+    video_path_to_serve = full_path
     
     # Determine media type
     suffix = video_path_to_serve.suffix.lower()

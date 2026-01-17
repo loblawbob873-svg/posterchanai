@@ -1835,6 +1835,31 @@
     transform: scale(1.1);
 }
 
+.cyberpunk-fullscreen-download {
+    position: absolute;
+    top: 20px;
+    right: 70px;
+    width: 40px;
+    height: 40px;
+    border: 2px solid #00ff88;
+    background: rgba(0, 255, 136, 0.2);
+    color: #00ff88;
+    font-size: 24px;
+    cursor: pointer;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s;
+    box-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+}
+
+.cyberpunk-fullscreen-download:hover {
+    background: rgba(0, 255, 136, 0.4);
+    box-shadow: 0 0 20px rgba(0, 255, 136, 0.8);
+    transform: scale(1.1);
+}
+
 .cyberpunk-fullscreen-nav {
     position: absolute;
     top: 50%;

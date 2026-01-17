@@ -2136,13 +2136,17 @@ class FileManager {
             this.hasMoreImages = data.has_more || false;
             this.imageLoadOffset += data.images?.length || 0;
             
-            if (countEl) {
-                countEl.textContent = `[${data.total || 0} IMAGES FOUND]`;
+            // Update count displays
+            const countEl = document.querySelector('.photo-gallery-count');
+            const infoEl = document.querySelector('.photo-gallery-info');
+            const loadMoreBtn = document.getElementById('loadMoreImages');
+            
+            // Show total from server in main count
+            if (countEl && data.total !== undefined) {
+                countEl.textContent = `[${data.total} IMAGES FOUND]`;
             }
             
-            if (countEl) {
-                countEl.textContent = `${this.allImages.length} image${this.allImages.length !== 1 ? 's' : ''}`;
-            }
+            // Show loaded vs total in info display
             if (infoEl) {
                 infoEl.textContent = `[LOADED: ${this.allImages.length}/${data.total || 0}]`;
             }
@@ -2473,6 +2477,21 @@ class FileManager {
         
         if (prevBtn) prevBtn.style.display = index > 0 ? 'flex' : 'none';
         if (nextBtn) nextBtn.style.display = index < this.allImages.length - 1 ? 'flex' : 'none';
+        
+        // Update download button to download original file
+        const downloadBtn = document.getElementById('cyberpunkFullscreenDownload');
+        if (downloadBtn) {
+            downloadBtn.onclick = () => {
+                // Create a temporary link and trigger download
+                const link = document.createElement('a');
+                link.href = `/api/files/view/${encodeURIComponent(mediaPath)}`;
+                link.download = mediaName; // Suggest filename for download
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                console.log(`Photo Gallery - Downloading original: ${mediaName}`);
+            };
+        }
         
         fullscreen.style.display = 'flex';
     }
