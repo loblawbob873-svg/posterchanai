@@ -71,10 +71,22 @@ class NotesManager {
     }
     
     async loadFolders() {
+        // Clear cached folders immediately
+        this.folders = [];
+        
         try {
-            const response = await fetch('/api/notes/folders');
+            // Add cache busting to prevent stale data
+            const url = `/api/notes/folders?_t=${Date.now()}`;
+            const response = await fetch(url, {
+                cache: 'no-store',
+                headers: {
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache'
+                }
+            });
             if (response.ok) {
                 this.folders = await response.json();
+                // Force re-render even if folders array is empty
                 this.renderFolders();
             }
         } catch (error) {

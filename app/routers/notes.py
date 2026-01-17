@@ -11,6 +11,7 @@ from typing import List, Optional
 from pathlib import Path
 import logging
 import asyncio
+from datetime import datetime
 from pydantic import ValidationError
 
 from app.database import get_db
@@ -31,14 +32,20 @@ def _serialize_note_response(note: Note, folder_name: Optional[str] = None) -> d
     Used across all endpoints for consistent error handling.
     """
     try:
-        note_dict = NoteResponse.model_validate(note).model_dump()
-    except (AttributeError, ValidationError):
-        # Pydantic v1 fallback
+        # Try Pydantic v2 with JSON mode to ensure datetime serialization
+        note_dict = NoteResponse.model_validate(note).model_dump(mode='json')
+    except (AttributeError, ValidationError, TypeError):
+        # Pydantic v1 fallback or if mode='json' not supported
         try:
             note_dict = NoteResponse.from_orm(note).dict()
+            # Ensure datetime objects are serialized to strings
+            if isinstance(note_dict.get('created_at'), datetime):
+                note_dict['created_at'] = note_dict['created_at'].isoformat()
+            if isinstance(note_dict.get('updated_at'), datetime):
+                note_dict['updated_at'] = note_dict['updated_at'].isoformat()
         except Exception as e:
             logger.error(f"Error serializing note {note.id}: {e}", exc_info=True)
-            # Fallback: manual dict construction
+            # Fallback: manual dict construction with datetime serialization
             note_dict = {
                 "id": note.id,
                 "title": note.title,
@@ -47,8 +54,8 @@ def _serialize_note_response(note: Note, folder_name: Optional[str] = None) -> d
                 "tags": note.tags,
                 "attachments": note.attachments,
                 "is_pinned": note.is_pinned,
-                "created_at": note.created_at,
-                "updated_at": note.updated_at
+                "created_at": note.created_at.isoformat() if note.created_at else None,
+                "updated_at": note.updated_at.isoformat() if note.updated_at else None
             }
     
     result = {**note_dict}
@@ -85,7 +92,16 @@ async def get_folders(
             "notes_count": notes_count
         })
     
-    return result
+    # Return with no-cache headers to prevent browser caching
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        content=result,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
 
 
 @router.post("/folders", response_model=NoteFolderResponse)
@@ -241,9 +257,21 @@ async def get_notes(
             result.append(_serialize_note_response(note, folder_name))
         
         # Return with no-cache headers to prevent browser caching
-        from fastapi.responses import JSONResponse
-        return JSONResponse(
-            content=result,
+        # Use Response with proper JSON serialization to handle datetime objects
+        from fastapi.responses import Response
+        import json
+        
+        # Custom JSON encoder for datetime objects
+        class DateTimeEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                return super().default(obj)
+        
+        json_content = json.dumps(result, cls=DateTimeEncoder)
+        return Response(
+            content=json_content,
+            media_type="application/json",
             headers={
                 "Cache-Control": "no-cache, no-store, must-revalidate",
                 "Pragma": "no-cache",
