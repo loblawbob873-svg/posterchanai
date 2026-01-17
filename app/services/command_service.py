@@ -3108,48 +3108,37 @@ Return ONLY valid JSON, no other text. If this is not a bill or invoice, return 
                 if not attachment.data:
                     return {"type": "text", "content": f"Attachment too large or couldn't be downloaded."}
 
-                # Save to temp file and open
+                # Save attachment to user's temp directory for serving via API
                 import os
-                import platform
-                import subprocess
                 import tempfile
-
-                # Create temp file with original extension
+                import hashlib
+                from pathlib import Path
+                from app.services.storage_service import StorageService
+                
+                storage = StorageService(self.db)
+                user_temp_dir = Path(storage.upload_path) / self.user.username / "temp" / "mail_attachments"
+                user_temp_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Create a unique filename based on account, uid, and index to avoid conflicts
+                unique_id = hashlib.md5(f"{account_email}_{uid}_{att_index}".encode()).hexdigest()[:8]
                 _, ext = os.path.splitext(attachment.filename)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=ext, prefix="mail_att_") as f:
+                safe_filename = f"{unique_id}_{attachment.filename}"
+                temp_file_path = user_temp_dir / safe_filename
+                
+                # Save attachment
+                with open(temp_file_path, "wb") as f:
                     f.write(attachment.data)
-                    temp_path = f.name
-
-                # Open with system default application
-                opened = False
-                try:
-                    if platform.system() == "Darwin":  # macOS
-                        subprocess.run(["open", temp_path], check=True)
-                        opened = True
-                    elif platform.system() == "Windows":
-                        os.startfile(temp_path)
-                        opened = True
-                    else:  # Linux - try multiple openers
-                        for opener in ["xdg-open", "gio open", "kde-open", "gnome-open"]:
-                            try:
-                                subprocess.run(opener.split() + [temp_path], check=True, stderr=subprocess.DEVNULL)
-                                opened = True
-                                break
-                            except (FileNotFoundError, subprocess.CalledProcessError):
-                                continue
-                except Exception:
-                    pass
-
-                if opened:
-                    return {
-                        "type": "text",
-                        "content": f"📎 Opened: **{attachment.filename}** ({attachment.size / 1024:.1f} KB)",
-                    }
-                else:
-                    return {
-                        "type": "text",
-                        "content": f"📎 Saved: `{temp_path}`\n\nOpen manually or install `xdg-utils`",
-                    }
+                
+                # Generate URL to open in browser
+                from urllib.parse import quote
+                encoded_filename = quote(safe_filename)
+                attachment_url = f"/api/mail/attachment/{self.user.username}/{encoded_filename}"
+                
+                # Return HTML with clickable link that opens in new tab
+                return {
+                    "type": "text",
+                    "content": f"📎 Saved: **{attachment.filename}** ({attachment.size / 1024:.1f} KB)\n\n<a href=\"{attachment_url}\" target=\"_blank\" rel=\"noopener noreferrer\">Open in browser</a>",
+                }
 
             elif subcommand == "send":
                 # Explicit send: mail send [account] <recipient> ["subject"] <message>

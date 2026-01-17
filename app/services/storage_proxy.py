@@ -42,6 +42,15 @@ async def proxy_storage_request(
     if not storage_server_url or not storage_server_url.value:
         raise HTTPException(status_code=500, detail="Storage server not configured")
     
+    # Validate that storage_server_url has a protocol
+    base_url = storage_server_url.value.strip()
+    if not base_url.startswith(('http://', 'https://')):
+        logger.error(f"[STORAGE] Invalid storage_server_url (missing protocol): {base_url}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Storage proxy error: Request URL is missing an 'http://' or 'https://' protocol. Please configure storage_server_url with a valid URL (e.g., https://storage.example.com)"
+        )
+    
     # Get server-to-server API token (optional)
     storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
     
@@ -51,7 +60,7 @@ async def proxy_storage_request(
     # Forward Authorization header from original request (for API key auth)
     auth_header = request.headers.get("Authorization", "")
     
-    url = f"{storage_server_url.value.rstrip('/')}{endpoint}"
+    url = f"{base_url.rstrip('/')}{endpoint}"
     headers = {}
     
     # Prefer server token for server-to-server auth

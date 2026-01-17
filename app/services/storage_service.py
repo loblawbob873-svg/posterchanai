@@ -87,8 +87,20 @@ class StorageService:
         # Check if storage server is configured - proxy request if so
         storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
         if storage_server_url and storage_server_url.value:
-            # Proxy to storage server
-            return self._proxy_save_image(storage_server_url.value, username, conversation_id, image_base64, prefix)
+            # Validate URL has protocol before proxying
+            url = storage_server_url.value.strip()
+            if url.startswith(('http://', 'https://')):
+                # Valid URL - try to proxy
+                try:
+                    return self._proxy_save_image(url, username, conversation_id, image_base64, prefix)
+                except Exception as e:
+                    # If proxy fails, fall back to local storage
+                    logger.warning(f"[STORAGE] Failed to proxy save_image, falling back to local: {e}")
+                    # Fall through to local storage below
+            else:
+                # Invalid URL - log but fall back to local storage
+                logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
+                # Fall through to local storage below
         
         # Local file saving (storage server node)
         conv_path = self.get_conversation_path(username, conversation_id)
@@ -166,8 +178,20 @@ class StorageService:
         # Check if storage server is configured - proxy request if so
         storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
         if storage_server_url and storage_server_url.value:
-            # Proxy to storage server
-            return self._proxy_save_avatar(storage_server_url.value, username, image_data, ext)
+            # Validate URL has protocol before proxying
+            url = storage_server_url.value.strip()
+            if url.startswith(('http://', 'https://')):
+                # Valid URL - try to proxy
+                try:
+                    return self._proxy_save_avatar(url, username, image_data, ext)
+                except Exception as e:
+                    # If proxy fails, fall back to local storage
+                    logger.warning(f"[STORAGE] Failed to proxy save_avatar, falling back to local: {e}")
+                    # Fall through to local storage below
+            else:
+                # Invalid URL - log but fall back to local storage
+                logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
+                # Fall through to local storage below
         
         # Local file saving (storage server node)
         user_path = self.get_user_path(username)

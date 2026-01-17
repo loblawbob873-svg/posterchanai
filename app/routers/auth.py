@@ -893,29 +893,36 @@ async def get_avatar(
     # Check if storage server is configured - proxy request if so
     storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
     if storage_server_url and storage_server_url.value:
-        logger.debug(f"Proxying avatar request for {username} to storage server: {storage_server_url.value}")
-        # Try to get avatar from storage server via auth API (same endpoint)
-        # This will proxy to the storage server's /api/auth/avatar endpoint
-        try:
-            from app.services.storage_proxy import proxy_storage_request
-            # Proxy to the storage server's avatar endpoint
-            result = await proxy_storage_request(
-                db=db,
-                request=request,
-                endpoint=f"/api/auth/avatar/{username}",
-                method="GET",
-                stream=True
-            )
-            logger.debug(f"Successfully proxied avatar for {username} from storage server")
-            return result
-        except HTTPException as e:
-            logger.warning(f"HTTPException proxying avatar for {username}: {e.status_code} - {e.detail}")
-            if e.status_code == 404:
-                raise HTTPException(status_code=404, detail="Avatar not found")
-            raise
-        except Exception as e:
-            logger.warning(f"Error proxying avatar get for {username}, falling back to local: {e}", exc_info=True)
-            # Fall through to local serving
+        # Validate URL has protocol before proxying
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            logger.debug(f"Proxying avatar request for {username} to storage server: {url}")
+            # Try to get avatar from storage server via auth API (same endpoint)
+            # This will proxy to the storage server's /api/auth/avatar endpoint
+            try:
+                from app.services.storage_proxy import proxy_storage_request
+                # Proxy to the storage server's avatar endpoint
+                result = await proxy_storage_request(
+                    db=db,
+                    request=request,
+                    endpoint=f"/api/auth/avatar/{username}",
+                    method="GET",
+                    stream=True
+                )
+                logger.debug(f"Successfully proxied avatar for {username} from storage server")
+                return result
+            except HTTPException as e:
+                logger.warning(f"HTTPException proxying avatar for {username}: {e.status_code} - {e.detail}")
+                if e.status_code == 404:
+                    raise HTTPException(status_code=404, detail="Avatar not found")
+                # For other errors, fall through to local serving
+                logger.warning(f"Falling back to local avatar serving for {username}")
+            except Exception as e:
+                logger.warning(f"Error proxying avatar get for {username}, falling back to local: {e}", exc_info=True)
+                # Fall through to local serving
+        else:
+            # Invalid URL - log but fall back to local storage
+            logger.warning(f"Invalid storage_server_url (missing protocol): {url}, using local storage for avatar")
     else:
         logger.debug(f"Serving avatar for {username} from local storage (no storage_server_url configured)")
     

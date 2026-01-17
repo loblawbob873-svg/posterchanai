@@ -2,14 +2,17 @@
 Mail Router - API endpoints for email functionality.
 """
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response, RedirectResponse
+from fastapi.responses import Response, RedirectResponse, FileResponse
 from sqlalchemy.orm import Session
 from typing import List
+from pathlib import Path
+from urllib.parse import unquote
 
 from app.database import get_db
 from app.auth import get_current_user
 from app.models import User
 from app.services.mail_service import get_attachment, get_user_mail_accounts, sanitize_filename
+from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
 
 router = APIRouter(prefix="/api/mail", tags=["mail"])
 
@@ -52,6 +55,71 @@ async def download_attachment(
     return Response(
         content=attachment.data,
         media_type=attachment.content_type,
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{safe_filename}"'
+        }
+    )
+
+
+@router.get("/attachment/{username}/{filename:path}")
+async def serve_saved_attachment(
+    username: str,
+    filename: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Serve a saved mail attachment from temp directory (opens in browser)."""
+    # Verify user owns this file
+    if current_user.username != username:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Decode URL-encoded filename
+    try:
+        decoded_filename = unquote(filename)
+    except:
+        decoded_filename = filename
+    
+    # Sanitize filename
+    try:
+        safe_filename = _sanitize_path_component(decoded_filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid filename: {str(e)}")
+    
+    # Get storage service and construct path
+    storage = StorageService(db)
+    file_path = Path(storage.upload_path) / username / "temp" / "mail_attachments" / safe_filename
+    
+    # Validate path is within expected directory
+    base_path = Path(storage.upload_path) / username / "temp" / "mail_attachments"
+    if not _validate_path_within_base(file_path, base_path):
+        raise HTTPException(status_code=403, detail="Invalid file path")
+    
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    
+    # Determine content type
+    suffix = file_path.suffix.lower()
+    content_type_map = {
+        '.pdf': 'application/pdf',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.txt': 'text/plain',
+        '.html': 'text/html',
+        '.htm': 'text/html',
+    }
+    content_type = content_type_map.get(suffix, 'application/octet-stream')
+    
+    # Use inline disposition for viewable types (images, PDFs, text)
+    viewable_types = ['application/pdf', 'image/', 'text/']
+    disposition = 'inline' if any(t in content_type for t in viewable_types) else 'attachment'
+    
+    return FileResponse(
+        path=str(file_path),
+        media_type=content_type,
+        filename=safe_filename,
         headers={
             "Content-Disposition": f'{disposition}; filename="{safe_filename}"'
         }

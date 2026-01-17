@@ -1579,7 +1579,7 @@ fieldset legend {
     background: var(--bg-secondary);
 }
 
-/* Toast notification */
+/* Toast notification - smaller size */
 .toast {
     position: fixed;
     bottom: 100px;
@@ -1587,15 +1587,15 @@ fieldset legend {
     transform: translateX(-50%);
     background: var(--bg-tertiary);
     color: var(--accent);
-    padding: 12px 24px;
-    border-radius: 2px;
+    padding: 8px 14px;
+    border-radius: 6px;
     z-index: 10000;
     animation: toastIn 0.3s ease, toastOut 0.3s ease 1.7s forwards;
-    box-shadow: var(--glow-cyan);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
     border: 1px solid var(--accent);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-size: 13px;
+    font-size: 12px;
+    max-width: 300px;
+    text-align: center;
 }
 @keyframes toastIn {
     from { opacity: 0; transform: translateX(-50%) translateY(20px); }

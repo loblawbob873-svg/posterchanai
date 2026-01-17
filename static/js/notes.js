@@ -930,8 +930,9 @@ class NotesManager {
         const tags = document.getElementById('noteTagsInput').value.trim();
         const isPinned = document.getElementById('pinNoteBtn').dataset.pinned === 'true';
         
+        // Require title unless it's auto-save
         if (!title && !autoSave) {
-            alert('Please enter a note title');
+            this.showToast('Please enter a note title', 'error');
             return;
         }
         
@@ -981,13 +982,13 @@ class NotesManager {
                 }
                 console.error('Error saving note:', errorDetail);
                 if (!autoSave) {
-                    alert(`Error saving note: ${errorDetail}`);
+                    this.showToast(`Error saving note: ${errorDetail}`, 'error');
                 }
             }
         } catch (error) {
             console.error('Error saving note:', error);
             if (!autoSave) {
-                alert(`Error saving note: ${error.message || 'Network error'}`);
+                this.showToast(`Error saving note: ${error.message || 'Network error'}`, 'error');
             }
         }
     }
@@ -1008,11 +1009,11 @@ class NotesManager {
                 this.cancelEdit();
                 this.loadNotes();
             } else {
-                alert('Error deleting note');
+                this.showToast('Error deleting note', 'error');
             }
         } catch (error) {
             console.error('Error deleting note:', error);
-            alert('Error deleting note');
+            this.showToast('Error deleting note', 'error');
         }
     }
     
@@ -1165,7 +1166,7 @@ class NotesManager {
         // Ensure csrfFetch is available
         if (typeof csrfFetch === 'undefined') {
             // csrfFetch not available, fallback to fetch
-            alert('Error: CSRF protection not loaded. Please refresh the page.');
+            this.showToast('Error: CSRF protection not loaded. Please refresh the page.', 'error');
             return;
         }
         
@@ -1193,11 +1194,11 @@ class NotesManager {
                     errorDetail = `HTTP ${response.status}: ${response.statusText}`;
                 }
                 console.error('Error creating folder:', errorDetail);
-                alert(`Error creating folder: ${errorDetail}`);
+                this.showToast(`Error creating folder: ${errorDetail}`, 'error');
             }
         } catch (error) {
             console.error('Error creating folder:', error);
-            alert(`Error creating folder: ${error.message || 'Network error'}`);
+            this.showToast(`Error creating folder: ${error.message || 'Network error'}`, 'error');
         }
     }
     
@@ -1449,9 +1450,10 @@ class NotesManager {
     async removeAttachment(filename) {
         if (!this.currentNoteId) return;
         
-        if (!confirm(`Remove attachment "${filename}"?`)) {
-            return;
-        }
+                // Use a smaller confirmation - could be improved with a custom modal
+                if (!confirm(`Remove attachment "${filename}"?`)) {
+                    return;
+                }
         
         try {
             const response = await csrfFetch(`/api/notes/${this.currentNoteId}/attachments/${encodeURIComponent(filename)}`, {
@@ -1473,11 +1475,11 @@ class NotesManager {
     }
     
     showToast(message, type = 'success') {
-        // Simple toast notification
+        // Simple toast notification - smaller size
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
         toast.textContent = message;
-        toast.style.cssText = 'position: fixed; top: 20px; right: 20px; padding: 12px 20px; background: #2a2a3e; border: 1px solid #3a3a4e; border-radius: 8px; color: #e0e0e0; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.3);';
+        toast.style.cssText = 'position: fixed; top: 20px; right: 20px; padding: 8px 14px; background: #2a2a3e; border: 1px solid #3a3a4e; border-radius: 6px; color: #e0e0e0; z-index: 10000; box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-size: 13px; max-width: 300px;';
         document.body.appendChild(toast);
         setTimeout(() => {
             toast.style.opacity = '0';
@@ -1504,8 +1506,22 @@ class NotesManager {
         if (!this.currentNoteId) {
             // Create a new note first (sets up UI)
             this.createNote();
+            
+            // Auto-generate a title if none exists (for attachment upload)
+            const titleInput = document.getElementById('noteTitleInput');
+            if (titleInput && !titleInput.value.trim()) {
+                const timestamp = new Date().toLocaleString('en-US', { 
+                    month: 'short', 
+                    day: 'numeric', 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                });
+                titleInput.value = `Untitled Note ${timestamp}`;
+            }
+            
             // Save the note to get an ID, then show file picker
-            this.saveNote().then(() => {
+            // Note: saveNote() will now use the auto-generated title
+            this.saveNote(false).then(() => {
                 // Wait a moment for the note to be fully set up
                 setTimeout(() => {
                     if (this.currentNoteId) {

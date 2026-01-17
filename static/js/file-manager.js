@@ -270,7 +270,7 @@ class FileManager {
                                 <td>${share.access_count || 0}${share.max_accesses ? ` / ${share.max_accesses}` : ''}</td>
                                 <td><span class="share-status ${statusClass}">${status}</span></td>
                                 <td>
-                                    <button class="btn-danger btn-small" onclick="fileManager.unshareFile(${share.id}, '${this.escapeHtml(share.filename)}')" title="Unshare">🗑️ Unshare</button>
+                                    <button class="btn-danger btn-small" onclick="fileManager.unshareFile(${share.id}, '${this.escapeJs(share.filename)}')" title="Unshare">🗑️ Unshare</button>
                                 </td>
                             </tr>
                         `;
@@ -552,8 +552,8 @@ class FileManager {
                 const isExternal = item.is_external || false;
                 const actions = !item.is_directory ? `
                     <div class="file-actions" onclick="event.stopPropagation();">
-                        <button class="file-action-btn" title="Email" onclick="if(window.fileManager && window.fileManager.emailFile){window.fileManager.emailFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}');}else{alert('Email functionality not available');}">📧</button>
-                        <button class="file-action-btn" title="Share" onclick="if(window.fileManager && window.fileManager.shareFile){window.fileManager.shareFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}');}else{alert('Share functionality not available');}">🔗</button>
+                        <button class="file-action-btn" title="Email" onclick="if(window.fileManager && window.fileManager.emailFile){window.fileManager.emailFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Email functionality not available');}">📧</button>
+                        <button class="file-action-btn" title="Share" onclick="if(window.fileManager && window.fileManager.shareFile){window.fileManager.shareFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Share functionality not available');}">🔗</button>
                     </div>
                 ` : '';
                 return `
@@ -562,10 +562,10 @@ class FileManager {
                          data-is-dir="${item.is_directory}"
                          data-is-external="${isExternal}"
                          data-name="${this.escapeHtml(item.name)}"
-                         oncontextmenu="event.preventDefault(); fileManager.showContextMenu(event, '${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}', ${item.is_directory ? 'true' : 'false'});"
-                         onclick="if(event.ctrlKey || event.metaKey) { fileManager.toggleSelection('${this.escapeHtml(item.path)}', !fileManager.selectedFiles.has('${this.escapeHtml(item.path)}')); } else if (!event.target.closest('.file-actions') && !event.target.closest('.file-checkbox')) { ${item.is_directory ? `fileManager.loadFiles('${this.escapeHtml(item.path)}');` : `fileManager.openFile('${this.escapeHtml(item.path)}');`} }">
+                         oncontextmenu="event.preventDefault(); fileManager.showContextMenu(event, '${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}', ${item.is_directory ? 'true' : 'false'});"
+                         onclick="if(event.ctrlKey || event.metaKey) { fileManager.toggleSelection('${this.escapeJs(item.path)}', !fileManager.selectedFiles.has('${this.escapeJs(item.path)}')); } else if (!event.target.closest('.file-actions') && !event.target.closest('.file-checkbox')) { ${item.is_directory ? `fileManager.loadFiles('${this.escapeJs(item.path)}');` : `fileManager.openFile('${this.escapeJs(item.path)}');`} }">
                         <input type="checkbox" class="file-checkbox" ${isSelected ? 'checked' : ''} 
-                               onchange="fileManager.toggleSelection('${this.escapeHtml(item.path)}', this.checked)"
+                               onchange="fileManager.toggleSelection('${this.escapeJs(item.path)}', this.checked)"
                                onclick="event.stopPropagation();">
                         <div class="file-icon">${thumbnail || icon}</div>
                         <div class="file-name" title="${this.escapeHtml(item.name)}${item.description ? ' - ' + this.escapeHtml(item.description) : ''}">
@@ -598,8 +598,8 @@ class FileManager {
                             const icon = isExternal ? '💾' : (item.is_directory ? '📂' : this.getFileIcon(item.name));
                             const actions = !item.is_directory ? `
                                 <td>
-                                    <button class="file-action-btn" title="Email" onclick="if(window.fileManager && window.fileManager.emailFile){window.fileManager.emailFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}');}else{alert('Email functionality not available');}">📧</button>
-                                    <button class="file-action-btn" title="Share" onclick="if(window.fileManager && window.fileManager.shareFile){window.fileManager.shareFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}');}else{alert('Share functionality not available');}">🔗</button>
+                                    <button class="file-action-btn" title="Email" onclick="if(window.fileManager && window.fileManager.emailFile){window.fileManager.emailFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Email functionality not available');}">📧</button>
+                                    <button class="file-action-btn" title="Share" onclick="if(window.fileManager && window.fileManager.shareFile){window.fileManager.shareFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Share functionality not available');}">🔗</button>
                                 </td>
                             ` : '<td></td>';
                             return `
@@ -608,10 +608,10 @@ class FileManager {
                                     data-is-dir="${item.is_directory}"
                                     data-is-external="${isExternal}"
                                     data-name="${this.escapeHtml(item.name)}"
-                                    oncontextmenu="event.preventDefault(); fileManager.showContextMenu(event, '${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}', ${item.is_directory ? 'true' : 'false'});"
-                                    onclick="if(event.ctrlKey || event.metaKey) { fileManager.toggleSelection('${this.escapeHtml(item.path)}', !fileManager.selectedFiles.has('${this.escapeHtml(item.path)}')); } else if (!event.target.closest('td:last-child') && !event.target.closest('.file-checkbox')) { ${item.is_directory ? `fileManager.loadFiles('${this.escapeHtml(item.path)}');` : `fileManager.openFile('${this.escapeHtml(item.path)}');`} }">
+                                    oncontextmenu="event.preventDefault(); fileManager.showContextMenu(event, '${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}', ${item.is_directory ? 'true' : 'false'});"
+                                    onclick="if(event.ctrlKey || event.metaKey) { fileManager.toggleSelection('${this.escapeJs(item.path)}', !fileManager.selectedFiles.has('${this.escapeJs(item.path)}')); } else if (!event.target.closest('td:last-child') && !event.target.closest('.file-checkbox')) { ${item.is_directory ? `fileManager.loadFiles('${this.escapeJs(item.path)}');` : `fileManager.openFile('${this.escapeJs(item.path)}');`} }">
                                     <td><input type="checkbox" class="file-checkbox" ${isSelected ? 'checked' : ''} 
-                                               onchange="fileManager.toggleSelection('${this.escapeHtml(item.path)}', this.checked)"
+                                               onchange="fileManager.toggleSelection('${this.escapeJs(item.path)}', this.checked)"
                                                onclick="event.stopPropagation();"></td>
                                     <td>${icon} ${this.escapeHtml(item.name)}${isExternal ? ' <span class="external-badge" title="External Storage">💾</span>' : ''}</td>
                                     <td>${item.is_directory ? '-' : this.formatSize(item.size)}</td>
@@ -745,11 +745,22 @@ class FileManager {
     }
     
     async sendEmail() {
-        const filePath = document.getElementById('emailFilePath').value;
-        const apiUrl = document.getElementById('emailFilePath').dataset.apiUrl; // For note attachments
-        let to = document.getElementById('emailTo').value.trim();
-        const subject = document.getElementById('emailSubject').value.trim();
-        const body = document.getElementById('emailBody').value.trim();
+        const emailFilePathInput = document.getElementById('emailFilePath');
+        const emailToInput = document.getElementById('emailTo');
+        const emailSubjectInput = document.getElementById('emailSubject');
+        const emailBodyInput = document.getElementById('emailBody');
+        
+        if (!emailFilePathInput || !emailToInput || !emailSubjectInput || !emailBodyInput) {
+            console.error('FileManager: Required email form elements not found');
+            alert('Email form error. Please refresh the page.');
+            return;
+        }
+        
+        const filePath = emailFilePathInput.value;
+        const apiUrl = emailFilePathInput.dataset.apiUrl; // For note attachments
+        let to = emailToInput.value.trim();
+        const subject = emailSubjectInput.value.trim();
+        const body = emailBodyInput.value.trim();
         
         if (!to) {
             alert('Please enter recipient email address');
@@ -921,6 +932,21 @@ class FileManager {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+    
+    /**
+     * Escape JavaScript string delimiters for use in JavaScript string literals
+     * Prevents XSS when inserting user input into onclick handlers
+     */
+    escapeJs(text) {
+        if (text == null) return '';
+        return String(text)
+            .replace(/\\/g, '\\\\')  // Escape backslashes first
+            .replace(/'/g, "\\'")    // Escape single quotes
+            .replace(/"/g, '\\"')     // Escape double quotes
+            .replace(/\n/g, '\\n')   // Escape newlines
+            .replace(/\r/g, '\\r')   // Escape carriage returns
+            .replace(/\t/g, '\\t');    // Escape tabs
     }
     
     showContextMenu(event, filePath, fileName, isDirectory) {
@@ -1314,7 +1340,7 @@ class FileManager {
                 const dirs = data.items.filter(item => item.is_directory);
                 
                 foldersDiv.innerHTML = dirs.map(dir => {
-                    return `<button type="button" class="btn-secondary folder-btn" onclick="fileManager.selectMoveDestination('${this.escapeHtml(dir.path)}')">📂 ${this.escapeHtml(dir.name)}</button>`;
+                    return `<button type="button" class="btn-secondary folder-btn" onclick="fileManager.selectMoveDestination('${this.escapeJs(dir.path)}')">📂 ${this.escapeHtml(dir.name)}</button>`;
                 }).join('');
             }
         } catch (error) {
