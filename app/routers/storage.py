@@ -407,9 +407,10 @@ async def upload_file(
     
     relative_path, safe_filename, full_file_path = await asyncio.to_thread(_upload_file_sync)
     
-    # Generate thumbnail for images and videos asynchronously (don't block upload response)
+    # Generate thumbnail and transcode videos asynchronously (don't block upload response)
     try:
         from app.services.thumbnail_service import is_image_file, is_video_file, generate_thumbnail_for_media
+        from app.services.video_transcode_service import transcode_video
         # Get user_path in async context
         storage = StorageService(db)
         user_path = storage.get_user_path(username)
@@ -421,8 +422,15 @@ async def upload_file(
             )
             media_type = "image" if is_image_file(full_file_path) else "video"
             logger.debug(f"Scheduled thumbnail generation for uploaded {media_type}: {full_file_path}")
+            
+            # For videos, also schedule transcoding for faster playback
+            if is_video_file(full_file_path):
+                asyncio.create_task(
+                    asyncio.to_thread(transcode_video, user_path, full_file_path)
+                )
+                logger.debug(f"Scheduled video transcoding for: {full_file_path}")
     except Exception as e:
-        logger.warning(f"Failed to schedule thumbnail generation for {full_file_path}: {e}")
+        logger.warning(f"Failed to schedule media processing for {full_file_path}: {e}")
     
     # Invalidate file cache
     try:
@@ -1322,26 +1330,43 @@ async def view_file(
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     
+    # Check if this is a video file - try to serve transcoded version if available
+    from app.services.video_transcode_service import get_transcoded_video_if_exists, is_video_file
+    
+    # For videos, check if transcoded version exists
+    video_path_to_serve = full_path
+    if is_video_file(full_path):
+        transcoded_path = get_transcoded_video_if_exists(user_path, full_path)
+        if transcoded_path:
+            video_path_to_serve = transcoded_path
+            logger.debug(f"Serving transcoded video: {transcoded_path.name} instead of {full_path.name}")
+    
     # Determine media type
-    suffix = full_path.suffix.lower()
+    suffix = video_path_to_serve.suffix.lower()
     media_types = {
         '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
         '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
         '.pdf': 'application/pdf',
         '.txt': 'text/plain', '.md': 'text/markdown',
         '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript',
+        '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+        '.avi': 'video/x-msvideo', '.mkv': 'video/x-matroska',
     }
     media_type = media_types.get(suffix, 'application/octet-stream')
     
-    # For images, set headers to display inline instead of triggering download
+    # For images and videos, set headers to display inline instead of triggering download
     headers = {}
     if suffix in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
         headers['Content-Disposition'] = 'inline'
+    elif suffix in ['.mp4', '.webm', '.mov', '.avi', '.mkv']:
+        headers['Content-Disposition'] = 'inline'
+        # Enable range requests for video streaming
+        headers['Accept-Ranges'] = 'bytes'
     
     return FileResponse(
-        full_path,
+        video_path_to_serve,
         media_type=media_type,
-        filename=full_path.name,
+        filename=full_path.name,  # Keep original filename for download
         headers=headers
     )
 
