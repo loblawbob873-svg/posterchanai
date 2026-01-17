@@ -4,10 +4,10 @@
         <div class="modal-header">
             <h2>📁 File Manager</h2>
             <div class="file-manager-header-actions">
-                <button class="btn-secondary" id="fileManagerUploadBtn">📤 Upload</button>
-                <button class="btn-secondary" id="fileManagerUploadDirBtn">📁 Upload Directory</button>
-                <button class="btn-secondary" id="fileManagerNewFolderBtn">📂 New Folder</button>
-                <button class="btn-secondary" id="fileManagerPictureViewerBtn" title="View All Pictures">🖼️ Gallery</button>
+                <button class="btn-icon-only" id="fileManagerUploadBtn" title="Upload Files">📤</button>
+                <button class="btn-icon-only" id="fileManagerUploadDirBtn" title="Upload Directory">📁</button>
+                <button class="btn-icon-only" id="fileManagerNewFolderBtn" title="New Folder">📂</button>
+                <button class="btn-icon-only" id="fileManagerPictureViewerBtn" title="Photo Gallery">🖼️</button>
             </div>
             <button class="btn-icon modal-close" id="fileManagerCloseBtn">&times;</button>
         </div>
@@ -28,11 +28,11 @@
                         <button class="tab-btn" id="fileManagerSharesTab" data-tab="shares">🔗 Shared Files</button>
                     </div>
                     <div class="file-selection-controls" id="fileSelectionControls">
-                        <button class="btn-secondary" id="fileManagerSelectAllBtn">Select All</button>
-                        <button class="btn-secondary" id="fileManagerSelectNoneBtn">Select None</button>
-                        <button class="btn-danger" id="fileManagerDeleteBtn" title="Delete selected">🗑️ Delete</button>
-                        <button class="btn-secondary" id="fileManagerMoveBtn" title="Move selected">📦 Move</button>
-                        <span class="selection-count" id="fileSelectionCount">0 selected</span>
+                        <button class="btn-icon-only" id="fileManagerSelectAllBtn" title="Select All">✓</button>
+                        <button class="btn-icon-only" id="fileManagerSelectNoneBtn" title="Select None">✗</button>
+                        <button class="btn-icon-only btn-danger-icon" id="fileManagerDeleteBtn" title="Delete selected">🗑️</button>
+                        <button class="btn-icon-only" id="fileManagerMoveBtn" title="Move selected">📦</button>
+                        <span class="selection-count" id="fileSelectionCount">0</span>
                     </div>
                     <div class="file-manager-search">
                         <input type="text" id="fileManagerSearchInput" class="file-search-input" placeholder="🔍 Search files..." autocomplete="off">

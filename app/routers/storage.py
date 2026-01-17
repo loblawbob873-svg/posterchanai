@@ -714,13 +714,25 @@ async def get_all_images(
                     if item.is_dir() or item.suffix.lower() not in media_extensions:
                         continue
                     
+                    # Skip hidden files (starting with .) - these are usually system files
+                    if item.name.startswith('.'):
+                        skipped_count += 1
+                        skipped_reasons['hidden'] = skipped_reasons.get('hidden', 0) + 1
+                        continue
+                    
                     # Skip thumbnails directory - check path parts, not just string contains
                     # This avoids false positives like "my.thumbnails.jpg"
                     try:
                         relative = item.relative_to(user_path)
+                        # Skip any path that contains .thumbnails as a directory component
                         if any(part == '.thumbnails' for part in relative.parts):
                             skipped_count += 1
                             skipped_reasons['thumbnails'] = skipped_reasons.get('thumbnails', 0) + 1
+                            continue
+                        # Skip other hidden/system directories
+                        if any(part.startswith('.') and part != '.' for part in relative.parts):
+                            skipped_count += 1
+                            skipped_reasons['hidden_dir'] = skipped_reasons.get('hidden_dir', 0) + 1
                             continue
                     except ValueError:
                         # If relative path calculation fails, fall back to string check
@@ -743,8 +755,9 @@ async def get_all_images(
                         skipped_reasons['empty'] = skipped_reasons.get('empty', 0) + 1
                         continue
                     
-                    # Skip very small files that are likely not real images/videos (< 100 bytes)
-                    if stat.st_size < 100:
+                    # Skip very small files that are likely not real images/videos
+                    # Images should be at least 1KB, videos at least 10KB
+                    if stat.st_size < 1024:  # Less than 1KB
                         skipped_count += 1
                         skipped_reasons['too_small'] = skipped_reasons.get('too_small', 0) + 1
                         continue
@@ -771,9 +784,20 @@ async def get_all_images(
                         skipped_reasons['not_media'] = skipped_reasons.get('not_media', 0) + 1
                         continue
                     
+                    # Additional size checks based on file type
+                    if is_image and stat.st_size < 1024:  # Images should be at least 1KB
+                        skipped_count += 1
+                        skipped_reasons['image_too_small'] = skipped_reasons.get('image_too_small', 0) + 1
+                        continue
+                    
+                    if is_video and stat.st_size < 10240:  # Videos should be at least 10KB
+                        skipped_count += 1
+                        skipped_reasons['video_too_small'] = skipped_reasons.get('video_too_small', 0) + 1
+                        continue
+                    
                     # Skip files that are likely thumbnails based on name/path patterns
                     name_lower = item.name.lower()
-                    if any(pattern in name_lower for pattern in ['thumb', 'thumbnail', '_tn', '_small', '_mini']):
+                    if any(pattern in name_lower for pattern in ['thumb', 'thumbnail', '_tn', '_small', '_mini', '_thumb']):
                         try:
                             relative = item.relative_to(user_path)
                             if '.thumbnails' in relative.parts:
@@ -790,6 +814,9 @@ async def get_all_images(
                             # Quick check - just try to open (don't verify, too slow)
                             with Image.open(item) as img:
                                 _ = img.format  # This will fail if file is completely invalid
+                                # Also check that image has valid dimensions
+                                if img.size[0] == 0 or img.size[1] == 0:
+                                    raise ValueError("Invalid image dimensions")
                         except Exception as img_error:
                             skipped_count += 1
                             skipped_reasons['invalid_image'] = skipped_reasons.get('invalid_image', 0) + 1
@@ -804,115 +831,25 @@ async def get_all_images(
                         "type": "image" if is_image else "video" if is_video else "unknown",
                     }
                     
-                    # Get thumbnail (use stored thumbnail if available)
+                    # Get thumbnail (ONLY use stored thumbnail - never generate on gallery load!)
+                    # Thumbnails should be generated during upload, not when viewing gallery
+                    # This prevents ffmpeg from running every time the gallery loads
                     try:
-                        from app.services.thumbnail_service import get_thumbnail_if_exists, generate_thumbnail_for_image, generate_thumbnail_for_video_file
-                        from PIL import Image
-                        import base64
-                        import io
-                        
-                        def _generate_thumbnail(file_path: Path, max_size: tuple = (300, 300)):
-                            """Generate base64-encoded thumbnail for an image."""
-                            try:
-                                # Quick validation: skip if file is empty or doesn't exist
-                                if not file_path.exists() or file_path.stat().st_size == 0:
-                                    return None
-                                
-                                with Image.open(file_path) as img:
-                                    original_mode = img.mode
-                                    
-                                    # Convert to a mode that supports thumbnail operations first
-                                    # Handle palette mode (P) - convert to RGBA first to preserve transparency
-                                    if img.mode == 'P':
-                                        # Check if image has transparency
-                                        if 'transparency' in img.info:
-                                            img = img.convert('RGBA')
-                                        else:
-                                            img = img.convert('RGB')
-                                    # Handle grayscale with alpha (LA)
-                                    elif img.mode == 'LA':
-                                        img = img.convert('RGBA')
-                                    # Handle other unsupported modes
-                                    elif img.mode not in ('RGB', 'RGBA', 'L', 'CMYK'):
-                                        # Try to convert to RGB, fallback to RGBA if that fails
-                                        try:
-                                            img = img.convert('RGB')
-                                        except Exception:
-                                            try:
-                                                img = img.convert('RGBA')
-                                            except Exception:
-                                                logger.debug(f"Could not convert mode {original_mode}, trying L")
-                                                img = img.convert('L').convert('RGB')
-                                    
-                                    # Create thumbnail (maintains aspect ratio) - now safe to call
-                                    img.thumbnail(max_size, Image.Resampling.LANCZOS)
-                                    
-                                    # Convert to RGB for JPEG saving (handle transparency)
-                                    if img.mode in ('RGBA', 'LA'):
-                                        background = Image.new('RGB', img.size, (255, 255, 255))
-                                        if img.mode == 'RGBA':
-                                            background.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
-                                        elif img.mode == 'LA':
-                                            background.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
-                                        img = background
-                                    elif img.mode not in ('RGB', 'L'):
-                                        # Convert any remaining non-RGB modes to RGB
-                                        if img.mode == 'L':
-                                            img = img.convert('RGB')
-                                        else:
-                                            img = img.convert('RGB')
-                                    
-                                    # Ensure we have RGB mode for JPEG
-                                    if img.mode != 'RGB':
-                                        img = img.convert('RGB')
-                                    
-                                    # Save to bytes
-                                    buffer = io.BytesIO()
-                                    img.save(buffer, format='JPEG', quality=85)
-                                    buffer.seek(0)
-                                    
-                                    # Encode as base64
-                                    thumbnail_b64 = base64.b64encode(buffer.read()).decode('utf-8')
-                                    return f"data:image/jpeg;base64,{thumbnail_b64}"
-                            except Exception as e:
-                                # Don't log "cannot identify" errors as they're expected for corrupted files
-                                if "cannot identify" not in str(e).lower():
-                                    logger.debug(f"Error generating thumbnail for {file_path}: {e}")
-                                return None
+                        from app.services.thumbnail_service import get_thumbnail_if_exists
+                        from app.routers.files import generate_thumbnail
                         
                         thumbnail_path = get_thumbnail_if_exists(user_path, item)
                         if thumbnail_path and thumbnail_path.exists():
-                            # Use stored thumbnail
-                            thumbnail = _generate_thumbnail(thumbnail_path, max_size=(300, 300))
+                            # Use stored thumbnail only
+                            thumbnail = generate_thumbnail(thumbnail_path, max_size=(300, 300))
                             if thumbnail:
                                 image_info["thumbnail"] = thumbnail
-                        else:
-                            if is_image:
-                                # Generate on-the-fly for images
-                                thumbnail = _generate_thumbnail(item, max_size=(300, 300))
-                                if thumbnail:
-                                    image_info["thumbnail"] = thumbnail
-                                    # Also save thumbnail for future use
-                                    try:
-                                        generate_thumbnail_for_image(user_path, item)
-                                    except Exception:
-                                        pass  # Ignore errors when saving thumbnail
-                            elif is_video:
-                                # For videos, try to generate thumbnail
-                                try:
-                                    generate_thumbnail_for_video_file(user_path, item)
-                                    # Try to get the thumbnail we just generated
-                                    thumbnail_path = get_thumbnail_if_exists(user_path, item)
-                                    if thumbnail_path and thumbnail_path.exists():
-                                        thumbnail = _generate_thumbnail(thumbnail_path, max_size=(300, 300))
-                                        if thumbnail:
-                                            image_info["thumbnail"] = thumbnail
-                                except Exception as video_error:
-                                    logger.debug(f"Failed to generate video thumbnail for {item}: {video_error}")
+                        # If no thumbnail exists, that's OK - it will be generated on upload
+                        # Don't generate here as it's too slow and causes performance issues
                     except Exception as e:
-                        # Only log if it's not a "cannot identify" error
-                        if "cannot identify" not in str(e).lower():
-                            logger.debug(f"Failed to generate thumbnail for {item}: {e}")
+                        # Silently skip thumbnail if it doesn't exist or can't be loaded
+                        # This is expected for files that haven't had thumbnails generated yet
+                        pass
                     
                     images.append(image_info)
                 except Exception as e:
@@ -953,9 +890,15 @@ async def get_all_images(
         images.sort(key=lambda x: (float(x.get('modified', 0) or 0), str(x.get('path', '')).lower()), reverse=True)
         
         # Debug: log statistics
-        logger.info(f"[STORAGE] Image scan complete: {len(images)} unique valid images/videos found, {skipped_count} files skipped, {duplicates_removed} duplicates removed")
+        total_scanned = len(images) + skipped_count
+        logger.info(f"[STORAGE] Image scan complete:")
+        logger.info(f"  - Total files scanned: {total_scanned}")
+        logger.info(f"  - Valid images/videos: {len(images)}")
+        logger.info(f"  - Files skipped: {skipped_count}")
+        logger.info(f"  - Duplicates removed: {duplicates_removed}")
         if skipped_reasons:
-            logger.info(f"[STORAGE] Skip reasons: {skipped_reasons}")
+            logger.info(f"  - Skip reasons breakdown: {skipped_reasons}")
+        logger.info(f"[STORAGE] Final count returned to client: {len(images)} images/videos")
         
         # Debug: log first few images to verify sorting
         if images:
