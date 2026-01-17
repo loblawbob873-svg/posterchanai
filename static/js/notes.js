@@ -983,7 +983,7 @@ class NotesManager {
         document.getElementById('noteTitleInput').focus();
     }
     
-    async saveNote(autoSave = false) {
+    async saveNote(autoSave = false, keepOpen = false) {
         const title = document.getElementById('noteTitleInput').value.trim();
         const content = document.getElementById('noteContentInput').value;
         const tags = document.getElementById('noteTagsInput').value.trim();
@@ -992,11 +992,11 @@ class NotesManager {
         // Require title unless it's auto-save
         if (!title && !autoSave) {
             this.showToast('Please enter a note title', 'error');
-            return;
+            return Promise.resolve(false);
         }
         
         if (!title && autoSave) {
-            return; // Don't save empty notes on auto-save
+            return Promise.resolve(false); // Don't save empty notes on auto-save
         }
         
         try {
@@ -1020,11 +1020,16 @@ class NotesManager {
             if (response.ok) {
                 const note = await response.json();
                 this.currentNoteId = note.id;
+                this.currentNote = note; // Store note for username access
+                if (note.username) {
+                    this.currentUsername = note.username;
+                }
                 
-                if (!autoSave) {
+                if (!autoSave && !keepOpen) {
                     this.loadNotes();
                     this.cancelEdit();
                 }
+                return Promise.resolve(true);
             } else {
                 // Try to parse as JSON, fallback to text
                 let errorDetail = 'Unknown error';
@@ -1043,12 +1048,14 @@ class NotesManager {
                 if (!autoSave) {
                     this.showToast(`Error saving note: ${errorDetail}`, 'error');
                 }
+                return Promise.resolve(false);
             }
         } catch (error) {
             console.error('Error saving note:', error);
             if (!autoSave) {
                 this.showToast(`Error saving note: ${error.message || 'Network error'}`, 'error');
             }
+            return Promise.resolve(false);
         }
     }
     
@@ -1547,7 +1554,7 @@ class NotesManager {
         }, 3000);
     }
     
-    showAttachmentDialog() {
+    async showAttachmentDialog() {
         // Prevent multiple simultaneous calls
         if (this._showingAttachmentDialog) {
             return;
@@ -1579,22 +1586,25 @@ class NotesManager {
             }
             
             // Save the note to get an ID, then show file picker
-            // Note: saveNote() will now use the auto-generated title
-            this.saveNote(false).then(() => {
-                // Wait a moment for the note to be fully set up
-                setTimeout(() => {
-                    if (this.currentNoteId) {
-                        fileInput.click();
-                    } else {
-                        this.showToast('Please create or open a note first', 'error');
-                    }
+            // Use keepOpen=true to keep the editor open after saving
+            try {
+                const saved = await this.saveNote(false, true);
+                if (saved && this.currentNoteId) {
+                    // Note was saved successfully, now show file picker
+                    fileInput.click();
+                    // Reset flag after a short delay (file dialog opens asynchronously)
+                    setTimeout(() => {
+                        this._showingAttachmentDialog = false;
+                    }, 100);
+                } else {
+                    this.showToast('Failed to create note. Please try again.', 'error');
                     this._showingAttachmentDialog = false;
-                }, 100);
-            }).catch((error) => {
+                }
+            } catch (error) {
                 console.error('Error creating note for attachment:', error);
                 this.showToast('Failed to create note', 'error');
                 this._showingAttachmentDialog = false;
-            });
+            }
         } else {
             // Note exists, show file picker
             fileInput.click();
