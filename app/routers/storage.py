@@ -369,6 +369,106 @@ async def upload_file(
     }
 
 
+@router.post("/upload-file")
+async def upload_file(
+    file: UploadFile = File(...),
+    username: str = Form(...),
+    path: str = Form(""),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """
+    Upload a file via file manager. Called by client nodes when proxying file uploads.
+    Only accessible on storage server node.
+    """
+    # Check if this is a server-to-server request
+    is_server_request = current_user is None
+    if not is_server_request:
+        # Check if this is a server token request
+        from app.models import Setting
+        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+        if storage_server_token and storage_server_token.value:
+            # Check if the request has the server token
+            from fastapi import Request
+            request = Request
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+                is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Read file content
+    content = await file.read()
+    
+    # Get filename
+    filename = file.filename or "uploaded_file"
+    
+    # Run blocking file I/O in thread pool
+    def _upload_file_sync():
+        storage = StorageService(db)
+        user_path = storage.get_user_path(username)
+        
+        # Sanitize and validate target path
+        target_path = user_path
+        if path:
+            from app.services.storage_service import _sanitize_path_component, _validate_path_within_base
+            from pathlib import Path
+            safe_path = Path(*[_sanitize_path_component(p) for p in path.split('/') if p])
+            target_path = user_path / safe_path
+            
+            # Validate path is within user directory
+            if not _validate_path_within_base(target_path, user_path):
+                raise ValueError("Access denied")
+            
+            # Create directory if it doesn't exist
+            target_path.mkdir(parents=True, exist_ok=True)
+        
+        # Sanitize filename
+        safe_filename = _sanitize_path_component(filename)
+        full_file_path = target_path / safe_filename
+        
+        # Check if file already exists
+        if full_file_path.exists():
+            # Add number suffix
+            base_name = full_file_path.stem
+            extension = full_file_path.suffix
+            counter = 1
+            while full_file_path.exists():
+                full_file_path = target_path / f"{base_name}_{counter}{extension}"
+                counter += 1
+        
+        # Write file
+        with open(full_file_path, 'wb') as f:
+            f.write(content)
+        
+        return str(full_file_path.relative_to(user_path))
+    
+    try:
+        relative_path = await asyncio.to_thread(_upload_file_sync)
+        
+        # Invalidate file cache
+        try:
+            from app.routers.files import get_file_cache
+            cache = get_file_cache(db)
+            cache.invalidate(f"{username}:")
+            if path:
+                cache.invalidate(f"{username}:{path}")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+        
+        return {
+            "message": "File uploaded successfully",
+            "path": relative_path,
+            "filename": filename
+        }
+    except Exception as e:
+        logger.error(f"Error uploading file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/delete-note-attachments")
 async def delete_note_attachments(
     username: str = Form(...),

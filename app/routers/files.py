@@ -1295,8 +1295,11 @@ async def _proxy_upload_file(storage_server_url: str, username: str, file: Uploa
         if storage_server_token and storage_server_token.value:
             headers["Authorization"] = f"Bearer {storage_server_token.value}"
         
-        # Read file content
+        # Read file content (need to reset file pointer if already read)
         content = await file.read()
+        
+        # Reset file pointer for potential retry
+        await file.seek(0)
         
         files = {
             "file": (file.filename, content, file.content_type or "application/octet-stream")
@@ -1306,13 +1309,15 @@ async def _proxy_upload_file(storage_server_url: str, username: str, file: Uploa
             "path": path
         }
         
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(url, headers=headers, files=files, data=data)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.error(f"[FILES] Failed to proxy upload_file: {response.status_code} - {response.text}")
-                raise Exception(f"Storage server error: {response.status_code}")
+        # Use synchronous requests to avoid event loop issues
+        import requests
+        response = requests.post(url, headers=headers, files=files, data=data, timeout=300)
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            logger.error(f"[FILES] Failed to proxy upload_file: {response.status_code} - {response.text}")
+            raise Exception(f"Storage server error: {response.status_code}")
     except Exception as e:
         logger.error(f"[FILES] Error proxying upload_file: {e}", exc_info=True)
         raise
