@@ -24,13 +24,21 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.database import SessionLocal, init_db
 from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
-from app.models import User
+from app.models import User, Setting
 
 
 def get_user_path(username: str, db) -> Path:
     """Get the storage path for a user."""
     storage_service = StorageService(db)
     return storage_service.get_user_path(username)
+
+
+def check_storage_setup(db) -> tuple[bool, str]:
+    """Check if distributed storage is configured. Returns (is_distributed, storage_server_url)."""
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        return (True, storage_server_url.value)
+    return (False, None)
 
 
 def sync_file(source: Path, dest: Path, overwrite: bool = False, dry_run: bool = False, verbose: bool = False) -> bool:
@@ -64,7 +72,9 @@ def sync_directory(
     overwrite: bool = False,
     dry_run: bool = False,
     verbose: bool = False,
-    relative_path: str = ""
+    relative_path: str = "",
+    total_files: int = 0,
+    progress_counter: list = None
 ) -> tuple[int, int, int]:
     """
     Recursively sync a directory.
@@ -73,6 +83,10 @@ def sync_directory(
     files_copied = 0
     files_skipped = 0
     errors = 0
+    
+    # Use shared progress counter list for thread-safe progress tracking
+    if progress_counter is None:
+        progress_counter = [0]
     
     if not source_dir.exists():
         print(f"ERROR: Source directory does not exist: {source_dir}")
@@ -103,6 +117,11 @@ def sync_directory(
             
             if item.is_file():
                 # Copy file
+                progress_counter[0] += 1
+                if total_files > 0 and progress_counter[0] % 100 == 0:
+                    progress = (progress_counter[0] / total_files) * 100
+                    print(f"  Progress: {progress_counter[0]}/{total_files} files ({progress:.1f}%)")
+                
                 if sync_file(item, dest_item, overwrite, dry_run, verbose):
                     files_copied += 1
                 else:
@@ -112,7 +131,8 @@ def sync_directory(
                 if verbose:
                     print(f"Entering directory: {relative_path}/{item.name}")
                 sub_copied, sub_skipped, sub_errors = sync_directory(
-                    item, dest_item, overwrite, dry_run, verbose, f"{relative_path}/{item.name}"
+                    item, dest_item, overwrite, dry_run, verbose, f"{relative_path}/{item.name}",
+                    total_files, progress_counter
                 )
                 files_copied += sub_copied
                 files_skipped += sub_skipped
@@ -183,8 +203,21 @@ Examples:
                 print(f"  - {u.username}")
             sys.exit(1)
         
+        # Check storage setup
+        is_distributed, storage_server_url = check_storage_setup(db)
+        if is_distributed:
+            print(f"\n⚠️  WARNING: Distributed storage detected!")
+            print(f"   Storage server URL: {storage_server_url}")
+            print(f"   This script will copy files to the LOCAL storage path.")
+            print(f"   If you're running this on the MAIN server, files won't be accessible.")
+            print(f"   You should run this script on the STORAGE SERVER instead.")
+            print(f"\n   If you're on the storage server, continue.")
+            print(f"   If you're on the main server, consider:")
+            print(f"     1. Running this script on the storage server (192.168.0.85)")
+            print(f"     2. Or using SSH/SCP to copy files directly")
+        
         # Get user storage path
-        print(f"Getting storage path for user '{args.username}'...")
+        print(f"\nGetting storage path for user '{args.username}'...")
         try:
             user_path = get_user_path(args.username, db)
             print(f"User storage path: {user_path}")
@@ -192,15 +225,24 @@ Examples:
             print(f"ERROR: Failed to get user storage path: {e}")
             sys.exit(1)
         
+        # Count source files for progress estimation
+        print(f"\nScanning source directory...")
+        source_files = list(source_path.rglob('*'))
+        source_files = [f for f in source_files if f.is_file() and not f.name.startswith('.')]
+        total_size = sum(f.stat().st_size for f in source_files) / (1024 * 1024 * 1024)  # GB
+        print(f"  Found {len(source_files)} files (~{total_size:.2f} GB)")
+        
         # Confirm operation
         if args.dry_run:
             print(f"\nDRY RUN: Would sync files from:")
             print(f"  Source: {source_path}")
             print(f"  Destination: {user_path}")
+            print(f"  Files: {len(source_files)}")
         else:
             print(f"\nSyncing files from:")
             print(f"  Source: {source_path}")
             print(f"  Destination: {user_path}")
+            print(f"  Files: {len(source_files)} (~{total_size:.2f} GB)")
             if args.overwrite:
                 print("  Mode: Overwrite existing files")
             else:
@@ -213,12 +255,15 @@ Examples:
         
         # Perform sync
         print("\nStarting sync...")
+        progress_counter = [0]  # Use list for mutable counter
         files_copied, files_skipped, errors = sync_directory(
             source_path,
             user_path,
             overwrite=args.overwrite,
             dry_run=args.dry_run,
-            verbose=args.verbose
+            verbose=args.verbose,
+            total_files=len(source_files),
+            progress_counter=progress_counter
         )
         
         # Print summary
