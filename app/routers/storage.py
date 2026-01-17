@@ -427,6 +427,7 @@ async def delete_note_attachments(
 
 @router.get("/list-files")
 async def list_files(
+    request: FastAPIRequest,
     username: str = Query(...),
     path: str = Query(""),
     db: Session = Depends(get_db),
@@ -443,8 +444,6 @@ async def list_files(
     
     if not is_server_request and storage_server_token and storage_server_token.value:
         # Check if the request has the server token
-        from fastapi import Request as FastAPIRequest
-        request = FastAPIRequest
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
             is_server_request = True
@@ -496,15 +495,8 @@ async def list_files(
                         "is_external": False,
                     }
                     
-                    # Generate thumbnail for images
-                    if not is_dir and item.suffix.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
-                        try:
-                            from app.routers.files import generate_thumbnail
-                            thumbnail = generate_thumbnail(item, max_size=(200, 200))
-                            if thumbnail:
-                                item_info["thumbnail"] = thumbnail
-                        except Exception as e:
-                            logger.warning(f"Failed to generate thumbnail for {item}: {e}")
+                    # Generate thumbnail for images (skip for now to avoid circular import)
+                    # Thumbnails can be generated on the client node if needed
                     
                     items.append(item_info)
                 except Exception as e:
