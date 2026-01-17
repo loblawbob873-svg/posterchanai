@@ -1197,6 +1197,11 @@ async def upload_file(
     current_user: User = Depends(get_current_user)
 ):
     """Upload a file to the user's storage. Proxies to storage server if configured."""
+    # Read file content once (needed for both proxy and local storage)
+    content = await file.read()
+    filename = file.filename or "uploaded_file"
+    content_type = file.content_type or "application/octet-stream"
+    
     # Check if storage server is configured - proxy request if so
     storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
     if storage_server_url and storage_server_url.value:
@@ -1204,13 +1209,13 @@ async def upload_file(
         if url.startswith(('http://', 'https://')):
             logger.info(f"[FILES] Proxying upload to storage server: {url}")
             try:
-                # Proxy to storage server
-                result = await _proxy_upload_file(url, current_user.username, file, path, db)
+                # Proxy to storage server (pass content directly to avoid re-reading)
+                result = await _proxy_upload_file(url, current_user.username, filename, content, content_type, path, db)
                 logger.info(f"[FILES] Successfully proxied upload to storage server")
                 return result
             except Exception as e:
                 logger.warning(f"[FILES] Failed to proxy upload_file, falling back to local: {e}")
-                # Fall through to local storage below
+                # Fall through to local storage below (content already read)
     else:
         logger.info(f"[FILES] No storage_server_url configured, saving locally")
     
@@ -1236,7 +1241,7 @@ async def upload_file(
     
     # Sanitize filename
     try:
-        safe_filename = _sanitize_path_component(file.filename or "uploaded_file")
+        safe_filename = _sanitize_path_component(filename)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid filename: {e}")
     
@@ -1251,9 +1256,6 @@ async def upload_file(
         while full_file_path.exists():
             full_file_path = target_path / f"{base_name}_{counter}{extension}"
             counter += 1
-    
-    # Read file content
-    content = await file.read()
     
     # Run file write in thread pool
     def _write_file_sync():
@@ -1285,7 +1287,7 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _proxy_upload_file(storage_server_url: str, username: str, file: UploadFile, path: str, db: Session):
+async def _proxy_upload_file(storage_server_url: str, username: str, filename: str, content: bytes, content_type: str, path: str, db: Session):
     """Proxy file upload to storage server - uses synchronous requests to avoid event loop issues"""
     from app.models import Setting
     
@@ -1298,11 +1300,8 @@ async def _proxy_upload_file(storage_server_url: str, username: str, file: Uploa
         if storage_server_token and storage_server_token.value:
             headers["Authorization"] = f"Bearer {storage_server_token.value}"
         
-        # Read file content
-        content = await file.read()
-        
         files = {
-            "file": (file.filename, content, file.content_type or "application/octet-stream")
+            "file": (filename, content, content_type)
         }
         data = {
             "username": username,
