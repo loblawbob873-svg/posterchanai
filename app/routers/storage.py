@@ -736,16 +736,51 @@ async def get_all_images(
                             """Generate base64-encoded thumbnail for an image."""
                             try:
                                 with Image.open(file_path) as img:
+                                    original_mode = img.mode
+                                    
+                                    # Convert to a mode that supports thumbnail operations first
+                                    # Handle palette mode (P) - convert to RGBA first to preserve transparency
+                                    if img.mode == 'P':
+                                        # Check if image has transparency
+                                        if 'transparency' in img.info:
+                                            img = img.convert('RGBA')
+                                        else:
+                                            img = img.convert('RGB')
+                                    # Handle grayscale with alpha (LA)
+                                    elif img.mode == 'LA':
+                                        img = img.convert('RGBA')
+                                    # Handle other unsupported modes
+                                    elif img.mode not in ('RGB', 'RGBA', 'L', 'CMYK'):
+                                        # Try to convert to RGB, fallback to RGBA if that fails
+                                        try:
+                                            img = img.convert('RGB')
+                                        except Exception:
+                                            try:
+                                                img = img.convert('RGBA')
+                                            except Exception:
+                                                logger.debug(f"Could not convert mode {original_mode}, trying L")
+                                                img = img.convert('L').convert('RGB')
+                                    
+                                    # Create thumbnail (maintains aspect ratio) - now safe to call
                                     img.thumbnail(max_size, Image.Resampling.LANCZOS)
                                     
-                                    # Convert to RGB if necessary
-                                    if img.mode in ('RGBA', 'LA', 'P'):
+                                    # Convert to RGB for JPEG saving (handle transparency)
+                                    if img.mode in ('RGBA', 'LA'):
                                         background = Image.new('RGB', img.size, (255, 255, 255))
-                                        if img.mode == 'P':
-                                            img = img.convert('RGBA')
-                                        background.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                                        if img.mode == 'RGBA':
+                                            background.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
+                                        elif img.mode == 'LA':
+                                            background.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
                                         img = background
-                                    elif img.mode != 'RGB':
+                                    elif img.mode not in ('RGB', 'L'):
+                                        # Convert any remaining non-RGB modes to RGB
+                                        if img.mode == 'L':
+                                            img = img.convert('RGB')
+                                        else:
+                                            img = img.convert('RGB')
+                                    
+                                    # Ensure we have RGB mode for JPEG
+                                    if img.mode != 'RGB':
                                         img = img.convert('RGB')
                                     
                                     # Save to bytes
@@ -757,7 +792,7 @@ async def get_all_images(
                                     thumbnail_b64 = base64.b64encode(buffer.read()).decode('utf-8')
                                     return f"data:image/jpeg;base64,{thumbnail_b64}"
                             except Exception as e:
-                                logger.debug(f"Error generating thumbnail: {e}")
+                                logger.debug(f"Error generating thumbnail for {file_path}: {e}")
                                 return None
                         
                         thumbnail_path = get_thumbnail_if_exists(user_path, item)

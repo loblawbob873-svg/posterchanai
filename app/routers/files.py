@@ -251,10 +251,25 @@ async def get_all_images(
                     if response.status_code == 200:
                         return response.json()
                     else:
-                        raise HTTPException(status_code=response.status_code, detail=response.text)
+                        # Try to get error details from response
+                        try:
+                            error_data = response.json()
+                            error_detail = error_data.get("detail", error_data.get("message", response.text))
+                        except:
+                            error_detail = response.text or f"HTTP {response.status_code}"
+                        logger.error(f"[FILES] Storage server returned {response.status_code}: {error_detail}")
+                        raise HTTPException(status_code=response.status_code, detail=error_detail)
+            except httpx.TimeoutException:
+                logger.error(f"[FILES] Timeout proxying get_all_images to storage server")
+                raise HTTPException(status_code=504, detail="Storage server timeout")
+            except httpx.ConnectError as e:
+                logger.error(f"[FILES] Cannot connect to storage server: {e}")
+                raise HTTPException(status_code=503, detail=f"Cannot reach storage server: {e}")
+            except HTTPException:
+                raise  # Re-raise HTTP exceptions as-is
             except Exception as e:
-                logger.error(f"[FILES] Failed to proxy get_all_images: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to get images from storage server: {e}")
+                logger.error(f"[FILES] Failed to proxy get_all_images: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Failed to get images from storage server: {str(e)}")
         else:
             raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
     
