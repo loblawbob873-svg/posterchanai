@@ -9,7 +9,7 @@ Usage:
 
 Joplin database location:
     - Linux: ~/.config/joplin-desktop/database.sqlite
-    - Windows: %APPDATA%\Joplin\database.sqlite
+    - Windows: %APPDATA%\\Joplin\\database.sqlite
     - macOS: ~/Library/Application Support/Joplin/database.sqlite
 """
 import argparse
@@ -241,8 +241,6 @@ def migrate_joplin(joplin_db_path, user_id, dry_run=False):
                 resource_count = len(list(Path(joplin_resources_dir).iterdir())) if Path(joplin_resources_dir).exists() else 0
                 print(f"  Resources directory contains {resource_count} files")
         else:
-            print(f"  WARNING: Could not find Joplin resources directory")
-        else:
             print(f"  WARNING: Resources directory not found. Attachments may not be migrated.")
         
         # Initialize storage service for saving attachments
@@ -313,20 +311,14 @@ def migrate_joplin(joplin_db_path, user_id, dry_run=False):
                 note = None  # Placeholder for dry-run
             
             # Process attachments if resources directory exists
-            if note_content and joplin_resources_dir:
-                # Find all resource references in note content
-                resource_ids = re.findall(resource_id_pattern, note_content)
+            updated_content = note_content
+            resource_ids = re.findall(resource_id_pattern, note_content)
+            
+            if resource_ids and joplin_resources_dir:
+                print(f"  Note '{clean_title}': Found {len(resource_ids)} attachment(s)")
+                print(f"    Resource IDs: {resource_ids[:5]}{'...' if len(resource_ids) > 5 else ''}")
                 
-                if resource_ids:
-                    print(f"  Note '{clean_title}': Found {len(resource_ids)} attachment(s)")
-                    print(f"    Resource IDs: {resource_ids[:5]}{'...' if len(resource_ids) > 5 else ''}")
-                else:
-                    print(f"  Note '{clean_title}': No attachments found in content")
-            elif not joplin_resources_dir:
-                print(f"  Note '{clean_title}': WARNING - Joplin resources directory not found, skipping attachments")
-                    
-                    updated_content = note_content
-                    for resource_id in resource_ids:
+                for resource_id in resource_ids:
                         if resource_id in resources:
                             resource_info = resources[resource_id]
                             # Determine file extension
@@ -489,13 +481,15 @@ def migrate_joplin(joplin_db_path, user_id, dry_run=False):
                                 print(f"    WARNING: Resource file not found: {resource_file}")
                         else:
                             print(f"    WARNING: Resource {resource_id} not found in resources table")
-                    
-                    # Update note content with migrated attachment references
-                    if not dry_run and updated_content != note_content:
-                        note.content = updated_content
-                else:
-                    if dry_run:
-                        print(f"  Would create note: {clean_title}")
+                
+                # Update note content with migrated attachment references
+                if not dry_run and updated_content != note_content:
+                    note.content = updated_content
+            elif not joplin_resources_dir:
+                print(f"  Note '{clean_title}': WARNING - Joplin resources directory not found, skipping attachments")
+            else:
+                if dry_run:
+                    print(f"  Would create note: {clean_title}")
             
             # Store attachment list if any
             if attachment_filenames and not dry_run:
