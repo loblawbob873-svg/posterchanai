@@ -2365,11 +2365,26 @@ class FileManager {
         if (!fullscreen) return;
         
         const media = this.allImages[index];
-        if (!media) return;
+        if (!media) {
+            console.error('Photo Gallery - openFullscreenViewer: No media at index', index);
+            return;
+        }
         
-        // Extract filename from path if name is not available
-        const mediaName = media.name || (media.path ? media.path.split('/').pop() : 'Unknown');
-        const mediaPath = media.path || '';
+        // Validate and extract media path
+        let mediaPath = media.path || '';
+        if (!mediaPath || mediaPath === 'undefined' || mediaPath.trim() === '') {
+            console.error('Photo Gallery - openFullscreenViewer: Invalid path for media at index', index, ':', media);
+            return;
+        }
+        
+        // Extract filename from path if name is not available or invalid
+        let mediaName = media.name;
+        if (!mediaName || mediaName === 'undefined' || mediaName.trim() === '') {
+            // Extract from path
+            const pathParts = mediaPath.split('/');
+            mediaName = pathParts[pathParts.length - 1] || 'Unknown';
+            console.warn('Photo Gallery - openFullscreenViewer: Extracted name from path:', mediaName);
+        }
         
         const isVideo = media.type === 'video' || /\.(mp4|avi|mov|mkv|webm|flv|wmv|m4v|3gp|ogv)$/i.test(mediaName);
         
@@ -2404,9 +2419,35 @@ class FileManager {
         }
         
         if (info) {
-            const date = media.modified ? new Date(media.modified * 1000).toLocaleString() : 'N/A';
+            // Format date safely - handle various formats
+            let dateStr = 'N/A';
+            if (media.modified) {
+                try {
+                    // Try to parse as number (Unix timestamp in seconds)
+                    let timestamp = Number(media.modified);
+                    if (isNaN(timestamp) || timestamp <= 0) {
+                        // Try parsing as ISO string or other format
+                        const dateObj = new Date(media.modified);
+                        if (!isNaN(dateObj.getTime())) {
+                            dateStr = dateObj.toLocaleString();
+                        }
+                    } else {
+                        // Convert seconds to milliseconds if needed
+                        if (timestamp < 10000000000) {
+                            timestamp = timestamp * 1000;
+                        }
+                        const dateObj = new Date(timestamp);
+                        if (!isNaN(dateObj.getTime())) {
+                            dateStr = dateObj.toLocaleString();
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Photo Gallery - Error formatting date:', e, 'for media:', media);
+                }
+            }
+            
             const typeLabel = isVideo ? 'VIDEO' : 'IMAGE';
-            info.textContent = `${index + 1} / ${this.allImages.length} - ${mediaName} [${typeLabel}] [${date}]`;
+            info.textContent = `${index + 1} / ${this.allImages.length} - ${mediaName} [${typeLabel}] [${dateStr}]`;
         }
         
         if (prevBtn) prevBtn.style.display = index > 0 ? 'flex' : 'none';
