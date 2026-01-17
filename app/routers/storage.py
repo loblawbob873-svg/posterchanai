@@ -548,6 +548,84 @@ async def list_files(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.delete("/delete-file")
+async def delete_file(
+    request: FastAPIRequest,
+    username: str = Query(...),
+    file_path: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """
+    Delete a file or directory. Called by client nodes when proxying file deletions.
+    Only accessible on storage server node.
+    """
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    # Sanitize and validate path
+    try:
+        safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
+        full_path = user_path / safe_path
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    
+    # Validate path is within user directory
+    if not _validate_path_within_base(full_path, user_path):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="File or directory not found")
+    
+    # Run deletion in thread pool
+    def _delete_file_sync():
+        try:
+            if full_path.is_file():
+                full_path.unlink()
+            elif full_path.is_dir():
+                import shutil
+                shutil.rmtree(full_path)
+            else:
+                raise Exception("Path is neither a file nor a directory")
+        except Exception as e:
+            raise Exception(f"Error deleting file: {e}")
+    
+    try:
+        await asyncio.to_thread(_delete_file_sync)
+        
+        # Invalidate file cache
+        try:
+            from app.routers.files import get_file_cache
+            cache = get_file_cache(db)
+            cache.invalidate(f"{username}:")
+            parent_path = '/'.join(file_path.split('/')[:-1]) if '/' in file_path else ""
+            if parent_path:
+                cache.invalidate(f"{username}:{parent_path}")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+        
+        return {"message": "File deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/list-files")
 async def list_files(
     username: str = Query(..., description="Username"),
