@@ -117,8 +117,6 @@ async def serve_saved_attachment(
     if not file_path.exists():
         # Try to find the file with case-insensitive or partial matching
         if base_path.exists():
-            import logging
-            logger = logging.getLogger(__name__)
             logger.warning(f"Mail attachment not found: {safe_filename}, checking directory: {base_path}")
             
             try:

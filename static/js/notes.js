@@ -1,4 +1,9 @@
 // Notes Management
+// Set cache version on page load to force fresh data
+if (!window.notesCacheVersion) {
+    window.notesCacheVersion = `v${Date.now()}`;
+}
+
 class NotesManager {
     constructor() {
         this.notes = [];
@@ -79,14 +84,17 @@ class NotesManager {
         
         try {
             // Add cache busting to prevent stale data - use random number for stronger cache busting
-            const url = `/api/notes/folders?_t=${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            // Also add a version parameter that changes on page load
+            const cacheBuster = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${window.notesCacheVersion || 'v1'}`;
+            const url = `/api/notes/folders?_t=${cacheBuster}`;
             const response = await fetch(url, {
                 method: 'GET',
                 cache: 'no-store',
                 headers: {
-                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
                     'Pragma': 'no-cache',
-                    'Expires': '0'
+                    'Expires': '0',
+                    'X-Requested-With': 'XMLHttpRequest'
                 }
             });
             if (response.ok) {
@@ -120,15 +128,18 @@ class NotesManager {
                 url += `search=${encodeURIComponent(this.searchQuery)}&`;
             }
             // Add cache busting to prevent stale data - use random number for stronger cache busting
-            url += `_t=${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            // Also add a version parameter that changes on page load
+            const cacheBuster = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${window.notesCacheVersion || 'v1'}`;
+            url += `_t=${cacheBuster}`;
             
             const response = await fetch(url, {
                 method: 'GET',
                 cache: 'no-store',
                 headers: {
-                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
                     'Pragma': 'no-cache',
-                    'Expires': '0'
+                    'Expires': '0',
+                    'X-Requested-With': 'XMLHttpRequest'
                 }
             });
             if (response.ok) {
@@ -1675,10 +1686,15 @@ function initNotesModal() {
                 if (notesModal.style.display === 'flex' || notesModal.style.display === 'block') {
                     const manager = ensureNotesManager();
                     // Force clear cache and reload when modal opens
+                    // Update cache version to force fresh data
+                    window.notesCacheVersion = `v${Date.now()}`;
                     manager.notes = [];
                     manager.folders = [];
-                    manager.loadFolders();
-                    manager.loadNotes();
+                    // Small delay to ensure DOM is ready
+                    setTimeout(() => {
+                        manager.loadFolders();
+                        manager.loadNotes();
+                    }, 50);
                     // Ensure Edit/Preview buttons are wired up (in case they weren't available during init)
                     manager.attachModeButtons();
                 }
@@ -1692,10 +1708,15 @@ function initNotesModal() {
         // Ensure manager is ready immediately
         const manager = ensureNotesManager();
         // Force clear cache and reload when opening modal
+        // Update cache version to force fresh data
+        window.notesCacheVersion = `v${Date.now()}`;
         manager.notes = [];
         manager.folders = [];
-        manager.loadFolders();
-        manager.loadNotes();
+        // Small delay to ensure DOM is ready
+        setTimeout(() => {
+            manager.loadFolders();
+            manager.loadNotes();
+        }, 50);
         manager.attachModeButtons();
     };
 }
