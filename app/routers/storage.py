@@ -215,7 +215,51 @@ async def save_note_attachment(
         cache = get_file_cache(db)
         cache.invalidate(f"{username}:")
         cache.invalidate(f"{username}:notes")
+        cache.invalidate(f"{username}:notes/{note_id}")
     except Exception as e:
         logger.warning(f"Failed to invalidate cache: {e}")
     
     return {"filename": filename}
+
+
+@router.post("/delete-note-attachments")
+async def delete_note_attachments(
+    username: str = Form(...),
+    note_id: int = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete all attachments for a note (storage server endpoint)."""
+    # Verify user owns this note
+    if current_user.username != username:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Run blocking file I/O - handle both async and sync contexts
+    # Bypass proxy since we're already on the storage server endpoint
+    def _delete_attachments_sync():
+        storage = StorageService(db)
+        return storage.delete_note_attachments(username, note_id, bypass_proxy=True)
+    
+    # Try to get running event loop
+    try:
+        loop = asyncio.get_running_loop()
+        # Use executor to run blocking I/O
+        success = await loop.run_in_executor(None, _delete_attachments_sync)
+    except RuntimeError:
+        # No running event loop - we're likely in a thread pool
+        # Just run synchronously since we're already in a separate thread
+        success = _delete_attachments_sync()
+    
+    if success:
+        # Invalidate file cache for notes directory (non-blocking)
+        try:
+            from app.routers.files import get_file_cache
+            cache = get_file_cache(db)
+            cache.invalidate(f"{username}:notes/{note_id}")
+            cache.invalidate(f"{username}:notes")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+        
+        return {"success": True, "message": "Attachments deleted"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to delete attachments")

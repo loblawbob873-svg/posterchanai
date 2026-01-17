@@ -379,10 +379,23 @@ async def delete_note(
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     
-    # Delete attachments
+    # Delete attachments (storage service handles proxying if needed)
     from app.services.storage_service import StorageService
-    storage = StorageService(db)
-    storage.delete_note_attachments(current_user.username, note_id)
+    from app.database import SessionLocal
+    
+    username = current_user.username
+    
+    def _delete_attachments_sync():
+        # Create a new database session for the thread
+        thread_db = SessionLocal()
+        try:
+            storage = StorageService(thread_db)
+            return storage.delete_note_attachments(username, note_id)
+        finally:
+            thread_db.close()
+    
+    # Run in thread pool to avoid blocking
+    await asyncio.to_thread(_delete_attachments_sync)
     
     db.delete(note)
     db.commit()

@@ -438,18 +438,24 @@ class NotesManager {
         // NOW escape HTML for text content (but preserve placeholders and already-inserted HTML tags)
         // We need to escape text but not the HTML tags we've already inserted
         // Strategy: temporarily replace HTML tags, escape, then restore
+        // IMPORTANT: Image placeholders (\x00IMAGE...) should NOT be affected by HTML escaping
+        // because \x00 is a null byte and won't match HTML patterns
         const htmlTagPlaceholders = [];
         let htmlTagIndex = 0;
         
-        // Replace HTML tags with placeholders
+        // Replace HTML tags with placeholders (this won't affect \x00IMAGE placeholders)
         html = html.replace(/<[^>]+>/g, (match) => {
+            // Skip if this is an image placeholder (shouldn't happen, but be safe)
+            if (match.includes('\x00IMAGE')) {
+                return match;
+            }
             const placeholder = `\x00HTMLTAG${htmlTagIndex}\x00`;
             htmlTagPlaceholders.push(match);
             htmlTagIndex++;
             return placeholder;
         });
         
-        // Escape HTML in text content
+        // Escape HTML in text content (this won't affect \x00IMAGE placeholders since they use null bytes)
         html = html
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
@@ -461,16 +467,33 @@ class NotesManager {
         });
         
         // Restore images as HTML img tags (after escaping, so they're not escaped)
+        // This must happen AFTER HTML tag restoration to ensure proper order
         html = html.replace(/\x00IMAGE(\d+)\x00/g, (match, index) => {
-            const img = images[parseInt(index)];
-            const safeAlt = this.escapeHtml(img.alt);
-            const safeSrc = this.escapeHtml(img.src);
-            console.log('Rendering image:', { alt: safeAlt, src: safeSrc });
+            const imgIndex = parseInt(index);
+            if (!images || !images[imgIndex]) {
+                console.error('Image not found in array:', { 
+                    index: imgIndex, 
+                    imagesLength: images ? images.length : 0, 
+                    images,
+                    match,
+                    htmlSnippet: html.substring(Math.max(0, html.indexOf(match) - 50), Math.min(html.length, html.indexOf(match) + 50))
+                });
+                return `[Image ${imgIndex} not found]`;
+            }
+            const img = images[imgIndex];
+            if (!img || !img.src) {
+                console.error('Image object invalid:', { imgIndex, img, images });
+                return `[Image ${imgIndex} invalid]`;
+            }
+            const safeAlt = this.escapeHtml(img.alt || '');
+            const safeSrc = img.src; // Don't escape URL - it's already a valid URL string
+            console.log('Rendering image:', { index: imgIndex, alt: safeAlt, src: safeSrc, img, imagesLength: images.length });
+            
             // Add cache busting and error handling
             const cacheBust = safeSrc.includes('?') ? '&' : '?';
             const imgSrc = `${safeSrc}${cacheBust}t=${Date.now()}`;
             // Use proper error handling - show placeholder if image fails to load
-            return `<img src="${imgSrc}" alt="${safeAlt}" style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);" onerror="console.error('Failed to load image:', this.src); this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iIzJhMmEzZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM4ODg4YWEiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';" onload="console.log('Image loaded:', this.src);">`;
+            return `<img src="${imgSrc}" alt="${safeAlt}" style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);" onerror="console.error('Failed to load image:', this.src); this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iIzJhMmEzZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM4ODg4YWEiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';" onload="console.log('Image loaded successfully:', this.src);">`;
         });
         
         // Restore links (after escaping, so they're not escaped)

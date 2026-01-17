@@ -575,8 +575,16 @@ class StorageService:
             logger.error(f"Error deleting attachment: {e}", exc_info=True)
             return False
     
-    def delete_note_attachments(self, username: str, note_id: int) -> bool:
-        """Delete all attachments for a note"""
+    def delete_note_attachments(self, username: str, note_id: int, bypass_proxy: bool = False) -> bool:
+        """Delete all attachments for a note. Proxies to storage server if configured."""
+        # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
+        if not bypass_proxy:
+            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+            if storage_server_url and storage_server_url.value:
+                # Proxy to storage server
+                return self._proxy_delete_note_attachments(storage_server_url.value, username, note_id)
+        
+        # Local file deletion (storage server node or when bypassing proxy)
         try:
             safe_username = _sanitize_path_component(username)
             safe_note_id = _sanitize_path_component(str(note_id))
@@ -589,10 +597,71 @@ class StorageService:
 
             if note_path.exists():
                 shutil.rmtree(note_path)
+                logger.info(f"Deleted note attachments directory: {note_path}")
                 return True
+            else:
+                logger.warning(f"Note attachments directory not found: {note_path}")
+                return False
         except ValueError as e:
             logger.warning(f"Invalid path component in delete_note_attachments: {e}")
+        except Exception as e:
+            logger.error(f"Error deleting note attachments: {e}", exc_info=True)
         return False
+    
+    def _proxy_delete_note_attachments(self, storage_server_url: str, username: str, note_id: int) -> bool:
+        """Proxy note attachments deletion to storage server"""
+        import asyncio
+        try:
+            # Get server-to-server API token
+            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
+            
+            url = f"{storage_server_url.rstrip('/')}/api/storage/delete-note-attachments"
+            headers = {}
+            if storage_server_token and storage_server_token.value:
+                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            
+            data = {
+                "username": username,
+                "note_id": note_id
+            }
+            
+            async def _async_proxy():
+                import httpx
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(url, json=data, headers=headers)
+                    if response.status_code == 200:
+                        return True
+                    else:
+                        logger.error(f"Storage server error deleting note attachments: {response.status_code}")
+                        return False
+            
+            # Try to get running event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # If we're in an async context with a running loop, run in a new thread with its own event loop
+                import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_async_proxy())
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    return future.result()
+            except RuntimeError:
+                # No running loop, we can use asyncio.run or create a new loop
+                try:
+                    loop = asyncio.get_event_loop()
+                    return loop.run_until_complete(_async_proxy())
+                except RuntimeError:
+                    # No event loop at all, create one
+                    return asyncio.run(_async_proxy())
+        except Exception as e:
+            logger.error(f"[STORAGE] Error proxying note attachments deletion: {e}", exc_info=True)
+            return False
 
 
 def get_storage_service(db: Session) -> StorageService:
