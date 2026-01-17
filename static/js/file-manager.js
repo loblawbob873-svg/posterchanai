@@ -79,6 +79,28 @@ class FileManager {
             this.refresh();
         });
         
+        // Email modal send button
+        attachButtonListener('sendEmailBtn', () => {
+            console.log('FileManager: Send Email button clicked');
+            if (this.sendEmail) {
+                this.sendEmail();
+            } else {
+                console.error('FileManager: sendEmail method not found');
+                alert('Email functionality not available');
+            }
+        });
+        
+        // Email modal send button
+        attachButtonListener('sendEmailBtn', () => {
+            console.log('FileManager: Send Email button clicked');
+            if (this.sendEmail) {
+                this.sendEmail();
+            } else {
+                console.error('FileManager: sendEmail method not found');
+                alert('Email functionality not available');
+            }
+        });
+        
         // View toggle
         document.querySelectorAll('.view-btn').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -530,8 +552,8 @@ class FileManager {
                 const isExternal = item.is_external || false;
                 const actions = !item.is_directory ? `
                     <div class="file-actions" onclick="event.stopPropagation();">
-                        <button class="file-action-btn" title="Email" onclick="fileManager.emailFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}')">📧</button>
-                        <button class="file-action-btn" title="Share" onclick="fileManager.shareFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}')">🔗</button>
+                        <button class="file-action-btn" title="Email" onclick="if(window.fileManager && window.fileManager.emailFile){window.fileManager.emailFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}');}else{alert('Email functionality not available');}">📧</button>
+                        <button class="file-action-btn" title="Share" onclick="if(window.fileManager && window.fileManager.shareFile){window.fileManager.shareFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}');}else{alert('Share functionality not available');}">🔗</button>
                     </div>
                 ` : '';
                 return `
@@ -576,8 +598,8 @@ class FileManager {
                             const icon = isExternal ? '💾' : (item.is_directory ? '📂' : this.getFileIcon(item.name));
                             const actions = !item.is_directory ? `
                                 <td>
-                                    <button class="file-action-btn" title="Email" onclick="fileManager.emailFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}')">📧</button>
-                                    <button class="file-action-btn" title="Share" onclick="fileManager.shareFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}')">🔗</button>
+                                    <button class="file-action-btn" title="Email" onclick="if(window.fileManager && window.fileManager.emailFile){window.fileManager.emailFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}');}else{alert('Email functionality not available');}">📧</button>
+                                    <button class="file-action-btn" title="Share" onclick="if(window.fileManager && window.fileManager.shareFile){window.fileManager.shareFile('${this.escapeHtml(item.path)}', '${this.escapeHtml(item.name)}');}else{alert('Share functionality not available');}">🔗</button>
                                 </td>
                             ` : '<td></td>';
                             return `
@@ -632,22 +654,46 @@ class FileManager {
     }
     
     async emailFile(filePath, fileName) {
-        // Show email modal
-        const modal = document.getElementById('fileEmailModal');
-        if (modal) {
-            document.getElementById('emailFilePath').value = filePath;
-            document.getElementById('emailFileName').textContent = fileName;
+        console.log('FileManager: emailFile called', { filePath, fileName });
+        try {
+            // Show email modal
+            const modal = document.getElementById('fileEmailModal');
+            if (!modal) {
+                console.error('FileManager: fileEmailModal not found!');
+                alert('Email modal not found. Please refresh the page.');
+                return;
+            }
+            
+            const emailFilePathInput = document.getElementById('emailFilePath');
+            const emailFileNameSpan = document.getElementById('emailFileName');
             const emailToInput = document.getElementById('emailTo');
+            const emailSubjectInput = document.getElementById('emailSubject');
+            const emailBodyInput = document.getElementById('emailBody');
+            
+            if (!emailFilePathInput || !emailFileNameSpan || !emailToInput || !emailSubjectInput || !emailBodyInput) {
+                console.error('FileManager: Required email modal elements not found!');
+                alert('Email form elements not found. Please refresh the page.');
+                return;
+            }
+            
+            emailFilePathInput.value = filePath || '';
+            emailFilePathInput.dataset.apiUrl = ''; // Clear any previous API URL
+            emailFileNameSpan.textContent = fileName || 'Unknown file';
             emailToInput.value = '';
-            document.getElementById('emailSubject').value = `Shared file: ${fileName}`;
-            document.getElementById('emailBody').value = `Please find the attached file: ${fileName}`;
+            emailSubjectInput.value = `Shared file: ${fileName || 'file'}`;
+            emailBodyInput.value = `Please find the attached file: ${fileName || 'file'}`;
             
             // Load contact emails for autocomplete
             await this.loadContactEmailsForAutocomplete();
             
-            modal.style.display = 'block';
+            modal.style.display = 'flex'; // Use flex like other modals
             // Focus on email input
-            setTimeout(() => emailToInput.focus(), 100);
+            setTimeout(() => {
+                if (emailToInput) emailToInput.focus();
+            }, 100);
+        } catch (error) {
+            console.error('FileManager: Error in emailFile:', error);
+            alert('Error opening email dialog: ' + (error.message || 'Unknown error'));
         }
     }
     
@@ -694,7 +740,7 @@ class FileManager {
             document.getElementById('shareMaxAccesses').value = '';
             document.getElementById('shareUrl').value = '';
             document.getElementById('shareUrlDisplay').style.display = 'none';
-            modal.style.display = 'block';
+            modal.style.display = 'flex'; // Use flex like other modals
         }
     }
     
@@ -748,7 +794,8 @@ class FileManager {
             const data = await response.json();
             if (response.ok) {
                 alert('Email sent successfully!');
-                document.getElementById('fileEmailModal').style.display = 'none';
+                const emailModal = document.getElementById('fileEmailModal');
+                if (emailModal) emailModal.style.display = 'none';
             } else {
                 alert('Error: ' + (data.detail || 'Failed to send email'));
             }

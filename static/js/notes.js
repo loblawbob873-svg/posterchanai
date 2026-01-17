@@ -1437,7 +1437,7 @@ class NotesManager {
             
             document.getElementById('emailSubject').value = `Shared file: ${filename}`;
             document.getElementById('emailBody').value = `Please find the attached file: ${filename}`;
-            emailModal.style.display = 'flex';
+            emailModal.style.display = 'flex'; // Use flex for consistent modal display
         } else {
             // Fallback: Use mailto link
             const subject = encodeURIComponent(`Shared file: ${filename}`);

@@ -95,7 +95,7 @@
         </div>
         <div class="modal-footer">
             <button class="btn-secondary" onclick="document.getElementById('fileEmailModal').style.display='none'">Cancel</button>
-            <button class="btn-primary" onclick="if(window.fileManager && window.fileManager.sendEmail){window.fileManager.sendEmail();}else if(window.chatHandler && window.chatHandler.sendEmailFromModal){window.chatHandler.sendEmailFromModal();}else{alert('Email functionality not available');}">Send Email</button>
+            <button class="btn-primary" id="sendEmailBtn">Send Email</button>
         </div>
     </div>
 </div>
