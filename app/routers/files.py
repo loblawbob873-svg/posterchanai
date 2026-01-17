@@ -1202,12 +1202,17 @@ async def upload_file(
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
+            logger.info(f"[FILES] Proxying upload to storage server: {url}")
             try:
                 # Proxy to storage server
-                return await _proxy_upload_file(url, current_user.username, file, path, db)
+                result = await _proxy_upload_file(url, current_user.username, file, path, db)
+                logger.info(f"[FILES] Successfully proxied upload to storage server")
+                return result
             except Exception as e:
                 logger.warning(f"[FILES] Failed to proxy upload_file, falling back to local: {e}")
                 # Fall through to local storage below
+    else:
+        logger.info(f"[FILES] No storage_server_url configured, saving locally")
     
     # Local file saving (storage server node or when proxy fails)
     storage = get_storage_service(db)
