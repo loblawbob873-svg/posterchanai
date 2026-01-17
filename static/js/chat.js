@@ -2061,51 +2061,47 @@ class ChatHandler {
 
         const messageEl = this.addMessage('assistant', html, true);
         
-        // Attach event listeners to file action buttons (using event delegation for dynamically added content)
-        if (messageEl) {
-            // Use setTimeout to ensure DOM is fully updated
-            setTimeout(() => {
-                const fileActions = messageEl.querySelectorAll('.file-action-btn[data-action]');
-                console.log(`Found ${fileActions.length} file action buttons to attach listeners to`);
-                fileActions.forEach(btn => {
-                    // Remove any existing listeners
-                    const newBtn = btn.cloneNode(true);
-                    btn.parentNode.replaceChild(newBtn, btn);
-                    
-                    newBtn.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const action = newBtn.dataset.action;
-                        const filePath = newBtn.dataset.path;
-                        const fileName = newBtn.dataset.name;
-                        console.log('File action clicked:', action, filePath, fileName);
-                        
-                        if (!window.chatHandler) {
-                            console.error('chatHandler not available');
-                            return;
-                        }
-                        
-                        switch(action) {
-                            case 'open':
-                                window.chatHandler.openFile(filePath, fileName);
-                                break;
-                            case 'download':
-                                window.chatHandler.downloadFile(filePath, fileName);
-                                break;
-                            case 'share':
-                                window.chatHandler.shareFile(filePath, fileName);
-                                break;
-                            case 'email':
-                                window.chatHandler.emailFile(filePath, fileName);
-                                break;
-                            case 'delete':
-                                window.chatHandler.deleteFile(filePath, fileName);
-                                break;
-                        }
-                    });
-                });
-                console.log(`Attached event listeners to ${fileActions.length} file action buttons`);
-            }, 100);
+        // Attach event listeners to file action buttons using event delegation
+        // This is more reliable than attaching to individual buttons
+        if (messageEl && data.type === 'files') {
+            // Use event delegation on the message element
+            messageEl.addEventListener('click', (e) => {
+                const btn = e.target.closest('.file-action-btn[data-action]');
+                if (!btn) return;
+                
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const action = btn.dataset.action;
+                const filePath = btn.dataset.path;
+                const fileName = btn.dataset.name;
+                
+                console.log('File action clicked:', action, filePath, fileName);
+                
+                if (!window.chatHandler) {
+                    console.error('chatHandler not available');
+                    return;
+                }
+                
+                switch(action) {
+                    case 'open':
+                        window.chatHandler.openFile(filePath, fileName);
+                        break;
+                    case 'download':
+                        window.chatHandler.downloadFile(filePath, fileName);
+                        break;
+                    case 'share':
+                        window.chatHandler.shareFile(filePath, fileName);
+                        break;
+                    case 'email':
+                        window.chatHandler.emailFile(filePath, fileName);
+                        break;
+                    case 'delete':
+                        window.chatHandler.deleteFile(filePath, fileName);
+                        break;
+                }
+            });
+            console.log('Attached event delegation listener for file action buttons');
         }
         
         // Ensure UI is updated and scroll to bottom

@@ -548,6 +548,33 @@ class StorageService:
             logger.error(f"[STORAGE] Error proxying note attachment: {e}", exc_info=True)
             raise
 
+    def delete_note_attachment(self, username: str, note_id: int, filename: str) -> bool:
+        """Delete a specific attachment file for a note"""
+        try:
+            safe_username = _sanitize_path_component(username)
+            safe_note_id = _sanitize_path_component(str(note_id))
+            safe_filename = _sanitize_path_component(filename)
+            note_path = Path(self.upload_path) / safe_username / "notes" / safe_note_id
+            file_path = note_path / safe_filename
+            
+            if not _validate_path_within_base(file_path, note_path):
+                logger.warning(f"Path traversal attempt blocked in delete_note_attachment: {username}/{note_id}/{filename}")
+                return False
+            
+            if file_path.exists():
+                file_path.unlink()
+                logger.info(f"Deleted attachment: {file_path}")
+                return True
+            else:
+                logger.warning(f"Attachment file not found: {file_path}")
+                return False
+        except ValueError as e:
+            logger.warning(f"Invalid path component in delete_note_attachment: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting attachment: {e}", exc_info=True)
+            return False
+    
     def delete_note_attachments(self, username: str, note_id: int) -> bool:
         """Delete all attachments for a note"""
         try:

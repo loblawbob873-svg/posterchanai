@@ -2,7 +2,7 @@
 Notes Router - API endpoints for notes management.
 Supports both local storage and remote storage server proxying via storage_server_url.
 """
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.requests import Request as StarletteRequest
 from sqlalchemy.orm import Session
@@ -10,6 +10,7 @@ from sqlalchemy import func, or_
 from typing import List, Optional
 from pathlib import Path
 import logging
+import asyncio
 from pydantic import ValidationError
 
 from app.database import get_db
@@ -176,7 +177,7 @@ async def delete_folder(
         raise HTTPException(status_code=404, detail="Folder not found")
     
     # Move notes to root (folder_id = None)
-    db.query(Note.id).filter(Note.folder_id == folder_id).update({"folder_id": None})
+    db.query(Note).filter(Note.folder_id == folder_id).update({"folder_id": None})
     
     db.delete(folder)
     db.commit()
@@ -524,3 +525,109 @@ async def serve_note_file(
         return Response(headers=headers, status_code=200)
     
     return FileResponse(file_path, media_type=media_type)
+
+
+@router.post("/{note_id}/attachments")
+async def upload_note_attachment(
+    note_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Upload an attachment file for a note."""
+    # Verify note belongs to user
+    note = db.query(Note).filter(
+        Note.id == note_id,
+        Note.user_id == current_user.id
+    ).first()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    
+    # Read file content
+    content = await file.read()
+    
+    # Get original filename
+    original_name = file.filename or "attachment"
+    
+    # Save attachment (storage service handles proxying if needed)
+    from app.services.storage_service import StorageService
+    from app.database import SessionLocal
+    
+    username = current_user.username
+    
+    def _save_attachment_sync():
+        # Create a new database session for the thread
+        thread_db = SessionLocal()
+        try:
+            storage = StorageService(thread_db)
+            return storage.save_note_attachment(username, note_id, content, original_name)
+        finally:
+            thread_db.close()
+    
+    filename = await asyncio.to_thread(_save_attachment_sync)
+    
+    # Update note's attachments list
+    import json
+    attachments = []
+    if note.attachments:
+        try:
+            attachments = json.loads(note.attachments) if isinstance(note.attachments, str) else note.attachments
+        except:
+            attachments = []
+    
+    if filename not in attachments:
+        attachments.append(filename)
+        note.attachments = json.dumps(attachments)
+        db.commit()
+    
+    return {"filename": filename, "message": "Attachment uploaded"}
+
+
+@router.delete("/{note_id}/attachments/{filename}")
+async def delete_note_attachment(
+    note_id: int,
+    filename: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete an attachment file from a note."""
+    # Verify note belongs to user
+    note = db.query(Note).filter(
+        Note.id == note_id,
+        Note.user_id == current_user.id
+    ).first()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    
+    # Update note's attachments list
+    import json
+    attachments = []
+    if note.attachments:
+        try:
+            attachments = json.loads(note.attachments) if isinstance(note.attachments, str) else note.attachments
+        except:
+            attachments = []
+    
+    if filename in attachments:
+        attachments.remove(filename)
+        note.attachments = json.dumps(attachments) if attachments else None
+        db.commit()
+        
+        # Delete the actual file
+        from app.services.storage_service import StorageService
+        from app.database import SessionLocal
+        
+        username = current_user.username
+        
+        def _delete_attachment_sync():
+            # Create a new database session for the thread
+            thread_db = SessionLocal()
+            try:
+                storage = StorageService(thread_db)
+                return storage.delete_note_attachment(username, note_id, filename)
+            finally:
+                thread_db.close()
+        
+        await asyncio.to_thread(_delete_attachment_sync)
+    
+    return {"message": "Attachment deleted"}

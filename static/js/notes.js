@@ -43,6 +43,11 @@ class NotesManager {
                     }
                 }, 2000);
             });
+            
+            // Handle paste events for images
+            contentInput.addEventListener('paste', (e) => {
+                this.handlePaste(e);
+            });
         }
         if (titleInput) {
             titleInput.addEventListener('input', () => {
@@ -132,6 +137,19 @@ class NotesManager {
         // Add click handlers
         foldersList.querySelectorAll('.notes-folder-item').forEach(item => {
             item.addEventListener('click', () => {
+                // Close note editor if open
+                const notesEditor = document.getElementById('notesEditor');
+                const notesList = document.getElementById('notesList');
+                if (notesEditor && notesList) {
+                    notesEditor.style.display = 'none';
+                    notesList.style.display = 'grid';
+                }
+                
+                // Clear current note
+                this.currentNoteId = null;
+                this.currentNote = null;
+                
+                // Update active folder
                 foldersList.querySelectorAll('.notes-folder-item').forEach(i => i.classList.remove('active'));
                 item.classList.add('active');
                 this.currentFolderId = parseInt(item.dataset.folderId) || 0;
@@ -224,8 +242,8 @@ class NotesManager {
                 document.getElementById('notesList').style.display = 'none';
                 document.getElementById('notesEditor').style.display = 'block';
                 
-                // Start in edit mode
-                this.setEditorMode('edit');
+                // Start in preview mode (default action)
+                this.setEditorMode('preview');
             }
         } catch (error) {
             console.error('Error loading note:', error);
@@ -451,7 +469,8 @@ class NotesManager {
             // Add cache busting and error handling
             const cacheBust = safeSrc.includes('?') ? '&' : '?';
             const imgSrc = `${safeSrc}${cacheBust}t=${Date.now()}`;
-            return `<img src="${imgSrc}" alt="${safeAlt}" style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);" onerror="console.error('Failed to load image:', this.src); this.style.display='none';" onload="console.log('Image loaded:', this.src);">`;
+            // Use proper error handling - show placeholder if image fails to load
+            return `<img src="${imgSrc}" alt="${safeAlt}" style="max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);" onerror="console.error('Failed to load image:', this.src); this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iIzJhMmEzZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM4ODg4YWEiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';" onload="console.log('Image loaded:', this.src);">`;
         });
         
         // Restore links (after escaping, so they're not escaped)
@@ -505,9 +524,11 @@ class NotesManager {
         }
         
         attachmentsDiv.innerHTML = `
-            <div class="notes-attachments-header">Attachments (${attachments.length})</div>
+            <div class="notes-attachments-header">
+                <span>Attachments (${attachments.length})</span>
+            </div>
             <div class="notes-attachments-list">
-                ${attachments.map(filename => {
+                ${attachments.map((filename, index) => {
                     const ext = filename.split('.').pop().toLowerCase();
                     const isImage = /^(png|jpg|jpeg|gif|webp|svg|bmp|tiff|ico)$/i.test(ext);
                     const isPdf = ext === 'pdf';
@@ -522,10 +543,11 @@ class NotesManager {
                     // Choose icon based on file type
                     let icon = '📎'; // Default
                     if (isImage) {
-                        return `<div class="attachment-item" onclick="window.open('${fileUrl}', '_blank')">
-                            <img src="${fileUrl}" alt="${this.escapeHtml(filename)}" class="attachment-preview" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        return `<div class="attachment-item" data-filename="${this.escapeHtml(filename)}">
+                            <img src="${fileUrl}?t=${Date.now()}" alt="${this.escapeHtml(filename)}" class="attachment-preview" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
                             <div class="attachment-icon" style="display: none;">🖼️</div>
                             <a href="${fileUrl}" target="_blank" class="attachment-link" onclick="event.stopPropagation()">${this.escapeHtml(shortName)}</a>
+                            <button class="attachment-remove-btn" onclick="event.stopPropagation(); window.notesManager.removeAttachment('${this.escapeHtml(filename)}');" title="Remove attachment">🗑️</button>
                         </div>`;
                     } else if (isPdf) {
                         icon = '📄';
@@ -541,9 +563,10 @@ class NotesManager {
                         icon = '💻';
                     }
                     
-                    return `<div class="attachment-item" onclick="window.open('${fileUrl}', '_blank')">
+                    return `<div class="attachment-item" data-filename="${this.escapeHtml(filename)}">
                         <div class="attachment-icon">${icon}</div>
                         <a href="${fileUrl}" target="_blank" class="attachment-link" onclick="event.stopPropagation()">${this.escapeHtml(shortName)}</a>
+                        <button class="attachment-remove-btn" onclick="event.stopPropagation(); window.notesManager.removeAttachment('${this.escapeHtml(filename)}');" title="Remove attachment">🗑️</button>
                     </div>`;
                 }).join('')}
             </div>
@@ -766,6 +789,105 @@ class NotesManager {
             });
             previewBtn.dataset.listenerAttached = 'true';
         }
+    }
+    
+    async handlePaste(e) {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (item.type.indexOf('image') !== -1) {
+                e.preventDefault();
+                const file = item.getAsFile();
+                if (file && this.currentNoteId) {
+                    console.log('Pasted image:', file.name, file.type, file.size);
+                    await this.uploadAttachment(file);
+                }
+            }
+        }
+    }
+    
+    async uploadAttachment(file) {
+        if (!this.currentNoteId) {
+            this.showToast('Please create or open a note first', 'error');
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {
+            const response = await csrfFetch(`/api/notes/${this.currentNoteId}/attachments`, {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                this.showToast('Attachment uploaded successfully');
+                // Reload note to get updated attachments
+                await this.openNote(this.currentNoteId);
+                // Insert image reference at cursor position
+                const contentInput = document.getElementById('noteContentInput');
+                if (contentInput && data.filename) {
+                    const cursorPos = contentInput.selectionStart;
+                    const textBefore = contentInput.value.substring(0, cursorPos);
+                    const textAfter = contentInput.value.substring(cursorPos);
+                    const imageRef = `![${data.filename}](${data.filename})`;
+                    contentInput.value = textBefore + imageRef + textAfter;
+                    contentInput.selectionStart = contentInput.selectionEnd = cursorPos + imageRef.length;
+                    // Auto-save
+                    this.saveNote(true);
+                }
+            } else {
+                const error = await response.json();
+                this.showToast(error.detail || 'Failed to upload attachment', 'error');
+            }
+        } catch (error) {
+            console.error('Error uploading attachment:', error);
+            this.showToast('Failed to upload attachment', 'error');
+        }
+    }
+    
+    async removeAttachment(filename) {
+        if (!this.currentNoteId) return;
+        
+        if (!confirm(`Remove attachment "${filename}"?`)) {
+            return;
+        }
+        
+        try {
+            const response = await csrfFetch(`/api/notes/${this.currentNoteId}/attachments/${encodeURIComponent(filename)}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                this.showToast('Attachment removed');
+                // Reload note to refresh attachments
+                await this.openNote(this.currentNoteId);
+            } else {
+                const error = await response.json();
+                this.showToast(error.detail || 'Failed to remove attachment', 'error');
+            }
+        } catch (error) {
+            console.error('Error removing attachment:', error);
+            this.showToast('Failed to remove attachment', 'error');
+        }
+    }
+    
+    showToast(message, type = 'success') {
+        // Simple toast notification
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        toast.style.cssText = 'position: fixed; top: 20px; right: 20px; padding: 12px 20px; background: #2a2a3e; border: 1px solid #3a3a4e; border-radius: 8px; color: #e0e0e0; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.3);';
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transition = 'opacity 0.3s';
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
     }
     
     escapeHtml(text) {
