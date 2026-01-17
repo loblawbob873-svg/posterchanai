@@ -87,8 +87,17 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 # Skip if request has Authorization header (API key or Bearer token for server-to-server)
                 auth_header = request.headers.get("Authorization")
                 if not auth_header:
-                    # Validate CSRF token
-                    csrf_header = request.headers.get(CSRF_HEADER_NAME)
+                    # Validate CSRF token - check both case variations and common variations
+                    csrf_header = (
+                        request.headers.get(CSRF_HEADER_NAME) or 
+                        request.headers.get(CSRF_HEADER_NAME.lower()) or
+                        request.headers.get("x-csrf-token") or
+                        request.headers.get("X-Csrf-Token")
+                    )
+                    
+                    # Log all headers for debugging
+                    all_headers = dict(request.headers)
+                    logger.warning(f"CSRF check for {request.method} {request.url.path}: cookie={bool(csrf_cookie)}, header={bool(csrf_header)}, header_keys={list(all_headers.keys())}, looking_for={CSRF_HEADER_NAME}")
 
                     if not csrf_cookie:
                         # Log for debugging
@@ -99,8 +108,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                         )
 
                     if not csrf_header:
-                        # Log for debugging
-                        logger.warning(f"CSRF token missing from header for {request.method} {request.url.path}. Cookie present: {bool(csrf_cookie)}")
+                        # Log for debugging - show all headers to help diagnose
+                        logger.warning(f"CSRF token missing from header for {request.method} {request.url.path}. Cookie present: {bool(csrf_cookie)}. Headers: {list(request.headers.keys())}")
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="CSRF token missing from header"

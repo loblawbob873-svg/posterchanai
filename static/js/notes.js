@@ -1351,58 +1351,56 @@ class NotesManager {
         const name = prompt('Enter folder name:');
         if (!name) return;
         
-        // Ensure we have CSRF token - fetch it if needed
-        let csrfToken = null;
-        if (typeof getCSRFToken !== 'undefined') {
-            csrfToken = getCSRFToken();
-        }
-        
-        // If no token, try to get it by making a GET request first
-        if (!csrfToken) {
-            console.log('CSRF token not found, fetching...');
-            try {
-                // Make a GET request to trigger CSRF cookie setting
-                await fetch('/', { method: 'GET', credentials: 'include' });
-                // Wait a moment for cookie to be set
-                await new Promise(resolve => setTimeout(resolve, 200));
+        // Use csrfFetch if available, otherwise use fetch with manual CSRF token
+        try {
+            let response;
+            if (typeof csrfFetch !== 'undefined') {
+                // Use csrfFetch which handles CSRF automatically
+                console.log('Using csrfFetch for folder creation');
+                response = await csrfFetch('/api/notes/folders', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ name: name.trim() })
+                });
+            } else {
+                // Fallback: manually get and send CSRF token
+                console.log('csrfFetch not available, using manual CSRF token');
+                let csrfToken = null;
                 if (typeof getCSRFToken !== 'undefined') {
                     csrfToken = getCSRFToken();
                 }
-            } catch (e) {
-                console.error('Failed to fetch CSRF token:', e);
+                
+                // If no token, try to get it by making a GET request first
+                if (!csrfToken) {
+                    console.log('CSRF token not found, fetching...');
+                    await fetch('/', { method: 'GET', credentials: 'include' });
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    if (typeof getCSRFToken !== 'undefined') {
+                        csrfToken = getCSRFToken();
+                    }
+                }
+                
+                if (!csrfToken) {
+                    this.showToast('Error: CSRF token not available. Please refresh the page.', 'error');
+                    return;
+                }
+                
+                const headers = new Headers();
+                headers.set('Content-Type', 'application/json');
+                headers.set('X-CSRF-Token', csrfToken);
+                
+                response = await fetch('/api/notes/folders', {
+                    method: 'POST',
+                    headers: headers,
+                    credentials: 'include',
+                    body: JSON.stringify({ name: name.trim() })
+                });
             }
-        }
-        
-        if (!csrfToken) {
-            this.showToast('Error: CSRF token not available. Please refresh the page.', 'error');
-            console.error('CSRF token still not available after retry');
-            console.log('Available cookies:', document.cookie);
-            return;
-        }
-        
-        console.log('Using CSRF token:', csrfToken.substring(0, 8) + '...');
-        console.log('Token length:', csrfToken.length);
-        
-        // Build headers object
-        const headers = {
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': csrfToken
-        };
-        
-        console.log('Request headers:', headers);
-        console.log('Request will include credentials:', true);
-        
-        try {
-            const response = await fetch('/api/notes/folders', {
-                method: 'POST',
-                headers: headers,
-                credentials: 'include', // Important: include cookies
-                body: JSON.stringify({ name: name.trim() })
-            });
-            
             
             if (response.ok) {
                 this.loadFolders();
+                this.showToast('Folder created successfully', 'success');
             } else {
                 let errorDetail = 'Unknown error';
                 try {
