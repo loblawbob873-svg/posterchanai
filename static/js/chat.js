@@ -2614,61 +2614,56 @@ class ChatHandler {
 
     async openFile(filePath, fileName) {
         // Open file in new tab/window
-        const url = `/api/files/view/${encodeURIComponent(filePath)}`;
-        window.open(url, '_blank');
-        this.showToast(`Opening ${fileName}...`);
+        // Encode path segments separately to preserve slashes
+        const pathSegments = filePath.split('/').map(seg => encodeURIComponent(seg));
+        const encodedPath = pathSegments.join('/');
+        const url = `/api/files/view/${encodedPath}`;
+        
+        // Check if it's an image or PDF that should open in browser
+        const ext = fileName.split('.').pop().toLowerCase();
+        const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext);
+        const isPdf = ext === 'pdf';
+        
+        if (isImage || isPdf) {
+            // Open directly in new tab - browser will display it
+            window.open(url, '_blank');
+            this.showToast(`Opening ${fileName}...`);
+        } else {
+            // For other files, open in new tab (browser may download or display)
+            window.open(url, '_blank');
+            this.showToast(`Opening ${fileName}...`);
+        }
     }
     
     async downloadFile(filePath, fileName) {
         try {
-            // Use the view endpoint to download the file
-            // Encode each path segment separately to preserve slashes
+            // Encode path segments separately to preserve slashes
             const pathSegments = filePath.split('/').map(seg => encodeURIComponent(seg));
             const encodedPath = pathSegments.join('/');
             const url = `/api/files/view/${encodedPath}`;
             
             console.log('Downloading file:', { filePath, fileName, url });
             
-            // Use fetch with credentials to include cookies
-            const response = await fetch(url, {
-                credentials: 'include',
-                method: 'GET'
-            });
-            
-            if (!response.ok) {
-                let errorText = 'Unknown error';
-                try {
-                    errorText = await response.text();
-                } catch (e) {
-                    errorText = `${response.status} ${response.statusText}`;
-                }
-                console.error('Download failed:', response.status, errorText);
-                throw new Error(`Failed to download file: ${response.status} ${errorText.substring(0, 100)}`);
-            }
-            
-            // Get the file as a blob
-            const blob = await response.blob();
-            
-            if (!blob || blob.size === 0) {
-                throw new Error('Received empty file');
-            }
-            
-            // Create download link
-            const url_obj = window.URL.createObjectURL(blob);
+            // Use a simple approach: create a download link and trigger it
+            // This is more reliable than fetch+blob for downloads
             const a = document.createElement('a');
-            a.href = url_obj;
+            a.href = url;
             a.download = fileName;
             a.style.display = 'none';
+            a.target = '_blank'; // Open in new tab as fallback
+            
+            // Add to DOM, click, then remove
             document.body.appendChild(a);
             a.click();
             
-            // Clean up
+            // Clean up after a short delay
             setTimeout(() => {
-                document.body.removeChild(a);
-                window.URL.revokeObjectURL(url_obj);
-            }, 100);
+                if (document.body.contains(a)) {
+                    document.body.removeChild(a);
+                }
+            }, 1000);
             
-            this.showToast('File downloaded');
+            this.showToast('Download started...');
         } catch (error) {
             console.error('Error downloading file:', error);
             const errorMsg = error.message || 'Unknown error';
@@ -2766,23 +2761,49 @@ class ChatHandler {
 
     async emailFile(filePath, fileName) {
         // Open email modal with file pre-selected
-        // Ensure fileManager is initialized
-        if (typeof FileManager !== 'undefined' && !window.fileManager) {
-            window.fileManager = new FileManager();
+        // Try to use FileManager if available
+        if (window.fileManager && typeof window.fileManager.emailFile === 'function') {
+            try {
+                await window.fileManager.emailFile(filePath, fileName);
+                return;
+            } catch (e) {
+                console.warn('FileManager.emailFile failed, using fallback:', e);
+            }
         }
         
-        if (window.fileManager) {
-            window.fileManager.emailFile(filePath, fileName);
+        // Fallback: Show email modal directly
+        const modal = document.getElementById('fileEmailModal');
+        if (modal) {
+            // Set file info
+            document.getElementById('emailFilePath').value = filePath;
+            document.getElementById('emailFileName').textContent = fileName;
+            const emailToInput = document.getElementById('emailTo');
+            emailToInput.value = '';
+            document.getElementById('emailSubject').value = `Shared file: ${fileName}`;
+            document.getElementById('emailBody').value = `Please find the attached file: ${fileName}`;
+            
+            // Load contacts for autocomplete if function exists
+            if (window.fileManager && typeof window.fileManager.loadContactEmailsForAutocomplete === 'function') {
+                await window.fileManager.loadContactEmailsForAutocomplete();
+            }
+            
+            // Show modal
+            modal.style.display = 'block';
+            setTimeout(() => emailToInput.focus(), 100);
         } else {
-            // Fallback: prompt for email address (shouldn't happen normally)
-            console.warn('FileManager not available, using fallback prompt');
+            // Last resort: prompt
+            console.warn('Email modal not found, using prompt');
             const to = prompt('Enter email address:');
             if (!to) return;
             
             try {
-                const response = await csrfFetch('/api/files/email', {
+                const response = await fetch('/api/files/email', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || ''
+                    },
+                    credentials: 'include',
                     body: JSON.stringify({
                         file_paths: [filePath],
                         to: to,
@@ -2790,14 +2811,72 @@ class ChatHandler {
                         body: `Please find the attached file: ${fileName}`
                     })
                 });
+                
                 if (!response.ok) {
-                    throw new Error('Failed to send email');
+                    const error = await response.json().catch(() => ({ detail: 'Failed to send email' }));
+                    throw new Error(error.detail || 'Failed to send email');
                 }
+                
                 this.showToast('Email sent successfully');
             } catch (error) {
                 console.error('Error sending email:', error);
-                this.showToast('Error sending email', 'error');
+                this.showToast(`Error sending email: ${error.message}`, 'error');
             }
+        }
+    }
+    
+    async sendEmailFromModal() {
+        // Fallback sendEmail function when FileManager is not available
+        const filePath = document.getElementById('emailFilePath')?.value;
+        let to = document.getElementById('emailTo')?.value.trim();
+        const subject = document.getElementById('emailSubject')?.value.trim();
+        const body = document.getElementById('emailBody')?.value.trim();
+        
+        if (!filePath || !to) {
+            alert('Please enter recipient email address');
+            return;
+        }
+        
+        // Extract email from "Name <email>" format if present
+        const emailMatch = to.match(/<([^>]+)>/);
+        if (emailMatch) {
+            to = emailMatch[1];
+        }
+        
+        // Basic email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(to)) {
+            alert('Please enter a valid email address');
+            return;
+        }
+        
+        try {
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+            const response = await fetch('/api/files/email', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                credentials: 'include',
+                body: JSON.stringify({
+                    file_paths: [filePath],
+                    to: to,
+                    subject: subject || 'Shared file',
+                    body: body || 'Please find the attached file.'
+                })
+            });
+            
+            const data = await response.json();
+            if (response.ok) {
+                alert('Email sent successfully!');
+                document.getElementById('fileEmailModal').style.display = 'none';
+            } else {
+                alert('Error: ' + (data.detail || 'Failed to send email'));
+            }
+        } catch (error) {
+            console.error('Error sending email:', error);
+            alert('Error sending email. Please try again.');
         }
     }
 
