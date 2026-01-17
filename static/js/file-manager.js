@@ -1966,6 +1966,13 @@ class FileManager {
                 this.allImages.push(...(data.images || []));
             }
             
+            // Ensure images are sorted by modified time (newest first)
+            this.allImages.sort((a, b) => {
+                const timeA = a.modified || 0;
+                const timeB = b.modified || 0;
+                return timeB - timeA; // Descending order (newest first)
+            });
+            
             this.hasMoreImages = data.has_more || false;
             this.imageLoadOffset += data.images?.length || 0;
             
@@ -1981,11 +1988,20 @@ class FileManager {
                 loadMoreBtn.style.display = this.hasMoreImages ? 'block' : 'none';
             }
             
+            // Ensure images are sorted by modified time (newest first)
+            // This ensures correct order even when loading more images
+            this.allImages.sort((a, b) => {
+                const timeA = a.modified || 0;
+                const timeB = b.modified || 0;
+                return timeB - timeA; // Descending order (newest first)
+            });
+            
             // Debug: log first image to see if thumbnails are included
             if (this.allImages.length > 0) {
-                console.log('First image data:', {
+                console.log('First image data (newest first):', {
                     name: this.allImages[0].name,
                     path: this.allImages[0].path,
+                    modified: new Date(this.allImages[0].modified * 1000).toLocaleString(),
                     hasThumbnail: !!this.allImages[0].thumbnail,
                     thumbnailLength: this.allImages[0].thumbnail ? this.allImages[0].thumbnail.length : 0
                 });
