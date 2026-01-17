@@ -407,15 +407,28 @@ async def get_all_images(
                     # PIL Image.open() is very slow when scanning thousands of files
                     # We rely on file extension, size checks, and thumbnail_service.is_image_file() instead
                     
-                    # Ensure all values are JSON serializable
+                    # Ensure all values are JSON serializable - be very explicit
+                    # Convert everything to basic Python types (str, int, float, bool)
+                    name_str = str(item.name) if not isinstance(item.name, bytes) else item.name.decode('utf-8', errors='ignore')
+                    path_str = str(relative_path) if not isinstance(relative_path, bytes) else relative_path.decode('utf-8', errors='ignore')
+                    
                     image_info = {
-                        "name": str(item.name),
-                        "path": str(relative_path),
+                        "name": name_str,
+                        "path": path_str,
                         "size": int(stat.st_size),
                         "modified": float(modified_time),  # CRITICAL: Ensure it's a float, not string
                         "modified_date": str(datetime.fromtimestamp(modified_time).isoformat()),
                         "type": str("image" if is_image else "video" if is_video else "unknown"),
                     }
+                    
+                    # Final safety check - ensure no bytes slipped through
+                    for key, value in list(image_info.items()):
+                        if isinstance(value, bytes):
+                            logger.warning(f"[FILES] Found bytes in image_info.{key}, converting")
+                            image_info[key] = value.decode('utf-8', errors='ignore')
+                        elif not isinstance(value, (str, int, float, bool, type(None))):
+                            logger.warning(f"[FILES] Found non-serializable type {type(value)} in image_info.{key}, converting")
+                            image_info[key] = str(value)
                     
                     # Skip loading thumbnails during initial scan for performance
                     # Thumbnails will be loaded on-demand by the frontend via /thumbnail endpoint
@@ -608,36 +621,30 @@ async def get_all_images(
             "has_more": bool(offset + limit < total)
         }
     
+    def _clean_for_json(obj):
+        """Recursively clean object to ensure JSON serializability."""
+        if isinstance(obj, bytes):
+            return obj.decode('utf-8', errors='ignore')
+        elif isinstance(obj, (Path, type(None))):
+            return str(obj) if obj else ""
+        elif isinstance(obj, dict):
+            return {str(k): _clean_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [_clean_for_json(item) for item in obj]
+        elif isinstance(obj, (str, int, float, bool, type(None))):
+            return obj
+        else:
+            # Convert anything else to string
+            try:
+                return str(obj)
+            except Exception:
+                return ""
+    
     try:
         result = await asyncio.to_thread(_get_all_images_sync)
-        # Result should already be cleaned in _get_all_images_sync, but double-check
-        # FastAPI will handle serialization, but we ensure everything is clean
-        if isinstance(result, dict) and "images" in result:
-            # Final pass to ensure no bytes or other non-serializable types
-            cleaned_images = []
-            for idx, img in enumerate(result.get("images", [])):
-                try:
-                    cleaned_img = {}
-                    for key, value in img.items():
-                        if isinstance(value, bytes):
-                            logger.warning(f"[FILES] Found bytes in image {idx}, key '{key}', converting to string")
-                            cleaned_img[key] = value.decode('utf-8', errors='ignore')
-                        elif isinstance(value, (Path, type(None))):
-                            cleaned_img[key] = str(value) if value else ""
-                        elif not isinstance(value, (str, int, float, bool, type(None))):
-                            # Convert any other non-basic type to string
-                            try:
-                                cleaned_img[key] = str(value)
-                            except Exception:
-                                cleaned_img[key] = ""
-                        else:
-                            cleaned_img[key] = value
-                    cleaned_images.append(cleaned_img)
-                except Exception as img_err:
-                    logger.error(f"[FILES] Error cleaning image {idx}: {img_err}, skipping")
-                    # Skip problematic images
-            result["images"] = cleaned_images
-        return result
+        # Recursively clean the entire result to ensure JSON serializability
+        cleaned_result = _clean_for_json(result)
+        return cleaned_result
     except Exception as e:
         logger.error(f"[FILES] Error in get_all_images: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
