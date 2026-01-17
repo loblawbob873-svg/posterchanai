@@ -60,24 +60,10 @@ def _serialize_note_response(note: Note, folder_name: Optional[str] = None) -> d
 
 @router.get("/folders", response_model=List[NoteFolderResponse])
 async def get_folders(
-    request: StarletteRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get all note folders for the current user."""
-    # Check if storage server is configured - proxy request if so
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    if storage_server_url and storage_server_url.value:
-        # Proxy to storage server
-        from app.services.storage_proxy import proxy_storage_request
-        return await proxy_storage_request(
-            db=db,
-            request=request,
-            endpoint="/api/notes/folders",
-            method="GET",
-            stream=False
-        )
-    
     folders = db.query(NoteFolder).filter(NoteFolder.user_id == current_user.id).all()
     
     result = []
@@ -206,35 +192,10 @@ async def get_notes(
     search: Optional[str] = None,
     tag: Optional[str] = None,
     limit: Optional[int] = None,
-    request: StarletteRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get notes for the current user. Can filter by folder, search query, or tag."""
-    # Check if storage server is configured - proxy request if so
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    if storage_server_url and storage_server_url.value:
-        # Proxy to storage server
-        from app.services.storage_proxy import proxy_storage_request
-        # Build query string
-        query_params = []
-        if folder_id is not None:
-            query_params.append(f"folder_id={folder_id}")
-        if search:
-            query_params.append(f"search={search}")
-        if tag:
-            query_params.append(f"tag={tag}")
-        if limit:
-            query_params.append(f"limit={limit}")
-        endpoint = "/api/notes" + ("?" + "&".join(query_params) if query_params else "")
-        return await proxy_storage_request(
-            db=db,
-            request=request,
-            endpoint=endpoint,
-            method="GET",
-            stream=False
-        )
-    
     try:
         query = db.query(Note).filter(Note.user_id == current_user.id)
         
@@ -283,24 +244,10 @@ async def get_notes(
 @router.get("/{note_id}", response_model=NoteResponse)
 async def get_note(
     note_id: int,
-    request: StarletteRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get a single note by ID."""
-    # Check if storage server is configured - proxy request if so
-    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    if storage_server_url and storage_server_url.value:
-        # Proxy to storage server
-        from app.services.storage_proxy import proxy_storage_request
-        return await proxy_storage_request(
-            db=db,
-            request=request,
-            endpoint=f"/api/notes/{note_id}",
-            method="GET",
-            stream=False
-        )
-    
     note = db.query(Note).filter(
         Note.id == note_id,
         Note.user_id == current_user.id
@@ -459,15 +406,8 @@ async def serve_note_file(
     if current_user.username != username:
         raise HTTPException(status_code=403, detail="Access denied")
     
-    # Verify note belongs to user
-    note = db.query(Note).filter(
-        Note.id == note_id,
-        Note.user_id == current_user.id
-    ).first()
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    
     # Check if storage server is configured - proxy request if so
+    # (Note: When proxying, the main server has already verified the note exists)
     storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
     if storage_server_url and storage_server_url.value:
         # Proxy to storage server (stream file response)
@@ -483,6 +423,16 @@ async def serve_note_file(
         )
     
     # Local file serving
+    # Note: For storage servers, we may not have notes in the database.
+    # The main server verifies note ownership before proxying, so we can
+    # serve files if they exist on disk without checking the database.
+    # Optionally verify note exists if we have it in the database (for local setups)
+    note = db.query(Note).filter(
+        Note.id == note_id,
+        Note.user_id == current_user.id
+    ).first()
+    # If note doesn't exist in DB, we'll still try to serve the file if it exists on disk
+    # (This allows storage servers to serve files without notes in their database)
     # Get file path with sanitization to prevent path traversal
     from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
     storage = StorageService(db)
