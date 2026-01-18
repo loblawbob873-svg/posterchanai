@@ -186,8 +186,32 @@ async def carddav_discovery(request: Request, db: Session = Depends(get_db)):
 
 # CalDAV/CardDAV principals endpoint (used by iOS and other clients for discovery)
 @app.api_route("/principals/", methods=["PROPFIND"])
-async def principals_propfind(request: Request, current_user: User = Depends(get_current_user)):
+async def principals_propfind(request: Request, db: Session = Depends(get_db)):
     """Handle PROPFIND on /principals/ - redirect to user's calendar."""
+    # CalDAV clients use Basic Auth, not session auth
+    import base64
+    from app.auth import verify_password
+    
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Basic "):
+        return Response(
+            content="Unauthorized",
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+        )
+    
+    # Parse Basic Auth
+    try:
+        credentials = base64.b64decode(auth_header[6:]).decode('utf-8')
+        username, password = credentials.split(':', 1)
+    except:
+        return Response(content="Invalid credentials", status_code=401)
+    
+    # Verify user
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not verify_password(password, user.password_hash):
+        return Response(content="Invalid credentials", status_code=401)
+    
     scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
     base_url = f"{scheme}://{request.url.hostname}"
     if request.url.port and request.url.port not in (80, 443):
@@ -197,16 +221,16 @@ async def principals_propfind(request: Request, current_user: User = Depends(get
     xml = f'''<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
     <D:response>
-        <D:href>/principals/{current_user.username}/</D:href>
+        <D:href>/principals/{user.username}/</D:href>
         <D:propstat>
             <D:prop>
                 <D:resourcetype>
                     <D:collection/>
                     <D:principal/>
                 </D:resourcetype>
-                <D:displayname>{current_user.username}</D:displayname>
+                <D:displayname>{user.username}</D:displayname>
                 <C:calendar-home-set>
-                    <D:href>/caldav/{current_user.username}/</D:href>
+                    <D:href>/caldav/{user.username}/</D:href>
                 </C:calendar-home-set>
             </D:prop>
             <D:status>HTTP/1.1 200 OK</D:status>
