@@ -163,22 +163,30 @@ app.include_router(storage.router)
 @app.get("/.well-known/caldav")
 async def caldav_discovery(request: Request, db: Session = Depends(get_db)):
     """CalDAV autodiscovery - redirect to CalDAV server."""
-    caldav_port = db.query(Setting).filter(Setting.key == "caldav_port").first()
-    port = caldav_port.value if caldav_port else "8081"
-    
-    # Use same host but different port
-    base_url = f"{request.url.scheme}://{request.url.hostname}:{port}"
+    # When behind nginx reverse proxy, redirect to the proxied path (same host/port)
+    # Nginx will proxy /caldav/ to the actual CalDAV server on port 8081
+    base_url = f"{request.url.scheme}://{request.url.hostname}"
+    if request.url.port and request.url.port not in (80, 443):
+        base_url += f":{request.url.port}"
     return RedirectResponse(url=f"{base_url}/caldav/", status_code=301)
 
 @app.get("/.well-known/carddav")
 async def carddav_discovery(request: Request, db: Session = Depends(get_db)):
     """CardDAV autodiscovery - redirect to CardDAV server."""
-    cardav_port = db.query(Setting).filter(Setting.key == "cardav_port").first()
-    port = cardav_port.value if cardav_port else "8082"
-    
-    # Use same host but different port
-    base_url = f"{request.url.scheme}://{request.url.hostname}:{port}"
+    # When behind nginx reverse proxy, redirect to the proxied path (same host/port)
+    # Nginx will proxy /carddav/ to the actual CardDAV server on port 8082
+    base_url = f"{request.url.scheme}://{request.url.hostname}"
+    if request.url.port and request.url.port not in (80, 443):
+        base_url += f":{request.url.port}"
     return RedirectResponse(url=f"{base_url}/carddav/", status_code=301)
+
+# Legacy/alternate CalDAV paths (some clients use /calendar/dav/ or /dav/)
+@app.route("/calendar/dav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "REPORT", "MKCALENDAR", "OPTIONS"])
+async def legacy_caldav_redirect(path: str, request: Request):
+    """Redirect legacy /calendar/dav/ paths to /caldav/"""
+    # Preserve query string if any
+    query = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(url=f"/caldav/{path}{query}", status_code=308)  # 308 = Permanent Redirect preserving method
 
 # Handle old Joplin resource URLs (:/[resource-id]) - return 404 with helpful message
 # These are legacy URLs from Joplin that should have been converted during migration
