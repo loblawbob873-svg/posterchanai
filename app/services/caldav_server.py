@@ -145,40 +145,75 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         
         # If depth=1, list child calendars
         if depth == "1":
-            # Add default calendar
-            items.append({
-                "href": f"{base_url}/calendar/",
-                "props": {
-                    "resourcetype": "calendar",
-                    "displayname": "Calendar",
-                    "supported-calendar-component-set": "VEVENT,VTODO",
-                    "calendar-description": "Default Calendar",
-                    "calendar-color": "#0088FF",
-                    "calendar-timezone": "UTC"
-                }
-            })
+            # Check for calendar subdirectories
+            calendar_dirs = []
+            if caldav_path.exists():
+                for item in caldav_path.iterdir():
+                    if item.is_dir():
+                        calendar_dirs.append(item.name)
+            
+            # If no subdirectories exist, check if there are loose .ics files
+            # If so, treat the root as a default calendar for backwards compatibility
+            has_loose_ics = False
+            if caldav_path.exists():
+                has_loose_ics = any(caldav_path.glob("*.ics"))
+            
+            if not calendar_dirs and has_loose_ics:
+                # Legacy mode: root directory has .ics files, show as "Calendar"
+                items.append({
+                    "href": f"{base_url}/calendar/",
+                    "props": {
+                        "resourcetype": "calendar",
+                        "displayname": "Calendar",
+                        "supported-calendar-component-set": "VEVENT,VTODO",
+                        "calendar-description": "Default Calendar",
+                        "calendar-color": "#0088FF",
+                        "calendar-timezone": "UTC"
+                    }
+                })
+            else:
+                # New mode: show actual calendar subdirectories
+                for cal_name in sorted(calendar_dirs):
+                    # Skip hidden directories
+                    if cal_name.startswith('.'):
+                        continue
+                    items.append({
+                        "href": f"{base_url}/{quote(cal_name, safe='')}/",
+                        "props": {
+                            "resourcetype": "calendar",
+                            "displayname": cal_name.replace('_', ' ').title(),
+                            "supported-calendar-component-set": "VEVENT,VTODO",
+                            "calendar-description": f"{cal_name} Calendar",
+                            "calendar-color": "#0088FF",
+                            "calendar-timezone": "UTC"
+                        }
+                    })
     
     # Individual calendar collection
-    elif path == 'calendar':
+    elif '/' not in path:
+        # This is a calendar name (e.g., "calendar" or "work" or "personal")
+        cal_name = path
+        cal_dir = caldav_path / cal_name if cal_name != 'calendar' else caldav_path
+        
         items.append({
-            "href": f"{base_url}/calendar/",
+            "href": f"{base_url}/{quote(cal_name, safe='')}/",
             "props": {
                 "resourcetype": "calendar",
-                "displayname": "Calendar",
+                "displayname": cal_name.replace('_', ' ').title() if cal_name != 'calendar' else "Calendar",
                 "supported-calendar-component-set": "VEVENT,VTODO",
-                "calendar-description": "Default Calendar",
+                "calendar-description": f"{cal_name} Calendar",
                 "calendar-color": "#0088FF",
                 "calendar-timezone": "UTC"
             }
         })
         
         # If depth=1, list events in this calendar
-        if depth == "1":
+        if depth == "1" and cal_dir.exists():
             # List all .ics files
-            for ics_file in caldav_path.glob("*.ics"):
+            for ics_file in cal_dir.glob("*.ics"):
                 event_uid = ics_file.stem
                 items.append({
-                    "href": f"{base_url}/calendar/{event_uid}.ics",
+                    "href": f"{base_url}/{quote(cal_name, safe='')}/{event_uid}.ics",
                     "props": {
                         "getcontenttype": "text/calendar; charset=utf-8",
                         "getetag": str(ics_file.stat().st_mtime)
@@ -186,9 +221,15 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
                 })
     
     # Individual event
-    elif path.startswith('calendar/') and path.endswith('.ics'):
-        event_uid = path.split('/')[-1].replace('.ics', '')
-        ics_file = caldav_path / f"{event_uid}.ics"
+    elif path.count('/') == 1 and path.endswith('.ics'):
+        parts = path.split('/')
+        cal_name = parts[0]
+        event_file = parts[1]
+        event_uid = event_file.replace('.ics', '')
+        
+        cal_dir = caldav_path / cal_name if cal_name != 'calendar' else caldav_path
+        ics_file = cal_dir / f"{event_uid}.ics"
+        
         if ics_file.exists():
             items.append({
                 "href": f"{base_url}/{path}",
@@ -204,7 +245,7 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
 
 async def handle_report(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
     """Handle REPORT request (calendar queries)."""
-    from urllib.parse import quote
+    from urllib.parse import quote, unquote
     body = await request.body()
     caldav_path = get_user_caldav_path(user, db)
     encoded_username = quote(user.username, safe='')
@@ -216,6 +257,19 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         path = path[len(user.username):].lstrip('/')
     if path.startswith(encoded_username):
         path = path[len(encoded_username):].lstrip('/')
+    
+    # Determine which calendar we're querying
+    cal_name = None
+    if path and '/' not in path:
+        cal_name = unquote(path)
+    
+    # Determine the calendar directory
+    if cal_name == 'calendar':
+        cal_dir = caldav_path  # Legacy: root directory
+    elif cal_name:
+        cal_dir = caldav_path / cal_name
+    else:
+        cal_dir = caldav_path  # Default to root
     
     try:
         root = ET.fromstring(body)
@@ -242,46 +296,56 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                         except:
                             pass
             
-            # List matching events
-            for ics_file in caldav_path.glob("*.ics"):
-                try:
-                    with open(ics_file, 'r', encoding='utf-8') as f:
-                        ical_data = f.read()
-                    
-                    # Check time range if specified
-                    if time_range:
-                        cal = ICalendar.from_ical(ical_data.encode('utf-8'))
-                        for component in cal.walk():
-                            if component.name == "VEVENT":
-                                dtstart = component.get('dtstart')
-                                if dtstart:
-                                    event_start = dtstart.dt
-                                    if isinstance(event_start, datetime):
-                                        if not (time_range[0] <= event_start <= time_range[1]):
-                                            continue
-                    
-                    event_uid = ics_file.stem
-                    items.append({
-                        "href": f"{base_url}/calendar/{event_uid}.ics",
-                        "props": {
-                            "getcontenttype": "text/calendar; charset=utf-8",
-                            "getetag": str(ics_file.stat().st_mtime),
-                            "calendar-data": ical_data
-                        }
-                    })
-                except Exception as e:
-                    logger.debug(f"Error processing {ics_file}: {e}")
-                    continue
+            # List matching events from the specified calendar directory
+            if cal_dir.exists():
+                for ics_file in cal_dir.glob("*.ics"):
+                    try:
+                        with open(ics_file, 'r', encoding='utf-8') as f:
+                            ical_data = f.read()
+                        
+                        # Check time range if specified
+                        if time_range:
+                            cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+                            for component in cal.walk():
+                                if component.name == "VEVENT":
+                                    dtstart = component.get('dtstart')
+                                    if dtstart:
+                                        event_start = dtstart.dt
+                                        if isinstance(event_start, datetime):
+                                            if not (time_range[0] <= event_start <= time_range[1]):
+                                                continue
+                        
+                        event_uid = ics_file.stem
+                        href_path = f"{cal_name}/{event_uid}.ics" if cal_name else f"calendar/{event_uid}.ics"
+                        items.append({
+                            "href": f"{base_url}/{href_path}",
+                            "props": {
+                                "getcontenttype": "text/calendar; charset=utf-8",
+                                "getetag": str(ics_file.stat().st_mtime),
+                                "calendar-data": ical_data
+                            }
+                        })
+                    except Exception as e:
+                        logger.debug(f"Error processing {ics_file}: {e}")
+                        continue
         
         elif multiget_elem is not None:
             # Calendar multiget - get specific events by href
             hrefs = [elem.text for elem in multiget_elem.findall('.//{DAV:}href')]
             for href in hrefs:
-                # Extract UID from href
-                match = re.search(r'/([^/]+)\.ics$', href)
+                # Extract calendar name and UID from href
+                match = re.search(r'/([^/]+)/([^/]+)\.ics$', href)
                 if match:
-                    event_uid = match.group(1)
-                    ics_file = caldav_path / f"{event_uid}.ics"
+                    href_cal_name = unquote(match.group(1))
+                    event_uid = match.group(2)
+                    
+                    # Determine calendar directory
+                    if href_cal_name == 'calendar':
+                        href_cal_dir = caldav_path
+                    else:
+                        href_cal_dir = caldav_path / href_cal_name
+                    
+                    ics_file = href_cal_dir / f"{event_uid}.ics"
                     if ics_file.exists():
                         try:
                             with open(ics_file, 'r', encoding='utf-8') as f:
@@ -306,13 +370,22 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
 
 async def handle_get(path: str, user: User, db: Session) -> Response:
     """Handle GET request (retrieve calendar/event)."""
+    from urllib.parse import unquote
     caldav_path = get_user_caldav_path(user, db)
     
-    # Extract event UID from path (handle both /calendar/uid.ics and /uid.ics for backwards compat)
-    match = re.search(r'/([^/]+)\.ics$', path)
+    # Extract calendar name and event UID from path
+    match = re.search(r'/([^/]+)/([^/]+)\.ics$', path)
     if match:
-        event_uid = match.group(1)
-        ics_file = caldav_path / f"{event_uid}.ics"
+        cal_name = unquote(match.group(1))
+        event_uid = match.group(2)
+        
+        # Determine calendar directory
+        if cal_name == 'calendar':
+            cal_dir = caldav_path  # Legacy: root directory
+        else:
+            cal_dir = caldav_path / cal_name
+        
+        ics_file = cal_dir / f"{event_uid}.ics"
         if ics_file.exists():
             try:
                 with open(ics_file, 'r', encoding='utf-8') as f:
@@ -327,6 +400,7 @@ async def handle_get(path: str, user: User, db: Session) -> Response:
 
 async def handle_put(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
     """Handle PUT request (create/update event)."""
+    from urllib.parse import unquote
     body = await request.body()
     caldav_path = get_user_caldav_path(user, db)
     
@@ -336,13 +410,17 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
         # Extract UID from iCalendar data
         event_uid = get_event_uid_from_ical(ical_data)
         
-        # If path contains a UID, use that instead
-        match = re.search(r'/([^/]+)\.ics$', path)
+        # Extract calendar name and UID from path
+        match = re.search(r'/([^/]+)/([^/]+)\.ics$', path)
         if match:
-            path_uid = match.group(1)
+            cal_name = unquote(match.group(1))
+            path_uid = match.group(2)
             if event_uid and event_uid != path_uid:
                 logger.warning(f"UID mismatch: path={path_uid}, ical={event_uid}, using path UID")
             event_uid = path_uid
+        else:
+            # Legacy path format or no calendar specified
+            cal_name = 'calendar'
         
         if not event_uid:
             # Generate UID if not present
@@ -355,12 +433,19 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
                         component.add('uid', event_uid)
             ical_data = cal.to_ical().decode('utf-8')
         
+        # Determine calendar directory
+        if cal_name == 'calendar':
+            cal_dir = caldav_path  # Legacy: root directory
+        else:
+            cal_dir = caldav_path / cal_name
+            cal_dir.mkdir(parents=True, exist_ok=True)
+        
         # Save to file
-        ics_file = caldav_path / f"{event_uid}.ics"
+        ics_file = cal_dir / f"{event_uid}.ics"
         with open(ics_file, 'w', encoding='utf-8') as f:
             f.write(ical_data)
         
-        logger.info(f"Saved event/todo {event_uid} for user {user.username}")
+        logger.info(f"Saved event/todo {event_uid} for user {user.username} in calendar {cal_name}")
         return Response(content="", status_code=201)
     except Exception as e:
         logger.error(f"Error saving event: {e}")
@@ -369,17 +454,26 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
 
 async def handle_delete(path: str, user: User, db: Session) -> Response:
     """Handle DELETE request."""
+    from urllib.parse import unquote
     caldav_path = get_user_caldav_path(user, db)
     
-    # Extract event UID from path (handle both /calendar/uid.ics and /uid.ics)
-    match = re.search(r'/([^/]+)\.ics$', path)
+    # Extract calendar name and event UID from path
+    match = re.search(r'/([^/]+)/([^/]+)\.ics$', path)
     if match:
-        event_uid = match.group(1)
-        ics_file = caldav_path / f"{event_uid}.ics"
+        cal_name = unquote(match.group(1))
+        event_uid = match.group(2)
+        
+        # Determine calendar directory
+        if cal_name == 'calendar':
+            cal_dir = caldav_path  # Legacy: root directory
+        else:
+            cal_dir = caldav_path / cal_name
+        
+        ics_file = cal_dir / f"{event_uid}.ics"
         if ics_file.exists():
             try:
                 ics_file.unlink()
-                logger.info(f"Deleted event {event_uid} for user {user.username}")
+                logger.info(f"Deleted event {event_uid} from calendar {cal_name} for user {user.username}")
                 return Response(content="", status_code=204)
             except Exception as e:
                 logger.error(f"Error deleting event: {e}")
@@ -396,6 +490,36 @@ async def handle_mkcalendar(path: str, user: User, db: Session) -> Response:
     return Response(content="", status_code=201)
 
 
+async def handle_proppatch(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
+    """Handle PROPPATCH request (set calendar properties)."""
+    body = await request.body()
+    
+    try:
+        # Parse the PROPPATCH request
+        root = ET.fromstring(body)
+        
+        # For now, just accept the changes without actually storing them
+        # The calendar properties are hardcoded in handle_propfind
+        # In a full implementation, you'd store these in a database or file
+        
+        # Return success response
+        xml = '''<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+    <D:response>
+        <D:href>{}</D:href>
+        <D:propstat>
+            <D:prop/>
+            <D:status>HTTP/1.1 200 OK</D:status>
+        </D:propstat>
+    </D:response>
+</D:multistatus>'''.format(path)
+        
+        return Response(content=xml, media_type="application/xml", status_code=207)
+    except Exception as e:
+        logger.error(f"Error handling PROPPATCH: {e}")
+        return Response(content="", status_code=500)
+
+
 def create_caldav_app() -> FastAPI:
     """Create CalDAV FastAPI application."""
     app = FastAPI(title="Posterchanai CalDAV Server")
@@ -409,7 +533,7 @@ def create_caldav_app() -> FastAPI:
             headers={"Location": "/caldav/"}
         )
     
-    @app.api_route("/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "REPORT", "MKCALENDAR"])
+    @app.api_route("/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCALENDAR"])
     async def caldav_handler(path: str, request: StarletteRequest, db: Session = Depends(get_db)):
         """Handle CalDAV requests."""
         # Extract username from path or Basic Auth
@@ -449,6 +573,8 @@ def create_caldav_app() -> FastAPI:
         
         if method == "PROPFIND":
             return await handle_propfind(path, user, db, depth)
+        elif method == "PROPPATCH":
+            return await handle_proppatch(path, user, db, request)
         elif method == "REPORT":
             return await handle_report(path, user, db, request)
         elif method == "GET":
