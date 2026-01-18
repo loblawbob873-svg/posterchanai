@@ -188,7 +188,8 @@
     padding: 6px 10px;
     border-radius: 4px;
     font-size: 16px;
-    opacity: 0.8;
+    opacity: 1 !important; /* Make it fully visible always */
+    color: #ff4444 !important; /* Red color so it's obvious */
     transition: all 0.2s ease;
     display: flex;
     align-items: center;
@@ -205,7 +206,8 @@
 }
 
 .notes-browser-folder-item.active .folder-delete-btn {
-    opacity: 0.9;
+    opacity: 1 !important;
+    color: #ff6666 !important; /* Brighter red when active */
 }
 
 .notes-browser-folder-item.active .folder-delete-btn:hover {
