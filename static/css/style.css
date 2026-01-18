@@ -1662,8 +1662,9 @@ fieldset legend {
 #notesModal .modal-content.notes-modal-content {
     margin: 0;
     align-self: center;
-    max-height: calc(100vh - 10px) !important;
-    height: calc(100vh - 10px) !important;
+    max-height: 90vh !important;
+    height: auto !important;
+    min-height: 600px !important;
     overflow: hidden !important;
     box-sizing: border-box;
 }
