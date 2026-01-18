@@ -72,12 +72,18 @@ class DAVStorageProxy:
                     data = response.json()
                     items = data.get('items', [])
                     return items
+                elif response.status_code == 404:
+                    # Path not found - fallback to local filesystem
+                    logger.warning(f"[{self.dav_type.upper()}] Storage server returned 404 for {api_path}, falling back to local filesystem")
+                    return self._list_files_local(subpath)
                 else:
-                    logger.error(f"[{self.dav_type.upper()}] Storage server returned {response.status_code}: {response.text[:200]}")
-                    return []
+                    logger.error(f"[{self.dav_type.upper()}] Storage server returned {response.status_code}: {response.text[:200]}, falling back to local")
+                    # Fallback to local on any error
+                    return self._list_files_local(subpath)
         except Exception as e:
-            logger.error(f"[{self.dav_type.upper()}] Error listing files: {e}", exc_info=True)
-            return []
+            logger.error(f"[{self.dav_type.upper()}] Error listing files: {e}, falling back to local", exc_info=True)
+            # Always fallback to local on exception
+            return self._list_files_local(subpath)
     
     def read_file(self, filepath: str) -> Optional[str]:
         """Read file content from storage."""
@@ -100,12 +106,16 @@ class DAVStorageProxy:
                 response = client.get(url, params=params, headers=self._get_headers())
                 if response.status_code == 200:
                     return response.text
+                elif response.status_code == 404:
+                    # File not found - fallback to local
+                    logger.warning(f"[{self.dav_type.upper()}] File not found on storage server: {filepath}, trying local")
+                    return self._read_file_local(filepath)
                 else:
-                    logger.error(f"[{self.dav_type.upper()}] Failed to read {filepath}: {response.status_code}")
-                    return None
+                    logger.error(f"[{self.dav_type.upper()}] Failed to read {filepath}: {response.status_code}, trying local")
+                    return self._read_file_local(filepath)
         except Exception as e:
-            logger.error(f"[{self.dav_type.upper()}] Error reading file {filepath}: {e}", exc_info=True)
-            return None
+            logger.error(f"[{self.dav_type.upper()}] Error reading file {filepath}: {e}, trying local", exc_info=True)
+            return self._read_file_local(filepath)
     
     def write_file(self, filepath: str, content: str) -> bool:
         """Write file content to storage."""
@@ -174,6 +184,7 @@ class DAVStorageProxy:
             return self._file_exists_local(filepath)
         
         # Try to read the file - if successful, it exists
+        # read_file already handles fallback to local
         content = self.read_file(filepath)
         return content is not None
     
