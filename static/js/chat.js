@@ -2482,7 +2482,7 @@ class ChatHandler {
                                 <div class="track-name">${trackName}</div>
                                 ${trackDetails ? `<div class="track-details">${trackDetails}</div>` : ''}
                             </div>
-                            <button class="btn-action-sm" onclick="console.log('Play clicked for track ${num}'); window.chatHandler.sendMessage('music play ${num}')" title="Play this track">▶️</button>
+                            <button class="btn-action-sm" onclick="console.log('Play clicked for track ${num}'); window.sendMessage('music play ${num}')" title="Play this track">▶️</button>
                         </div>
                     </div>`;
                 } else if (line.trim() && !line.startsWith('📂')) {
@@ -2495,7 +2495,7 @@ class ChatHandler {
             console.log(`[MUSIC SEARCH] Total tracks added: ${trackCount}`);
             musicHtml += '</div>';
             musicHtml += `<div class="music-search-actions">
-                <button class="btn-action" onclick="console.log('Play All clicked'); window.chatHandler.sendMessage('music queueall')" title="Play all search results">▶️ Play All</button>
+                <button class="btn-action" onclick="console.log('Play All clicked'); window.sendMessage('music queueall')" title="Play all search results">▶️ Play All</button>
             </div>`;
             
             html = musicHtml;
