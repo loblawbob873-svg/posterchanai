@@ -236,6 +236,9 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
             # show legacy "Calendar" for backwards compatibility
             if not calendar_dirs and has_loose_ics:
                 logger.info(f"[CalDAV] Adding legacy 'Calendar' (loose .ics files found)")
+                import hashlib
+                sync_token = hashlib.md5(f"calendar_{user.username}".encode()).hexdigest()[:16]
+                ctag = hashlib.md5(f"calendar_{user.username}_ctag".encode()).hexdigest()[:16]
                 items.append({
                     "href": f"{base_url}/calendar/",
                     "props": {
@@ -244,13 +247,18 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                         "supported-calendar-component-set": "VEVENT,VTODO",
                         "calendar-description": "Default Calendar",
                         "calendar-color": "#0088FF",
-                        "calendar-timezone": "UTC"
+                        "calendar-timezone": "UTC",
+                        "sync-token": f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/calendar/sync-token-{sync_token}",
+                        "getctag": ctag
                     }
                 })
             
             # If no calendars exist at all, create a default "Calendar" so users can add events
             if not calendar_dirs and not has_loose_ics:
                 logger.info(f"[CalDAV] No calendars found, adding default 'Calendar'")
+                import hashlib
+                sync_token = hashlib.md5(f"calendar_{user.username}".encode()).hexdigest()[:16]
+                ctag = hashlib.md5(f"calendar_{user.username}_ctag".encode()).hexdigest()[:16]
                 items.append({
                     "href": f"{base_url}/calendar/",
                     "props": {
@@ -259,7 +267,9 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                         "supported-calendar-component-set": "VEVENT,VTODO",
                         "calendar-description": "Default Calendar",
                         "calendar-color": "#0088FF",
-                        "calendar-timezone": "UTC"
+                        "calendar-timezone": "UTC",
+                        "sync-token": f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/calendar/sync-token-{sync_token}",
+                        "getctag": ctag
                     }
                 })
             
