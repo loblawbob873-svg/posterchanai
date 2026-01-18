@@ -94,6 +94,9 @@ async def stream_audio(
     db: Session = Depends(get_db)
 ):
     """Stream audio file from local directory with range request support and optional transcoding."""
+    from app.models import Setting
+    import httpx
+    
     config = get_user_music_config(current_user.id, db)
     if not config:
         raise HTTPException(status_code=400, detail="Music directory not configured")
@@ -101,7 +104,81 @@ async def stream_audio(
     directory = config.get('directory')
     if not directory:
         raise HTTPException(status_code=400, detail="Music directory not set")
+    
+    # Check if using storage proxy
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    use_proxy = storage_server_url and storage_server_url.value and storage_server_token
+    
+    logger.info(f"[MUSIC STREAM] path={path}, directory={directory}, use_proxy={use_proxy}")
+    
+    if use_proxy:
+        # Stream from storage proxy
+        logger.info(f"[MUSIC STREAM PROXY] Proxying stream request")
+        try:
+            # Build the file path for the storage proxy (relative to user storage)
+            if directory.startswith('/'):
+                directory = directory.lstrip('/')
+            
+            file_url = f"{storage_server_url.value}/api/files/{directory}/{path}"
+            headers = {"Authorization": f"Bearer {storage_server_token.value}"}
+            
+            # Forward range header if present
+            range_header = request.headers.get('range')
+            if range_header:
+                headers['Range'] = range_header
+            
+            logger.info(f"[MUSIC STREAM PROXY] Fetching from: {file_url}")
+            
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.get(file_url, headers=headers)
+                
+                if response.status_code not in (200, 206):
+                    logger.error(f"[MUSIC STREAM PROXY] Storage server returned {response.status_code}")
+                    raise HTTPException(status_code=response.status_code, detail="Storage server error")
+                
+                # Determine content type from extension
+                ext = path.lower().split('.')[-1]
+                content_types = {
+                    'mp3': 'audio/mpeg',
+                    'flac': 'audio/flac',
+                    'ogg': 'audio/ogg',
+                    'wav': 'audio/wav',
+                    'm4a': 'audio/mp4',
+                    'aac': 'audio/aac',
+                    'opus': 'audio/opus',
+                    'wma': 'audio/x-ms-wma'
+                }
+                content_type = content_types.get(ext, 'audio/mpeg')
+                
+                # Build response headers
+                response_headers = {
+                    "Content-Type": content_type,
+                    "Accept-Ranges": "bytes",
+                    "Cache-Control": "no-cache"
+                }
+                
+                # Forward content-range if present (for 206 responses)
+                if response.status_code == 206:
+                    if 'content-range' in response.headers:
+                        response_headers['Content-Range'] = response.headers['content-range']
+                    if 'content-length' in response.headers:
+                        response_headers['Content-Length'] = response.headers['content-length']
+                
+                return StreamingResponse(
+                    iter([response.content]),
+                    status_code=response.status_code,
+                    media_type=content_type,
+                    headers=response_headers
+                )
+        except httpx.HTTPError as e:
+            logger.error(f"[MUSIC STREAM PROXY] HTTP error: {e}")
+            raise HTTPException(status_code=500, detail=f"Storage proxy error: {str(e)}")
+        except Exception as e:
+            logger.error(f"[MUSIC STREAM PROXY] Error: {e}")
+            raise HTTPException(status_code=500, detail=f"Stream error: {str(e)}")
 
+    # Local filesystem streaming (original code)
     # Get the absolute file path with security check
     file_path = get_file_path(directory, path)
     if not file_path:
