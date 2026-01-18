@@ -1916,7 +1916,7 @@ fieldset legend {
 }
 
 /* User Settings Tabbed Layout */
-.modal-fullscreen {
+.modal-fullscreen:not(#userSettingsModal .modal-content):not(#ragModal .modal-content):not(#calendarModal .modal-content):not(#contactsModal .modal-content):not(#newsModal .modal-content):not(#translateModal .modal-content):not(#apiKeysModal .modal-content) {
     width: 95%;
     max-width: 900px;
     height: 90vh;
