@@ -650,6 +650,7 @@ def get_all_user_events(
 ) -> List[CalendarEvent]:
     """Get events from all user's calendars for a date range with timeout protection. Uses storage proxy for built-in server."""
     calendars = get_user_calendars(user_id, db)
+    logger.debug(f"[Calendar] Found {len(calendars)} calendars for user {user_id}")
     all_events = []
 
     for cal_config in calendars:
@@ -659,11 +660,15 @@ def get_all_user_events(
         name = cal_config.get('name', 'Calendar')
         is_builtin = cal_config.get('builtin', False)
 
+        logger.debug(f"[Calendar] Processing calendar: name={name}, url={url}, is_builtin={is_builtin}, password={password[:20] if password else 'None'}...")
+
         if url and username:
             try:
                 # If using built-in server, read directly from storage proxy
                 if is_builtin and password == "__USE_SESSION_AUTH__":
+                    logger.debug(f"[Calendar] Using built-in CalDAV server for calendar {name}")
                     events = _get_events_from_builtin(user_id, start_date, end_date, name, db)
+                    logger.debug(f"[Calendar] Found {len(events)} events from built-in server for calendar {name}")
                     if events:
                         all_events.extend(events)
                 else:
@@ -1260,6 +1265,7 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
     """Search contacts using user's CardDAV configuration with timeout protection. Uses storage proxy for built-in server."""
     config = get_user_contacts_config(user_id, db)
     if not config:
+        logger.debug(f"[Contacts] No CardDAV config found for user {user_id}")
         return []
 
     url = config.get('url', '')
@@ -1267,11 +1273,15 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
     password = config.get('password', '')
     is_builtin = config.get('builtin', False)
 
+    logger.debug(f"[Contacts] Config for user {user_id}: url={url}, username={username}, is_builtin={is_builtin}, password={password[:20] if password else 'None'}...")
+
     if not url or not username:
+        logger.debug(f"[Contacts] Missing url or username for user {user_id}")
         return []
 
     # If using built-in server, read directly from storage proxy
     if is_builtin and password == "__USE_SESSION_AUTH__":
+        logger.debug(f"[Contacts] Using built-in CardDAV server for user {user_id}")
         try:
             from app.models import User
             from app.services.dav_storage_proxy import DAVStorageProxy
