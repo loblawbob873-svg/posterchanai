@@ -447,7 +447,7 @@ def create_cardav_app() -> FastAPI:
             headers={"Location": "/carddav/"}
         )
     
-    @app.route("/carddav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL", "OPTIONS"])
+    @app.api_route("/carddav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL", "OPTIONS"])
     async def carddav_handler(request: StarletteRequest):
         """Handle CardDAV requests."""
         # Get path parameter
