@@ -331,7 +331,7 @@ def create_caldav_app() -> FastAPI:
             headers={"Location": "/caldav/"}
         )
     
-    @app.route("/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "REPORT", "MKCALENDAR"])
+    @app.api_route("/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "REPORT", "MKCALENDAR"])
     async def caldav_handler(path: str, request: StarletteRequest, db: Session = Depends(get_db)):
         """Handle CalDAV requests."""
         # Extract username from path or Basic Auth
