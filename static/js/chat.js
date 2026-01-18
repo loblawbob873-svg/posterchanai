@@ -1260,8 +1260,7 @@ class ChatHandler {
                 // Add Mail account settings
                 settingsData.mail_accounts = collectMailAccountData();
 
-                // Add WebDAV Music settings
-                console.log('WebDAV Music elements:', {
+                // Add Local Music settings
                 console.log('Local Music settings available:', {
                     dirEl: !!localMusicDir,
                     recursiveEl: !!musicRecursiveScan,
