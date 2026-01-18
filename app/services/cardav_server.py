@@ -473,6 +473,7 @@ def create_cardav_app() -> FastAPI:
             # Extract username from Basic Auth
             auth_header = request.headers.get("Authorization", "")
             if not auth_header.startswith("Basic "):
+                logger.warning(f"[CardDAV] No Basic auth header: {auth_header[:20] if auth_header else 'empty'}")
                 return Response(
                     content="Unauthorized",
                     status_code=401,
@@ -483,7 +484,8 @@ def create_cardav_app() -> FastAPI:
             try:
                 credentials = base64.b64decode(auth_header[6:]).decode('utf-8')
                 username, password = credentials.split(':', 1)
-            except:
+            except Exception as e:
+                logger.warning(f"[CardDAV] Failed to parse credentials: {e}")
                 return Response(
                     content="Invalid credentials",
                     status_code=401,
@@ -493,6 +495,7 @@ def create_cardav_app() -> FastAPI:
             # Verify user
             user = db.query(User).filter(User.username == username).first()
             if not user or not verify_password(password, user.password_hash):
+                logger.warning(f"[CardDAV] Invalid credentials for user: {username}")
                 return Response(
                     content="Invalid credentials",
                     status_code=401,
