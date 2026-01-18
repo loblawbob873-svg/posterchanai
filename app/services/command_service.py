@@ -3498,7 +3498,9 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                         "content": "Usage: `music search <query>`\n\nExample: `music search beatles`",
                     }
 
-                tracks = search_music_files(directory, param, recursive)
+                logger.info(f"[MUSIC SEARCH] Searching for: {param}")
+                tracks = search_music_files(directory, param, recursive, db=self.db, user_id=self.user.id)
+                logger.info(f"[MUSIC SEARCH] Found {len(tracks)} tracks")
 
                 # Cache results
                 _music_cache[self.user.id] = {"tracks": tracks, "folders": [], "current_path": ""}

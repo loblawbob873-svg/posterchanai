@@ -323,11 +323,48 @@ def scan_music_directory(directory: str, recursive: bool = True, subfolder: str 
     return items
 
 
-def search_music_files(directory: str, query: str, recursive: bool = True, limit: int = 50) -> List[Dict[str, any]]:
+def search_music_files(directory: str, query: str, recursive: bool = True, limit: int = 50, db: Session = None, user_id: int = None) -> List[Dict[str, any]]:
     """Search for music files matching query."""
     if not directory or not query:
         return []
     
+    logger.info(f"[MUSIC SEARCH] Searching directory={directory}, query='{query}', db={db is not None}, user_id={user_id}")
+    
+    # Check if using storage proxy
+    from app.models import Setting
+    storage_server_url = None
+    storage_server_token = None
+    
+    if db:
+        storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+    
+    use_proxy = storage_server_url and storage_server_url.value and storage_server_token
+    
+    if use_proxy:
+        # Use storage proxy to search
+        logger.info(f"[MUSIC SEARCH PROXY] Searching via storage proxy")
+        try:
+            # Get all items from storage proxy
+            all_items = scan_music_directory(directory, recursive, db=db, user_id=user_id)
+            
+            # Filter items matching query
+            query_lower = query.lower()
+            results = []
+            for item in all_items:
+                if len(results) >= limit:
+                    break
+                if item['type'] == 'file' and query_lower in item['name'].lower():
+                    results.append(item)
+            
+            logger.info(f"[MUSIC SEARCH PROXY] Found {len(results)} matches")
+            return results
+        except Exception as e:
+            logger.error(f"[MUSIC SEARCH PROXY] Error: {e}")
+            return []
+    
+    # Fall back to local filesystem
+    logger.info(f"[MUSIC SEARCH] Using local filesystem")
     base_path = Path(directory)
     if not base_path.exists() or not base_path.is_dir():
         return []
