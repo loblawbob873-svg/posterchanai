@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Optional, List, Tuple, Callable
 from PIL import Image
 import hashlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -366,19 +368,91 @@ def generate_thumbnail_for_media(
     return None
 
 
+def _process_single_thumbnail(
+    media_path: Path,
+    user_path: Path,
+    max_size: Tuple[int, int],
+    lock: threading.Lock,
+    stats: dict
+) -> None:
+    """
+    Process a single media file to generate thumbnail.
+    Thread-safe helper function for parallel processing.
+    
+    Args:
+        media_path: Path to the media file
+        user_path: The user's root directory
+        max_size: Maximum size for thumbnails
+        lock: Thread lock for stats updates
+        stats: Dictionary with 'successful', 'failed', 'skipped' counters
+    """
+    try:
+        # Quick check: skip if file doesn't exist or is empty
+        try:
+            if not media_path.exists() or media_path.stat().st_size == 0:
+                with lock:
+                    stats['failed'] += 1
+                return
+        except OSError:
+            with lock:
+                stats['failed'] += 1
+            return
+        
+        thumbnail_path = get_thumbnail_path(user_path, media_path)
+        
+        # OPTIMIZATION: Skip if thumbnail already exists and is up-to-date
+        if thumbnail_path.exists():
+            try:
+                # Check if thumbnail is newer than or equal to source file
+                if thumbnail_path.stat().st_mtime >= media_path.stat().st_mtime:
+                    with lock:
+                        stats['successful'] += 1
+                        stats['skipped'] += 1
+                    return
+            except OSError:
+                # If we can't check thumbnail, regenerate it
+                pass
+        
+        # Generate thumbnail based on file type
+        generation_success = False
+        if is_image_file(media_path):
+            generation_success = generate_thumbnail_file(media_path, thumbnail_path, max_size)
+        elif is_video_file(media_path):
+            generation_success = generate_thumbnail_for_video(media_path, thumbnail_path, max_size)
+        
+        with lock:
+            if generation_success:
+                stats['successful'] += 1
+            else:
+                stats['failed'] += 1
+                
+    except Exception as e:
+        # Log as debug for corrupted/truncated files, error for unexpected issues
+        error_str = str(e).lower()
+        if any(keyword in error_str for keyword in ["cannot identify", "truncated", "broken data stream", "corrupted"]):
+            logger.debug(f"Skipping corrupted/truncated media: {media_path.name}")
+        else:
+            logger.error(f"Error processing {media_path}: {e}")
+        with lock:
+            stats['failed'] += 1
+
+
 def generate_thumbnails_for_user(
     user_path: Path,
     max_size: Tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
-    progress_callback: Optional[Callable[[int, int], None]] = None
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    max_workers: Optional[int] = None
 ) -> Tuple[int, int]:
     """
     Generate thumbnails for all images and videos in a user's directory.
     OPTIMIZATION: Skips files that already have up-to-date thumbnails.
+    Uses multi-threading for parallel processing to improve performance.
     
     Args:
         user_path: The user's root directory
         max_size: Maximum size for thumbnails
         progress_callback: Optional callback function(current, total) for progress updates
+        max_workers: Maximum number of worker threads (default: min(32, CPU count * 2))
     
     Returns:
         Tuple of (successful_count, failed_count)
@@ -402,69 +476,52 @@ def generate_thumbnails_for_user(
             media_files.append(path)
     
     total = len(media_files)
-    successful = 0
-    failed = 0
-    skipped = 0  # Track skipped files (already have thumbnails)
     
-    logger.info(f"[Thumbnail] Processing {total} media files in {user_path}")
+    if total == 0:
+        logger.info(f"[Thumbnail] No media files found in {user_path}")
+        return (0, 0)
     
-    for i, media_path in enumerate(media_files):
-        try:
-            # Quick check: skip if file doesn't exist or is empty
-            try:
-                if not media_path.exists() or media_path.stat().st_size == 0:
-                    failed += 1
-                    if progress_callback:
-                        progress_callback(i + 1, total)
-                    continue
-            except OSError:
-                failed += 1
-                if progress_callback:
-                    progress_callback(i + 1, total)
-                continue
-            
-            thumbnail_path = get_thumbnail_path(user_path, media_path)
-            
-            # OPTIMIZATION: Skip if thumbnail already exists and is up-to-date
-            if thumbnail_path.exists():
-                try:
-                    # Check if thumbnail is newer than or equal to source file
-                    if thumbnail_path.stat().st_mtime >= media_path.stat().st_mtime:
-                        successful += 1
-                        skipped += 1
-                        if progress_callback:
-                            progress_callback(i + 1, total)
-                        continue
-                except OSError:
-                    # If we can't check thumbnail, regenerate it
-                    pass
-            
-            # Generate thumbnail based on file type
-            generation_success = False
-            if is_image_file(media_path):
-                generation_success = generate_thumbnail_file(media_path, thumbnail_path, max_size)
-            elif is_video_file(media_path):
-                generation_success = generate_thumbnail_for_video(media_path, thumbnail_path, max_size)
-            
-            if generation_success:
-                successful += 1
-            else:
-                failed += 1
-                
-        except Exception as e:
-            # Log as debug for corrupted/truncated files, error for unexpected issues
-            error_str = str(e).lower()
-            if any(keyword in error_str for keyword in ["cannot identify", "truncated", "broken data stream", "corrupted"]):
-                logger.debug(f"Skipping corrupted/truncated media: {media_path.name}")
-            else:
-                logger.error(f"Error processing {media_path}: {e}")
-            failed += 1
+    # Determine optimal number of workers
+    if max_workers is None:
+        import os
+        cpu_count = os.cpu_count() or 4
+        # Use more workers for I/O-bound operations (file reading, PIL operations)
+        # But cap at 32 to avoid too much overhead
+        max_workers = min(32, cpu_count * 2)
+    
+    logger.info(f"[Thumbnail] Processing {total} media files in {user_path} using {max_workers} workers")
+    
+    # Thread-safe stats tracking
+    stats = {'successful': 0, 'failed': 0, 'skipped': 0}
+    lock = threading.Lock()
+    completed = 0
+    
+    # Process files in parallel using ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        futures = {
+            executor.submit(_process_single_thumbnail, media_path, user_path, max_size, lock, stats): media_path
+            for media_path in media_files
+        }
         
-        if progress_callback:
-            progress_callback(i + 1, total)
+        # Process completed tasks and update progress
+        for future in as_completed(futures):
+            completed += 1
+            if progress_callback:
+                try:
+                    progress_callback(completed, total)
+                except Exception as e:
+                    logger.warning(f"Progress callback error: {e}")
+            
+            # Log progress every 100 files or at milestones
+            if completed % 100 == 0 or completed == total:
+                with lock:
+                    logger.info(f"[Thumbnail] Progress: {completed}/{total} files processed "
+                              f"({stats['successful']} successful, {stats['skipped']} skipped, {stats['failed']} failed)")
     
-    logger.info(f"[Thumbnail] Complete: {successful} successful ({skipped} skipped, already up-to-date), {failed} failed")
-    return (successful, failed)
+    logger.info(f"[Thumbnail] Complete: {stats['successful']} successful "
+              f"({stats['skipped']} skipped, already up-to-date), {stats['failed']} failed")
+    return (stats['successful'], stats['failed'])
 
 
 def get_thumbnail_if_exists(user_path: Path, image_path: Path) -> Optional[Path]:
