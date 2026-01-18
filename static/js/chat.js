@@ -2280,7 +2280,9 @@ class ChatHandler {
 
             if (response.ok) {
                 const data = await response.json();
+                console.log('[MUSIC SHUFFLE] Response data:', data);
                 if (data.type === 'music_playlist' && data.tracks && window.musicPlayer) {
+                    console.log('[MUSIC SHUFFLE] Got playlist with', data.tracks.length, 'tracks');
                     // Shuffle the tracks
                     const shuffled = [...data.tracks].sort(() => Math.random() - 0.5);
                     window.musicPlayer.clearQueue();
@@ -2292,11 +2294,12 @@ class ChatHandler {
                 } else if (data.type === 'music_play' && data.track && window.musicPlayer) {
                     window.musicPlayer.play(data.track);
                 } else if (data.content) {
+                    console.log('[MUSIC SHUFFLE] Showing content as toast:', data.content);
                     this.showToast(data.content);
                 }
             }
         } catch (e) {
-            console.error('Music shuffle error:', e);
+            console.error('[MUSIC SHUFFLE] Error:', e);
             this.showToast('Failed to start shuffle');
         }
     }
