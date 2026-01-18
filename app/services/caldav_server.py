@@ -583,7 +583,22 @@ async def handle_get(path: str, user: User, db: Session) -> Response:
         # Read file using proxy
         ical_data = proxy.read_file(filepath)
         if ical_data:
-            return Response(content=ical_data, media_type="text/calendar; charset=utf-8")
+            # Get ETag for the file (iPhone requires ETag in GET response)
+            try:
+                file_items = proxy.list_files(cal_name if cal_name != 'calendar' else "")
+                etag = "0"
+                for item in file_items:
+                    if item.get('name') == f"{event_uid}.ics":
+                        etag = str(item.get('modified', item.get('mtime', 0)))
+                        break
+            except:
+                etag = "0"
+            
+            return Response(
+                content=ical_data,
+                media_type="text/calendar; charset=utf-8",
+                headers={"ETag": f'"{etag}"'}
+            )
         else:
             logger.warning(f"Event file not found: {filepath}")
             return Response(content="Not found", status_code=404)
@@ -602,7 +617,9 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
     proxy = DAVStorageProxy(db, user.username, 'caldav')
     
     # Log PUT request for debugging
-    logger.info(f"[CalDAV] PUT request for path: {path}, user: {user.username}, body size: {len(body)} bytes")
+    if_match = request.headers.get("If-Match")
+    if_none_match = request.headers.get("If-None-Match")
+    logger.info(f"[CalDAV] PUT request for path: {path}, user: {user.username}, body size: {len(body)} bytes, If-Match: {if_match}, If-None-Match: {if_none_match}")
     
     try:
         ical_data = body.decode('utf-8')
