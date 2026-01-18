@@ -83,9 +83,7 @@ def get_contact_uid_from_vcard(vcard_data: str) -> Optional[str]:
 async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") -> Response:
     """Handle PROPFIND request."""
     from urllib.parse import quote
-    from app.services.dav_storage_proxy import DAVStorageProxy
-    
-    proxy = DAVStorageProxy(db, user.username, 'carddav')
+    cardav_path = get_user_cardav_path(user, db)
     encoded_username = quote(user.username, safe='')
     base_url = f"/carddav/{encoded_username}"
     
@@ -110,16 +108,17 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         
         # If depth=1, list addressbooks
         if depth == "1":
-            # Check for addressbook subdirectories using proxy
+            # Check for addressbook subdirectories
             addressbook_dirs = []
-            all_items = proxy.list_files("")
-            
-            for item in all_items:
-                if item.get('is_directory', False) and not item['name'].startswith('.'):
-                    addressbook_dirs.append(item['name'])
+            if cardav_path.exists():
+                for item in cardav_path.iterdir():
+                    if item.is_dir() and not item.name.startswith('.'):
+                        addressbook_dirs.append(item.name)
             
             # If no subdirectories, check for loose .vcf files (legacy mode)
-            has_loose_vcf = any(item['name'].endswith('.vcf') for item in all_items if not item.get('is_directory', False))
+            has_loose_vcf = False
+            if cardav_path.exists():
+                has_loose_vcf = any(cardav_path.glob("*.vcf"))
             
             if not addressbook_dirs and has_loose_vcf:
                 # Legacy mode: show root as default addressbook
@@ -144,7 +143,7 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
     # Individual addressbook
     elif '/' not in path:
         abook_name = path
-        abook_path = f"{abook_name}" if abook_name != 'contacts' else ""
+        abook_dir = cardav_path / abook_name if abook_name != 'contacts' else cardav_path
         
         items.append({
             "href": f"{base_url}/{quote(abook_name, safe='')}/",
@@ -155,18 +154,16 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         })
         
         # If depth=1, list contacts
-        if depth == "1":
-            abook_items = proxy.list_files(abook_path)
-            for item in abook_items:
-                if item['name'].endswith('.vcf') and not item.get('is_directory', False):
-                    contact_uid = item['name'].replace('.vcf', '')
-                    items.append({
-                        "href": f"{base_url}/{quote(abook_name, safe='')}/{contact_uid}.vcf",
-                        "props": {
-                            "getcontenttype": "text/vcard; charset=utf-8",
-                            "getetag": str(item.get('modified', 0))
-                        }
-                    })
+        if depth == "1" and abook_dir.exists():
+            for vcf_file in abook_dir.glob("*.vcf"):
+                contact_uid = vcf_file.stem
+                items.append({
+                    "href": f"{base_url}/{quote(abook_name, safe='')}/{contact_uid}.vcf",
+                    "props": {
+                        "getcontenttype": "text/vcard; charset=utf-8",
+                        "getetag": str(vcf_file.stat().st_mtime)
+                    }
+                })
     
     # Individual contact
     elif path.count('/') == 1 and path.endswith('.vcf'):
@@ -175,15 +172,15 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         contact_file = parts[1]
         contact_uid = contact_file.replace('.vcf', '')
         
-        abook_path = f"{abook_name}" if abook_name != 'contacts' else ""
-        vcf_path = f"{abook_path}/{contact_uid}.vcf" if abook_path else f"{contact_uid}.vcf"
+        abook_dir = cardav_path / abook_name if abook_name != 'contacts' else cardav_path
+        vcf_file = abook_dir / f"{contact_uid}.vcf"
         
-        if proxy.file_exists(vcf_path):
+        if vcf_file.exists():
             items.append({
                 "href": f"{base_url}/{path}",
                 "props": {
                     "getcontenttype": "text/vcard; charset=utf-8",
-                    "getetag": "0"  # Could get from storage but not critical
+                    "getetag": str(vcf_file.stat().st_mtime)
                 }
             })
     
@@ -194,10 +191,8 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
 async def handle_report(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
     """Handle REPORT request (contact queries)."""
     from urllib.parse import quote, unquote
-    from app.services.dav_storage_proxy import DAVStorageProxy
-    
-    proxy = DAVStorageProxy(db, user.username, 'carddav')
     body = await request.body()
+    cardav_path = get_user_cardav_path(user, db)
     encoded_username = quote(user.username, safe='')
     base_url = f"/carddav/{encoded_username}"
     
@@ -213,13 +208,13 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
     if path and '/' not in path:
         abook_name = unquote(path)
     
-    # Determine the addressbook path
+    # Determine the addressbook directory
     if abook_name == 'contacts':
-        abook_path = ""  # Legacy: root directory
+        abook_dir = cardav_path  # Legacy: root directory
     elif abook_name:
-        abook_path = abook_name
+        abook_dir = cardav_path / abook_name
     else:
-        abook_path = ""  # Default to root
+        abook_dir = cardav_path  # Default to root
     
     try:
         root = ET.fromstring(body)
@@ -231,27 +226,24 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         
         if query_elem is not None:
             # Addressbook query - list all contacts
-            abook_items = proxy.list_files(abook_path)
-            for item in abook_items:
-                if item['name'].endswith('.vcf') and not item.get('is_directory', False):
+            if abook_dir.exists():
+                for vcf_file in abook_dir.glob("*.vcf"):
                     try:
-                        vcf_path = f"{abook_path}/{item['name']}" if abook_path else item['name']
-                        vcard_data = proxy.read_file(vcf_path)
-                        if not vcard_data:
-                            continue
+                        with open(vcf_file, 'r', encoding='utf-8') as f:
+                            vcard_data = f.read()
                         
-                        contact_uid = item['name'].replace('.vcf', '')
+                        contact_uid = vcf_file.stem
                         href_path = f"{abook_name}/{contact_uid}.vcf" if abook_name else f"contacts/{contact_uid}.vcf"
                         items.append({
                             "href": f"{base_url}/{href_path}",
                             "props": {
                                 "getcontenttype": "text/vcard; charset=utf-8",
-                                "getetag": str(item.get('modified', 0)),
+                                "getetag": str(vcf_file.stat().st_mtime),
                                 "address-data": vcard_data
                             }
                         })
                     except Exception as e:
-                        logger.debug(f"Error processing {item['name']}: {e}")
+                        logger.debug(f"Error processing {vcf_file}: {e}")
                         continue
         
         elif multiget_elem is not None:
@@ -264,26 +256,27 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                     href_abook_name = unquote(match.group(1))
                     contact_uid = match.group(2)
                     
-                    # Determine addressbook path
+                    # Determine addressbook directory
                     if href_abook_name == 'contacts':
-                        href_abook_path = ""
+                        href_abook_dir = cardav_path
                     else:
-                        href_abook_path = href_abook_name
+                        href_abook_dir = cardav_path / href_abook_name
                     
-                    vcf_path = f"{href_abook_path}/{contact_uid}.vcf" if href_abook_path else f"{contact_uid}.vcf"
-                    vcard_data = proxy.read_file(vcf_path)
-                    if vcard_data:
+                    vcf_file = href_abook_dir / f"{contact_uid}.vcf"
+                    if vcf_file.exists():
                         try:
+                            with open(vcf_file, 'r', encoding='utf-8') as f:
+                                vcard_data = f.read()
                             items.append({
                                 "href": href,
                                 "props": {
                                     "getcontenttype": "text/vcard; charset=utf-8",
-                                    "getetag": "0",
+                                    "getetag": str(vcf_file.stat().st_mtime),
                                     "address-data": vcard_data
                                 }
                             })
                         except Exception as e:
-                            logger.debug(f"Error processing contact {contact_uid}: {e}")
+                            logger.debug(f"Error reading {vcf_file}: {e}")
         
         xml = create_cardav_response(items)
         return Response(content=xml, media_type="application/xml", status_code=207)
