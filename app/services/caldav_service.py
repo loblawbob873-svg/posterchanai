@@ -1159,7 +1159,7 @@ def search_contacts(
         </D:propfind>'''
 
         resp = requests.request('PROPFIND', url, auth=HTTPBasicAuth(username, password),
-                               headers=headers, data=propfind_body, timeout=30)
+                               headers=headers, data=propfind_body, timeout=30, verify=False)
 
         if resp.status_code != 207:
             logger.error(f"CardDAV PROPFIND failed: {resp.status_code}")
@@ -1185,7 +1185,7 @@ def search_contacts(
                 else:
                     vcf_url = base_url + '/' + vcf_path
 
-                vcf_resp = requests.get(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10)
+                vcf_resp = requests.get(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10, verify=False)
                 if vcf_resp.status_code != 200:
                     continue
 
@@ -1510,7 +1510,8 @@ def add_contact(
             headers={
                 "Content-Type": "text/vcard; charset=utf-8",
             },
-            timeout=30
+            timeout=30,
+            verify=False
         )
 
         if response.status_code in (200, 201, 204):
@@ -1596,7 +1597,7 @@ def delete_contact(url: str, username: str, password: str, contact_uid: str) -> 
         </D:propfind>'''
 
         resp = requests.request('PROPFIND', url, auth=HTTPBasicAuth(username, password),
-                               headers=headers, data=propfind_body, timeout=30)
+                               headers=headers, data=propfind_body, timeout=30, verify=False)
 
         if resp.status_code != 207:
             logger.error(f"CardDAV PROPFIND failed: {resp.status_code}")
@@ -1620,7 +1621,7 @@ def delete_contact(url: str, username: str, password: str, contact_uid: str) -> 
                 else:
                     vcf_url = base_url + '/' + vcf_path
 
-                vcf_resp = requests.get(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10)
+                vcf_resp = requests.get(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10, verify=False)
                 if vcf_resp.status_code != 200:
                     continue
 
@@ -1631,7 +1632,7 @@ def delete_contact(url: str, username: str, password: str, contact_uid: str) -> 
                 vcard_uid = str(vcard.uid.value) if hasattr(vcard, 'uid') else None
                 if vcard_uid == contact_uid:
                     # Delete the vCard
-                    delete_resp = requests.delete(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10)
+                    delete_resp = requests.delete(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10, verify=False)
                     if delete_resp.status_code in (200, 204, 404):  # 404 means already deleted
                         logger.info(f"Deleted contact with UID: {contact_uid}")
                         return True
@@ -1684,7 +1685,7 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
         </D:propfind>'''
 
         resp = requests.request('PROPFIND', url, auth=HTTPBasicAuth(username, password),
-                               headers=headers, data=propfind_body, timeout=30)
+                               headers=headers, data=propfind_body, timeout=30, verify=False)
 
         if resp.status_code != 207:
             logger.error(f"CardDAV PROPFIND failed: {resp.status_code}")
@@ -1708,7 +1709,7 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                 else:
                     vcf_url = base_url + '/' + vcf_path
 
-                vcf_resp = requests.get(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10)
+                vcf_resp = requests.get(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10, verify=False)
                 if vcf_resp.status_code != 200:
                     continue
 
@@ -1784,7 +1785,7 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                         'Content-Type': 'text/vcard; charset=utf-8'
                     }
                     put_resp = requests.put(vcf_url, auth=HTTPBasicAuth(username, password),
-                                          headers=put_headers, data=updated_vcard_data, timeout=10)
+                                          headers=put_headers, data=updated_vcard_data, timeout=10, verify=False)
 
                     if put_resp.status_code in (200, 201, 204):
                         logger.info(f"Updated contact with UID: {contact_uid}")
@@ -1863,7 +1864,7 @@ def get_contact_by_uid(url: str, username: str, password: str, contact_uid: str)
         </D:propfind>'''
 
         resp = requests.request('PROPFIND', url, auth=HTTPBasicAuth(username, password),
-                               headers=headers, data=propfind_body, timeout=30)
+                               headers=headers, data=propfind_body, timeout=30, verify=False)
 
         if resp.status_code != 207:
             logger.error(f"CardDAV PROPFIND failed: {resp.status_code}")
@@ -1887,7 +1888,7 @@ def get_contact_by_uid(url: str, username: str, password: str, contact_uid: str)
                 else:
                     vcf_url = base_url + '/' + vcf_path
 
-                vcf_resp = requests.get(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10)
+                vcf_resp = requests.get(vcf_url, auth=HTTPBasicAuth(username, password), timeout=10, verify=False)
                 if vcf_resp.status_code != 200:
                     continue
 
