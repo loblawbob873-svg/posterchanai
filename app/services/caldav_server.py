@@ -98,6 +98,8 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
             elif prop_name == 'getctag':
                 # CTag is like ETag but for collections (calendars)
                 xml += f'                <CS:getctag xmlns:CS="http://calendarserver.org/ns/">{html.escape(str(prop_value))}</CS:getctag>\n'
+            elif prop_name == 'calendar-home-set':
+                xml += f'                <C:calendar-home-set xmlns:C="urn:ietf:params:xml:ns:caldav"><D:href xmlns:D="DAV:">{html.escape(str(prop_value))}</D:href></C:calendar-home-set>\n'
         xml += '            </D:prop>\n            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
     xml += '</D:multistatus>'
     return xml
@@ -143,11 +145,13 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
     # Root calendar home - this is NOT a calendar itself, just a container
     if not path or path == '':
         # Return the calendar home collection
+        # iPhone may request calendar-home-set, so we should include it
         items.append({
             "href": f"{base_url}/",
             "props": {
                 "resourcetype": "collection",  # Just a collection, not a calendar
-                "displayname": f"{user.username}'s Calendars"
+                "displayname": f"{user.username}'s Calendars",
+                "calendar-home-set": f"{base_url}/"  # Point to itself as the calendar home
             }
         })
         
