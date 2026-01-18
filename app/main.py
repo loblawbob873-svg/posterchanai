@@ -180,14 +180,6 @@ async def carddav_discovery(request: Request, db: Session = Depends(get_db)):
         base_url += f":{request.url.port}"
     return RedirectResponse(url=f"{base_url}/carddav/", status_code=301)
 
-# Legacy/alternate CalDAV paths (some clients use /calendar/dav/ or /dav/)
-@app.route("/calendar/dav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "REPORT", "MKCALENDAR", "OPTIONS"])
-async def legacy_caldav_redirect(path: str, request: Request):
-    """Redirect legacy /calendar/dav/ paths to /caldav/"""
-    # Preserve query string if any
-    query = f"?{request.url.query}" if request.url.query else ""
-    return RedirectResponse(url=f"/caldav/{path}{query}", status_code=308)  # 308 = Permanent Redirect preserving method
-
 # Handle old Joplin resource URLs (:/[resource-id]) - return 404 with helpful message
 # These are legacy URLs from Joplin that should have been converted during migration
 @app.get("/:/{resource_id}")
