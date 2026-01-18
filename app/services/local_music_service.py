@@ -22,6 +22,8 @@ AUDIO_EXTENSIONS = {
 def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]:
     """Get user's local music configuration. Falls back to user storage path if not configured.
     Always resolves paths relative to user storage."""
+    from app.models import User, Setting
+    
     setting = db.query(UserSetting).filter(
         UserSetting.user_id == user_id,
         UserSetting.key == "local_music_config"
@@ -34,7 +36,6 @@ def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]
             
             # Always resolve relative paths (paths starting with / but not containing username)
             if directory and directory.startswith('/') and not directory.startswith('//'):
-                from app.models import User, Setting
                 user = db.query(User).filter(User.id == user_id).first()
                 upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
                 
@@ -52,9 +53,6 @@ def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]
             logger.error(f"Invalid local_music_config JSON for user {user_id}")
     
     # Fall back to user storage path + /Music (using upload_path like File Manager)
-    from app.models import User, Setting
-    from pathlib import Path
-    
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return None
