@@ -46,34 +46,26 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
         # Use storage proxy (must be configured)
         proxy = DAVStorageProxy(db, user.username, 'caldav')
         
-        # Determine calendar subpath
-        # Built-in calendar name is "Built-in Calendar", but we need to check all calendar subdirectories
-        # For now, check all calendars (main, wwwcanoncityschoolsorg, etc.)
-        # We'll search all calendar subdirectories
-        subpath = ""
-        
-        # First, check if there are calendar subdirectories
+        # Search all calendar subdirectories and root
+        # Built-in server may have multiple calendars (main, wwwcanoncityschoolsorg, etc.)
         root_items = proxy.list_files("")
         calendar_dirs = []
         for item in root_items:
             if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
                 calendar_dirs.append(item.get('name'))
         
-        # If no subdirectories, use root (legacy mode)
-        if not calendar_dirs:
-            subpath = ""
-        else:
-            # Search all calendar subdirectories
-            all_events = []
-            for cal_dir in calendar_dirs:
-                cal_events = _get_events_from_calendar_dir(proxy, cal_dir, start_date, end_date, calendar_name)
-                all_events.extend(cal_events)
-            
-            # Also check root for legacy .ics files
-            root_events = _get_events_from_calendar_dir(proxy, "", start_date, end_date, calendar_name)
-            all_events.extend(root_events)
-            
-            return all_events
+        all_events = []
+        
+        # Search all calendar subdirectories
+        for cal_dir in calendar_dirs:
+            cal_events = _get_events_from_calendar_dir(proxy, cal_dir, start_date, end_date, calendar_name)
+            all_events.extend(cal_events)
+        
+        # Also check root for legacy .ics files
+        root_events = _get_events_from_calendar_dir(proxy, "", start_date, end_date, calendar_name)
+        all_events.extend(root_events)
+        
+        return all_events
         
         # List all .ics files in the calendar directory
         file_items = proxy.list_files(subpath)
