@@ -177,15 +177,22 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                     from datetime import timezone
                                     event_end = event_end.replace(tzinfo=timezone.utc)
                         
-                        # Check if event is in date range
-                        # Include events that start within the range: start_date <= event_start <= end_date
-                        # Also include events that overlap: event_start < start_date but event_end >= start_date
-                        # Skip if: event starts after range OR (has end time AND ends before range)
+                        # Check if event is in date range [start_date, end_date]
+                        # Include events that:
+                        #   - Start within range: start_date <= event_start <= end_date
+                        #   - Overlap with range: event_start < start_date but event_end >= start_date
+                        # Exclude events that:
+                        #   - Start after range: event_start > end_date
+                        #   - End before range: event_end is not None AND event_end < start_date
+                        #   - Start before range with no end: event_start < start_date AND event_end is None
                         if event_start > end_date:
                             # Event starts after the range - skip
                             continue
                         if event_end is not None and event_end < start_date:
                             # Event has an end time and ends before the range - skip
+                            continue
+                        if event_start < start_date and event_end is None:
+                            # Event starts before range and has no end time - skip (single-day past events)
                             continue
                         # Event is within or overlaps with range - include it
                         
