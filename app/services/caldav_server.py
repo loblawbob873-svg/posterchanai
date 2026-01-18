@@ -657,31 +657,45 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
             filepath = f"{cal_name}/{event_uid}.ics"
         
         # Save to file using proxy
+        logger.debug(f"[CalDAV] Saving event {event_uid} to filepath: {filepath}")
         success = proxy.write_file(filepath, ical_data)
         
         if success:
-            logger.info(f"[CalDAV] Saved event/todo {event_uid} for user {user.username} in calendar {cal_name}")
+            logger.info(f"[CalDAV] Successfully saved event/todo {event_uid} for user {user.username} in calendar {cal_name}")
+            
+            # Verify file was written by trying to read it back
+            verify_data = proxy.read_file(filepath)
+            if not verify_data:
+                logger.warning(f"[CalDAV] File {filepath} was not found after write, but write_file returned success")
             
             # Get ETag for the saved file (iPhone requires ETag in PUT response)
+            etag = "0"
             try:
-                # Get file info for ETag
+                # Get file info for ETag - wait a moment for storage to update
+                import time
+                time.sleep(0.1)  # Small delay to ensure storage server has updated
+                
                 file_items = proxy.list_files(cal_name if cal_name != 'calendar' else "")
-                etag = "0"
                 for item in file_items:
                     if item.get('name') == f"{event_uid}.ics":
                         etag = str(item.get('modified', item.get('mtime', 0)))
+                        logger.debug(f"[CalDAV] Got ETag {etag} for event {event_uid}")
                         break
-            except:
-                etag = "0"
+            except Exception as e:
+                logger.warning(f"[CalDAV] Could not get ETag for {event_uid}: {e}")
+                # Use hash of content as fallback ETag
+                import hashlib
+                etag = hashlib.md5(ical_data.encode('utf-8')).hexdigest()[:16]
             
             # Return 201 Created with ETag header (iPhone requires this)
+            logger.debug(f"[CalDAV] Returning 201 with ETag: {etag}")
             return Response(
                 content="",
                 status_code=201,
                 headers={"ETag": f'"{etag}"'}
             )
         else:
-            logger.error(f"[CalDAV] Failed to save event {event_uid}")
+            logger.error(f"[CalDAV] Failed to save event {event_uid} - write_file returned False")
             error_xml = f'''<?xml version="1.0" encoding="utf-8"?>
 <D:error xmlns:D="DAV:">
     <D:internal-server-error/>
