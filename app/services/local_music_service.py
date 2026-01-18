@@ -103,11 +103,57 @@ def save_user_music_config(user_id: int, db: Session, directory: str, recursive:
     return True
 
 
-def test_directory_access(directory: str, recursive: bool = True) -> Dict[str, any]:
-    """Test if directory exists and is accessible, count music files."""
+def test_directory_access(directory: str, recursive: bool = True, db: Session = None, user_id: int = None) -> Dict[str, any]:
+    """Test if directory exists and is accessible, count music files. Supports storage proxy if configured."""
     if not directory:
         return {"success": False, "error": "Directory path is required"}
     
+    # Check if storage proxy is configured
+    if db and user_id:
+        from app.models import Setting
+        storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        
+        if storage_server_url and storage_server_url.value:
+            # Use storage proxy to test
+            import httpx
+            api_path = directory.lstrip('/') if directory.startswith('/') else directory
+            
+            try:
+                url = f"{storage_server_url.value}/api/files/list?path={api_path}"
+                logger.info(f"[MUSIC TEST PROXY] Testing directory via storage server: {url}")
+                
+                # Get auth token
+                storage_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+                headers = {}
+                if storage_token and storage_token.value:
+                    headers["Authorization"] = f"Bearer {storage_token.value}"
+                
+                with httpx.Client(timeout=30.0) as client:
+                    response = client.get(url, headers=headers)
+                    if response.status_code == 200:
+                        data = response.json()
+                        # Count audio files
+                        track_count = 0
+                        for item in data.get('files', []):
+                            if item.get('type') == 'file':
+                                ext = Path(item['name']).suffix.lower()
+                                if ext in AUDIO_EXTENSIONS:
+                                    track_count += 1
+                        
+                        logger.info(f"[MUSIC TEST PROXY] Found {track_count} tracks")
+                        return {
+                            "success": True,
+                            "message": f"Directory accessible",
+                            "track_count": track_count
+                        }
+                    else:
+                        logger.error(f"[MUSIC TEST PROXY] Storage server returned {response.status_code}")
+                        return {"success": False, "error": f"Storage server error: {response.status_code}"}
+            except Exception as e:
+                logger.error(f"[MUSIC TEST PROXY] Error testing directory: {e}")
+                return {"success": False, "error": f"Storage proxy error: {str(e)}"}
+    
+    # Local filesystem access (original code)
     path = Path(directory)
     
     if not path.exists():
