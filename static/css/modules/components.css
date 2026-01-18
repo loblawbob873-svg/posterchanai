@@ -169,6 +169,12 @@
     border: 1px solid rgba(0, 255, 255, 0.3);
     box-shadow: 0 0 50px rgba(0, 255, 255, 0.2);
 }
+/* Notes modal and User Settings need full height - don't restrict them */
+#notesModal .modal-content,
+#userSettingsModal .modal-content {
+    max-height: calc(100vh - 10px) !important;
+    overflow-y: hidden !important;
+}
 .modal-content.modal-large {
     max-width: 800px;
     max-height: 90vh;
