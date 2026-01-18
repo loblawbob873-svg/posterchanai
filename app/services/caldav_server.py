@@ -577,11 +577,42 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
 
 
 async def handle_mkcalendar(path: str, user: User, db: Session) -> Response:
-    """Handle MKCALENDAR request."""
-    # Calendar already exists (created on first access)
-    caldav_path = get_user_caldav_path(user, db)
-    caldav_path.mkdir(parents=True, exist_ok=True)
-    return Response(content="", status_code=201)
+    """Handle MKCALENDAR request. Creates a new calendar directory."""
+    from urllib.parse import unquote
+    from app.services.dav_storage_proxy import DAVStorageProxy
+    
+    # Normalize path
+    path = path.rstrip('/')
+    if path.startswith(user.username):
+        path = path[len(user.username):].lstrip('/')
+    encoded_username = quote(user.username, safe='')
+    if path.startswith(encoded_username):
+        path = path[len(encoded_username):].lstrip('/')
+    
+    # Extract calendar name from path
+    if '/' in path:
+        # Path like "calendar_name/" - extract calendar name
+        cal_name = path.split('/')[0]
+    else:
+        # Path is just the calendar name
+        cal_name = path if path else 'calendar'
+    
+    cal_name = unquote(cal_name)
+    
+    # Use storage proxy to create calendar directory
+    proxy = DAVStorageProxy(db, user.username, 'caldav')
+    
+    # Create calendar directory by writing a placeholder file
+    # The directory will be created automatically when we write a file
+    placeholder_path = f"{cal_name}/.caldav_placeholder"
+    success = proxy.write_file(placeholder_path, "# CalDAV Calendar Directory")
+    
+    if success:
+        logger.info(f"Created calendar '{cal_name}' for user {user.username}")
+        return Response(content="", status_code=201)
+    else:
+        logger.error(f"Failed to create calendar '{cal_name}' for user {user.username}")
+        return Response(content="Failed to create calendar", status_code=500)
 
 
 async def handle_proppatch(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
