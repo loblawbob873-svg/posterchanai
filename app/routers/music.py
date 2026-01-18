@@ -1,24 +1,27 @@
 """
 Music streaming API endpoint.
-Proxies WebDAV audio streams with user authentication.
+Serves local audio files with user authentication.
 Supports on-the-fly transcoding for bandwidth savings.
 """
 import logging
 import subprocess
-import tempfile
 import os
-from typing import Optional, Literal
+from pathlib import Path
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-import requests
-from requests.auth import HTTPBasicAuth
 
 from app.database import get_db
 from app.auth import get_current_user
 from app.models import User
-from app.services.webdav_music_service import get_user_webdav_config, connect_webdav
+from app.services.local_music_service import (
+    get_user_music_config,
+    get_file_path,
+    test_directory_access,
+    AUDIO_EXTENSIONS
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,22 +35,16 @@ QUALITY_PRESETS = {
 }
 
 
-async def stream_transcoded(full_url: str, config: dict, quality: str):
+async def stream_transcoded(file_path: Path, quality: str):
     """Stream audio with on-the-fly transcoding via ffmpeg."""
     bitrate = QUALITY_PRESETS.get(quality, 128)
 
     def generate():
-        # Start ffmpeg process that reads from URL and outputs MP3
-        # Using ffmpeg's ability to read from HTTP with auth
-        import base64
-        auth_string = f"{config['username']}:{config['password']}"
-        auth_b64 = base64.b64encode(auth_string.encode()).decode()
         ffmpeg_cmd = [
             'ffmpeg',
             '-hide_banner',
             '-loglevel', 'error',
-            '-headers', f'Authorization: Basic {auth_b64}',
-            '-i', full_url,
+            '-i', str(file_path),
             '-vn',  # No video
             '-acodec', 'libmp3lame',
             '-b:a', f'{bitrate}k',
@@ -91,70 +88,53 @@ async def stream_transcoded(full_url: str, config: dict, quality: str):
 @router.get("/stream")
 async def stream_audio(
     request: Request,
-    path: str = Query(..., description="WebDAV file path"),
+    path: str = Query(..., description="Relative file path within music directory"),
     quality: Optional[str] = Query(None, description="Quality: low (64k), medium (128k), high (256k), or original"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Stream audio file from WebDAV server with range request support and optional transcoding."""
-    config = get_user_webdav_config(current_user.id, db)
+    """Stream audio file from local directory with range request support and optional transcoding."""
+    config = get_user_music_config(current_user.id, db)
     if not config:
-        raise HTTPException(status_code=400, detail="WebDAV music not configured")
+        raise HTTPException(status_code=400, detail="Music directory not configured")
 
-    if not config.get('url'):
-        raise HTTPException(status_code=400, detail="WebDAV URL not configured")
+    directory = config.get('directory')
+    if not directory:
+        raise HTTPException(status_code=400, detail="Music directory not set")
 
-    # Build full URL
-    base_url = config['url'].rstrip('/')
-    # Handle path - it might be a full path or relative
-    if path.startswith('http'):
-        full_url = path
-    elif path.startswith('/'):
-        # Extract base URL (scheme + host)
-        from urllib.parse import urlparse
-        parsed = urlparse(base_url)
-        full_url = f"{parsed.scheme}://{parsed.netloc}{path}"
-    else:
-        full_url = f"{base_url}/{path}"
+    # Get the absolute file path with security check
+    file_path = get_file_path(directory, path)
+    if not file_path:
+        raise HTTPException(status_code=404, detail="File not found")
 
-    logger.debug(f"Streaming from: {full_url}, quality: {quality}")
+    logger.debug(f"Streaming from: {file_path}, quality: {quality}")
 
     # If quality is specified (not original), use transcoding
     if quality and quality in QUALITY_PRESETS:
-        return await stream_transcoded(full_url, config, quality)
+        return await stream_transcoded(file_path, quality)
 
     # Determine content type from extension
-    ext = path.split('.')[-1].lower() if '.' in path else 'mp3'
+    ext = file_path.suffix.lower()
     content_types = {
-        'mp3': 'audio/mpeg',
-        'flac': 'audio/flac',
-        'ogg': 'audio/ogg',
-        'wav': 'audio/wav',
-        'm4a': 'audio/mp4',
-        'aac': 'audio/aac',
-        'opus': 'audio/opus',
-        'wma': 'audio/x-ms-wma'
+        '.mp3': 'audio/mpeg',
+        '.flac': 'audio/flac',
+        '.ogg': 'audio/ogg',
+        '.wav': 'audio/wav',
+        '.m4a': 'audio/mp4',
+        '.aac': 'audio/aac',
+        '.opus': 'audio/opus',
+        '.wma': 'audio/x-ms-wma'
     }
     content_type = content_types.get(ext, 'audio/mpeg')
 
+    # Get file size
+    file_size = file_path.stat().st_size
+
     # Check for Range header (required for iOS Safari and seeking)
     range_header = request.headers.get('range')
-    logger.info(f"Stream request - Range header: {range_header}")
+    logger.info(f"Stream request - Range header: {range_header}, file size: {file_size}")
 
-    # First, get the file size with a HEAD request
-    try:
-        head_resp = requests.head(
-            full_url,
-            auth=HTTPBasicAuth(config['username'], config['password']),
-            timeout=10
-        )
-        file_size = int(head_resp.headers.get('content-length', 0))
-        logger.info(f"HEAD response - status: {head_resp.status_code}, content-length: {file_size}")
-    except Exception as e:
-        logger.warning(f"HEAD request failed: {e}, will stream without size")
-        file_size = 0
-
-    if range_header and file_size > 0:
+    if range_header:
         # Parse range header: "bytes=start-end" or "bytes=start-"
         try:
             range_spec = range_header.replace('bytes=', '')
@@ -173,18 +153,18 @@ async def stream_audio(
 
             def generate_range():
                 try:
-                    headers = {'Range': f'bytes={start}-{end}'}
-                    with requests.get(
-                        full_url,
-                        auth=HTTPBasicAuth(config['username'], config['password']),
-                        headers=headers,
-                        stream=True,
-                        timeout=(10, 300)  # 10s connect, 5min read - tolerant of slow connections
-                    ) as r:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            if chunk:
-                                yield chunk
-                except requests.RequestException as e:
+                    with open(file_path, 'rb') as f:
+                        f.seek(start)
+                        remaining = content_length
+                        chunk_size = 8192
+                        
+                        while remaining > 0:
+                            chunk = f.read(min(chunk_size, remaining))
+                            if not chunk:
+                                break
+                            remaining -= len(chunk)
+                            yield chunk
+                except Exception as e:
                     logger.error(f"Stream error: {e}")
 
             return StreamingResponse(
@@ -204,69 +184,49 @@ async def stream_audio(
     # Full file streaming (no range request)
     def generate():
         try:
-            with requests.get(
-                full_url,
-                auth=HTTPBasicAuth(config['username'], config['password']),
-                stream=True,
-                timeout=(10, 300)  # 10s connect, 5min read - tolerant of slow connections
-            ) as r:
-                r.raise_for_status()
-                for chunk in r.iter_content(chunk_size=8192):
-                    if chunk:
-                        yield chunk
-        except requests.RequestException as e:
+            with open(file_path, 'rb') as f:
+                chunk_size = 8192
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+        except Exception as e:
             logger.error(f"Stream error: {e}")
             raise
-
-    headers = {
-        "Accept-Ranges": "bytes",
-        "Cache-Control": "no-cache"
-    }
-    if file_size > 0:
-        headers["Content-Length"] = str(file_size)
 
     return StreamingResponse(
         generate(),
         media_type=content_type,
-        headers=headers
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+            "Cache-Control": "no-cache"
+        }
     )
 
 
-class WebDAVTestRequest(BaseModel):
-    url: str
-    username: str
-    password: Optional[str] = None
-    use_stored_password: bool = False
+class MusicDirectoryTestRequest(BaseModel):
+    directory: str
+    recursive: bool = True
 
 
-@router.post("/test")
-async def test_connection(
-    request: WebDAVTestRequest,
+@router.post("/test-directory")
+async def test_music_directory(
+    request: MusicDirectoryTestRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Test WebDAV connection with provided or stored credentials."""
-    url = request.url
-    username = request.username
-    password = request.password
-
-    # If using stored password, get it from the database
-    if request.use_stored_password:
-        config = get_user_webdav_config(current_user.id, db)
-        if config and config.get('password'):
-            password = config['password']
-
-    if not url:
-        return {"success": False, "message": "WebDAV URL is required"}
-
-    if not username:
-        return {"success": False, "message": "Username is required"}
-
-    if not password:
-        return {"success": False, "message": "Password is required"}
-
-    success = connect_webdav(url, username, password)
-    return {
-        "success": success,
-        "message": "Connected successfully" if success else "Connection failed - check URL and credentials"
-    }
+    """Test music directory access and count files."""
+    result = test_directory_access(request.directory, request.recursive)
+    
+    if result['success']:
+        return {
+            "success": True,
+            "message": f"✓ {result['message']} ({result['track_count']} tracks found)"
+        }
+    else:
+        return {
+            "success": False,
+            "error": result['error']
+        }

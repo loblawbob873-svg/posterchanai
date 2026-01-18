@@ -57,15 +57,14 @@ from app.services.torrent_service import (
     scrape_torrents,
     search_torrents,
 )
-from app.services.webdav_music_service import (
+from app.services.local_music_service import (
     format_music_browse,
     format_music_tracks,
     generate_mood_playlist,
     get_stream_url,
-    get_user_webdav_config,
-    list_folder,
-    scan_all_tracks,
-    search_tracks,
+    get_user_music_config,
+    scan_music_directory,
+    search_music_files,
 )
 from app.services.youtube_service import (
     check_ytdlp_available,
@@ -3439,81 +3438,53 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
             return {"type": "text", "content": f"Error: {str(e)}"}
 
     async def _music_command(self, arg: str) -> dict:
-        """WebDAV music browsing and playback commands"""
+        """Local music browsing and playback commands"""
         global _music_cache
-        from urllib.parse import quote
 
         if not self.user:
             return {"type": "text", "content": "Please log in to use the music command."}
 
-        config = get_user_webdav_config(self.user.id, self.db)
-        if not config or not config.get("url"):
+        config = get_user_music_config(self.user.id, self.db)
+        if not config or not config.get("directory"):
             return {
                 "type": "text",
-                "content": "WebDAV music not configured. Add your music server in User Settings > Music.",
+                "content": "Music directory not configured. Set your music directory in User Settings > Music.",
             }
 
+        directory = config["directory"]
+        recursive = config.get("recursive", True)
+        
         parts = arg.strip().split(maxsplit=1)
         subcommand = parts[0].lower() if parts else ""
         param = parts[1] if len(parts) > 1 else ""
 
         try:
-            # Default: shuffle and play music (quick mode - limited scan)
+            # Default: browse root directory
             if not subcommand:
-                import random as rand_module
-
-                # Always do a fresh scan for shuffle to avoid using search results
-                # This ensures shuffle plays from the full library, not just last search
-                all_tracks = scan_all_tracks(
-                    config["url"], config["username"], config["password"], "/", max_tracks=1000
-                )
-
-                if not all_tracks:
-                    return {
-                        "type": "text",
-                        "content": "No tracks found. Try `music browse` to explore your library first.",
-                    }
-
-                # Shuffle tracks
-                all_tracks = list(all_tracks)
-                rand_module.shuffle(all_tracks)
-
-                # Cache shuffled playlist
-                _music_cache[self.user.id] = {"tracks": all_tracks, "folders": [], "current_path": "/"}
-
-                # Build track list for playlist
-                playlist = []
-                for track in all_tracks[:500]:
-                    playlist.append(
-                        {
-                            "path": track.path,
-                            "title": track.title,
-                            "artist": track.artist or "",
-                            "album": track.album or "",
-                            "streamUrl": get_stream_url(track.path),
-                        }
-                    )
-
-                return {
-                    "type": "music_playlist",
-                    "content": f"🔀 Shuffling {len(all_tracks)} tracks...\n\nNow playing: **{all_tracks[0].title}**"
-                    + (f" - {all_tracks[0].artist}" if all_tracks[0].artist else ""),
-                    "tracks": playlist,
+                items = scan_music_directory(directory, recursive)
+                
+                # Cache results
+                _music_cache[self.user.id] = {
+                    "tracks": [item for item in items if item['type'] == 'file'],
+                    "folders": [item for item in items if item['type'] == 'folder'],
+                    "current_path": ""
                 }
+                
+                return {"type": "text", "content": format_music_browse(items, "")}
 
             # Browse folder
             if subcommand == "browse":
-                path = param if param else "/"
-                contents = list_folder(config["url"], config["username"], config["password"], path)
+                subfolder = param if param else ""
+                items = scan_music_directory(directory, recursive, subfolder)
 
                 # Cache results
                 _music_cache[self.user.id] = {
-                    "tracks": contents.get("tracks", []),
-                    "folders": contents.get("folders", []),
-                    "current_path": path,
+                    "tracks": [item for item in items if item['type'] == 'file'],
+                    "folders": [item for item in items if item['type'] == 'folder'],
+                    "current_path": subfolder,
                 }
 
-                return {"type": "text", "content": format_music_browse(contents, path)}
+                return {"type": "text", "content": format_music_browse(items, subfolder)}
 
             # Search tracks
             elif subcommand == "search":
@@ -3523,12 +3494,12 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                         "content": "Usage: `music search <query>`\n\nExample: `music search beatles`",
                     }
 
-                tracks = search_tracks(config["url"], config["username"], config["password"], param)
+                tracks = search_music_files(directory, param, recursive)
 
                 # Cache results
-                _music_cache[self.user.id] = {"tracks": tracks, "folders": [], "current_path": "/"}
+                _music_cache[self.user.id] = {"tracks": tracks, "folders": [], "current_path": ""}
 
-                return {"type": "text", "content": format_music_tracks(tracks, f"Search: {param}")}
+                return {"type": "text", "content": format_music_tracks(tracks)}
 
             # Play track by number
             elif subcommand == "play":
@@ -3550,19 +3521,21 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                     return {"type": "text", "content": f"Invalid track number. Choose 1-{len(tracks)}."}
 
                 track = tracks[num - 1]
-                stream_url = get_stream_url(track.path)
+                stream_url = get_stream_url(track['path'])
+                
+                # Extract title from filename (without extension)
+                title = track['name'].rsplit('.', 1)[0]
 
                 return {
                     "type": "music_play",
-                    "content": f"## ◈ NOW PLAYING ◈\n\n**{track.title}**"
-                    + (f"\n*{track.artist}*" if track.artist else ""),
+                    "content": f"## ◈ NOW PLAYING ◈\n\n**{title}**",
                     "track": {
-                        "path": track.path,
-                        "title": track.title,
-                        "artist": track.artist,
-                        "album": track.album,
+                        "path": track['path'],
+                        "title": title,
+                        "artist": "",  # Could be extracted from ID3 tags in future
+                        "album": "",
                         "streamUrl": stream_url,
-                        "duration": track.duration,
+                        "duration": None,
                     },
                 }
 
@@ -3581,12 +3554,13 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                         return {"type": "text", "content": f"Invalid track number. Choose 1-{len(tracks)}."}
 
                     track = tracks[num - 1]
-                    stream_url = get_stream_url(track.path)
+                    stream_url = get_stream_url(track['path'])
+                    title = track['name'].rsplit('.', 1)[0]
 
                     return {
                         "type": "music_queue_add",
-                        "content": f"Added to queue: **{track.title}**",
-                        "track": {"title": track.title, "artist": track.artist, "stream_url": stream_url},
+                        "content": f"Added to queue: **{title}**",
+                        "track": {"title": title, "artist": "", "stream_url": stream_url},
                     }
                 else:
                     return {
@@ -3594,7 +3568,7 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                         "content": "Usage: `music queue add <#>`\n\nQueue is managed by the player. Use the player controls to view queue.",
                     }
 
-            # Mood-based playlist (LLM)
+            # Mood-based playlist
             elif subcommand == "mood":
                 if not param:
                     return {
@@ -3602,44 +3576,29 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                         "content": "Usage: `music mood <vibe>`\n\nExamples:\n- `music mood chill`\n- `music mood upbeat workout`\n- `music mood relaxing evening`",
                     }
 
-                cache = _music_cache.get(self.user.id, {})
-                tracks = cache.get("tracks", [])
+                # Generate mood playlist
+                playlist_tracks = generate_mood_playlist(directory, param, recursive)
 
-                # Auto-scan library if no tracks loaded
-                if not tracks:
-                    config = get_user_webdav_config(self.user.id, self.db)
-                    if not config:
-                        return {
-                            "type": "text",
-                            "content": "WebDAV music not configured. Set up in User Settings > Music.",
-                        }
+                if not playlist_tracks:
+                    return {"type": "text", "content": f"No tracks found for mood: {param}"}
 
-                    # Scan all tracks (this may take a moment)
-                    tracks = scan_all_tracks(config["url"], config["username"], config["password"], max_tracks=500)
-
-                    if not tracks:
-                        return {"type": "text", "content": "No tracks found in music library."}
-
-                    # Cache the scanned tracks
-                    _music_cache[self.user.id] = {"tracks": tracks, "folders": [], "current_path": "/"}
-
-                playlist = await generate_mood_playlist(tracks, param, self.chat_service)
-
-                if not playlist:
-                    return {"type": "text", "content": f"No tracks found matching mood: {param}"}
-
-                # Cache the playlist as current tracks
-                _music_cache[self.user.id]["tracks"] = playlist
+                # Cache the playlist
+                _music_cache[self.user.id] = {"tracks": playlist_tracks, "folders": [], "current_path": ""}
 
                 # Build track list for player
-                playlist_data = [
-                    {"path": t.path, "title": t.title, "artist": t.artist, "streamUrl": get_stream_url(t.path)}
-                    for t in playlist
-                ]
+                playlist_data = []
+                for t in playlist_tracks:
+                    title = t['name'].rsplit('.', 1)[0]
+                    playlist_data.append({
+                        "path": t['path'],
+                        "title": title,
+                        "artist": "",
+                        "streamUrl": get_stream_url(t['path'])
+                    })
 
                 return {
                     "type": "music_playlist",
-                    "content": format_music_tracks(playlist, f"Mood: {param}"),
+                    "content": f"🎵 **{param.title()} Vibes**\n\n{len(playlist_tracks)} tracks curated for your mood.\n\nNow playing: **{playlist_data[0]['title']}**",
                     "tracks": playlist_data,
                 }
 
@@ -3653,25 +3612,51 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
 
             # Random/shuffle play
             elif subcommand == "random":
-                # Always scan fresh to avoid playing from search results
-                tracks = scan_all_tracks(config["url"], config["username"], config["password"], "/", max_tracks=1000)
+                # Get all tracks from music directory
+                import random as rand_module
+                all_tracks = []
+                
+                if recursive:
+                    from pathlib import Path
+                    base_path = Path(directory)
+                    for item in base_path.rglob('*'):
+                        if item.is_file() and item.suffix in {'.mp3', '.flac', '.wav', '.ogg', '.m4a', '.aac', '.wma', '.opus'}:
+                            all_tracks.append({
+                                'type': 'file',
+                                'name': item.name,
+                                'path': str(item.relative_to(base_path)),
+                                'size': item.stat().st_size,
+                                'extension': item.suffix.lower()
+                            })
+                else:
+                    from pathlib import Path
+                    base_path = Path(directory)
+                    for item in base_path.iterdir():
+                        if item.is_file() and item.suffix in {'.mp3', '.flac', '.wav', '.ogg', '.m4a', '.aac', '.wma', '.opus'}:
+                            all_tracks.append({
+                                'type': 'file',
+                                'name': item.name,
+                                'path': str(item.relative_to(base_path)),
+                                'size': item.stat().st_size,
+                                'extension': item.suffix.lower()
+                            })
 
-                if not tracks:
-                    return {"type": "text", "content": "No tracks available for random play. Try `music browse` first."}
+                if not all_tracks:
+                    return {"type": "text", "content": "No tracks available for random play."}
 
                 # Pick a random track
-                import random as rand_module
-
-                track = rand_module.choice(tracks)
+                track = rand_module.choice(all_tracks)
+                title = track['name'].rsplit('.', 1)[0]
+                
                 return {
                     "type": "music_play",
-                    "content": f"🎲 Random: **{track.title}**" + (f" - {track.artist}" if track.artist else ""),
+                    "content": f"🎲 Random: **{title}**",
                     "track": {
-                        "path": track.path,
-                        "title": track.title,
-                        "artist": track.artist or "",
-                        "album": track.album or "",
-                        "streamUrl": get_stream_url(track.path),
+                        "path": track['path'],
+                        "title": title,
+                        "artist": "",
+                        "album": "",
+                        "streamUrl": get_stream_url(track['path']),
                     },
                 }
 
@@ -3679,30 +3664,57 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
             elif subcommand == "shuffle":
                 import random as rand_module
 
-                # Always scan fresh to avoid shuffling just search results
-                all_tracks = scan_all_tracks(
-                    config["url"], config["username"], config["password"], "/", max_tracks=1000
-                )
+                # Get all tracks
+                all_tracks = []
+                
+                if recursive:
+                    from pathlib import Path
+                    base_path = Path(directory)
+                    for item in base_path.rglob('*'):
+                        if item.is_file() and item.suffix in {'.mp3', '.flac', '.wav', '.ogg', '.m4a', '.aac', '.wma', '.opus'}:
+                            all_tracks.append({
+                                'type': 'file',
+                                'name': item.name,
+                                'path': str(item.relative_to(base_path)),
+                                'size': item.stat().st_size,
+                                'extension': item.suffix.lower()
+                            })
+                else:
+                    from pathlib import Path
+                    base_path = Path(directory)
+                    for item in base_path.iterdir():
+                        if item.is_file() and item.suffix in {'.mp3', '.flac', '.wav', '.ogg', '.m4a', '.aac', '.wma', '.opus'}:
+                            all_tracks.append({
+                                'type': 'file',
+                                'name': item.name,
+                                'path': str(item.relative_to(base_path)),
+                                'size': item.stat().st_size,
+                                'extension': item.suffix.lower()
+                            })
 
                 if not all_tracks:
-                    return {"type": "text", "content": "No tracks found. Browse or search music first."}
+                    return {"type": "text", "content": "No tracks found."}
 
-                # Make a copy and shuffle
-                all_tracks = list(all_tracks)
+                # Shuffle tracks
                 rand_module.shuffle(all_tracks)
 
                 # Update cache with shuffled tracks
-                _music_cache[self.user.id] = {"tracks": all_tracks, "folders": [], "current_path": "/"}
+                _music_cache[self.user.id] = {"tracks": all_tracks, "folders": [], "current_path": ""}
 
                 # Build playlist data
-                playlist_data = [
-                    {"path": t.path, "title": t.title, "artist": t.artist or "", "streamUrl": get_stream_url(t.path)}
-                    for t in all_tracks
-                ]
+                playlist_data = []
+                for t in all_tracks:
+                    title = t['name'].rsplit('.', 1)[0]
+                    playlist_data.append({
+                        "path": t['path'],
+                        "title": title,
+                        "artist": "",
+                        "streamUrl": get_stream_url(t['path'])
+                    })
 
                 return {
                     "type": "music_playlist",
-                    "content": f"Shuffling {len(all_tracks)} tracks",
+                    "content": f"🔀 Shuffling {len(all_tracks)} tracks",
                     "tracks": playlist_data,
                 }
 
@@ -3714,10 +3726,15 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                 if not tracks:
                     return {"type": "text", "content": "No tracks to queue. Browse or search first."}
 
-                playlist_data = [
-                    {"path": t.path, "title": t.title, "artist": t.artist or "", "streamUrl": get_stream_url(t.path)}
-                    for t in tracks
-                ]
+                playlist_data = []
+                for t in tracks:
+                    title = t['name'].rsplit('.', 1)[0]
+                    playlist_data.append({
+                        "path": t['path'],
+                        "title": title,
+                        "artist": "",
+                        "streamUrl": get_stream_url(t['path'])
+                    })
 
                 return {"type": "music_playlist", "content": f"Queued {len(tracks)} tracks", "tracks": playlist_data}
 

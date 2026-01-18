@@ -449,20 +449,18 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         except json.JSONDecodeError:
             pass
 
-    # Get WebDAV music settings
-    webdav_music_url = None
-    webdav_music_username = None
-    webdav_music_has_password = False
-    webdav_music_setting = db.query(UserSetting).filter(
+    # Get local music settings
+    local_music_dir = None
+    music_recursive_scan = True
+    music_setting = db.query(UserSetting).filter(
         UserSetting.user_id == current_user.id,
-        UserSetting.key == "webdav_music_config"
+        UserSetting.key == "local_music_config"
     ).first()
-    if webdav_music_setting and webdav_music_setting.value:
+    if music_setting and music_setting.value:
         try:
-            webdav_config = json.loads(webdav_music_setting.value)
-            webdav_music_url = webdav_config.get('url')
-            webdav_music_username = webdav_config.get('username')
-            webdav_music_has_password = bool(webdav_config.get('password'))
+            music_config = json.loads(music_setting.value)
+            local_music_dir = music_config.get('directory')
+            music_recursive_scan = music_config.get('recursive', True)
         except json.JSONDecodeError:
             pass
 
@@ -493,10 +491,9 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         carddav_has_password=carddav_has_password,
         # Mail settings
         mail_accounts=mail_accounts,
-        # Music settings (WebDAV)
-        webdav_music_url=webdav_music_url,
-        webdav_music_username=webdav_music_username,
-        webdav_music_has_password=webdav_music_has_password
+        # Local music settings
+        local_music_dir=local_music_dir,
+        music_recursive_scan=music_recursive_scan
     )
 
 
@@ -666,18 +663,34 @@ def update_user_settings(
 
         save_user_setting("mail_accounts", json.dumps(new_accounts))
 
-    # Save WebDAV music settings
-    logger.info(f"WebDAV Music settings received: url={settings.webdav_music_url}, username={settings.webdav_music_username}, has_password={settings.webdav_music_password is not None}")
-    if settings.webdav_music_url is not None or settings.webdav_music_username is not None or settings.webdav_music_password is not None:
-        from app.services.webdav_music_service import save_user_webdav_config
-        logger.info(f"Saving WebDAV config for user {current_user.id}")
-        save_user_webdav_config(
+    # Save local music settings
+    logger.info(f"Local Music settings received: dir={settings.local_music_dir}, recursive={settings.music_recursive_scan}")
+    if settings.local_music_dir is not None or settings.music_recursive_scan is not None:
+        from app.services.local_music_service import save_user_music_config
+        logger.info(f"Saving local music config for user {current_user.id}")
+        
+        # Get existing config to preserve values not being updated
+        existing_config = db.query(UserSetting).filter(
+            UserSetting.user_id == current_user.id,
+            UserSetting.key == "local_music_config"
+        ).first()
+        
+        existing_dir = ''
+        existing_recursive = True
+        if existing_config and existing_config.value:
+            try:
+                existing_data = json.loads(existing_config.value)
+                existing_dir = existing_data.get('directory', '')
+                existing_recursive = existing_data.get('recursive', True)
+            except json.JSONDecodeError:
+                pass
+        
+        save_user_music_config(
             current_user.id, db,
-            url=settings.webdav_music_url or '',
-            username=settings.webdav_music_username or '',
-            password=settings.webdav_music_password
+            directory=settings.local_music_dir if settings.local_music_dir is not None else existing_dir,
+            recursive=settings.music_recursive_scan if settings.music_recursive_scan is not None else existing_recursive
         )
-        logger.info("WebDAV config saved")
+        logger.info("Local music config saved")
 
     db.commit()
 

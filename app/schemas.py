@@ -394,9 +394,9 @@ class UserSettingsUpdate(BaseModel):
     # Mail settings
     mail_accounts: Optional[List[dict]] = None  # List of {email, imap_server, imap_port, smtp_server, smtp_port, password}
     # Music settings (WebDAV)
-    webdav_music_url: Optional[str] = None
-    webdav_music_username: Optional[str] = None
-    webdav_music_password: Optional[str] = None
+    # Local music directory settings
+    local_music_dir: Optional[str] = None
+    music_recursive_scan: Optional[bool] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -427,9 +427,9 @@ class UserSettingsResponse(BaseModel):
     # Mail settings
     mail_accounts: List[dict] = []  # List of mail accounts (passwords masked)
     # Music settings (WebDAV)
-    webdav_music_url: Optional[str] = None
-    webdav_music_username: Optional[str] = None
-    webdav_music_has_password: bool = False
+    # Local music directory settings
+    local_music_dir: Optional[str] = None
+    music_recursive_scan: bool = True
 
 
 class TestConnectionRequest(BaseModel):
