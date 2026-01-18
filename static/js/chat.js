@@ -995,6 +995,7 @@ class ChatHandler {
             testLocalMusic.addEventListener('click', async () => {
                 testMusicResult.textContent = 'Testing...';
                 testMusicResult.className = 'test-result';
+                testMusicResult.style.display = 'block';
                 try {
                     const response = await csrfFetch('/api/music/test-directory', {
                         method: 'POST',
@@ -1005,10 +1006,15 @@ class ChatHandler {
                         })
                     });
                     const data = await response.json();
-                    testMusicResult.textContent = data.message;
-                    testMusicResult.className = 'test-result ' + (data.success ? 'success' : 'error');
+                    if (data.success) {
+                        testMusicResult.textContent = `✓ ${data.message} (${data.track_count || 0} tracks found)`;
+                        testMusicResult.className = 'test-result success';
+                    } else {
+                        testMusicResult.textContent = `✗ ${data.error || data.message || 'Test failed'}`;
+                        testMusicResult.className = 'test-result error';
+                    }
                 } catch (e) {
-                    testMusicResult.textContent = 'Test failed';
+                    testMusicResult.textContent = `✗ Error: ${e.message}`;
                     testMusicResult.className = 'test-result error';
                 }
             });

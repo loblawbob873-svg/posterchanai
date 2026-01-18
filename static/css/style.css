@@ -1845,12 +1845,19 @@ fieldset legend {
 .test-result {
     font-size: 14px;
     margin-left: 12px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-weight: 500;
 }
 .test-result.success {
     color: var(--success);
+    background: rgba(39, 174, 96, 0.1);
+    border: 1px solid var(--success);
 }
 .test-result.error {
     color: var(--error);
+    background: rgba(231, 76, 60, 0.1);
+    border: 1px solid var(--error);
 }
 
 /* Custom AI Settings inner containers */
