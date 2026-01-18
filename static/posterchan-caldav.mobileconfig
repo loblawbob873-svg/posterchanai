@@ -12,7 +12,7 @@
             <key>CalDAVPort</key>
             <integer>443</integer>
             <key>CalDAVPrincipalURL</key>
-            <string>https://ai.poster.place/caldav/</string>
+            <string>https://ai.poster.place/caldav/verita84@poster.place/</string>
             <key>CalDAVUseSSL</key>
             <true/>
             <key>CalDAVUsername</key>
