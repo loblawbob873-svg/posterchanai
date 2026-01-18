@@ -33,7 +33,11 @@ def migrate_user_dav_data(username: str, dav_type: str, db: SessionLocal):
     # Get local storage path
     storage = get_storage_service(db)
     user_path = storage.get_user_path(username)
-    dav_path = user_path / dav_type
+    # CardDAV uses 'carddav' (two d's) in local filesystem
+    if dav_type == 'cardav':
+        dav_path = user_path / "carddav"
+    else:
+        dav_path = user_path / dav_type
     
     if not dav_path.exists():
         logger.info(f"No {dav_type} directory found for {username}")
@@ -67,8 +71,12 @@ def migrate_user_dav_data(username: str, dav_type: str, db: SessionLocal):
             # Get relative path from dav_path
             rel_path = file_path.relative_to(dav_path)
             
-            # Build storage server path: caldav/subdir/file.ics or cardav/subdir/file.vcf
-            storage_path = f"{dav_type}/{rel_path}"
+            # Build storage server path: caldav/subdir/file.ics or carddav/subdir/file.vcf
+            # Note: CardDAV uses 'carddav' (two d's) to match local filesystem convention
+            if dav_type == 'cardav':
+                storage_path = f"carddav/{rel_path}"
+            else:
+                storage_path = f"{dav_type}/{rel_path}"
             
             total_files += 1
             

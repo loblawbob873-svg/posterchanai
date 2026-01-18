@@ -27,7 +27,12 @@ class DAVStorageProxy:
         self.db = db
         self.username = username
         self.dav_type = dav_type
-        self.base_path = f"{dav_type}"
+        # Use 'carddav' (two d's) to match local filesystem convention
+        # CalDAV uses 'caldav' (one d), CardDAV uses 'carddav' (two d's)
+        if dav_type == 'cardav':
+            self.base_path = "carddav"
+        else:
+            self.base_path = f"{dav_type}"
         
         # Load storage server config
         # Use a fresh query to avoid session issues
