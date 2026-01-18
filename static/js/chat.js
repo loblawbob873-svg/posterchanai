@@ -2453,22 +2453,39 @@ class ChatHandler {
             // Work with raw content to parse track numbers
             const lines = data.content.split('\n');
             let musicHtml = '<div class="music-search-results">';
+            let i = 0;
             
-            for (const line of lines) {
+            while (i < lines.length) {
+                const line = lines[i];
+                
                 // Match track lines like "1. Track Name"
                 const trackMatch = line.match(/^(\d+)\.\s+(.+)$/);
                 if (trackMatch) {
                     const num = trackMatch[1];
                     const trackName = this.escapeHtml(trackMatch[2]);
+                    
+                    // Check if next line is the path/details line (starts with 📂)
+                    let trackDetails = '';
+                    if (i + 1 < lines.length && lines[i + 1].trim().startsWith('📂')) {
+                        trackDetails = this.escapeHtml(lines[i + 1].trim());
+                        i++; // Skip the details line
+                    }
+                    
                     musicHtml += `<div class="music-track-result">
-                        <span class="track-number">${num}.</span>
-                        <span class="track-name">${trackName}</span>
-                        <button class="btn-action-sm" onclick="window.chatHandler.sendMessage('music play ${num}')" title="Play this track">▶️</button>
+                        <div class="track-main">
+                            <span class="track-number">${num}.</span>
+                            <div class="track-info-col">
+                                <div class="track-name">${trackName}</div>
+                                ${trackDetails ? `<div class="track-details">${trackDetails}</div>` : ''}
+                            </div>
+                            <button class="btn-action-sm" onclick="window.chatHandler.sendMessage('music play ${num}')" title="Play this track">▶️</button>
+                        </div>
                     </div>`;
-                } else if (line.trim()) {
-                    // Other lines (headers, instructions, etc)
+                } else if (line.trim() && !line.startsWith('📂')) {
+                    // Other lines (headers, instructions, etc) - but skip detail lines
                     musicHtml += `<div class="music-info">${this.escapeHtml(line)}</div>`;
                 }
+                i++;
             }
             
             musicHtml += '</div>';

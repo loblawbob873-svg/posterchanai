@@ -1,5 +1,5 @@
 // Service Worker for Poster-chan AI PWA
-const CACHE_NAME = 'posterchanai-v55';
+const CACHE_NAME = 'posterchanai-v56';
 const STATIC_ASSETS = [
   '/static/icon-192.png',
   '/static/icon-512.png',

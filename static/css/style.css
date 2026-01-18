@@ -2991,3 +2991,23 @@ fieldset legend {
     font-size: 16px;
     margin-bottom: 8px;
 }
+
+.music-track-result .track-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.music-track-result .track-info-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.music-track-result .track-details {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-family: monospace;
+}
