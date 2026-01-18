@@ -184,6 +184,37 @@ async def carddav_discovery(request: Request, db: Session = Depends(get_db)):
         base_url += f":{request.url.port}"
     return RedirectResponse(url=f"{base_url}/carddav/", status_code=301)
 
+# CalDAV/CardDAV principals endpoint (used by iOS and other clients for discovery)
+@app.api_route("/principals/", methods=["PROPFIND"])
+async def principals_propfind(request: Request, current_user: User = Depends(get_current_user)):
+    """Handle PROPFIND on /principals/ - redirect to user's calendar."""
+    scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    base_url = f"{scheme}://{request.url.hostname}"
+    if request.url.port and request.url.port not in (80, 443):
+        base_url += f":{request.url.port}"
+    
+    # Return principal info pointing to user's calendar
+    xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+    <D:response>
+        <D:href>/principals/{current_user.username}/</D:href>
+        <D:propstat>
+            <D:prop>
+                <D:resourcetype>
+                    <D:collection/>
+                    <D:principal/>
+                </D:resourcetype>
+                <D:displayname>{current_user.username}</D:displayname>
+                <C:calendar-home-set>
+                    <D:href>/caldav/{current_user.username}/</D:href>
+                </C:calendar-home-set>
+            </D:prop>
+            <D:status>HTTP/1.1 200 OK</D:status>
+        </D:propstat>
+    </D:response>
+</D:multistatus>'''
+    return Response(content=xml, media_type="application/xml", status_code=207)
+
 # Handle old Joplin resource URLs (:/[resource-id]) - return 404 with helpful message
 # These are legacy URLs from Joplin that should have been converted during migration
 @app.get("/:/{resource_id}")
