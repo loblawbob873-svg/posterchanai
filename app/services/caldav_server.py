@@ -66,6 +66,8 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
             if prop_name == 'resourcetype':
                 if prop_value == 'calendar':
                     xml += '                <D:resourcetype><D:collection/><C:calendar xmlns:C="urn:ietf:params:xml:ns:caldav"/></D:resourcetype>\n'
+                elif prop_value == 'collection':
+                    xml += f'                <D:resourcetype><D:collection/></D:resourcetype>\n'
                 else:
                     xml += f'                <D:resourcetype><D:collection/></D:resourcetype>\n'
             elif prop_name == 'displayname':
@@ -112,41 +114,84 @@ def get_event_uid_from_ical(ical_data: str) -> Optional[str]:
 
 async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") -> Response:
     """Handle PROPFIND request."""
+    from urllib.parse import quote
     caldav_path = get_user_caldav_path(user, db)
-    base_url = f"/caldav/{user.username}"
+    encoded_username = quote(user.username, safe='')
+    base_url = f"/caldav/{encoded_username}"
     
     items = []
     
     # Normalize path - remove trailing slashes and handle /user/ subpath
     path = path.rstrip('/')
-    # Strip username from path if present
+    # Strip username from path if present (both encoded and unencoded)
     if path.startswith(user.username):
         path = path[len(user.username):].lstrip('/')
+    if path.startswith(encoded_username):
+        path = path[len(encoded_username):].lstrip('/')
     # Handle /user/ subpath (some clients use this)
-    if path == 'user' or path == '':
+    if path == 'user':
         path = ''
     
-    # Root calendar collection
-    if not path or path == user.username:
+    # Root calendar home - this is NOT a calendar itself, just a container
+    if not path or path == '':
+        # Return the calendar home collection
         items.append({
             "href": f"{base_url}/",
+            "props": {
+                "resourcetype": "collection",  # Just a collection, not a calendar
+                "displayname": f"{user.username}'s Calendars"
+            }
+        })
+        
+        # If depth=1, list child calendars
+        if depth == "1":
+            # Add default calendar
+            items.append({
+                "href": f"{base_url}/calendar/",
+                "props": {
+                    "resourcetype": "calendar",
+                    "displayname": "Calendar",
+                    "supported-calendar-component-set": "VEVENT,VTODO",
+                    "calendar-description": "Default Calendar",
+                    "calendar-color": "#0088FF",
+                    "calendar-timezone": "UTC"
+                }
+            })
+    
+    # Individual calendar collection
+    elif path == 'calendar':
+        items.append({
+            "href": f"{base_url}/calendar/",
             "props": {
                 "resourcetype": "calendar",
                 "displayname": "Calendar",
                 "supported-calendar-component-set": "VEVENT,VTODO",
-                "calendar-description": "PosterChan AI Calendar",
+                "calendar-description": "Default Calendar",
                 "calendar-color": "#0088FF",
                 "calendar-timezone": "UTC"
             }
         })
+        
+        # If depth=1, list events in this calendar
+        if depth == "1":
+            # List all .ics files
+            for ics_file in caldav_path.glob("*.ics"):
+                event_uid = ics_file.stem
+                items.append({
+                    "href": f"{base_url}/calendar/{event_uid}.ics",
+                    "props": {
+                        "getcontenttype": "text/calendar; charset=utf-8",
+                        "getetag": str(ics_file.stat().st_mtime)
+                    }
+                })
     
-    # If depth=1, list events
-    if depth == "1" and (not path or path == user.username):
-        # List all .ics files
-        for ics_file in caldav_path.glob("*.ics"):
-            event_uid = ics_file.stem
+    # Individual event
+    elif path.startswith('calendar/') and path.endswith('.ics'):
+        event_uid = path.split('/')[-1].replace('.ics', '')
+        ics_file = caldav_path / f"{event_uid}.ics"
+        if ics_file.exists():
             items.append({
-                "href": f"{base_url}/{event_uid}.ics",
+                "href": f"{base_url}/{path}",
                 "props": {
                     "getcontenttype": "text/calendar; charset=utf-8",
                     "getetag": str(ics_file.stat().st_mtime)
@@ -159,9 +204,18 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
 
 async def handle_report(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
     """Handle REPORT request (calendar queries)."""
+    from urllib.parse import quote
     body = await request.body()
     caldav_path = get_user_caldav_path(user, db)
-    base_url = f"/caldav/{user.username}"
+    encoded_username = quote(user.username, safe='')
+    base_url = f"/caldav/{encoded_username}"
+    
+    # Normalize path
+    path = path.rstrip('/')
+    if path.startswith(user.username):
+        path = path[len(user.username):].lstrip('/')
+    if path.startswith(encoded_username):
+        path = path[len(encoded_username):].lstrip('/')
     
     try:
         root = ET.fromstring(body)
@@ -208,7 +262,7 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                     
                     event_uid = ics_file.stem
                     items.append({
-                        "href": f"{base_url}/{event_uid}.ics",
+                        "href": f"{base_url}/calendar/{event_uid}.ics",
                         "props": {
                             "getcontenttype": "text/calendar; charset=utf-8",
                             "getetag": str(ics_file.stat().st_mtime),
@@ -254,7 +308,7 @@ async def handle_get(path: str, user: User, db: Session) -> Response:
     """Handle GET request (retrieve calendar/event)."""
     caldav_path = get_user_caldav_path(user, db)
     
-    # Extract event UID from path
+    # Extract event UID from path (handle both /calendar/uid.ics and /uid.ics for backwards compat)
     match = re.search(r'/([^/]+)\.ics$', path)
     if match:
         event_uid = match.group(1)
@@ -281,6 +335,15 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
         
         # Extract UID from iCalendar data
         event_uid = get_event_uid_from_ical(ical_data)
+        
+        # If path contains a UID, use that instead
+        match = re.search(r'/([^/]+)\.ics$', path)
+        if match:
+            path_uid = match.group(1)
+            if event_uid and event_uid != path_uid:
+                logger.warning(f"UID mismatch: path={path_uid}, ical={event_uid}, using path UID")
+            event_uid = path_uid
+        
         if not event_uid:
             # Generate UID if not present
             event_uid = str(uuid.uuid4())
@@ -308,7 +371,7 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
     """Handle DELETE request."""
     caldav_path = get_user_caldav_path(user, db)
     
-    # Extract event UID from path
+    # Extract event UID from path (handle both /calendar/uid.ics and /uid.ics)
     match = re.search(r'/([^/]+)\.ics$', path)
     if match:
         event_uid = match.group(1)
