@@ -3668,33 +3668,12 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
             elif subcommand == "shuffle":
                 import random as rand_module
 
-                # Get all tracks
-                all_tracks = []
+                logger.info(f"[MUSIC SHUFFLE] Scanning directory: {directory}")
+                # Use storage proxy-aware scanning
+                items = scan_music_directory(directory, recursive, db=self.db, user_id=self.user.id)
+                all_tracks = [item for item in items if item['type'] == 'file']
                 
-                if recursive:
-                    from pathlib import Path
-                    base_path = Path(directory)
-                    for item in base_path.rglob('*'):
-                        if item.is_file() and item.suffix in {'.mp3', '.flac', '.wav', '.ogg', '.m4a', '.aac', '.wma', '.opus'}:
-                            all_tracks.append({
-                                'type': 'file',
-                                'name': item.name,
-                                'path': str(item.relative_to(base_path)),
-                                'size': item.stat().st_size,
-                                'extension': item.suffix.lower()
-                            })
-                else:
-                    from pathlib import Path
-                    base_path = Path(directory)
-                    for item in base_path.iterdir():
-                        if item.is_file() and item.suffix in {'.mp3', '.flac', '.wav', '.ogg', '.m4a', '.aac', '.wma', '.opus'}:
-                            all_tracks.append({
-                                'type': 'file',
-                                'name': item.name,
-                                'path': str(item.relative_to(base_path)),
-                                'size': item.stat().st_size,
-                                'extension': item.suffix.lower()
-                            })
+                logger.info(f"[MUSIC SHUFFLE] Found {len(all_tracks)} tracks")
 
                 if not all_tracks:
                     return {"type": "text", "content": "No tracks found."}
