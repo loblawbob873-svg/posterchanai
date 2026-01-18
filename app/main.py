@@ -240,7 +240,7 @@ async def principals_propfind(request: Request, db: Session = Depends(get_db)):
     return Response(content=xml, media_type="application/xml", status_code=207)
 
 # Dynamic iOS CalDAV configuration profile endpoint
-@app.get("/caldav/profile")
+@app.get("/api/caldav/profile")
 async def generate_caldav_profile(request: Request, user: User = Depends(get_current_user)):
     """Generate iOS configuration profile for CalDAV account (requires login)."""
     import uuid

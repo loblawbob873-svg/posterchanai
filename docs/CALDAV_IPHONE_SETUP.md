@@ -21,7 +21,7 @@ Nginx reverse proxy handles HTTPS termination and routes requests:
 ### Option 1: Automatic Setup (Recommended)
 
 1. **Login to your account**: Open `https://ai.poster.place` in Safari on your iPhone
-2. **Download profile**: Visit `https://ai.poster.place/caldav/profile` 
+2. **Download profile**: Visit `https://ai.poster.place/api/caldav/profile` 
 3. **Install profile**: 
    - Tap "Allow" to download
    - Go to Settings → General → VPN & Device Management
