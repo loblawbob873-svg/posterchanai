@@ -38,8 +38,8 @@ Completed the rewrite to use the new storage proxy for all CalDAV/CardDAV operat
 - ✅ `handle_get()` - Uses proxy.read_file()
 - ✅ `handle_put()` - Uses proxy.write_file()
 - ✅ `handle_delete()` - Uses proxy.delete_file()
-- ⚠️ `handle_propfind()` - Still uses direct filesystem (needs update)
-- ⚠️ `handle_report()` - Still uses direct filesystem (needs update)
+- ✅ `handle_propfind()` - Uses proxy.list_files() and proxy.file_exists()
+- ✅ `handle_report()` - Uses proxy.list_files() and proxy.read_file()
 
 ### 4. ✅ CardDAV Server Integration (`cardav_server.py`)
 
@@ -82,11 +82,10 @@ Completed the rewrite to use the new storage proxy for all CalDAV/CardDAV operat
 
 ### Remaining Issues
 
-1. **CalDAV PROPFIND/REPORT Handlers** ⚠️
-   - **Status**: Still use direct filesystem access
-   - **Impact**: Medium - works but doesn't use proxy
-   - **Recommendation**: Update to use proxy.list_files() and proxy.read_file()
-   - **Priority**: Low (functionality works)
+1. ✅ **CalDAV PROPFIND/REPORT Handlers** - FIXED
+   - **Status**: Now use storage proxy
+   - **Changes**: Updated to use proxy.list_files() and proxy.read_file()
+   - **Impact**: All CalDAV operations now use proxy consistently
 
 2. **Error Handling** ✅
    - All proxy methods have proper try/except blocks
