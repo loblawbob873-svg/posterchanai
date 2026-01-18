@@ -77,13 +77,11 @@ class DAVStorageProxy:
                     logger.warning(f"[{self.dav_type.upper()}] Storage server returned 404 for {api_path} - data may need migration")
                     return []
                 else:
-                    logger.error(f"[{self.dav_type.upper()}] Storage server returned {response.status_code}: {response.text[:200]}, falling back to local")
-                    # Fallback to local on any error
-                    return self._list_files_local(subpath)
+                    logger.error(f"[{self.dav_type.upper()}] Storage server returned {response.status_code}: {response.text[:200]}")
+                    return []
         except Exception as e:
-            logger.error(f"[{self.dav_type.upper()}] Error listing files: {e}, falling back to local", exc_info=True)
-            # Always fallback to local on exception
-            return self._list_files_local(subpath)
+            logger.error(f"[{self.dav_type.upper()}] Error listing files: {e}", exc_info=True)
+            return []
     
     def read_file(self, filepath: str) -> Optional[str]:
         """Read file content from storage."""
@@ -107,15 +105,15 @@ class DAVStorageProxy:
                 if response.status_code == 200:
                     return response.text
                 elif response.status_code == 404:
-                    # File not found - fallback to local
-                    logger.warning(f"[{self.dav_type.upper()}] File not found on storage server: {filepath}, trying local")
-                    return self._read_file_local(filepath)
+                    # File not found on storage server
+                    logger.warning(f"[{self.dav_type.upper()}] File not found on storage server: {filepath} - data may need migration")
+                    return None
                 else:
-                    logger.error(f"[{self.dav_type.upper()}] Failed to read {filepath}: {response.status_code}, trying local")
-                    return self._read_file_local(filepath)
+                    logger.error(f"[{self.dav_type.upper()}] Failed to read {filepath}: {response.status_code}")
+                    return None
         except Exception as e:
-            logger.error(f"[{self.dav_type.upper()}] Error reading file {filepath}: {e}, trying local", exc_info=True)
-            return self._read_file_local(filepath)
+            logger.error(f"[{self.dav_type.upper()}] Error reading file {filepath}: {e}", exc_info=True)
+            return None
     
     def write_file(self, filepath: str, content: str) -> bool:
         """Write file content to storage."""
