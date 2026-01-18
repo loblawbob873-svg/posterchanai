@@ -93,15 +93,32 @@ class App {
         const pictureViewerBtn = document.getElementById('pictureViewerBtn');
         if (pictureViewerBtn) {
             pictureViewerBtn.addEventListener('click', () => {
-                if (window.fileManager) {
-                    window.fileManager.openPictureViewer();
-                    // Close the user menu
-                    const userMenuContainer = document.querySelector('.user-menu-container');
-                    if (userMenuContainer) {
-                        userMenuContainer.classList.remove('open');
+                console.log('Picture Gallery button clicked');
+                
+                // Wait for fileManager to be ready if not already
+                const openViewer = () => {
+                    if (window.fileManager && typeof window.fileManager.openPictureViewer === 'function') {
+                        console.log('fileManager exists, calling openPictureViewer');
+                        try {
+                            window.fileManager.openPictureViewer();
+                            // Close the user menu
+                            const userMenuContainer = document.querySelector('.user-menu-container');
+                            if (userMenuContainer) {
+                                userMenuContainer.classList.remove('open');
+                            }
+                        } catch (err) {
+                            console.error('Error opening picture viewer:', err);
+                        }
+                    } else {
+                        console.warn('window.fileManager not ready yet, waiting...');
+                        // Retry after a short delay
+                        setTimeout(openViewer, 100);
                     }
-                }
+                };
+                openViewer();
             });
+        } else {
+            console.error('pictureViewerBtn not found');
         }
 
         // Mobile menu
