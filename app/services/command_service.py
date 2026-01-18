@@ -3501,11 +3501,17 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                 logger.info(f"[MUSIC SEARCH] Searching for: {param}")
                 tracks = search_music_files(directory, param, recursive, db=self.db, user_id=self.user.id)
                 logger.info(f"[MUSIC SEARCH] Found {len(tracks)} tracks")
+                
+                if tracks:
+                    logger.info(f"[MUSIC SEARCH] First track: {tracks[0]}")
 
                 # Cache results
                 _music_cache[self.user.id] = {"tracks": tracks, "folders": [], "current_path": ""}
+                
+                formatted_result = format_music_tracks(tracks)
+                logger.info(f"[MUSIC SEARCH] Formatted result length: {len(formatted_result)}, starts with: {formatted_result[:100]}")
 
-                return {"type": "text", "content": format_music_tracks(tracks)}
+                return {"type": "text", "content": formatted_result}
 
             # Play track by number
             elif subcommand == "play":
