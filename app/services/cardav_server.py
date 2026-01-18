@@ -565,11 +565,19 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
 
 
 async def handle_mkcol(path: str, user: User, db: Session) -> Response:
-    """Handle MKCOL request."""
-    # Addressbook already exists (created on first access)
-    cardav_path = get_user_cardav_path(user, db)
-    cardav_path.mkdir(parents=True, exist_ok=True)
-    return Response(content="", status_code=201)
+    """Handle MKCOL request. Uses storage proxy if configured."""
+    from app.services.dav_storage_proxy import DAVStorageProxy
+    
+    # Use storage proxy (must be configured)
+    proxy = DAVStorageProxy(db, user.username, 'cardav')
+    
+    # Create addressbook by writing a placeholder file
+    # The directory will be created automatically when we write a file
+    placeholder_path = f"{path}/.cardav_placeholder" if path else ".cardav_placeholder"
+    if proxy.write_file(placeholder_path, "# CardDAV Addressbook Directory"):
+        return Response(content="", status_code=201)
+    else:
+        return Response(content="Failed to create addressbook", status_code=500)
 
 
 async def handle_proppatch(path: str, user: User, db: Session, request: StarletteRequest) -> Response:

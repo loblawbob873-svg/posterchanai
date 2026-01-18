@@ -777,9 +777,12 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
 
 
 async def handle_delete(path: str, user: User, db: Session) -> Response:
-    """Handle DELETE request."""
+    """Handle DELETE request. Uses storage proxy if configured."""
     from urllib.parse import unquote
-    caldav_path = get_user_caldav_path(user, db)
+    from app.services.dav_storage_proxy import DAVStorageProxy
+    
+    # Use storage proxy (must be configured)
+    proxy = DAVStorageProxy(db, user.username, 'caldav')
     
     # Extract calendar name and event UID from path
     match = re.search(r'/([^/]+)/([^/]+)\.ics$', path)
@@ -787,11 +790,11 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
         cal_name = unquote(match.group(1))
         event_uid = match.group(2)
         
-        # Determine calendar directory
+        # Build filepath using proxy
         if cal_name == 'calendar':
-            cal_dir = caldav_path  # Legacy: root directory
+            filepath = f"{event_uid}.ics"  # Legacy: root directory
         else:
-            cal_dir = caldav_path / cal_name
+            filepath = f"{cal_name}/{event_uid}.ics"
         
         # Build filepath (with calendar subdirectory if not 'calendar')
         if cal_name == 'calendar':
