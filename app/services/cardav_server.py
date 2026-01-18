@@ -491,7 +491,19 @@ def create_cardav_app() -> FastAPI:
             # Handle CardDAV methods
             method = request.method
             
-            if method == "PROPFIND":
+            if method == "OPTIONS":
+                return Response(
+                    content="",
+                    status_code=200,
+                    headers={
+                        "DAV": "1, 2, 3, addressbook",
+                        "Allow": "OPTIONS, GET, HEAD, POST, PUT, DELETE, PROPFIND, PROPPATCH, REPORT, MKCOL",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "OPTIONS, GET, HEAD, POST, PUT, DELETE, PROPFIND, PROPPATCH, REPORT, MKCOL",
+                        "Access-Control-Allow-Headers": "Content-Type, Depth, User-Agent, X-Requested-With, If-None-Match, Authorization"
+                    }
+                )
+            elif method == "PROPFIND":
                 return await handle_propfind(path, user, db, depth)
             elif method == "PROPPATCH":
                 return await handle_proppatch(path, user, db, request)
