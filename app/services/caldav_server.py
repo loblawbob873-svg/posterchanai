@@ -151,14 +151,24 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
             # List files using proxy
             file_items = proxy.list_files("")
             
+            # Log what we found for debugging
+            logger.info(f"[CalDAV] Listing calendars for {user.username}: found {len(file_items)} items")
+            
             # Check for calendar subdirectories
             calendar_dirs = []
             ics_files = []
             for item in file_items:
-                if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
-                    calendar_dirs.append(item.get('name'))
-                elif item.get('name', '').endswith('.ics'):
-                    ics_files.append(item.get('name'))
+                item_name = item.get('name', '')
+                is_dir = item.get('is_directory', False)
+                logger.debug(f"[CalDAV] Item: {item_name}, is_directory: {is_dir}")
+                
+                if is_dir and not item_name.startswith('.'):
+                    calendar_dirs.append(item_name)
+                elif item_name.endswith('.ics'):
+                    ics_files.append(item_name)
+            
+            logger.info(f"[CalDAV] Found {len(calendar_dirs)} calendar directories: {calendar_dirs}")
+            logger.info(f"[CalDAV] Found {len(ics_files)} loose .ics files")
             
             # Check if there are loose .ics files in root (legacy mode)
             has_loose_ics = len(ics_files) > 0
@@ -168,6 +178,7 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
                 # Skip hidden directories
                 if cal_name.startswith('.'):
                     continue
+                logger.info(f"[CalDAV] Adding calendar: {cal_name}")
                 items.append({
                     "href": f"{base_url}/{quote(cal_name, safe='')}/",
                     "props": {
@@ -183,6 +194,7 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
             # If no calendar subdirectories exist but there are loose .ics files,
             # show legacy "Calendar" for backwards compatibility
             if not calendar_dirs and has_loose_ics:
+                logger.info(f"[CalDAV] Adding legacy 'Calendar' (loose .ics files found)")
                 items.append({
                     "href": f"{base_url}/calendar/",
                     "props": {
@@ -197,6 +209,7 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
             
             # If no calendars exist at all, create a default "Calendar" so users can add events
             if not calendar_dirs and not has_loose_ics:
+                logger.info(f"[CalDAV] No calendars found, adding default 'Calendar'")
                 items.append({
                     "href": f"{base_url}/calendar/",
                     "props": {
@@ -208,6 +221,8 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
                         "calendar-timezone": "UTC"
                     }
                 })
+            
+            logger.info(f"[CalDAV] Returning {len(items)} calendar items for {user.username}")
     
     # Individual calendar collection
     elif '/' not in path:
