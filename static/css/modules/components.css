@@ -169,20 +169,19 @@
     border: 1px solid rgba(0, 255, 255, 0.3);
     box-shadow: 0 0 50px rgba(0, 255, 255, 0.2);
 }
-/* Large modals that need full height - don't restrict them */
+/* Large modals that need full height */
 #notesModal .modal-content,
 #notesModal .modal-content.notes-modal-content,
 #userSettingsModal .modal-content,
-#userSettingsModal .modal-content.modal-fullscreen,
 #ragModal .modal-content,
 #calendarModal .modal-content,
 #contactsModal .modal-content,
 #newsModal .modal-content,
 #translateModal .modal-content,
 #apiKeysModal .modal-content {
-    max-height: calc(100vh - 10px) !important;
-    height: calc(100vh - 10px) !important;
-    overflow-y: hidden !important;
+    max-height: calc(100vh - 10px);
+    height: calc(100vh - 10px);
+    overflow-y: hidden;
 }
 .modal-content.modal-large {
     max-width: 800px;
