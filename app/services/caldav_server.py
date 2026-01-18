@@ -803,7 +803,7 @@ async def handle_proppatch(path: str, user: User, db: Session, request: Starlett
     body = await request.body()
     
     try:
-        logger.info(f"[CalDAV] PROPPATCH request for path: {path}, user: {user.username}")
+        logger.info(f"[CalDAV] PROPPATCH request for path: {path}, user: {user.username}, body size: {len(body)} bytes")
         
         # Parse the PROPPATCH request
         root = ET.fromstring(body)
@@ -817,18 +817,39 @@ async def handle_proppatch(path: str, user: User, db: Session, request: Starlett
             href = f"/caldav/{encoded_username}/{path}"
         href = href.rstrip('/') + '/' if href != '/caldav/' else href
         
+        # Parse what properties iPhone is trying to set
+        set_props = root.findall('.//{DAV:}set/{DAV:}prop/*')
+        remove_props = root.findall('.//{DAV:}remove/{DAV:}prop/*')
+        
+        logger.info(f"[CalDAV] PROPPATCH: setting {len(set_props)} properties, removing {len(remove_props)} properties")
+        for prop in set_props:
+            logger.debug(f"[CalDAV] PROPPATCH set property: {prop.tag}")
+        for prop in remove_props:
+            logger.debug(f"[CalDAV] PROPPATCH remove property: {prop.tag}")
+        
         # For now, just accept the changes without actually storing them
         # The calendar properties are hardcoded in handle_propfind
         # In a full implementation, you'd store these in a database or file
         
-        # Return success response with proper href
+        # Build response with all properties that were set/removed
         escaped_href = html.escape(href)
         xml = f'''<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
     <D:response>
         <D:href>{escaped_href}</D:href>
         <D:propstat>
-            <D:prop/>
+            <D:prop>'''
+        
+        # Include all properties that were set/removed in the response
+        for prop in set_props + remove_props:
+            prop_tag = prop.tag
+            # Remove namespace prefix if present
+            if '}' in prop_tag:
+                prop_tag = prop_tag.split('}')[1]
+            xml += f'\n                <D:{prop_tag}/>'
+        
+        xml += f'''
+            </D:prop>
             <D:status>HTTP/1.1 200 OK</D:status>
         </D:propstat>
     </D:response>
