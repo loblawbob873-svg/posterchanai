@@ -175,7 +175,9 @@
 #ragModal .modal-content,
 #calendarModal .modal-content,
 #contactsModal .modal-content,
-#newsModal .modal-content {
+#newsModal .modal-content,
+#translateModal .modal-content,
+#apiKeysModal .modal-content {
     max-height: calc(100vh - 10px) !important;
     overflow-y: hidden !important;
 }
