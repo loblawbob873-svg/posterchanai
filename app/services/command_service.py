@@ -3502,29 +3502,10 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                 tracks = search_music_files(directory, param, recursive, db=self.db, user_id=self.user.id)
                 logger.info(f"[MUSIC SEARCH] Found {len(tracks)} tracks")
 
-                if not tracks:
-                    return {"type": "text", "content": f"No tracks found matching '{param}'."}
-
                 # Cache results
                 _music_cache[self.user.id] = {"tracks": tracks, "folders": [], "current_path": ""}
 
-                # Build playlist data for playback
-                playlist_data = []
-                for t in tracks:
-                    title = t['name'].rsplit('.', 1)[0]
-                    stream_url = get_stream_url(t['path'])
-                    playlist_data.append({
-                        "path": t['path'],
-                        "title": title,
-                        "artist": "",
-                        "streamUrl": stream_url
-                    })
-
-                return {
-                    "type": "music_playlist",
-                    "content": f"🔍 Found {len(tracks)} track(s) matching '{param}'",
-                    "tracks": playlist_data,
-                }
+                return {"type": "text", "content": format_music_tracks(tracks)}
 
             # Play track by number
             elif subcommand == "play":

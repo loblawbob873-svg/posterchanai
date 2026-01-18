@@ -475,7 +475,9 @@ def format_music_tracks(tracks: List[Dict[str, any]]) -> str:
         output.append(f"{idx}. {track['name']}")
         output.append(f"   📂 {track['path']} [{ext}, {size_mb:.1f} MB]")
     
-    output.append(f"\n💡 Found {len(tracks)} tracks. Use `music play <number>` to play.")
+    output.append(f"\n💡 Found {len(tracks)} tracks")
+    output.append("💡 Use `music play <number>` to play a track")
+    output.append("💡 Use `music queueall` to play all results")
     
     return "\n".join(output)
 
