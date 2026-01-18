@@ -387,6 +387,8 @@ def get_file_path(directory: str, relative_path: str) -> Optional[Path]:
 
 def format_music_browse(items: List[Dict[str, any]], current_path: str = '') -> str:
     """Format music browse results for display."""
+    logger.info(f"[MUSIC FORMAT] Called with {len(items)} items, current_path='{current_path}'")
+    
     if not items:
         return "🎵 No music files found in this directory.\n\nMake sure your music directory is configured in User Settings."
     
@@ -398,6 +400,8 @@ def format_music_browse(items: List[Dict[str, any]], current_path: str = '') -> 
     # Separate folders and files
     folders = [item for item in items if item['type'] == 'folder']
     files = [item for item in items if item['type'] == 'file']
+    
+    logger.info(f"[MUSIC FORMAT] {len(folders)} folders, {len(files)} files")
     
     if folders:
         output.append("📁 **Folders:**")
