@@ -73,9 +73,9 @@ class DAVStorageProxy:
                     items = data.get('items', [])
                     return items
                 elif response.status_code == 404:
-                    # Path not found - fallback to local filesystem
-                    logger.warning(f"[{self.dav_type.upper()}] Storage server returned 404 for {api_path}, falling back to local filesystem")
-                    return self._list_files_local(subpath)
+                    # Path not found on storage server - return empty list (data needs to be migrated)
+                    logger.warning(f"[{self.dav_type.upper()}] Storage server returned 404 for {api_path} - data may need migration")
+                    return []
                 else:
                     logger.error(f"[{self.dav_type.upper()}] Storage server returned {response.status_code}: {response.text[:200]}, falling back to local")
                     # Fallback to local on any error
