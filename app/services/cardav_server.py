@@ -68,6 +68,13 @@ def create_cardav_response(multistatus_items: List[Dict]) -> str:
                 # Principal URL for DAV discovery (used by iPhone)
                 principal_href = html.escape(str(prop_value))
                 xml += f'                <D:current-user-principal><D:href>{principal_href}</D:href></D:current-user-principal>\n'
+            elif prop_name == 'addressbook-home-set':
+                xml += f'                <C:addressbook-home-set xmlns:C="urn:ietf:params:xml:ns:carddav"><D:href xmlns:D="DAV:">{html.escape(str(prop_value))}</D:href></C:addressbook-home-set>\n'
+            elif prop_name == 'sync-token':
+                xml += f'                <D:sync-token xmlns:D="DAV:">{html.escape(str(prop_value))}</D:sync-token>\n'
+            elif prop_name == 'getctag':
+                # CTag is like ETag but for collections (addressbooks)
+                xml += f'                <CS:getctag xmlns:CS="http://calendarserver.org/ns/">{html.escape(str(prop_value))}</CS:getctag>\n'
         xml += '            </D:prop>\n            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
     xml += '</D:multistatus>'
     return xml
@@ -84,10 +91,23 @@ def get_contact_uid_from_vcard(vcard_data: str) -> Optional[str]:
     return None
 
 
-async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") -> Response:
+async def handle_propfind(path: str, user: User, db: Session, request: StarletteRequest = None, depth: str = "0") -> Response:
     """Handle PROPFIND request. Uses storage proxy if configured."""
     from urllib.parse import quote
     from app.services.dav_storage_proxy import DAVStorageProxy
+    
+    # Log what properties iPhone is requesting
+    if request:
+        body = await request.body()
+        if body:
+            try:
+                root = ET.fromstring(body)
+                requested_props = root.findall('.//{DAV:}prop/*')
+                if requested_props:
+                    prop_names = [prop.tag for prop in requested_props]
+                    logger.info(f"[CardDAV] PROPFIND requested properties: {prop_names}")
+            except Exception as e:
+                logger.debug(f"[CardDAV] Could not parse PROPFIND body: {e}")
     
     # Use storage proxy (will fallback to local if not configured)
     proxy = DAVStorageProxy(db, user.username, 'cardav')
@@ -108,12 +128,14 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
     # iPhone expects this to return the principal URL
     if not path or path == '':
         # Return the principal URL (user's addressbook home)
+        # iPhone needs addressbook-home-set property
         items.append({
             "href": f"{base_url}/",
             "props": {
                 "resourcetype": "collection",
                 "displayname": f"{user.username}'s Addressbooks",
-                "current-user-principal": f"{base_url}/"  # Add principal URL for iPhone
+                "current-user-principal": f"{base_url}/",  # Principal URL for iPhone
+                "addressbook-home-set": f"{base_url}/"  # Addressbook home set for iPhone
             }
         })
         
@@ -136,21 +158,33 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
             
             if not addressbook_dirs and has_loose_vcf:
                 # Legacy mode: show root as default addressbook
+                # iPhone needs sync-token and getctag for addressbooks
+                import hashlib
+                sync_token = hashlib.md5(f"contacts_{user.username}".encode()).hexdigest()[:16]
+                ctag = hashlib.md5(f"contacts_{user.username}_ctag".encode()).hexdigest()[:16]
                 items.append({
                     "href": f"{base_url}/contacts/",
                     "props": {
                         "resourcetype": "addressbook",
-                        "displayname": "Contacts"
+                        "displayname": "Contacts",
+                        "sync-token": f"http://ai.poster.place/carddav/{quote(user.username, safe='')}/contacts/sync-token-{sync_token}",
+                        "getctag": ctag
                     }
                 })
             else:
                 # New mode: show actual addressbook subdirectories
                 for abook_name in sorted(addressbook_dirs):
+                    # iPhone needs sync-token and getctag for addressbooks
+                    import hashlib
+                    sync_token = hashlib.md5(f"{abook_name}_{user.username}".encode()).hexdigest()[:16]
+                    ctag = hashlib.md5(f"{abook_name}_{user.username}_ctag".encode()).hexdigest()[:16]
                     items.append({
                         "href": f"{base_url}/{quote(abook_name, safe='')}/",
                         "props": {
                             "resourcetype": "addressbook",
-                            "displayname": abook_name.replace('_', ' ').title()
+                            "displayname": abook_name.replace('_', ' ').title(),
+                            "sync-token": f"http://ai.poster.place/carddav/{quote(user.username, safe='')}/{quote(abook_name, safe='')}/sync-token-{sync_token}",
+                            "getctag": ctag
                         }
                     })
     
@@ -902,7 +936,7 @@ def create_cardav_app() -> FastAPI:
             method = request.method
             
             if method == "PROPFIND":
-                return await handle_propfind(path, user, db, depth)
+                return await handle_propfind(path, user, db, request, depth)
             elif method == "PROPPATCH":
                 return await handle_proppatch(path, user, db, request)
             elif method == "REPORT":
