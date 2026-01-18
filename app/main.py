@@ -258,12 +258,20 @@ async def principals_propfind(request: Request, db: Session = Depends(get_db)):
         credentials = base64.b64decode(auth_header[6:]).decode('utf-8')
         username, password = credentials.split(':', 1)
     except:
-        return Response(content="Invalid credentials", status_code=401)
+        return Response(
+            content="Invalid credentials",
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+        )
     
     # Verify user
     user = db.query(User).filter(User.username == username).first()
     if not user or not verify_password(password, user.password_hash):
-        return Response(content="Invalid credentials", status_code=401)
+        return Response(
+            content="Invalid credentials",
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+        )
     
     scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
     base_url = f"{scheme}://{request.url.hostname}"
@@ -291,6 +299,19 @@ async def principals_propfind(request: Request, db: Session = Depends(get_db)):
     </D:response>
 </D:multistatus>'''
     return Response(content=xml, media_type="application/xml", status_code=207)
+
+# Handle OPTIONS for specific principal paths (iOS checks this)
+@app.api_route("/principals/{username}/", methods=["OPTIONS"])
+async def principals_options(username: str):
+    """Handle OPTIONS request for principal path."""
+    return Response(
+        status_code=200,
+        headers={
+            "DAV": "1, 3, calendar-access",
+            "Allow": "OPTIONS, PROPFIND",
+            "Content-Length": "0"
+        }
+    )
 
 # Dynamic iOS CalDAV configuration profile endpoint
 @app.get("/api/caldav/profile")
