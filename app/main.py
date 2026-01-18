@@ -165,7 +165,9 @@ async def caldav_discovery(request: Request, db: Session = Depends(get_db)):
     """CalDAV autodiscovery - redirect to CalDAV server."""
     # When behind nginx reverse proxy, redirect to the proxied path (same host/port)
     # Nginx will proxy /caldav/ to the actual CalDAV server on port 8081
-    base_url = f"{request.url.scheme}://{request.url.hostname}"
+    # Use X-Forwarded-Proto header to determine if original request was HTTPS
+    scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    base_url = f"{scheme}://{request.url.hostname}"
     if request.url.port and request.url.port not in (80, 443):
         base_url += f":{request.url.port}"
     return RedirectResponse(url=f"{base_url}/caldav/", status_code=301)
@@ -175,7 +177,9 @@ async def carddav_discovery(request: Request, db: Session = Depends(get_db)):
     """CardDAV autodiscovery - redirect to CardDAV server."""
     # When behind nginx reverse proxy, redirect to the proxied path (same host/port)
     # Nginx will proxy /carddav/ to the actual CardDAV server on port 8082
-    base_url = f"{request.url.scheme}://{request.url.hostname}"
+    # Use X-Forwarded-Proto header to determine if original request was HTTPS
+    scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    base_url = f"{scheme}://{request.url.hostname}"
     if request.url.port and request.url.port not in (80, 443):
         base_url += f":{request.url.port}"
     return RedirectResponse(url=f"{base_url}/carddav/", status_code=301)
