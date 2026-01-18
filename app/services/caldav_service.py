@@ -177,16 +177,17 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                     from datetime import timezone
                                     event_end = event_end.replace(tzinfo=timezone.utc)
                         
-                        # Check if event overlaps with date range
-                        # Include events that start within the range OR overlap with the range
-                        # An event overlaps if: event_start <= end_date AND (event_end >= start_date OR event_end is None)
+                        # Check if event is in date range
+                        # Include events that start within the range: start_date <= event_start <= end_date
+                        # Also include events that overlap: event_start < start_date but event_end >= start_date
+                        # Skip if: event starts after range OR (has end time AND ends before range)
                         if event_start > end_date:
-                            # Event starts after the range
+                            # Event starts after the range - skip
                             continue
-                        if event_end and event_end < start_date:
-                            # Event ends before the range (only if we have an end time)
+                        if event_end is not None and event_end < start_date:
+                            # Event has an end time and ends before the range - skip
                             continue
-                        # Event overlaps with range - include it
+                        # Event is within or overlaps with range - include it
                         
                         # Convert to naive local for CalendarEvent
                         event_start_naive = to_naive_local(event_start)
