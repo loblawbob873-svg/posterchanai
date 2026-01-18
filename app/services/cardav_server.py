@@ -453,6 +453,20 @@ def create_cardav_app() -> FastAPI:
         # Get path parameter
         path = request.path_params.get("path", "")
         
+        # Handle OPTIONS without auth (for discovery)
+        if request.method == "OPTIONS":
+            return Response(
+                content="",
+                status_code=200,
+                headers={
+                    "DAV": "1, 2, 3, addressbook",
+                    "Allow": "OPTIONS, GET, HEAD, POST, PUT, DELETE, PROPFIND, PROPPATCH, REPORT, MKCOL",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "OPTIONS, GET, HEAD, POST, PUT, DELETE, PROPFIND, PROPPATCH, REPORT, MKCOL",
+                    "Access-Control-Allow-Headers": "Content-Type, Depth, User-Agent, X-Requested-With, If-None-Match, Authorization"
+                }
+            )
+        
         # Get DB session manually (can't use Depends with @app.route)
         db = SessionLocal()
         try:
@@ -491,19 +505,7 @@ def create_cardav_app() -> FastAPI:
             # Handle CardDAV methods
             method = request.method
             
-            if method == "OPTIONS":
-                return Response(
-                    content="",
-                    status_code=200,
-                    headers={
-                        "DAV": "1, 2, 3, addressbook",
-                        "Allow": "OPTIONS, GET, HEAD, POST, PUT, DELETE, PROPFIND, PROPPATCH, REPORT, MKCOL",
-                        "Access-Control-Allow-Origin": "*",
-                        "Access-Control-Allow-Methods": "OPTIONS, GET, HEAD, POST, PUT, DELETE, PROPFIND, PROPPATCH, REPORT, MKCOL",
-                        "Access-Control-Allow-Headers": "Content-Type, Depth, User-Agent, X-Requested-With, If-None-Match, Authorization"
-                    }
-                )
-            elif method == "PROPFIND":
+            if method == "PROPFIND":
                 return await handle_propfind(path, user, db, depth)
             elif method == "PROPPATCH":
                 return await handle_proppatch(path, user, db, request)
