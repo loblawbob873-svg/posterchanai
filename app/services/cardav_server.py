@@ -448,7 +448,7 @@ def create_cardav_app() -> FastAPI:
         )
     
     @app.route("/carddav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL"])
-    async def carddav_handler(path: str, request: StarletteRequest, db: Session = Depends(get_db)):
+    async def carddav_handler(request: StarletteRequest, path: str, db: Session = Depends(get_db)):
         """Handle CardDAV requests."""
         # Extract username from Basic Auth
         auth_header = request.headers.get("Authorization", "")
