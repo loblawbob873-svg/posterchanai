@@ -35,22 +35,32 @@ class DAVStorageProxy:
             self.base_path = f"{dav_type}"
         
         # Load storage server config
-        # Use a fresh session to avoid session issues with async contexts
+        # Always use a fresh session to avoid async context issues
+        # The provided session might be closed or in an invalid state
+        from app.database import SessionLocal
+        
+        fresh_db = None
         try:
-            # Try to use the provided session first
+            # Try to use the provided session first (if it's valid)
             try:
-                storage_url_setting = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-                storage_token_setting = db.query(Setting).filter(Setting.key == "storage_server_token").first()
-            except (AttributeError, RuntimeError, Exception) as session_error:
-                # Session is invalid (closed, detached, or in wrong context), create a new one
-                logger.debug(f"[{dav_type.upper()}] Session invalid, creating fresh session: {session_error}")
-                from app.database import SessionLocal
+                # Test if session is valid by checking if it's bound
+                if db.bind is not None:
+                    # Try a simple query to see if session works
+                    test_result = db.execute("SELECT 1").scalar()
+                    if test_result == 1:
+                        # Session seems valid, use it
+                        storage_url_setting = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+                        storage_token_setting = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+                    else:
+                        raise RuntimeError("Session test query failed")
+                else:
+                    raise RuntimeError("Session not bound")
+            except (AttributeError, RuntimeError, IndexError, Exception) as session_error:
+                # Session is invalid, create a fresh one
+                logger.debug(f"[{dav_type.upper()}] Session invalid, creating fresh session: {type(session_error).__name__}")
                 fresh_db = SessionLocal()
-                try:
-                    storage_url_setting = fresh_db.query(Setting).filter(Setting.key == "storage_server_url").first()
-                    storage_token_setting = fresh_db.query(Setting).filter(Setting.key == "storage_server_token").first()
-                finally:
-                    fresh_db.close()
+                storage_url_setting = fresh_db.query(Setting).filter(Setting.key == "storage_server_url").first()
+                storage_token_setting = fresh_db.query(Setting).filter(Setting.key == "storage_server_token").first()
             
             self.storage_url = storage_url_setting.value if storage_url_setting and storage_url_setting.value else None
             self.storage_token = storage_token_setting.value if storage_token_setting and storage_token_setting.value else None
@@ -60,23 +70,17 @@ class DAVStorageProxy:
                 logger.info(f"[{dav_type.upper()}] Using storage proxy: {self.storage_url}")
         except Exception as e:
             logger.error(f"[{dav_type.upper()}] Error loading storage proxy config: {e}", exc_info=True)
-            # Final fallback: try with a completely fresh session
-            try:
-                from app.database import SessionLocal
-                fresh_db = SessionLocal()
+            # Final fallback: disable proxy
+            self.storage_url = None
+            self.storage_token = None
+            self.use_proxy = False
+        finally:
+            # Always close fresh session if we created one
+            if fresh_db is not None:
                 try:
-                    storage_url_setting = fresh_db.query(Setting).filter(Setting.key == "storage_server_url").first()
-                    storage_token_setting = fresh_db.query(Setting).filter(Setting.key == "storage_server_token").first()
-                    self.storage_url = storage_url_setting.value if storage_url_setting and storage_url_setting.value else None
-                    self.storage_token = storage_token_setting.value if storage_token_setting and storage_token_setting.value else None
-                    self.use_proxy = bool(self.storage_url)
-                finally:
                     fresh_db.close()
-            except Exception as e2:
-                logger.error(f"[{dav_type.upper()}] Error with fresh session fallback: {e2}", exc_info=True)
-                self.storage_url = None
-                self.storage_token = None
-                self.use_proxy = False
+                except:
+                    pass
     
     def _get_headers(self) -> Dict[str, str]:
         """Get auth headers for storage server requests."""
