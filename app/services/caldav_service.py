@@ -2214,7 +2214,10 @@ def get_user_contact_by_uid(user_id: int, db: Session, contact_uid: str) -> Opti
 
 
 def format_events_for_display(events: List[CalendarEvent], include_description: bool = False, cyberpunk: bool = False) -> str:
-    """Format events for display with clickable map links for locations and delete buttons."""
+    """Format events for display with clickable map links for locations and delete buttons.
+    
+    Events are grouped by date, and calendar names are shown for each event when available.
+    """
     import urllib.parse
 
     if not events:
@@ -2226,7 +2229,10 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
     current_date = None
     first_event_of_day = True
 
-    for event in events:
+    # Sort events by start time
+    sorted_events = sorted(events, key=lambda e: e.start)
+
+    for event in sorted_events:
         event_date = event.start.date()
         if event_date != current_date:
             current_date = event_date
@@ -2261,9 +2267,17 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
         if cyberpunk:
             # Cyberpunk style event line with time in brackets
             time_bracket = event.start.strftime("%H:%M")
-            line = f"  ⏰ `{time_bracket}` **{event.summary}**{action_links}"
+            # Show calendar name if available and not generic
+            calendar_label = ""
+            if event.calendar_name and event.calendar_name not in ("Built-in Calendar", "Calendar"):
+                calendar_label = f" `[{event.calendar_name}]`"
+            line = f"  ⏰ `{time_bracket}` **{event.summary}**{calendar_label}{action_links}"
         else:
-            line = f"- {time_str}: {event.summary}{action_links}"
+            # Show calendar name if available and not generic
+            calendar_label = ""
+            if event.calendar_name and event.calendar_name not in ("Built-in Calendar", "Calendar"):
+                calendar_label = f" ({event.calendar_name})"
+            line = f"- {time_str}: {event.summary}{calendar_label}{action_links}"
 
         if event.location:
             # Create Google Maps link for mobile
