@@ -81,9 +81,12 @@ def get_contact_uid_from_vcard(vcard_data: str) -> Optional[str]:
 
 
 async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") -> Response:
-    """Handle PROPFIND request."""
+    """Handle PROPFIND request. Uses storage proxy if configured."""
     from urllib.parse import quote
-    cardav_path = get_user_cardav_path(user, db)
+    from app.services.dav_storage_proxy import DAVStorageProxy
+    
+    # Use storage proxy (will fallback to local if not configured)
+    proxy = DAVStorageProxy(db, user.username, 'cardav')
     encoded_username = quote(user.username, safe='')
     base_url = f"/carddav/{encoded_username}"
     
@@ -108,17 +111,20 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         
         # If depth=1, list addressbooks
         if depth == "1":
+            # List files using proxy
+            file_items = proxy.list_files("")
+            
             # Check for addressbook subdirectories
             addressbook_dirs = []
-            if cardav_path.exists():
-                for item in cardav_path.iterdir():
-                    if item.is_dir() and not item.name.startswith('.'):
-                        addressbook_dirs.append(item.name)
+            vcf_files = []
+            for item in file_items:
+                if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
+                    addressbook_dirs.append(item.get('name'))
+                elif item.get('name', '').endswith('.vcf'):
+                    vcf_files.append(item.get('name'))
             
             # If no subdirectories, check for loose .vcf files (legacy mode)
-            has_loose_vcf = False
-            if cardav_path.exists():
-                has_loose_vcf = any(cardav_path.glob("*.vcf"))
+            has_loose_vcf = len(vcf_files) > 0
             
             if not addressbook_dirs and has_loose_vcf:
                 # Legacy mode: show root as default addressbook
@@ -143,7 +149,7 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
     # Individual addressbook
     elif '/' not in path:
         abook_name = path
-        abook_dir = cardav_path / abook_name if abook_name != 'contacts' else cardav_path
+        subpath = "" if abook_name == 'contacts' else abook_name
         
         items.append({
             "href": f"{base_url}/{quote(abook_name, safe='')}/",
@@ -154,16 +160,20 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         })
         
         # If depth=1, list contacts
-        if depth == "1" and abook_dir.exists():
-            for vcf_file in abook_dir.glob("*.vcf"):
-                contact_uid = vcf_file.stem
-                items.append({
-                    "href": f"{base_url}/{quote(abook_name, safe='')}/{contact_uid}.vcf",
-                    "props": {
-                        "getcontenttype": "text/vcard; charset=utf-8",
-                        "getetag": str(vcf_file.stat().st_mtime)
-                    }
-                })
+        if depth == "1":
+            file_items = proxy.list_files(subpath)
+            for item in file_items:
+                name = item.get('name', '')
+                if name.endswith('.vcf'):
+                    contact_uid = name.replace('.vcf', '')
+                    etag = str(item.get('modified', item.get('mtime', 0)))
+                    items.append({
+                        "href": f"{base_url}/{quote(abook_name, safe='')}/{contact_uid}.vcf",
+                        "props": {
+                            "getcontenttype": "text/vcard; charset=utf-8",
+                            "getetag": etag
+                        }
+                    })
     
     # Individual contact
     elif path.count('/') == 1 and path.endswith('.vcf'):
@@ -172,15 +182,27 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         contact_file = parts[1]
         contact_uid = contact_file.replace('.vcf', '')
         
-        abook_dir = cardav_path / abook_name if abook_name != 'contacts' else cardav_path
-        vcf_file = abook_dir / f"{contact_uid}.vcf"
+        # Build filepath
+        if abook_name == 'contacts':
+            filepath = f"{contact_uid}.vcf"
+        else:
+            filepath = f"{abook_name}/{contact_uid}.vcf"
         
-        if vcf_file.exists():
+        # Check if file exists using proxy
+        if proxy.file_exists(filepath):
+            # Get file info for etag
+            file_items = proxy.list_files(abook_name if abook_name != 'contacts' else "")
+            etag = "0"
+            for item in file_items:
+                if item.get('name') == f"{contact_uid}.vcf":
+                    etag = str(item.get('modified', item.get('mtime', 0)))
+                    break
+            
             items.append({
                 "href": f"{base_url}/{path}",
                 "props": {
                     "getcontenttype": "text/vcard; charset=utf-8",
-                    "getetag": str(vcf_file.stat().st_mtime)
+                    "getetag": etag
                 }
             })
     
@@ -189,10 +211,14 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
 
 
 async def handle_report(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
-    """Handle REPORT request (contact queries)."""
+    """Handle REPORT request (contact queries). Uses storage proxy if configured."""
     from urllib.parse import quote, unquote
+    from app.services.dav_storage_proxy import DAVStorageProxy
+    
     body = await request.body()
-    cardav_path = get_user_cardav_path(user, db)
+    
+    # Use storage proxy (will fallback to local if not configured)
+    proxy = DAVStorageProxy(db, user.username, 'cardav')
     encoded_username = quote(user.username, safe='')
     base_url = f"/carddav/{encoded_username}"
     
@@ -208,13 +234,13 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
     if path and '/' not in path:
         abook_name = unquote(path)
     
-    # Determine the addressbook directory
+    # Determine the addressbook subpath
     if abook_name == 'contacts':
-        abook_dir = cardav_path  # Legacy: root directory
+        subpath = ""  # Legacy: root directory
     elif abook_name:
-        abook_dir = cardav_path / abook_name
+        subpath = abook_name
     else:
-        abook_dir = cardav_path  # Default to root
+        subpath = ""  # Default to root
     
     try:
         root = ET.fromstring(body)
@@ -226,24 +252,33 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         
         if query_elem is not None:
             # Addressbook query - list all contacts
-            if abook_dir.exists():
-                for vcf_file in abook_dir.glob("*.vcf"):
+            file_items = proxy.list_files(subpath)
+            for item in file_items:
+                name = item.get('name', '')
+                if name.endswith('.vcf'):
                     try:
-                        with open(vcf_file, 'r', encoding='utf-8') as f:
-                            vcard_data = f.read()
+                        # Build filepath
+                        if subpath:
+                            filepath = f"{subpath}/{name}"
+                        else:
+                            filepath = name
                         
-                        contact_uid = vcf_file.stem
-                        href_path = f"{abook_name}/{contact_uid}.vcf" if abook_name else f"contacts/{contact_uid}.vcf"
-                        items.append({
-                            "href": f"{base_url}/{href_path}",
-                            "props": {
-                                "getcontenttype": "text/vcard; charset=utf-8",
-                                "getetag": str(vcf_file.stat().st_mtime),
-                                "address-data": vcard_data
-                            }
-                        })
+                        # Read contact data using proxy
+                        vcard_data = proxy.read_file(filepath)
+                        if vcard_data:
+                            contact_uid = name.replace('.vcf', '')
+                            href_path = f"{abook_name}/{contact_uid}.vcf" if abook_name else f"contacts/{contact_uid}.vcf"
+                            etag = str(item.get('modified', item.get('mtime', 0)))
+                            items.append({
+                                "href": f"{base_url}/{href_path}",
+                                "props": {
+                                    "getcontenttype": "text/vcard; charset=utf-8",
+                                    "getetag": etag,
+                                    "address-data": vcard_data
+                                }
+                            })
                     except Exception as e:
-                        logger.debug(f"Error processing {vcf_file}: {e}")
+                        logger.debug(f"Error processing {name}: {e}")
                         continue
         
         elif multiget_elem is not None:
@@ -256,27 +291,31 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                     href_abook_name = unquote(match.group(1))
                     contact_uid = match.group(2)
                     
-                    # Determine addressbook directory
+                    # Build filepath
                     if href_abook_name == 'contacts':
-                        href_abook_dir = cardav_path
+                        filepath = f"{contact_uid}.vcf"
                     else:
-                        href_abook_dir = cardav_path / href_abook_name
+                        filepath = f"{href_abook_name}/{contact_uid}.vcf"
                     
-                    vcf_file = href_abook_dir / f"{contact_uid}.vcf"
-                    if vcf_file.exists():
-                        try:
-                            with open(vcf_file, 'r', encoding='utf-8') as f:
-                                vcard_data = f.read()
-                            items.append({
-                                "href": href,
-                                "props": {
-                                    "getcontenttype": "text/vcard; charset=utf-8",
-                                    "getetag": str(vcf_file.stat().st_mtime),
-                                    "address-data": vcard_data
-                                }
-                            })
-                        except Exception as e:
-                            logger.debug(f"Error reading {vcf_file}: {e}")
+                    # Read contact using proxy
+                    vcard_data = proxy.read_file(filepath)
+                    if vcard_data:
+                        # Get file info for etag
+                        file_items = proxy.list_files(href_abook_name if href_abook_name != 'contacts' else "")
+                        etag = "0"
+                        for item in file_items:
+                            if item.get('name') == f"{contact_uid}.vcf":
+                                etag = str(item.get('modified', item.get('mtime', 0)))
+                                break
+                        
+                        items.append({
+                            "href": href,
+                            "props": {
+                                "getcontenttype": "text/vcard; charset=utf-8",
+                                "getetag": etag,
+                                "address-data": vcard_data
+                            }
+                        })
         
         xml = create_cardav_response(items)
         return Response(content=xml, media_type="application/xml", status_code=207)
@@ -286,9 +325,12 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
 
 
 async def handle_get(path: str, user: User, db: Session) -> Response:
-    """Handle GET request (retrieve contact)."""
+    """Handle GET request (retrieve contact). Uses storage proxy if configured."""
     from urllib.parse import unquote
-    cardav_path = get_user_cardav_path(user, db)
+    from app.services.dav_storage_proxy import DAVStorageProxy
+    
+    # Use storage proxy (will fallback to local if not configured)
+    proxy = DAVStorageProxy(db, user.username, 'cardav')
     
     # Extract addressbook name and contact UID from path
     match = re.search(r'/([^/]+)/([^/]+)\.vcf$', path)
@@ -296,30 +338,32 @@ async def handle_get(path: str, user: User, db: Session) -> Response:
         abook_name = unquote(match.group(1))
         contact_uid = match.group(2)
         
-        # Determine addressbook directory
+        # Build filepath (with addressbook subdirectory if not 'contacts')
         if abook_name == 'contacts':
-            abook_dir = cardav_path  # Legacy: root directory
+            filepath = f"{contact_uid}.vcf"
         else:
-            abook_dir = cardav_path / abook_name
+            filepath = f"{abook_name}/{contact_uid}.vcf"
         
-        vcf_file = abook_dir / f"{contact_uid}.vcf"
-        if vcf_file.exists():
-            try:
-                with open(vcf_file, 'r', encoding='utf-8') as f:
-                    vcard_data = f.read()
-                return Response(content=vcard_data, media_type="text/vcard; charset=utf-8")
-            except Exception as e:
-                logger.error(f"Error reading contact file: {e}")
-                return Response(content="Error reading contact", status_code=500)
+        # Read file using proxy
+        vcard_data = proxy.read_file(filepath)
+        if vcard_data:
+            return Response(content=vcard_data, media_type="text/vcard; charset=utf-8")
+        else:
+            logger.warning(f"Contact file not found: {filepath}")
+            return Response(content="Not found", status_code=404)
     
     return Response(content="Not found", status_code=404)
 
 
 async def handle_put(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
-    """Handle PUT request (create/update contact)."""
+    """Handle PUT request (create/update contact). Uses storage proxy if configured."""
     from urllib.parse import unquote
+    from app.services.dav_storage_proxy import DAVStorageProxy
+    
     body = await request.body()
-    cardav_path = get_user_cardav_path(user, db)
+    
+    # Use storage proxy (will fallback to local if not configured)
+    proxy = DAVStorageProxy(db, user.username, 'cardav')
     
     try:
         vcard_data = body.decode('utf-8')
@@ -349,29 +393,33 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
             vcard.uid.value = contact_uid
             vcard_data = vcard.serialize()
         
-        # Determine addressbook directory
+        # Build filepath (with addressbook subdirectory if not 'contacts')
         if abook_name == 'contacts':
-            abook_dir = cardav_path  # Legacy: root directory
+            filepath = f"{contact_uid}.vcf"
         else:
-            abook_dir = cardav_path / abook_name
-            abook_dir.mkdir(parents=True, exist_ok=True)
+            filepath = f"{abook_name}/{contact_uid}.vcf"
         
-        # Save to file
-        vcf_file = abook_dir / f"{contact_uid}.vcf"
-        with open(vcf_file, 'w', encoding='utf-8') as f:
-            f.write(vcard_data)
+        # Save to file using proxy
+        success = proxy.write_file(filepath, vcard_data)
         
-        logger.info(f"Saved contact {contact_uid} for user {user.username} in addressbook {abook_name}")
-        return Response(content="", status_code=201)
+        if success:
+            logger.info(f"Saved contact {contact_uid} for user {user.username} in addressbook {abook_name}")
+            return Response(content="", status_code=201)
+        else:
+            logger.error(f"Failed to save contact {contact_uid}")
+            return Response(content="Error saving contact", status_code=500)
     except Exception as e:
         logger.error(f"Error saving contact: {e}")
         return Response(content=f"Error: {e}", status_code=500)
 
 
 async def handle_delete(path: str, user: User, db: Session) -> Response:
-    """Handle DELETE request."""
+    """Handle DELETE request. Uses storage proxy if configured."""
     from urllib.parse import unquote
-    cardav_path = get_user_cardav_path(user, db)
+    from app.services.dav_storage_proxy import DAVStorageProxy
+    
+    # Use storage proxy (will fallback to local if not configured)
+    proxy = DAVStorageProxy(db, user.username, 'cardav')
     
     # Extract addressbook name and contact UID from path
     match = re.search(r'/([^/]+)/([^/]+)\.vcf$', path)
@@ -379,21 +427,20 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
         abook_name = unquote(match.group(1))
         contact_uid = match.group(2)
         
-        # Determine addressbook directory
+        # Build filepath (with addressbook subdirectory if not 'contacts')
         if abook_name == 'contacts':
-            abook_dir = cardav_path  # Legacy: root directory
+            filepath = f"{contact_uid}.vcf"
         else:
-            abook_dir = cardav_path / abook_name
+            filepath = f"{abook_name}/{contact_uid}.vcf"
         
-        vcf_file = abook_dir / f"{contact_uid}.vcf"
-        if vcf_file.exists():
-            try:
-                vcf_file.unlink()
-                logger.info(f"Deleted contact {contact_uid} from addressbook {abook_name} for user {user.username}")
-                return Response(content="", status_code=204)
-            except Exception as e:
-                logger.error(f"Error deleting contact: {e}")
-                return Response(content="Error deleting", status_code=500)
+        # Delete file using proxy
+        success = proxy.delete_file(filepath)
+        if success:
+            logger.info(f"Deleted contact {contact_uid} from addressbook {abook_name} for user {user.username}")
+            return Response(content="", status_code=204)
+        else:
+            logger.warning(f"Contact file not found or failed to delete: {filepath}")
+            return Response(content="Not found", status_code=404)
     
     return Response(content="Not found", status_code=404)
 
@@ -484,6 +531,7 @@ def create_cardav_app() -> FastAPI:
             try:
                 credentials = base64.b64decode(auth_header[6:]).decode('utf-8')
                 username, password = credentials.split(':', 1)
+                logger.debug(f"[CardDAV] Parsed credentials - username: {username}, password length: {len(password)}")
             except Exception as e:
                 logger.warning(f"[CardDAV] Failed to parse credentials: {e}")
                 return Response(
@@ -492,15 +540,42 @@ def create_cardav_app() -> FastAPI:
                     headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
                 )
             
-            # Verify user
+            # Verify user - try exact match first, then try without domain
             user = db.query(User).filter(User.username == username).first()
-            if not user or not verify_password(password, user.password_hash):
-                logger.warning(f"[CardDAV] Invalid credentials for user: {username}")
+            if not user and '@' in username:
+                # Try without domain (some clients send just the username part)
+                username_part = username.split('@')[0]
+                user = db.query(User).filter(User.username.like(f"{username_part}@%")).first()
+                if user:
+                    logger.debug(f"[CardDAV] Matched user by username part: {username} -> {user.username}")
+            
+            if not user:
+                logger.warning(f"[CardDAV] User not found: {username}")
                 return Response(
                     content="Invalid credentials",
                     status_code=401,
                     headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
                 )
+            
+            # Verify password
+            try:
+                password_valid = verify_password(password, user.password_hash)
+                if not password_valid:
+                    logger.warning(f"[CardDAV] Invalid password for user: {user.username} (auth username: {username}, password chars: {len(password)})")
+                    return Response(
+                        content="Invalid credentials",
+                        status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                    )
+            except Exception as e:
+                logger.error(f"[CardDAV] Error verifying password: {e}")
+                return Response(
+                    content="Invalid credentials",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                )
+            
+            logger.debug(f"[CardDAV] Authenticated user: {user.username}")
             
             # Get depth header for PROPFIND
             depth = request.headers.get("Depth", "0")
@@ -541,12 +616,34 @@ def start_cardav_server(db: Session, port: int = 8082) -> bool:
     try:
         _cardav_app = create_cardav_app()
         
-        config = uvicorn.Config(
-            app=_cardav_app,
-            host="0.0.0.0",
-            port=port,
-            log_level="info"
-        )
+        # Check for SSL certificate settings
+        from app.models import Setting
+        ssl_cert_setting = db.query(Setting).filter(Setting.key == "cardav_ssl_cert").first()
+        ssl_key_setting = db.query(Setting).filter(Setting.key == "cardav_ssl_key").first()
+        
+        ssl_keyfile = ssl_key_setting.value if ssl_key_setting and ssl_key_setting.value else None
+        ssl_certfile = ssl_cert_setting.value if ssl_cert_setting and ssl_cert_setting.value else None
+        
+        config_kwargs = {
+            "app": _cardav_app,
+            "host": "0.0.0.0",
+            "port": port,
+            "log_level": "info"
+        }
+        
+        # Add SSL if certificates are configured
+        if ssl_certfile and ssl_keyfile:
+            from pathlib import Path
+            cert_path = Path(ssl_certfile)
+            key_path = Path(ssl_keyfile)
+            if cert_path.exists() and key_path.exists():
+                config_kwargs["ssl_keyfile"] = str(key_path)
+                config_kwargs["ssl_certfile"] = str(cert_path)
+                logger.info(f"[CardDAV] SSL enabled: cert={ssl_certfile}, key={ssl_keyfile}")
+            else:
+                logger.warning(f"[CardDAV] SSL certificates not found, starting without SSL")
+        
+        config = uvicorn.Config(**config_kwargs)
         _cardav_server = uvicorn.Server(config)
         
         def run_server():

@@ -1,0 +1,339 @@
+<!-- File Manager Full-Screen View -->
+<div class="modal" id="fileManagerOverlay" style="display: none;">
+    <div class="modal-content modal-fullscreen">
+        <div class="modal-header">
+            <h2>📁 File Manager</h2>
+            <div class="file-manager-header-actions">
+                <button class="btn-icon-only" id="fileManagerUploadBtn" title="Upload Files">📤</button>
+                <button class="btn-icon-only" id="fileManagerUploadDirBtn" title="Upload Directory">📁</button>
+                <button class="btn-icon-only" id="fileManagerNewFolderBtn" title="New Folder">📂</button>
+                <button class="btn-icon-only" id="fileManagerPictureViewerBtn" title="Photo Gallery">🖼️</button>
+            </div>
+            <button class="btn-icon modal-close" id="fileManagerCloseBtn">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 0; display: flex; flex-direction: column; overflow: hidden;">
+            <div class="file-manager-body" style="display: flex; flex: 1; overflow: hidden;">
+                <div class="file-manager-sidebar">
+                    <div class="file-manager-breadcrumb" id="fileManagerBreadcrumb">
+                        <button class="breadcrumb-item" data-path="">Home</button>
+                    </div>
+                    <div class="file-manager-storage" id="fileManagerStorage">
+                        <div class="storage-info">Loading storage info...</div>
+                    </div>
+                </div>
+                <div class="file-manager-content">
+                <div class="file-manager-toolbar">
+                    <div class="file-manager-tabs">
+                        <button class="tab-btn active" id="fileManagerFilesTab" data-tab="files">📁 Files</button>
+                        <button class="tab-btn" id="fileManagerSharesTab" data-tab="shares">🔗 Shared Files</button>
+                    </div>
+                    <div class="file-selection-controls" id="fileSelectionControls">
+                        <button class="btn-icon-only" id="fileManagerSelectAllBtn" title="Select All">✓</button>
+                        <button class="btn-icon-only" id="fileManagerSelectNoneBtn" title="Select None">✗</button>
+                        <button class="btn-icon-only btn-danger-icon" id="fileManagerDeleteBtn" title="Delete selected">🗑️</button>
+                        <button class="btn-icon-only" id="fileManagerMoveBtn" title="Move selected">📦</button>
+                        <span class="selection-count" id="fileSelectionCount">0</span>
+                    </div>
+                    <div class="file-manager-search">
+                        <input type="text" id="fileManagerSearchInput" class="file-search-input" placeholder="🔍 Search files..." autocomplete="off">
+                        <button class="btn-icon" id="fileManagerClearSearchBtn" title="Clear search" style="display: none;">✕</button>
+                    </div>
+                    <div class="file-toolbar-actions">
+                        <button class="btn-icon" id="fileManagerRefreshBtn" title="Refresh">🔄</button>
+                        <div class="file-view-toggle" id="fileViewToggle" style="display: none;">
+                            <button class="view-btn active" data-view="grid" title="Grid View">⊞</button>
+                            <button class="view-btn" data-view="list" title="List View">☰</button>
+                        </div>
+                    </div>
+                </div>
+                <!-- Mobile Upload Area -->
+                <div class="mobile-upload-area" id="mobileUploadArea" style="display: none;">
+                    <div class="mobile-upload-content">
+                        <div class="mobile-upload-icon">📤</div>
+                        <div class="mobile-upload-text">Tap to upload files</div>
+                        <div class="mobile-upload-options">
+                            <button class="mobile-upload-btn" id="mobileUploadFileBtn">📁 Files</button>
+                            <button class="mobile-upload-btn" id="mobileUploadCameraBtn">📷 Camera</button>
+                        </div>
+                    </div>
+                    <input type="file" id="mobileFileInput" multiple accept="*/*" style="display: none;">
+                    <input type="file" id="mobileCameraInput" accept="image/*" capture="environment" style="display: none;">
+                </div>
+                <div class="file-manager-grid" id="fileManagerGrid">
+                    <div class="file-manager-loading">Loading files...</div>
+                </div>
+                <div class="file-manager-shares" id="fileManagerShares" style="display: none;">
+                    <div class="file-manager-loading">Loading shared files...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Upload Monitor Panel -->
+<div class="upload-monitor-panel" id="uploadMonitorPanel" style="display: none;">
+    <div class="upload-monitor-header">
+        <h3>📤 Upload Monitor</h3>
+        <div class="upload-monitor-actions">
+            <button class="btn-icon" id="uploadMonitorMinimizeBtn" title="Minimize">−</button>
+            <button class="btn-icon" id="uploadMonitorCloseBtn" title="Close">×</button>
+        </div>
+    </div>
+    <div class="upload-monitor-body" id="uploadMonitorBody">
+        <div class="upload-monitor-summary" id="uploadMonitorSummary">
+            <div class="upload-summary-item">
+                <span class="summary-label">Total:</span>
+                <span class="summary-value" id="uploadTotalCount">0</span>
+            </div>
+            <div class="upload-summary-item">
+                <span class="summary-label">Uploading:</span>
+                <span class="summary-value" id="uploadActiveCount">0</span>
+            </div>
+            <div class="upload-summary-item">
+                <span class="summary-label">Completed:</span>
+                <span class="summary-value" id="uploadCompletedCount">0</span>
+            </div>
+            <div class="upload-summary-item">
+                <span class="summary-label">Failed:</span>
+                <span class="summary-value" id="uploadFailedCount">0</span>
+            </div>
+            <div class="upload-summary-item">
+                <span class="summary-label">Speed:</span>
+                <span class="summary-value" id="uploadSpeed">-</span>
+            </div>
+        </div>
+        <div class="upload-monitor-list" id="uploadMonitorList">
+            <div class="upload-monitor-empty">No uploads in progress</div>
+        </div>
+    </div>
+    <div class="upload-monitor-footer">
+        <button class="btn-secondary btn-small" id="uploadMonitorClearBtn" style="display: none;">Clear Completed</button>
+        <button class="btn-danger btn-small" id="uploadMonitorCancelAllBtn" style="display: none;">Cancel All</button>
+    </div>
+</div>
+
+<!-- Image Viewer Modal -->
+<div class="image-viewer-modal" id="imageViewerModal" style="display: none;">
+    <div class="image-viewer-container">
+        <button class="image-viewer-close" id="imageViewerClose">&times;</button>
+        <button class="image-viewer-nav image-viewer-prev" id="imageViewerPrev">‹</button>
+        <div class="image-viewer-content">
+            <img id="imageViewerImage" src="" alt="">
+            <div class="image-viewer-info" id="imageViewerInfo"></div>
+        </div>
+        <button class="image-viewer-nav image-viewer-next" id="imageViewerNext">›</button>
+    </div>
+</div>
+
+<!-- Email File Modal -->
+<div class="modal" id="fileEmailModal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>📧 Email File</h2>
+            <button class="btn-icon modal-close" onclick="document.getElementById('fileEmailModal').style.display='none'">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="emailFilePath">
+            <p><strong>File:</strong> <span id="emailFileName"></span></p>
+            <div class="form-group">
+                <label for="emailTo">To:</label>
+                <input type="text" id="emailTo" list="emailToAutocomplete" placeholder="Start typing email or name..." autocomplete="off" required>
+                <datalist id="emailToAutocomplete"></datalist>
+                <small>Type to see suggestions from your contacts</small>
+            </div>
+            <div class="form-group">
+                <label for="emailSubject">Subject:</label>
+                <input type="text" id="emailSubject" placeholder="Shared file">
+            </div>
+            <div class="form-group">
+                <label for="emailBody">Message:</label>
+                <textarea id="emailBody" rows="4" placeholder="Please find the attached file."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="document.getElementById('fileEmailModal').style.display='none'">Cancel</button>
+            <button class="btn-primary" id="sendEmailBtn">Send Email</button>
+        </div>
+    </div>
+</div>
+
+<!-- Share File Modal -->
+<div class="modal" id="fileShareModal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>🔗 Share File</h2>
+            <button class="btn-icon modal-close" onclick="document.getElementById('fileShareModal').style.display='none'">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="shareFilePath">
+            <p><strong>File:</strong> <span id="shareFileName"></span></p>
+            <div class="form-group">
+                <label for="shareExpiresHours">Expires in (hours, optional):</label>
+                <input type="number" id="shareExpiresHours" placeholder="24" min="1">
+                <small>Leave empty for no expiration</small>
+            </div>
+            <div class="form-group">
+                <label for="shareMaxAccesses">Max accesses (optional):</label>
+                <input type="number" id="shareMaxAccesses" placeholder="10" min="1">
+                <small>Leave empty for unlimited</small>
+            </div>
+            <div class="form-group" id="shareUrlDisplay" style="display: none;">
+                <label for="shareUrl">Share URL:</label>
+                <input type="text" id="shareUrl" readonly>
+                <button class="btn-secondary" onclick="
+                    document.getElementById('shareUrl').select();
+                    document.execCommand('copy');
+                    alert('Copied to clipboard!');
+                ">Copy</button>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="document.getElementById('fileShareModal').style.display='none'">Close</button>
+            <button class="btn-primary" onclick="fileManager.createShare()">Create Share Link</button>
+        </div>
+    </div>
+</div>
+
+<!-- Move Files Modal -->
+<div class="modal" id="fileMoveModal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>📦 Move Files</h2>
+            <button class="btn-icon modal-close" onclick="document.getElementById('fileMoveModal').style.display='none'">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p><strong>Selected items:</strong> <span id="moveFileCount">0</span></p>
+            <div class="form-group">
+                <label for="moveDestination">Destination folder:</label>
+                <input type="text" id="moveDestination" placeholder="Enter folder path (e.g., 'Documents' or 'Photos/Vacation')" required>
+                <small>Leave empty for root directory</small>
+            </div>
+            <div class="form-group">
+                <label>Or browse:</label>
+                <div id="moveDestinationBrowser" class="folder-browser">
+                    <button type="button" class="btn-secondary" onclick="fileManager.browseMoveDestination('')">Home</button>
+                    <div id="moveDestinationFolders" class="folder-list"></div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="document.getElementById('fileMoveModal').style.display='none'">Cancel</button>
+            <button class="btn-primary" onclick="fileManager.executeMove()">Move Files</button>
+        </div>
+    </div>
+</div>
+
+<!-- File Context Menu -->
+<div class="file-context-menu" id="fileContextMenu" style="display: none;">
+    <div class="context-menu-item" onclick="fileManager.contextMenuAction('delete')">
+        <span class="context-menu-icon">🗑️</span>
+        <span>Delete</span>
+    </div>
+    <div class="context-menu-item" onclick="fileManager.contextMenuAction('email')">
+        <span class="context-menu-icon">📧</span>
+        <span>Email</span>
+    </div>
+    <div class="context-menu-item" onclick="fileManager.contextMenuAction('share')">
+        <span class="context-menu-icon">🔗</span>
+        <span>Share / Get Public URL</span>
+    </div>
+    <div class="context-menu-item" onclick="fileManager.contextMenuAction('preview')">
+        <span class="context-menu-icon">👁️</span>
+        <span>Preview URL</span>
+    </div>
+</div>
+
+<!-- Cyberpunk Picture Viewer -->
+<div class="cyberpunk-picture-viewer" id="cyberpunkPictureViewer" style="display: none;">
+    <div class="cyberpunk-viewer-overlay"></div>
+    <div class="cyberpunk-viewer-container">
+        <div class="cyberpunk-viewer-header">
+            <div class="cyberpunk-header-left">
+                <div class="cyberpunk-title">
+                    <span class="cyberpunk-title-text">[IMAGE_GALLERY.exe]</span>
+                    <span class="cyberpunk-title-subtitle" id="pictureViewerCount">Loading...</span>
+                </div>
+            </div>
+            <div class="cyberpunk-header-right">
+                <button class="cyberpunk-btn cyberpunk-btn-secondary" id="pictureViewerRefreshBtn" title="Refresh">
+                    <span class="cyberpunk-icon">⟳</span>
+                </button>
+                <button class="cyberpunk-btn cyberpunk-btn-close" id="pictureViewerCloseBtn" title="Close">
+                    <span class="cyberpunk-icon">✕</span>
+                </button>
+            </div>
+        </div>
+        <div class="cyberpunk-viewer-body">
+            <div class="cyberpunk-gallery-grid" id="cyberpunkGalleryGrid">
+                <div class="cyberpunk-loading">
+                    <div class="cyberpunk-scanline"></div>
+                    <div class="cyberpunk-loading-text">[SCANNING_STORAGE...]</div>
+                </div>
+            </div>
+        </div>
+        <div class="cyberpunk-viewer-footer">
+            <div class="cyberpunk-footer-info">
+                <span id="pictureViewerInfo">Ready</span>
+            </div>
+            <button class="cyberpunk-btn cyberpunk-btn-primary" id="pictureViewerLoadMoreBtn" style="display: none;">
+                <span class="cyberpunk-icon">↓</span> Load More
+            </button>
+        </div>
+    </div>
+    
+    <!-- Fullscreen Image Viewer -->
+    <div class="cyberpunk-fullscreen-viewer" id="cyberpunkFullscreenViewer" style="display: none;">
+        <div class="cyberpunk-fullscreen-overlay"></div>
+        <button class="cyberpunk-fullscreen-close" id="cyberpunkFullscreenClose">✕</button>
+        <button class="cyberpunk-fullscreen-download" id="cyberpunkFullscreenDownload" title="Download Original">⬇</button>
+        <button class="cyberpunk-fullscreen-nav cyberpunk-fullscreen-prev" id="cyberpunkFullscreenPrev">‹</button>
+        <div class="cyberpunk-fullscreen-content">
+            <img id="cyberpunkFullscreenImage" src="" alt="">
+            <video id="cyberpunkFullscreenVideo" class="cyberpunk-fullscreen-media" controls style="display: none;"></video>
+            <div class="cyberpunk-fullscreen-info" id="cyberpunkFullscreenInfo"></div>
+        </div>
+        <button class="cyberpunk-fullscreen-nav cyberpunk-fullscreen-next" id="cyberpunkFullscreenNext">›</button>
+    </div>
+</div>
+
+<!-- Audio Player Modal -->
+<div class="modal cyberpunk-audio-player-modal" id="audioPlayerModal" style="display: none;">
+    <div class="modal-content cyberpunk-audio-player-content">
+        <div class="modal-header">
+            <h2>🎵 Audio Player</h2>
+            <button class="btn-icon modal-close" onclick="if(window.fileManager){window.fileManager.closeAudioPlayer();}">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 20px; text-align: center;">
+            <div class="cyberpunk-audio-info" id="audioPlayerTitle" style="color: #00ffff; font-size: 18px; margin-bottom: 20px; font-family: monospace;">
+                Loading...
+            </div>
+            <audio id="audioPlayer" controls style="width: 100%; max-width: 600px; outline: none;">
+                Your browser does not support the audio element.
+            </audio>
+            <div style="margin-top: 20px; color: #00ff88; font-size: 12px; font-family: monospace;">
+                Use controls to play, pause, and seek
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Video Player Modal -->
+<div class="modal cyberpunk-video-player-modal" id="videoPlayerModal" style="display: none;">
+    <div class="modal-content cyberpunk-video-player-content">
+        <div class="modal-header">
+            <h2>🎬 Video Player</h2>
+            <button class="btn-icon modal-close" onclick="if(window.fileManager){window.fileManager.closeVideoPlayer();}">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 20px; text-align: center;">
+            <div class="cyberpunk-video-info" id="videoPlayerTitle" style="color: #00ffff; font-size: 18px; margin-bottom: 20px; font-family: monospace;">
+                Loading...
+            </div>
+            <video id="videoPlayer" controls style="width: 100%; max-width: 900px; max-height: 70vh; outline: none;">
+                Your browser does not support the video element.
+            </video>
+            <div style="margin-top: 20px; color: #00ff88; font-size: 12px; font-family: monospace;">
+                Use controls to play, pause, and seek
+            </div>
+        </div>
+    </div>
+</div>

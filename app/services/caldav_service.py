@@ -32,10 +32,10 @@ _caldav_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="caldav_
 
 
 def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
-    """Save event directly to built-in CalDAV storage (bypasses network)."""
+    """Save event directly to built-in CalDAV storage (uses storage proxy if configured)."""
     try:
         from app.models import User
-        from app.services.caldav_server import get_user_caldav_path
+        from app.services.dav_storage_proxy import DAVStorageProxy
         from icalendar import Calendar as ICalendar
         import uuid
         
@@ -43,8 +43,8 @@ def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
         if not user:
             return False
         
-        caldav_path = get_user_caldav_path(user, db)
-        caldav_path.mkdir(parents=True, exist_ok=True)
+        # Use storage proxy (will fallback to local if not configured)
+        proxy = DAVStorageProxy(db, user.username, 'caldav')
         
         # Parse iCalendar to extract UID
         cal = ICalendar.from_ical(ical_data.encode('utf-8'))
@@ -57,23 +57,23 @@ def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
         if not event_uid:
             event_uid = str(uuid.uuid4())
         
-        # Save to file
-        ics_file = caldav_path / f"{event_uid}.ics"
-        with open(ics_file, 'w', encoding='utf-8') as f:
-            f.write(ical_data)
+        # Save to file using proxy
+        filepath = f"{event_uid}.ics"
+        success = proxy.write_file(filepath, ical_data)
         
-        logger.info(f"Saved event to built-in storage: {ics_file}")
-        return True
+        if success:
+            logger.info(f"Saved event to built-in storage: {filepath}")
+        return success
     except Exception as e:
         logger.error(f"Error saving event to built-in storage: {e}")
         return False
 
 
 def _save_contact_to_builtin(user_id: int, db: Session, vcard_data: str) -> bool:
-    """Save contact directly to built-in CardDAV storage (bypasses network)."""
+    """Save contact directly to built-in CardDAV storage (uses storage proxy if configured)."""
     try:
         from app.models import User
-        from app.services.cardav_server import get_user_cardav_path
+        from app.services.dav_storage_proxy import DAVStorageProxy
         import vobject
         import uuid
         
@@ -81,8 +81,8 @@ def _save_contact_to_builtin(user_id: int, db: Session, vcard_data: str) -> bool
         if not user:
             return False
         
-        cardav_path = get_user_cardav_path(user, db)
-        cardav_path.mkdir(parents=True, exist_ok=True)
+        # Use storage proxy (will fallback to local if not configured)
+        proxy = DAVStorageProxy(db, user.username, 'cardav')
         
         # Parse vCard to extract UID
         try:
@@ -91,39 +91,44 @@ def _save_contact_to_builtin(user_id: int, db: Session, vcard_data: str) -> bool
         except:
             contact_uid = str(uuid.uuid4())
         
-        # Save to file
-        vcf_file = cardav_path / f"{contact_uid}.vcf"
-        with open(vcf_file, 'w', encoding='utf-8') as f:
-            f.write(vcard_data)
+        # Save to file using proxy
+        filepath = f"{contact_uid}.vcf"
+        success = proxy.write_file(filepath, vcard_data)
         
-        logger.info(f"Saved contact to built-in storage: {vcf_file}")
-        return True
+        if success:
+            logger.info(f"Saved contact to built-in storage: {filepath}")
+        return success
     except Exception as e:
         logger.error(f"Error saving contact to built-in storage: {e}")
         return False
 
 
 def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: dict) -> bool:
-    """Edit contact directly in built-in CardDAV storage (bypasses network)."""
+    """Edit contact directly in built-in CardDAV storage (uses storage proxy if configured)."""
     try:
         from app.models import User
-        from app.services.cardav_server import get_user_cardav_path
+        from app.services.dav_storage_proxy import DAVStorageProxy
         import vobject
         
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return False
         
-        cardav_path = get_user_cardav_path(user, db)
-        vcf_file = cardav_path / f"{contact_uid}.vcf"
+        # Use storage proxy (will fallback to local if not configured)
+        proxy = DAVStorageProxy(db, user.username, 'cardav')
         
-        if not vcf_file.exists():
-            logger.warning(f"Contact file not found: {vcf_file}")
+        filepath = f"{contact_uid}.vcf"
+        
+        # Check if file exists
+        if not proxy.file_exists(filepath):
+            logger.warning(f"Contact file not found: {filepath}")
             return False
         
         # Read and parse existing contact
-        with open(vcf_file, 'r', encoding='utf-8') as f:
-            vcard_data = f.read()
+        vcard_data = proxy.read_file(filepath)
+        if not vcard_data:
+            logger.warning(f"Failed to read contact file: {filepath}")
+            return False
         
         vcard = vobject.readOne(vcard_data)
         
@@ -167,37 +172,39 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
                 vcard.add('note')
                 vcard.note.value = updates['note']
         
-        # Save updated contact
-        with open(vcf_file, 'w', encoding='utf-8') as f:
-            f.write(vcard.serialize())
+        # Save updated contact using proxy
+        success = proxy.write_file(filepath, vcard.serialize())
         
-        logger.info(f"Updated contact {contact_uid} in built-in storage")
-        return True
+        if success:
+            logger.info(f"Updated contact {contact_uid} in built-in storage")
+        return success
     except Exception as e:
         logger.error(f"Error editing contact in built-in storage: {e}")
         return False
 
 
 def _delete_contact_builtin(user_id: int, db: Session, contact_uid: str) -> bool:
-    """Delete contact directly from built-in CardDAV storage (bypasses network)."""
+    """Delete contact directly from built-in CardDAV storage (uses storage proxy if configured)."""
     try:
         from app.models import User
-        from app.services.cardav_server import get_user_cardav_path
+        from app.services.dav_storage_proxy import DAVStorageProxy
         
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return False
         
-        cardav_path = get_user_cardav_path(user, db)
-        vcf_file = cardav_path / f"{contact_uid}.vcf"
+        # Use storage proxy (will fallback to local if not configured)
+        proxy = DAVStorageProxy(db, user.username, 'cardav')
         
-        if vcf_file.exists():
-            vcf_file.unlink()
+        filepath = f"{contact_uid}.vcf"
+        success = proxy.delete_file(filepath)
+        
+        if success:
             logger.info(f"Deleted contact {contact_uid} from built-in storage")
-            return True
         else:
-            logger.warning(f"Contact file not found: {vcf_file}")
-            return False
+            logger.warning(f"Contact file not found or failed to delete: {filepath}")
+        
+        return success
     except Exception as e:
         logger.error(f"Error deleting contact from built-in storage: {e}")
         return False
@@ -1985,26 +1992,28 @@ def delete_todo_from_calendar(
         db: Optional database session for built-in mode
     """
     try:
-        # Check if using built-in server (direct file delete)
+        # Check if using built-in server (uses storage proxy if configured)
         if password == "__USE_SESSION_AUTH__" and user_id and db:
-            logger.info(f"Using built-in CalDAV storage (direct file delete) for todo {todo_uid}")
+            logger.info(f"Using built-in CalDAV storage (delete via proxy) for todo {todo_uid}")
             
             from app.models import User
-            from app.services.caldav_server import get_user_caldav_path
+            from app.services.dav_storage_proxy import DAVStorageProxy
             
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 return False
             
-            caldav_path = get_user_caldav_path(user, db)
-            ics_file = caldav_path / f"{todo_uid}.ics"
+            # Use storage proxy (will fallback to local if not configured)
+            proxy = DAVStorageProxy(db, user.username, 'caldav')
             
-            if ics_file.exists():
-                ics_file.unlink()
+            filepath = f"{todo_uid}.ics"
+            success = proxy.delete_file(filepath)
+            
+            if success:
                 logger.info(f"Deleted todo {todo_uid} from built-in storage")
                 return True
             else:
-                logger.warning(f"Todo file not found: {ics_file}")
+                logger.warning(f"Todo file not found or failed to delete: {filepath}")
                 return False
         
         # Otherwise use CalDAV protocol (for external servers)
@@ -2058,26 +2067,28 @@ def delete_event_from_calendar(
         db: Optional database session for built-in mode
     """
     try:
-        # Check if using built-in server (direct file delete)
+        # Check if using built-in server (uses storage proxy if configured)
         if password == "__USE_SESSION_AUTH__" and user_id and db:
-            logger.info(f"Using built-in CalDAV storage (direct file delete) for event {event_uid}")
+            logger.info(f"Using built-in CalDAV storage (delete via proxy) for event {event_uid}")
             
             from app.models import User
-            from app.services.caldav_server import get_user_caldav_path
+            from app.services.dav_storage_proxy import DAVStorageProxy
             
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 return False
             
-            caldav_path = get_user_caldav_path(user, db)
-            ics_file = caldav_path / f"{event_uid}.ics"
+            # Use storage proxy (will fallback to local if not configured)
+            proxy = DAVStorageProxy(db, user.username, 'caldav')
             
-            if ics_file.exists():
-                ics_file.unlink()
+            filepath = f"{event_uid}.ics"
+            success = proxy.delete_file(filepath)
+            
+            if success:
                 logger.info(f"Deleted event {event_uid} from built-in storage")
                 return True
             else:
-                logger.warning(f"Event file not found: {ics_file}")
+                logger.warning(f"Event file not found or failed to delete: {filepath}")
                 return False
         
         # Otherwise use CalDAV protocol (for external servers)

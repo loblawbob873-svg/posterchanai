@@ -1,0 +1,26 @@
+# Bot RSS Feeds Configuration
+# This file defines RSS feeds for each bot account
+# Format: BOT_FEEDS = {username: [{"url": "...", "name": "..."}, ...]}
+
+BOT_FEEDS = {
+    'news_rss': [
+        {'url': 'https://example.com/news/feed.xml', 'name': 'News Feed'},
+        # Add more feeds for news_rss here
+    ],
+    'anime_rss': [
+        {'url': 'https://example.com/anime/feed.xml', 'name': 'Anime Feed'},
+        # Add more feeds for anime_rss here
+    ],
+    'jeet_rss': [
+        # Add feeds for jeet_rss here
+    ],
+    'tonesha_rss': [
+        # Add feeds for tonesha_rss here
+    ],
+    'judge_rss': [
+        # Add feeds for judge_rss here
+    ],
+    'candy_rss': [
+        # Add feeds for candy_rss here
+    ],
+}

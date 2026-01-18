@@ -387,9 +387,12 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
 
 
 async def handle_get(path: str, user: User, db: Session) -> Response:
-    """Handle GET request (retrieve calendar/event)."""
+    """Handle GET request (retrieve calendar/event). Uses storage proxy if configured."""
     from urllib.parse import unquote
-    caldav_path = get_user_caldav_path(user, db)
+    from app.services.dav_storage_proxy import DAVStorageProxy
+    
+    # Use storage proxy (will fallback to local if not configured)
+    proxy = DAVStorageProxy(db, user.username, 'caldav')
     
     # Extract calendar name and event UID from path
     match = re.search(r'/([^/]+)/([^/]+)\.ics$', path)
@@ -397,30 +400,32 @@ async def handle_get(path: str, user: User, db: Session) -> Response:
         cal_name = unquote(match.group(1))
         event_uid = match.group(2)
         
-        # Determine calendar directory
+        # Build filepath (with calendar subdirectory if not 'calendar')
         if cal_name == 'calendar':
-            cal_dir = caldav_path  # Legacy: root directory
+            filepath = f"{event_uid}.ics"
         else:
-            cal_dir = caldav_path / cal_name
+            filepath = f"{cal_name}/{event_uid}.ics"
         
-        ics_file = cal_dir / f"{event_uid}.ics"
-        if ics_file.exists():
-            try:
-                with open(ics_file, 'r', encoding='utf-8') as f:
-                    ical_data = f.read()
-                return Response(content=ical_data, media_type="text/calendar; charset=utf-8")
-            except Exception as e:
-                logger.error(f"Error reading event file: {e}")
-                return Response(content="Error reading event", status_code=500)
+        # Read file using proxy
+        ical_data = proxy.read_file(filepath)
+        if ical_data:
+            return Response(content=ical_data, media_type="text/calendar; charset=utf-8")
+        else:
+            logger.warning(f"Event file not found: {filepath}")
+            return Response(content="Not found", status_code=404)
     
     return Response(content="Not found", status_code=404)
 
 
 async def handle_put(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
-    """Handle PUT request (create/update event)."""
+    """Handle PUT request (create/update event). Uses storage proxy if configured."""
     from urllib.parse import unquote
+    from app.services.dav_storage_proxy import DAVStorageProxy
+    
     body = await request.body()
-    caldav_path = get_user_caldav_path(user, db)
+    
+    # Use storage proxy (will fallback to local if not configured)
+    proxy = DAVStorageProxy(db, user.username, 'caldav')
     
     try:
         ical_data = body.decode('utf-8')
@@ -451,20 +456,21 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
                         component.add('uid', event_uid)
             ical_data = cal.to_ical().decode('utf-8')
         
-        # Determine calendar directory
+        # Build filepath (with calendar subdirectory if not 'calendar')
         if cal_name == 'calendar':
-            cal_dir = caldav_path  # Legacy: root directory
+            filepath = f"{event_uid}.ics"
         else:
-            cal_dir = caldav_path / cal_name
-            cal_dir.mkdir(parents=True, exist_ok=True)
+            filepath = f"{cal_name}/{event_uid}.ics"
         
-        # Save to file
-        ics_file = cal_dir / f"{event_uid}.ics"
-        with open(ics_file, 'w', encoding='utf-8') as f:
-            f.write(ical_data)
+        # Save to file using proxy
+        success = proxy.write_file(filepath, ical_data)
         
-        logger.info(f"Saved event/todo {event_uid} for user {user.username} in calendar {cal_name}")
-        return Response(content="", status_code=201)
+        if success:
+            logger.info(f"Saved event/todo {event_uid} for user {user.username} in calendar {cal_name}")
+            return Response(content="", status_code=201)
+        else:
+            logger.error(f"Failed to save event {event_uid}")
+            return Response(content="Error saving event", status_code=500)
     except Exception as e:
         logger.error(f"Error saving event: {e}")
         return Response(content=f"Error: {e}", status_code=500)
@@ -487,15 +493,24 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
         else:
             cal_dir = caldav_path / cal_name
         
-        ics_file = cal_dir / f"{event_uid}.ics"
-        if ics_file.exists():
-            try:
-                ics_file.unlink()
-                logger.info(f"Deleted event {event_uid} from calendar {cal_name} for user {user.username}")
-                return Response(content="", status_code=204)
-            except Exception as e:
-                logger.error(f"Error deleting event: {e}")
-                return Response(content="Error deleting", status_code=500)
+        # Build filepath (with calendar subdirectory if not 'calendar')
+        if cal_name == 'calendar':
+            filepath = f"{event_uid}.ics"
+        else:
+            filepath = f"{cal_name}/{event_uid}.ics"
+        
+        # Use storage proxy (will fallback to local if not configured)
+        from app.services.dav_storage_proxy import DAVStorageProxy
+        proxy = DAVStorageProxy(db, user.username, 'caldav')
+        
+        # Delete file using proxy
+        success = proxy.delete_file(filepath)
+        if success:
+            logger.info(f"Deleted event {event_uid} from calendar {cal_name} for user {user.username}")
+            return Response(content="", status_code=204)
+        else:
+            logger.warning(f"Event file not found or failed to delete: {filepath}")
+            return Response(content="Not found", status_code=404)
     
     return Response(content="Not found", status_code=404)
 
@@ -574,14 +589,33 @@ def create_caldav_app() -> FastAPI:
                 headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
             )
         
-        # Verify user
+        # Verify user - try exact match first, then try without domain
         user = db.query(User).filter(User.username == username).first()
-        if not user or not verify_password(password, user.password_hash):
+        if not user and '@' in username:
+            # Try without domain (some clients send just the username part)
+            username_part = username.split('@')[0]
+            user = db.query(User).filter(User.username.like(f"{username_part}@%")).first()
+            if user:
+                logger.debug(f"[CalDAV] Matched user by username part: {username} -> {user.username}")
+        
+        if not user:
+            logger.warning(f"[CalDAV] User not found: {username}")
             return Response(
                 content="Invalid credentials",
                 status_code=401,
                 headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
             )
+        
+        # Verify password
+        if not verify_password(password, user.password_hash):
+            logger.warning(f"[CalDAV] Invalid password for user: {user.username} (auth username: {username})")
+            return Response(
+                content="Invalid credentials",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+            )
+        
+        logger.debug(f"[CalDAV] Authenticated user: {user.username}")
         
         # Get depth header for PROPFIND
         depth = request.headers.get("Depth", "0")
@@ -620,12 +654,34 @@ def start_caldav_server(db: Session, port: int = 8081) -> bool:
     try:
         _caldav_app = create_caldav_app()
         
-        config = uvicorn.Config(
-            app=_caldav_app,
-            host="0.0.0.0",
-            port=port,
-            log_level="info"
-        )
+        # Check for SSL certificate settings
+        from app.models import Setting
+        ssl_cert_setting = db.query(Setting).filter(Setting.key == "caldav_ssl_cert").first()
+        ssl_key_setting = db.query(Setting).filter(Setting.key == "caldav_ssl_key").first()
+        
+        ssl_keyfile = ssl_key_setting.value if ssl_key_setting and ssl_key_setting.value else None
+        ssl_certfile = ssl_cert_setting.value if ssl_cert_setting and ssl_cert_setting.value else None
+        
+        config_kwargs = {
+            "app": _caldav_app,
+            "host": "0.0.0.0",
+            "port": port,
+            "log_level": "info"
+        }
+        
+        # Add SSL if certificates are configured
+        if ssl_certfile and ssl_keyfile:
+            from pathlib import Path
+            cert_path = Path(ssl_certfile)
+            key_path = Path(ssl_keyfile)
+            if cert_path.exists() and key_path.exists():
+                config_kwargs["ssl_keyfile"] = str(key_path)
+                config_kwargs["ssl_certfile"] = str(cert_path)
+                logger.info(f"[CalDAV] SSL enabled: cert={ssl_certfile}, key={ssl_keyfile}")
+            else:
+                logger.warning(f"[CalDAV] SSL certificates not found, starting without SSL")
+        
+        config = uvicorn.Config(**config_kwargs)
         _caldav_server = uvicorn.Server(config)
         
         def run_server():
