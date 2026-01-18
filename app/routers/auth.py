@@ -1187,7 +1187,7 @@ async def import_from_radicale(
     except ImportError:
         raise HTTPException(status_code=500, detail="caldav library not installed. Install with: pip install caldav")
     
-    from app.services.caldav_server import get_user_caldav_path
+    from app.services.dav_storage_proxy import DAVStorageProxy
     from icalendar import Calendar as ICalendar
     import asyncio
     
@@ -1208,8 +1208,8 @@ async def import_from_radicale(
         imported_count = 0
         error_count = 0
         
-        # Get user's CalDAV path
-        caldav_path = get_user_caldav_path(current_user, db)
+        # Use storage proxy (will fallback to local if not configured)
+        proxy = DAVStorageProxy(db, current_user.username, 'caldav')
         
         # Import each calendar into its own subdirectory
         calendar_names = []
@@ -1229,9 +1229,7 @@ async def import_from_radicale(
                 if not cal_name:
                     cal_name = "default"
                 
-                # Create subdirectory for this calendar
-                cal_dir = caldav_path / cal_name
-                cal_dir.mkdir(parents=True, exist_ok=True)
+                # Calendar subdirectory path
                 calendar_names.append(cal_name)
                 
                 logger.info(f"Importing calendar '{cal_name}' from Radicale")
@@ -1259,10 +1257,17 @@ async def import_from_radicale(
                             import uuid
                             event_uid = str(uuid.uuid4())
                         
-                        # Save to calendar's subdirectory
-                        ics_file = cal_dir / f"{event_uid}.ics"
-                        with open(ics_file, 'wb') as f:
-                            f.write(ical_data)
+                        # Save to calendar's subdirectory using proxy
+                        filepath = f"{cal_name}/{event_uid}.ics"
+                        # Convert bytes to string if needed
+                        if isinstance(ical_data, bytes):
+                            ical_data = ical_data.decode('utf-8')
+                        success = proxy.write_file(filepath, ical_data)
+                        
+                        if not success:
+                            logger.warning(f"Failed to save event {event_uid} to calendar {cal_name}")
+                            error_count += 1
+                            continue
                         
                         imported_count += 1
                     except Exception as e:
@@ -1291,15 +1296,15 @@ async def export_calendar(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Export all calendar events as a single iCalendar (.ics) file."""
-    from app.services.caldav_server import get_user_caldav_path
+    """Export all calendar events as a single iCalendar (.ics) file. Uses storage proxy if configured."""
+    from app.services.dav_storage_proxy import DAVStorageProxy
     from icalendar import Calendar as ICalendar
     from fastapi.responses import Response
     import asyncio
     
     try:
-        # Get user's CalDAV path
-        caldav_path = get_user_caldav_path(current_user, db)
+        # Use storage proxy (will fallback to local if not configured)
+        proxy = DAVStorageProxy(db, current_user.username, 'caldav')
         
         # Create a new calendar
         combined_calendar = ICalendar()
@@ -1308,22 +1313,41 @@ async def export_calendar(
         combined_calendar.add('calscale', 'GREGORIAN')
         combined_calendar.add('method', 'PUBLISH')
         
-        # Read all .ics files
+        # Read all .ics files from all calendar directories
         event_count = 0
-        for ics_file in caldav_path.glob("*.ics"):
-            try:
-                with open(ics_file, 'r', encoding='utf-8') as f:
-                    ical_data = f.read()
+        
+        def collect_events(subpath: str = ""):
+            """Recursively collect events from calendar directories."""
+            nonlocal event_count
+            items = proxy.list_files(subpath)
+            
+            for item in items:
+                name = item.get('name', '')
+                item_type = item.get('type', 'file')
                 
-                # Parse and add components to combined calendar
-                cal = ICalendar.from_ical(ical_data.encode('utf-8'))
-                for component in cal.walk():
-                    if component.name in ("VEVENT", "VTODO", "VJOURNAL"):
-                        combined_calendar.add_component(component)
-                        event_count += 1
-            except Exception as e:
-                logger.warning(f"Error reading {ics_file}: {e}")
-                continue
+                if item_type == 'directory':
+                    # Recursively process subdirectories (calendar subdirectories)
+                    new_subpath = f"{subpath}/{name}" if subpath else name
+                    collect_events(new_subpath)
+                elif name.endswith('.ics'):
+                    # Read and process .ics file
+                    try:
+                        filepath = f"{subpath}/{name}" if subpath else name
+                        ical_data = proxy.read_file(filepath)
+                        
+                        if ical_data:
+                            # Parse and add components to combined calendar
+                            cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+                            for component in cal.walk():
+                                if component.name in ("VEVENT", "VTODO", "VJOURNAL"):
+                                    combined_calendar.add_component(component)
+                                    event_count += 1
+                    except Exception as e:
+                        logger.warning(f"Error reading {filepath}: {e}")
+                        continue
+        
+        # Start collecting from root
+        collect_events()
         
         # Generate .ics file content
         ics_content = combined_calendar.to_ical().decode('utf-8')
