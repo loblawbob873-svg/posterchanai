@@ -34,14 +34,38 @@ CALDAV_OPERATION_TIMEOUT = 10  # Timeout for individual operations
 # Thread pool for running blocking CalDAV operations with timeout
 _caldav_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="caldav_worker")
 
-# Forward reference for type hints
-if TYPE_CHECKING:
-    from typing import List as ListType
-else:
-    ListType = list
+
+# Define dataclasses before functions that use them
+@dataclass
+class CalendarEvent:
+    """Represents a calendar event."""
+    uid: str
+    summary: str
+    description: Optional[str]
+    start: datetime
+    end: Optional[datetime]
+    location: Optional[str]
+    calendar_name: str
+    rrule: Optional[str] = None
 
 
-def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datetime, calendar_name: str, db: Session) -> "List[CalendarEvent]":
+@dataclass
+class Contact:
+    """Represents a contact."""
+    uid: str
+    name: str
+    emails: List[str]  # Multiple email addresses
+    phone: Optional[str]
+    organization: Optional[str]
+    note: Optional[str]
+
+    @property
+    def email(self) -> Optional[str]:
+        """Backwards compatibility - return first email."""
+        return self.emails[0] if self.emails else None
+
+
+def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datetime, calendar_name: str, db: Session) -> List[CalendarEvent]:
     """Get events directly from built-in CalDAV storage using storage proxy."""
     try:
         from app.models import User
@@ -81,7 +105,7 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
         return []
 
 
-def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end_date: datetime, calendar_name: str) -> List[CalendarEvent]:
+def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end_date: datetime, calendar_name: str) -> "List[CalendarEvent]":
     """Helper function to get events from a specific calendar directory."""
     from icalendar import Calendar as ICalendar
     
