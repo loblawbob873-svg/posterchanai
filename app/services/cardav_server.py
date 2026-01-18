@@ -100,12 +100,16 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         path = path[len(encoded_username):].lstrip('/')
     
     # Root addressbook home - container for addressbooks
+    # When path is empty, this is the root /carddav/ endpoint
+    # iPhone expects this to return the principal URL
     if not path or path == '':
+        # Return the principal URL (user's addressbook home)
         items.append({
             "href": f"{base_url}/",
             "props": {
                 "resourcetype": "collection",
-                "displayname": f"{user.username}'s Addressbooks"
+                "displayname": f"{user.username}'s Addressbooks",
+                "current-user-principal": f"{base_url}/"  # Add principal URL for iPhone
             }
         })
         
@@ -508,6 +512,12 @@ def create_cardav_app() -> FastAPI:
                 "Cache-Control": "no-cache"
             }
         )
+    
+    @app.api_route("/carddav/", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL", "OPTIONS"])
+    async def carddav_root_handler(request: StarletteRequest):
+        """Handle CardDAV root requests (/carddav/)."""
+        # Delegate to the main handler with empty path
+        return await carddav_handler(request)
     
     @app.api_route("/carddav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL", "OPTIONS"])
     async def carddav_handler(request: StarletteRequest):
