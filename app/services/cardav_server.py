@@ -19,7 +19,7 @@ import re
 from app.models import User
 from app.services.storage_service import get_storage_service
 from app.auth import verify_password
-from app.database import get_db
+from app.database import get_db, SessionLocal
 import vobject
 
 logger = logging.getLogger(__name__)
