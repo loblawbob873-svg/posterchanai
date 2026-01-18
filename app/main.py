@@ -300,6 +300,83 @@ async def principals_propfind(request: Request, db: Session = Depends(get_db)):
 </D:multistatus>'''
     return Response(content=xml, media_type="application/xml", status_code=207)
 
+# Handle PROPFIND for specific principal paths
+@app.api_route("/principals/{username}/", methods=["PROPFIND"])
+async def principals_user_propfind(request: Request, username: str, db: Session = Depends(get_db)):
+    """Handle PROPFIND on /principals/{username}/ - return user principal info."""
+    # CalDAV clients use Basic Auth
+    import base64
+    from app.auth import verify_password
+    from urllib.parse import unquote
+    
+    # Decode URL-encoded username (e.g., verita84%40poster.place -> verita84@poster.place)
+    username = unquote(username)
+    
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Basic "):
+        return Response(
+            content="Unauthorized",
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+        )
+    
+    # Parse Basic Auth
+    try:
+        credentials = base64.b64decode(auth_header[6:]).decode('utf-8')
+        auth_username, password = credentials.split(':', 1)
+    except:
+        return Response(
+            content="Invalid credentials",
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+        )
+    
+    # Verify user
+    user = db.query(User).filter(User.username == auth_username).first()
+    if not user or not verify_password(password, user.password_hash):
+        return Response(
+            content="Invalid credentials",
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+        )
+    
+    # Check if requested username matches authenticated user
+    if username != user.username:
+        return Response(content="Forbidden", status_code=403)
+    
+    scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    base_url = f"{scheme}://{request.url.hostname}"
+    if request.url.port and request.url.port not in (80, 443):
+        base_url += f":{request.url.port}"
+    
+    # Return principal info pointing to user's calendar and addressbook
+    from urllib.parse import quote
+    encoded_username = quote(username, safe='')
+    
+    xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CARD="urn:ietf:params:xml:ns:carddav">
+    <D:response>
+        <D:href>/principals/{encoded_username}/</D:href>
+        <D:propstat>
+            <D:prop>
+                <D:resourcetype>
+                    <D:collection/>
+                    <D:principal/>
+                </D:resourcetype>
+                <D:displayname>{user.username}</D:displayname>
+                <C:calendar-home-set>
+                    <D:href>/caldav/{encoded_username}/</D:href>
+                </C:calendar-home-set>
+                <CARD:addressbook-home-set>
+                    <D:href>/carddav/{encoded_username}/</D:href>
+                </CARD:addressbook-home-set>
+            </D:prop>
+            <D:status>HTTP/1.1 200 OK</D:status>
+        </D:propstat>
+    </D:response>
+</D:multistatus>'''
+    return Response(content=xml, media_type="application/xml", status_code=207)
+
 # Handle OPTIONS for specific principal paths (iOS checks this)
 @app.api_route("/principals/{username}/", methods=["OPTIONS"])
 async def principals_options(username: str):
