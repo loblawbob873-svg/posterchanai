@@ -218,34 +218,45 @@ async def test_music_directory(
     db: Session = Depends(get_db)
 ):
     """Test music directory access and count files."""
-    # Resolve directory path the same way as save_user_music_config
+    from app.models import Setting
+    from pathlib import Path
+    
     directory = request.directory
     original_directory = directory  # Keep original for display
     
     logger.info(f"[MUSIC TEST] Received directory: '{directory}', user: {current_user.username}")
     
-    if directory and directory.startswith('/') and not directory.startswith('//'):
-        from app.models import Setting
-        from pathlib import Path
-        
-        # Use upload_path (same as File Manager) instead of storage_base_path
-        upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
-        upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
-        
-        logger.info(f"[MUSIC TEST] upload_path: {upload_path}")
-        
-        upload_base = Path(upload_path)
-        # If the path doesn't contain the username, treat it as relative to user storage
-        if current_user.username not in directory:
-            relative_path = directory.lstrip('/')
-            directory = str(upload_base / current_user.username / relative_path)
-            logger.info(f"[MUSIC TEST] Resolved {original_directory} to {directory}")
-        else:
-            logger.info(f"[MUSIC TEST] Username found in path, no resolution needed")
+    # Check if storage proxy is configured
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    use_proxy = storage_server_url and storage_server_url.value
     
-    logger.info(f"[MUSIC TEST] Testing directory: {directory}")
-    result = test_directory_access(directory, request.recursive, db=db, user_id=current_user.id)
-    logger.info(f"[MUSIC TEST] Test result: {result}")
+    if use_proxy:
+        # For storage proxy, pass the original user path (e.g., "/Music")
+        # The storage proxy will handle user-relative paths
+        logger.info(f"[MUSIC TEST] Using storage proxy, passing original path: {directory}")
+        result = test_directory_access(directory, request.recursive, db=db, user_id=current_user.id)
+    else:
+        # For local filesystem, resolve to full path
+        if directory and directory.startswith('/') and not directory.startswith('//'):
+            # Use upload_path (same as File Manager) instead of storage_base_path
+            upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
+            upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
+            
+            logger.info(f"[MUSIC TEST] upload_path: {upload_path}")
+            
+            upload_base = Path(upload_path)
+            # If the path doesn't contain the username, treat it as relative to user storage
+            if current_user.username not in directory:
+                relative_path = directory.lstrip('/')
+                directory = str(upload_base / current_user.username / relative_path)
+                logger.info(f"[MUSIC TEST] Resolved {original_directory} to {directory}")
+            else:
+                logger.info(f"[MUSIC TEST] Username found in path, no resolution needed")
+        
+        logger.info(f"[MUSIC TEST] Testing directory: {directory}")
+        result = test_directory_access(directory, request.recursive, db=db, user_id=current_user.id)
+    
+    logger.info(f"[MUSIC TEST] Test result: {result}\n")
     
     if result['success']:
         return {
@@ -256,7 +267,7 @@ async def test_music_directory(
     else:
         # Show both original and resolved path in error
         error_msg = result['error']
-        if original_directory != directory:
+        if not use_proxy and original_directory != directory:
             error_msg = error_msg.replace(original_directory, f"{original_directory} (resolved to {directory})")
         return {
             "success": False,
