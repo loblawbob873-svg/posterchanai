@@ -657,8 +657,9 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
             filepath = f"{cal_name}/{event_uid}.ics"
         
         # Save to file using proxy
-        logger.debug(f"[CalDAV] Saving event {event_uid} to filepath: {filepath}")
+        logger.info(f"[CalDAV] Saving event {event_uid} to filepath: {filepath}, calendar: {cal_name}")
         success = proxy.write_file(filepath, ical_data)
+        logger.info(f"[CalDAV] write_file returned: {success} for {filepath}")
         
         if success:
             logger.info(f"[CalDAV] Successfully saved event/todo {event_uid} for user {user.username} in calendar {cal_name}")
@@ -831,7 +832,7 @@ def create_caldav_app() -> FastAPI:
             headers={"Location": "/caldav/"}
         )
     
-    @app.api_route("/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCALENDAR"])
+    @app.api_route("/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCALENDAR", "OPTIONS"])
     async def caldav_handler(path: str, request: StarletteRequest, db: Session = Depends(get_db)):
         """Handle CalDAV requests."""
         # Extract username from path or Basic Auth
@@ -888,6 +889,18 @@ def create_caldav_app() -> FastAPI:
         # Handle CalDAV methods
         method = request.method
         
+        # Handle OPTIONS request (required by some clients including iPhone)
+        if method == "OPTIONS":
+            return Response(
+                content="",
+                status_code=200,
+                headers={
+                    "Allow": "GET, POST, PUT, DELETE, PROPFIND, PROPPATCH, REPORT, MKCALENDAR, OPTIONS",
+                    "DAV": "1, 2, 3, calendar-access, calendar-schedule, calendar-auto-schedule",
+                    "Content-Length": "0"
+                }
+            )
+        
         if method == "PROPFIND":
             return await handle_propfind(path, user, db, depth)
         elif method == "PROPPATCH":
@@ -903,6 +916,7 @@ def create_caldav_app() -> FastAPI:
         elif method == "MKCALENDAR":
             return await handle_mkcalendar(path, user, db)
         else:
+            logger.warning(f"[CalDAV] Method not allowed: {method} for path: {path}")
             return Response(content="Method not allowed", status_code=405)
     
     return app
