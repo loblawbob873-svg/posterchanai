@@ -493,9 +493,88 @@ def create_cardav_app() -> FastAPI:
     """Create CardDAV FastAPI application."""
     app = FastAPI(title="Posterchanai CardDAV Server")
     
-    @app.route("/.well-known/carddav", methods=["GET", "HEAD", "OPTIONS"])
+    @app.route("/.well-known/carddav", methods=["GET", "HEAD", "OPTIONS", "PROPFIND"])
     async def carddav_discovery(request: StarletteRequest):
-        """CardDAV discovery endpoint. Returns 302 redirect to CardDAV principal."""
+        """CardDAV discovery endpoint. Returns 302 redirect to CardDAV principal or handles PROPFIND."""
+        # Handle PROPFIND requests (some clients like iPhone use this)
+        if request.method == "PROPFIND":
+            # Get DB session for authentication
+            db = SessionLocal()
+            try:
+                # Extract username from Basic Auth
+                auth_header = request.headers.get("Authorization", "")
+                if not auth_header.startswith("Basic "):
+                    return Response(
+                        content="Unauthorized",
+                        status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                    )
+                
+                # Parse Basic Auth
+                try:
+                    auth_data = auth_header[6:]
+                    decoded = base64.b64decode(auth_data).decode('utf-8')
+                    if ':' not in decoded:
+                        return Response(
+                            content="Invalid credentials",
+                            status_code=401,
+                            headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                        )
+                    username, password = decoded.split(':', 1)
+                    username = username.strip()
+                    password = password.strip()
+                except Exception:
+                    return Response(
+                        content="Invalid credentials",
+                        status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                    )
+                
+                # Verify user
+                user = db.query(User).filter(User.username == username).first()
+                if not user and '@' in username:
+                    username_part = username.split('@')[0]
+                    user = db.query(User).filter(User.username.like(f"{username_part}@%")).first()
+                
+                if not user:
+                    return Response(
+                        content="Invalid credentials",
+                        status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                    )
+                
+                # Verify password
+                if not verify_password(password, user.password_hash):
+                    return Response(
+                        content="Invalid credentials",
+                        status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                    )
+                
+                # Return principal URL in PROPFIND response
+                from urllib.parse import quote
+                encoded_username = quote(user.username, safe='')
+                principal_url = f"/carddav/{encoded_username}/"
+                
+                xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+    <D:response>
+        <D:href>/.well-known/carddav</D:href>
+        <D:propstat>
+            <D:prop>
+                <D:resourcetype><D:collection/></D:resourcetype>
+                <D:current-user-principal><D:href>{principal_url}</D:href></D:current-user-principal>
+            </D:prop>
+            <D:status>HTTP/1.1 200 OK</D:status>
+        </D:propstat>
+    </D:response>
+</D:multistatus>'''
+                
+                return Response(content=xml, media_type="application/xml", status_code=207)
+            finally:
+                db.close()
+        
+        # For GET/HEAD/OPTIONS, return redirect
         # Get the host from the request
         host = request.headers.get("Host", "ai.poster.place")
         # Determine if we're using HTTPS (check X-Forwarded-Proto or assume HTTPS if port 443)
@@ -516,6 +595,134 @@ def create_cardav_app() -> FastAPI:
                 "Cache-Control": "no-cache"
             }
         )
+    
+    @app.api_route("/principals/", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL", "OPTIONS"])
+    async def principals_root_handler(request: StarletteRequest):
+        """Handle DAV principals root requests (/principals/)."""
+        return await principals_handler(request, "")
+    
+    @app.api_route("/principals/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL", "OPTIONS"])
+    async def principals_handler(request: StarletteRequest, path: str = ""):
+        """Handle DAV principals requests. Used by iPhone for principal discovery."""
+        # Get path parameter
+        if not path:
+            path = request.path_params.get("path", "")
+        
+        # Handle OPTIONS without auth
+        if request.method == "OPTIONS":
+            return Response(
+                content="",
+                status_code=200,
+                headers={
+                    "DAV": "1, 2, 3, addressbook",
+                    "Allow": "OPTIONS, GET, HEAD, POST, PUT, DELETE, PROPFIND, PROPPATCH, REPORT, MKCOL",
+                }
+            )
+        
+        # Get DB session
+        db = SessionLocal()
+        try:
+            # Extract username from Basic Auth
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Basic "):
+                return Response(
+                    content="Unauthorized",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                )
+            
+            # Parse Basic Auth
+            try:
+                auth_data = auth_header[6:]
+                decoded = base64.b64decode(auth_data).decode('utf-8')
+                if ':' not in decoded:
+                    return Response(
+                        content="Invalid credentials",
+                        status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                    )
+                username, password = decoded.split(':', 1)
+                username = username.strip()
+                password = password.strip()
+            except Exception:
+                return Response(
+                    content="Invalid credentials",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                )
+            
+            # Verify user
+            user = db.query(User).filter(User.username == username).first()
+            if not user and '@' in username:
+                username_part = username.split('@')[0]
+                user = db.query(User).filter(User.username.like(f"{username_part}@%")).first()
+            
+            if not user:
+                return Response(
+                    content="Invalid credentials",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                )
+            
+            # Verify password
+            if not verify_password(password, user.password_hash):
+                return Response(
+                    content="Invalid credentials",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                )
+            
+            # Handle PROPFIND for principals
+            if request.method == "PROPFIND":
+                from urllib.parse import quote, unquote
+                encoded_username = quote(user.username, safe='')
+                carddav_principal = f"/carddav/{encoded_username}/"
+                
+                # Normalize path
+                path = path.rstrip('/')
+                if path:
+                    # Extract username from path (e.g., /principals/verita84%40poster.place/)
+                    path_username = unquote(path)
+                    if path_username == user.username or path_username == encoded_username:
+                        # Return principal info
+                        xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+    <D:response>
+        <D:href>/principals/{encoded_username}/</D:href>
+        <D:propstat>
+            <D:prop>
+                <D:resourcetype><D:collection/></D:resourcetype>
+                <D:displayname>{user.username}</D:displayname>
+                <C:addressbook-home-set xmlns:C="urn:ietf:params:xml:ns:carddav">
+                    <D:href>{carddav_principal}</D:href>
+                </C:addressbook-home-set>
+            </D:prop>
+            <D:status>HTTP/1.1 200 OK</D:status>
+        </D:propstat>
+    </D:response>
+</D:multistatus>'''
+                        return Response(content=xml, media_type="application/xml", status_code=207)
+                
+                # List all principals (root /principals/)
+                xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+    <D:response>
+        <D:href>/principals/{encoded_username}/</D:href>
+        <D:propstat>
+            <D:prop>
+                <D:resourcetype><D:collection/></D:resourcetype>
+                <D:displayname>{user.username}</D:displayname>
+            </D:prop>
+            <D:status>HTTP/1.1 200 OK</D:status>
+        </D:propstat>
+    </D:response>
+</D:multistatus>'''
+                return Response(content=xml, media_type="application/xml", status_code=207)
+            
+            # For other methods, return 405
+            return Response(content="Method not allowed", status_code=405)
+        finally:
+            db.close()
     
     @app.api_route("/carddav/", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL", "OPTIONS"])
     async def carddav_root_handler(request: StarletteRequest):
