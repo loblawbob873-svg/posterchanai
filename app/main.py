@@ -463,6 +463,79 @@ async def generate_caldav_profile(request: Request, user: User = Depends(get_cur
         }
     )
 
+
+@app.get("/api/carddav/profile")
+async def generate_carddav_profile(request: Request, user: User = Depends(get_current_user)):
+    """Generate iOS configuration profile for CardDAV account (requires login)."""
+    import uuid
+    
+    scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    hostname = request.url.hostname
+    
+    # Generate unique UUIDs for this profile
+    profile_uuid = str(uuid.uuid4()).upper()
+    payload_uuid = str(uuid.uuid4()).upper()
+    
+    mobileconfig = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>CardDAVAccountDescription</key>
+            <string>PosterChan Contacts</string>
+            <key>CardDAVHostName</key>
+            <string>{hostname}</string>
+            <key>CardDAVPort</key>
+            <integer>443</integer>
+            <key>CardDAVPrincipalURL</key>
+            <string>{scheme}://{hostname}/carddav/{user.username}/</string>
+            <key>CardDAVUseSSL</key>
+            <true/>
+            <key>CardDAVUsername</key>
+            <string>{user.username}</string>
+            <key>PayloadDescription</key>
+            <string>Configures CardDAV account</string>
+            <key>PayloadDisplayName</key>
+            <string>PosterChan CardDAV</string>
+            <key>PayloadIdentifier</key>
+            <string>place.poster.carddav.{user.id}</string>
+            <key>PayloadType</key>
+            <string>com.apple.carddav.account</string>
+            <key>PayloadUUID</key>
+            <string>{payload_uuid}</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>
+    </array>
+    <key>PayloadDescription</key>
+    <string>PosterChan CardDAV Configuration for {user.username}</string>
+    <key>PayloadDisplayName</key>
+    <string>PosterChan Contacts - {user.username}</string>
+    <key>PayloadIdentifier</key>
+    <string>place.poster.carddav.profile.{user.id}</string>
+    <key>PayloadOrganization</key>
+    <string>PosterChan AI</string>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>{profile_uuid}</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>'''
+    
+    return Response(
+        content=mobileconfig,
+        media_type="application/x-apple-aspen-config",
+        headers={
+            "Content-Disposition": f'attachment; filename="posterchan-carddav-{user.username}.mobileconfig"'
+        }
+    )
+
 # Handle old Joplin resource URLs (:/[resource-id]) - return 404 with helpful message
 # These are legacy URLs from Joplin that should have been converted during migration
 @app.get("/:/{resource_id}")
