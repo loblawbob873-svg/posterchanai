@@ -1,11 +1,11 @@
 <!-- User Settings Modal -->
 <div class="modal" id="userSettingsModal" style="display: none;">
-    <div class="modal-content modal-fullscreen" style="height: calc(100vh - 10px) !important; max-height: calc(100vh - 10px) !important;">
-        <div class="modal-header">
+    <div class="modal-content modal-fullscreen" style="height: calc(100vh - 10px) !important; max-height: calc(100vh - 10px) !important; display: flex !important; flex-direction: column !important;">
+        <div class="modal-header" style="flex-shrink: 0 !important;">
             <h2>User Settings</h2>
             <button class="btn-icon modal-close modal-close-cyberpunk" id="closeUserSettingsModal">✕</button>
         </div>
-        <div class="modal-body user-settings-body">
+        <div class="modal-body user-settings-body" style="flex: 1 !important; display: flex !important; flex-direction: column !important; overflow: hidden !important; min-height: 0 !important; padding: 0 !important;">
             <!-- Tab Navigation -->
             <div class="user-tabs">
                 <button class="user-tab-btn active" data-tab="profile">Profile</button>
@@ -18,7 +18,7 @@
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
             </div>
 
-            <div class="user-settings-content">
+            <div class="user-settings-content" style="flex: 1 !important; overflow-y: auto !important; min-height: 0 !important; padding: 24px !important;">
                 <!-- Profile Tab -->
                 <div class="user-tab-content active" id="user-tab-profile">
                     <fieldset>
