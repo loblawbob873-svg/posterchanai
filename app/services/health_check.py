@@ -509,22 +509,10 @@ def start_health_check():
         _health_check_task = loop.create_task(health_check_loop())
         logger.info("Health check started")
     except RuntimeError:
-        # No running loop - this shouldn't happen during startup, but handle it gracefully
-        # Since start_health_check() is called from a background thread in main.py,
-        # this case should be very rare. We'll retry after a delay.
-        logger.warning("No running event loop for health check, will retry after delay")
-        import threading
-        def delayed_retry():
-            import time
-            time.sleep(5)  # Wait for server to start
-            try:
-                # Retry - by now the server should be running with an event loop
-                start_health_check()
-            except Exception as e:
-                logger.error(f"Failed to start health check after retry: {e}")
-        thread = threading.Thread(target=delayed_retry, daemon=True)
-        thread.start()
-        logger.info("Health check retry scheduled")
+        # No running loop - just log and return, don't retry infinitely
+        # This can happen if called from a sync context before uvicorn is running
+        logger.warning("No running event loop for health check - will not start")
+        # Health check will need to be started manually via API if needed
 
 
 def stop_health_check():
