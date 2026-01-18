@@ -35,10 +35,11 @@ def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]
             if directory and directory.startswith('/') and not directory.startswith('//'):
                 from app.models import User, Setting
                 user = db.query(User).filter(User.id == user_id).first()
-                storage_setting = db.query(Setting).filter(Setting.key == "storage_base_path").first()
+                # Use upload_path (same as File Manager) instead of storage_base_path
+                upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
                 
-                if user and storage_setting and storage_setting.value:
-                    storage_base = Path(storage_setting.value)
+                if user and upload_path_setting and upload_path_setting.value:
+                    upload_base = Path(upload_path_setting.value)
                     # If the path doesn't contain the username and is not a full system path,
                     # treat it as relative to user storage
                     if user.username not in directory:
@@ -46,7 +47,7 @@ def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]
                         abs_path = Path(directory)
                         if not abs_path.exists():
                             relative_path = directory.lstrip('/')
-                            resolved_directory = str(storage_base / user.username / relative_path)
+                            resolved_directory = str(upload_base / user.username / relative_path)
                             logger.info(f"Resolved relative path {directory} to {resolved_directory}")
                             config['directory'] = resolved_directory
             
@@ -54,7 +55,7 @@ def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]
         except json.JSONDecodeError:
             logger.error(f"Invalid local_music_config JSON for user {user_id}")
     
-    # Fall back to user storage path + /Music
+    # Fall back to user storage path + /Music (using upload_path like File Manager)
     from app.models import User, Setting
     from pathlib import Path
     
@@ -62,19 +63,18 @@ def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]
     if not user:
         return None
     
-    # Get storage base path
-    storage_setting = db.query(Setting).filter(Setting.key == "storage_base_path").first()
-    if storage_setting and storage_setting.value:
-        storage_base = Path(storage_setting.value)
-        music_dir = storage_base / user.username / "Music"
-        
-        # Return default config
-        return {
-            'directory': str(music_dir),
-            'recursive': True
-        }
+    # Get upload path (same as File Manager)
+    upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
+    upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
     
-    return None
+    upload_base = Path(upload_path)
+    music_dir = upload_base / user.username / "Music"
+    
+    # Return default config
+    return {
+        'directory': str(music_dir),
+        'recursive': True
+    }
 
 
 def save_user_music_config(user_id: int, db: Session, directory: str, recursive: bool = True):
@@ -86,16 +86,18 @@ def save_user_music_config(user_id: int, db: Session, directory: str, recursive:
         # Check if it's a relative path by seeing if it's short and doesn't contain the storage base
         from app.models import User, Setting
         user = db.query(User).filter(User.id == user_id).first()
-        storage_setting = db.query(Setting).filter(Setting.key == "storage_base_path").first()
+        # Use upload_path (same as File Manager) instead of storage_base_path
+        upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
+        upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
         
-        if user and storage_setting and storage_setting.value:
-            storage_base = Path(storage_setting.value)
+        if user:
+            upload_base = Path(upload_path)
             # If the path doesn't contain the username and is not a full system path,
             # treat it as relative to user storage
             if user.username not in directory:
                 # Remove leading slash and append to user storage
                 relative_path = directory.lstrip('/')
-                resolved_directory = str(storage_base / user.username / relative_path)
+                resolved_directory = str(upload_base / user.username / relative_path)
                 logger.info(f"Resolved relative path /{relative_path} to {resolved_directory}")
     
     config = {

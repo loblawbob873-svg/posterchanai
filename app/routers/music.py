@@ -225,15 +225,16 @@ async def test_music_directory(
         from app.models import Setting
         from pathlib import Path
         
-        storage_setting = db.query(Setting).filter(Setting.key == "storage_base_path").first()
+        # Use upload_path (same as File Manager) instead of storage_base_path
+        upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
+        upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
         
-        if storage_setting and storage_setting.value:
-            storage_base = Path(storage_setting.value)
-            # If the path doesn't contain the username, treat it as relative to user storage
-            if current_user.username not in directory:
-                relative_path = directory.lstrip('/')
-                directory = str(storage_base / current_user.username / relative_path)
-                logger.info(f"Resolved test path /{relative_path} to {directory}")
+        upload_base = Path(upload_path)
+        # If the path doesn't contain the username, treat it as relative to user storage
+        if current_user.username not in directory:
+            relative_path = directory.lstrip('/')
+            directory = str(upload_base / current_user.username / relative_path)
+            logger.info(f"Resolved test path /{relative_path} to {directory}")
     
     result = test_directory_access(directory, request.recursive)
     

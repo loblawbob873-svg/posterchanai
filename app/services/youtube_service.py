@@ -549,16 +549,12 @@ async def download_video_and_save_to_storage(
     from pathlib import Path
     from app.models import Setting
     
-    # Get storage base path from settings
-    storage_path_setting = db.query(Setting).filter(Setting.key == "storage_base_path").first()
-    if not storage_path_setting or not storage_path_setting.value:
-        return DownloadResult(
-            success=False,
-            error="Storage path not configured. Contact administrator to set storage_base_path."
-        )
+    # Get upload path from settings (same as File Manager)
+    upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
+    upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
     
-    storage_base = Path(storage_path_setting.value)
-    if not storage_base.exists() or not storage_base.is_dir():
+    upload_base = Path(upload_path)
+    if not upload_base.exists() or not upload_base.is_dir():
         return DownloadResult(
             success=False,
             error="Storage path does not exist or is not accessible."
@@ -577,7 +573,7 @@ async def download_video_and_save_to_storage(
     if not user:
         return DownloadResult(success=False, error="User not found")
     
-    user_storage = storage_base / user.username / subfolder
+    user_storage = upload_base / user.username / subfolder
     user_storage.mkdir(parents=True, exist_ok=True)
 
     try:

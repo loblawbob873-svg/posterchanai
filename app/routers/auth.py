@@ -464,14 +464,14 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         except json.JSONDecodeError:
             pass
     
-    # If not configured, use default storage path + /Music
+    # If not configured, use default upload path + /Music (same as File Manager)
     if not local_music_dir:
         from pathlib import Path
-        storage_setting = db.query(Setting).filter(Setting.key == "storage_base_path").first()
-        if storage_setting and storage_setting.value:
-            storage_base = Path(storage_setting.value)
-            default_music_dir = storage_base / current_user.username / "Music"
-            local_music_dir = str(default_music_dir)
+        upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
+        upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
+        upload_base = Path(upload_path)
+        default_music_dir = upload_base / current_user.username / "Music"
+        local_music_dir = str(default_music_dir)
 
     return UserSettingsResponse(
         notification_email=current_user.notification_email,
