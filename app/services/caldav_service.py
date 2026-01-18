@@ -462,6 +462,7 @@ def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]
                 # Discover all calendar subdirectories to return one entry per calendar
                 try:
                     from app.services.dav_storage_proxy import DAVStorageProxy
+                    # Create proxy with a fresh session to avoid session issues
                     proxy = DAVStorageProxy(db, user.username, 'caldav')
                     root_items = proxy.list_files("")
                     calendar_dirs = []
@@ -481,8 +482,8 @@ def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]
                         })
                     
                     # If no subdirectories, check for legacy .ics files in root
+                    # Reuse root_items we already fetched instead of calling list_files again
                     if not calendar_dirs:
-                        root_items = proxy.list_files("")
                         has_ics_files = any(item.get('name', '').endswith('.ics') for item in root_items)
                         if has_ics_files:
                             calendars.append({
