@@ -86,7 +86,7 @@ async def export_calendar(
 @caldav_router.post("/import")
 async def import_calendar(
     file: UploadFile = File(...),
-    calendar_name: str = Form("default"),
+    calendar_name: str = Form(None),  # Optional - will auto-detect if not provided
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -98,15 +98,41 @@ async def import_calendar(
         import pytz
         import re
         
+        # Read uploaded file
+        ics_data = await file.read()
+        ics_data = ics_data.decode('utf-8')
+        
+        # Parse iCalendar data
+        try:
+            cal = Calendar.from_ical(ics_data)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid iCalendar data: {str(e)}")
+        
+        # Auto-detect calendar name if not provided
+        if not calendar_name:
+            # Try to get calendar name from the .ics file
+            detected_name = None
+            
+            # Check for X-WR-CALNAME or X-WR-CALENDAR-NAME
+            if 'X-WR-CALNAME' in cal:
+                detected_name = str(cal['X-WR-CALNAME'])
+            elif 'X-WR-CALENDAR-NAME' in cal:
+                detected_name = str(cal['X-WR-CALENDAR-NAME'])
+            elif 'NAME' in cal:
+                detected_name = str(cal['NAME'])
+            
+            # If still no name, use the filename (without .ics extension)
+            if not detected_name:
+                detected_name = file.filename.replace('.ics', '') if file.filename else "imported"
+            
+            calendar_name = detected_name
+            logger.info(f"Auto-detected calendar name: {calendar_name}")
+        
         # Sanitize calendar name
         calendar_name = re.sub(r'[^\w\s-]', '', calendar_name)
         calendar_name = calendar_name.replace(' ', '_')
         calendar_name = re.sub(r'_+', '_', calendar_name)
         calendar_name = calendar_name.strip('_').lower() or "default"
-        
-        # Read uploaded file
-        ics_data = await file.read()
-        ics_data = ics_data.decode('utf-8')
         
         # Get user's CalDAV path and create calendar subdirectory
         caldav_path = get_user_caldav_path(current_user, db)
@@ -116,12 +142,6 @@ async def import_calendar(
         imported_count = 0
         error_count = 0
         skipped_count = 0
-        
-        # Parse iCalendar data
-        try:
-            cal = Calendar.from_ical(ics_data)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid iCalendar data: {str(e)}")
         
         # Extract all VTIMEZONE components from the imported file
         vtimezones = {}
