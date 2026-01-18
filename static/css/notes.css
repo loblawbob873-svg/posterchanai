@@ -478,7 +478,7 @@
     flex: 1 1 0;
     display: flex;
     flex-direction: column;
-    min-height: 0; /* Changed from 400px to allow proper flex sizing */
+    min-height: 300px !important; /* Force minimum height */
     max-height: 100%;
     position: relative;
     overflow: hidden !important;
@@ -495,7 +495,7 @@
     font-size: 15px;
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'Courier New', monospace;
     resize: none;
-    min-height: 0; /* Allow flex to size naturally */
+    min-height: 200px !important; /* Force minimum height */
     height: 100%;
     max-height: 100%;
     overflow-y: auto !important;
