@@ -829,9 +829,82 @@ def create_caldav_app() -> FastAPI:
     """Create CalDAV FastAPI application."""
     app = FastAPI(title="Posterchanai CalDAV Server")
     
-    @app.get("/.well-known/caldav")
-    async def caldav_discovery():
-        """CalDAV discovery endpoint."""
+    @app.api_route("/.well-known/caldav", methods=["GET", "HEAD", "OPTIONS", "PROPFIND"])
+    async def caldav_discovery(request: StarletteRequest):
+        """CalDAV discovery endpoint. Returns 302 redirect to CalDAV principal or handles PROPFIND."""
+        # Handle PROPFIND requests (some clients like iPhone use this)
+        if request.method == "PROPFIND":
+            # Try to authenticate
+            from app.database import SessionLocal
+            from app.models import User
+            from app.auth import verify_password
+            import base64
+            from urllib.parse import quote
+            
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Basic "):
+                return Response(
+                    content="Unauthorized",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+                )
+            
+            try:
+                credentials = base64.b64decode(auth_header[6:]).decode('utf-8')
+                username, password = credentials.split(':', 1)
+            except:
+                return Response(
+                    content="Invalid credentials",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+                )
+            
+            db = SessionLocal()
+            try:
+                user = db.query(User).filter(User.username == username).first()
+                if not user and '@' in username:
+                    username_part = username.split('@')[0]
+                    user = db.query(User).filter(User.username.like(f"{username_part}@%")).first()
+                
+                if not user or not verify_password(password, user.password_hash):
+                    return Response(
+                        content="Invalid credentials",
+                        status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+                    )
+                
+                # Return principal URL in PROPFIND response
+                encoded_username = quote(user.username, safe='')
+                principal_url = f"/caldav/{encoded_username}/"
+                xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+    <D:response>
+        <D:href>/.well-known/caldav</D:href>
+        <D:propstat>
+            <D:prop>
+                <D:resourcetype><D:collection/></D:resourcetype>
+                <D:current-user-principal><D:href>{principal_url}</D:href></D:current-user-principal>
+            </D:prop>
+            <D:status>HTTP/1.1 200 OK</D:status>
+        </D:propstat>
+    </D:response>
+</D:multistatus>'''
+                return Response(content=xml, media_type="application/xml", status_code=207)
+            finally:
+                db.close()
+        
+        # For GET/HEAD/OPTIONS, return redirect
+        host = request.headers.get("Host", "ai.poster.place")
+        scheme = request.headers.get("X-Forwarded-Proto", "https")
+        if not scheme or scheme == "http":
+            if request.url.scheme == "https" or "443" in str(request.url.port):
+                scheme = "https"
+        redirect_url = f"{scheme}://{host}/caldav/"
+        return Response(
+            content="",
+            status_code=302,
+            headers={"Location": redirect_url, "Cache-Control": "no-cache"}
+        )
         return Response(
             content="",
             status_code=301,
