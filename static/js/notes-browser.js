@@ -119,6 +119,7 @@ class NotesBrowser {
                     <span class="folder-icon">📂</span>
                     <span class="folder-name">${this.escapeHtml(folder.name)}</span>
                     ${folder.notes_count > 0 ? `<span class="folder-count">${folder.notes_count}</span>` : ''}
+                    <button class="folder-delete-btn" onclick="event.stopPropagation(); notesBrowserManager.deleteFolder(${folder.id}, '${this.escapeJs(folder.name)}')" title="Delete folder">🗑️</button>
                 </div>
             `;
         });
@@ -281,6 +282,65 @@ class NotesBrowser {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+    
+    escapeJs(text) {
+        return text.replace(/'/g, "\\'").replace(/"/g, '\\"');
+    }
+    
+    async deleteFolder(folderId, folderName) {
+        if (!confirm(`Are you sure you want to delete folder "${folderName}"?\n\nAll notes in this folder will be moved to "All Notes" (root).`)) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/notes/folders/${folderId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                this.showToast(data.message || 'Folder deleted successfully', 'success');
+                
+                // If we were viewing this folder, switch to "All Notes"
+                if (this.currentFolderId === folderId) {
+                    this.currentFolderId = 0;
+                }
+                
+                // Reload folders and notes
+                await this.loadFolders();
+                await this.loadNotes();
+            } else {
+                const error = await response.json();
+                this.showToast(error.detail || 'Failed to delete folder', 'error');
+            }
+        } catch (error) {
+            console.error('Error deleting folder:', error);
+            this.showToast('Network error while deleting folder', 'error');
+        }
+    }
+    
+    showToast(message, type = 'info') {
+        // Simple toast notification
+        const toast = document.createElement('div');
+        toast.textContent = message;
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            background: ${type === 'success' ? '#4CAF50' : type === 'error' ? '#f44336' : '#2196F3'};
+            color: white;
+            border-radius: 4px;
+            z-index: 10000;
+            animation: slideIn 0.3s ease;
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.style.animation = 'slideOut 0.3s ease';
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
     }
 }
 
