@@ -210,12 +210,14 @@
 }
 
 /* Cyberpunk-style close button - SOLID RED FILLED */
-.modal-close-cyberpunk {
+.modal-close-cyberpunk,
+button.modal-close-cyberpunk,
+.btn-icon.modal-close-cyberpunk {
     width: 40px;
     height: 40px;
-    border: 2px solid #ff0066;
-    background: #ff0066;
-    color: #ffffff;
+    border: 2px solid #ff0066 !important;
+    background: #ff0066 !important;
+    color: #ffffff !important;
     font-size: 24px;
     cursor: pointer;
     display: flex;
@@ -246,15 +248,19 @@
     left: 100%;
 }
 
-.modal-close-cyberpunk:hover {
-    background: #ff0088;
+.modal-close-cyberpunk:hover,
+button.modal-close-cyberpunk:hover,
+.btn-icon.modal-close-cyberpunk:hover {
+    background: #ff0088 !important;
     box-shadow: 
         0 0 20px rgba(255, 0, 102, 1),
         inset 0 0 15px rgba(255, 255, 255, 0.2);
     transform: scale(1.1);
 }
 
-.modal-close-cyberpunk:active {
+.modal-close-cyberpunk:active,
+button.modal-close-cyberpunk:active,
+.btn-icon.modal-close-cyberpunk:active {
     transform: scale(0.95);
     box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.5);
 }
