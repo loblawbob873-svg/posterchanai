@@ -844,17 +844,20 @@ def get_all_user_events(
         name = cal_config.get('name', 'Calendar')
         is_builtin = cal_config.get('builtin', False)
 
-        logger.debug(f"[Calendar] Processing calendar: name={name}, url={url}, is_builtin={is_builtin}, password={password[:20] if password else 'None'}...")
+        logger.info(f"[Calendar] Processing calendar: name={name}, url={url}, is_builtin={is_builtin}")
 
         if url and username:
             try:
                 # If using built-in server, read directly from storage proxy
                 if is_builtin and password == "__USE_SESSION_AUTH__":
-                    logger.debug(f"[Calendar] Using built-in CalDAV server for calendar {name}")
+                    logger.info(f"[Calendar] Using built-in CalDAV server for calendar {name}")
                     events = _get_events_from_builtin(user_id, start_date, end_date, name, db)
-                    logger.debug(f"[Calendar] Found {len(events)} events from built-in server for calendar {name}")
+                    logger.info(f"[Calendar] Found {len(events)} events from built-in server for calendar {name}")
                     if events:
                         all_events.extend(events)
+                        logger.info(f"[Calendar] Added {len(events)} events from {name}, total now: {len(all_events)}")
+                    else:
+                        logger.info(f"[Calendar] No events found in calendar {name} for date range {start_date.date()} to {end_date.date()}")
                 else:
                     # External CalDAV server - use HTTP requests with timeout
                     def fetch_calendar():
