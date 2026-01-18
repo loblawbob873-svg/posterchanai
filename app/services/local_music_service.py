@@ -58,8 +58,27 @@ def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]
 
 def save_user_music_config(user_id: int, db: Session, directory: str, recursive: bool = True):
     """Save user's local music configuration."""
+    # Resolve directory path: if it starts with / but is not an absolute system path,
+    # treat it as relative to user storage
+    resolved_directory = directory
+    if directory and directory.startswith('/') and not directory.startswith('//'):
+        # Check if it's a relative path by seeing if it's short and doesn't contain the storage base
+        from app.models import User, Setting
+        user = db.query(User).filter(User.id == user_id).first()
+        storage_setting = db.query(Setting).filter(Setting.key == "storage_base_path").first()
+        
+        if user and storage_setting and storage_setting.value:
+            storage_base = Path(storage_setting.value)
+            # If the path doesn't contain the username and is not a full system path,
+            # treat it as relative to user storage
+            if user.username not in directory:
+                # Remove leading slash and append to user storage
+                relative_path = directory.lstrip('/')
+                resolved_directory = str(storage_base / user.username / relative_path)
+                logger.info(f"Resolved relative path /{relative_path} to {resolved_directory}")
+    
     config = {
-        'directory': directory,
+        'directory': resolved_directory,
         'recursive': recursive
     }
     
@@ -70,7 +89,7 @@ def save_user_music_config(user_id: int, db: Session, directory: str, recursive:
     
     if setting:
         setting.value = json.dumps(config)
-        logger.info(f"Updating music config: directory={directory}, recursive={recursive}")
+        logger.info(f"Updating music config: directory={resolved_directory}, recursive={recursive}")
     else:
         setting = UserSetting(
             user_id=user_id,
@@ -78,7 +97,7 @@ def save_user_music_config(user_id: int, db: Session, directory: str, recursive:
             value=json.dumps(config)
         )
         db.add(setting)
-        logger.info(f"Creating music config: directory={directory}, recursive={recursive}")
+        logger.info(f"Creating music config: directory={resolved_directory}, recursive={recursive}")
     
     db.commit()
     return True

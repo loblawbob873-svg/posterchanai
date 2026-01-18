@@ -218,12 +218,30 @@ async def test_music_directory(
     db: Session = Depends(get_db)
 ):
     """Test music directory access and count files."""
-    result = test_directory_access(request.directory, request.recursive)
+    # Resolve directory path the same way as save_user_music_config
+    directory = request.directory
+    
+    if directory and directory.startswith('/') and not directory.startswith('//'):
+        from app.models import Setting
+        from pathlib import Path
+        
+        storage_setting = db.query(Setting).filter(Setting.key == "storage_base_path").first()
+        
+        if storage_setting and storage_setting.value:
+            storage_base = Path(storage_setting.value)
+            # If the path doesn't contain the username, treat it as relative to user storage
+            if current_user.username not in directory:
+                relative_path = directory.lstrip('/')
+                directory = str(storage_base / current_user.username / relative_path)
+                logger.info(f"Resolved test path /{relative_path} to {directory}")
+    
+    result = test_directory_access(directory, request.recursive)
     
     if result['success']:
         return {
             "success": True,
-            "message": f"✓ {result['message']} ({result['track_count']} tracks found)"
+            "message": f"Directory accessible",
+            "track_count": result.get('track_count', 0)
         }
     else:
         return {
