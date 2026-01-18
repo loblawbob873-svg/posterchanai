@@ -80,6 +80,17 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
                 # But we need to escape them properly for XML CDATA or use proper escaping
                 # Actually, calendar-data should be in CDATA or properly escaped
                 xml += f'                <C:calendar-data xmlns:C="urn:ietf:params:xml:ns:caldav"><![CDATA[{prop_value}]]></C:calendar-data>\n'
+            elif prop_name == 'supported-calendar-component-set':
+                xml += '                <C:supported-calendar-component-set xmlns:C="urn:ietf:params:xml:ns:caldav">\n'
+                for comp in prop_value.split(','):
+                    xml += f'                    <C:comp name="{comp.strip()}"/>\n'
+                xml += '                </C:supported-calendar-component-set>\n'
+            elif prop_name == 'calendar-description':
+                xml += f'                <C:calendar-description xmlns:C="urn:ietf:params:xml:ns:caldav">{html.escape(str(prop_value))}</C:calendar-description>\n'
+            elif prop_name == 'calendar-color':
+                xml += f'                <ical:calendar-color xmlns:ical="http://apple.com/ns/ical/">{html.escape(str(prop_value))}</ical:calendar-color>\n'
+            elif prop_name == 'calendar-timezone':
+                xml += f'                <C:calendar-timezone xmlns:C="urn:ietf:params:xml:ns:caldav">{html.escape(str(prop_value))}</C:calendar-timezone>\n'
         xml += '            </D:prop>\n            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
     xml += '</D:multistatus>'
     return xml
@@ -121,7 +132,11 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
             "href": f"{base_url}/",
             "props": {
                 "resourcetype": "calendar",
-                "displayname": "Calendar"
+                "displayname": "Calendar",
+                "supported-calendar-component-set": "VEVENT,VTODO",
+                "calendar-description": "PosterChan AI Calendar",
+                "calendar-color": "#0088FF",
+                "calendar-timezone": "UTC"
             }
         })
     
