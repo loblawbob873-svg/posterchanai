@@ -36,6 +36,20 @@
     position: relative;
 }
 
+/* NEVER make notes modal fullscreen on desktop - only windowed */
+@media (min-width: 769px) {
+    #notesModal .notes-modal-content,
+    .notes-modal-content {
+        width: min(95vw, 1400px) !important;
+        height: auto !important;
+        max-height: 90vh !important;
+        min-height: 600px !important;
+        max-width: 1400px !important;
+        border-radius: 12px !important;
+        margin: auto !important;
+    }
+}
+
 .notes-modal-body {
     display: flex;
     flex: 1 1 0;
@@ -858,14 +872,30 @@
     transform: scale(1.1);
 }
 
-/* Responsive Design */
-@media (max-width: 768px) {
+/* Responsive Design - Only fullscreen on very small mobile devices */
+@media (max-width: 480px) {
+    #notesModal .notes-modal-content,
     .notes-modal-content {
-        width: 100vw;
-        height: 100vh;
-        max-height: 100vh;
-        border-radius: 0;
-        margin: 0;
+        width: 100vw !important;
+        height: 100vh !important;
+        max-height: 100vh !important;
+        border-radius: 0 !important;
+        margin: 0 !important;
+        max-width: 100vw !important;
+    }
+}
+
+/* Tablet and small laptop - keep windowed but adjust size */
+@media (max-width: 768px) and (min-width: 481px) {
+    #notesModal .notes-modal-content,
+    .notes-modal-content {
+        width: min(95vw, 1200px) !important;
+        height: auto !important;
+        max-height: 90vh !important;
+        min-height: 500px !important;
+        border-radius: 12px !important;
+        margin: auto !important;
+        max-width: 1200px !important;
     }
     
     .notes-modal-body {
