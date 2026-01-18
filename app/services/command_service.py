@@ -706,6 +706,10 @@ class CommandService:
                 if "error" not in result:
                     return {"type": "text", "content": f"✅ Bill added: {name} - ${float(amount):,.2f}"}
                 action = "add"
+            elif subcommand == "extract" and len(parts) >= 2:
+                # Extract bill from receipt text: budget extract <receipt text>
+                receipt_text = " ".join(parts[1:])
+                return await self._extract_bill_from_text(receipt_text)
             elif subcommand in ("pay", "paid") and len(parts) >= 2:
                 name = " ".join(parts[1:])
                 result = await plugin_service.execute_tool_call("budget", "pay", {"name": name}, self.user.id)
@@ -721,7 +725,7 @@ class CommandService:
             else:
                 return {
                     "type": "text",
-                    "content": "Usage: `budget` | `budget bills` | `budget add <name> <amount>` | `budget pay <name>`",
+                    "content": "Usage: `budget` | `budget bills` | `budget add <name> <amount>` | `budget pay <name>` | `budget extract <receipt text>`",
                 }
 
             formatted = plugin_service.format_result_for_display("budget", action, result)
@@ -2800,26 +2804,39 @@ Return ONLY valid JSON, no other text.""",
                 messages = [
                     {
                         "role": "system",
-                        "content": """Extract bill/invoice/order information from this email and return JSON with:
-- name: bill name, company name, or product name (e.g., "Electric Company", "Netflix", "Amazon Order", "Poppy Playtime Toy")
+                        "content": """Extract bill/invoice/order/receipt information from this email and return JSON with:
+- name: bill name, company name, or merchant name (e.g., "Electric Company", "Netflix", "Amazon Order", "McDonald's", "McDonald's - Canon City")
 - amount: total amount due/paid as a number (e.g., 45.99). Look for prices with $ signs, totals, or order amounts.
-- due_date: due date if mentioned (YYYY-MM-DD format), null if not mentioned
+- due_date: due date or transaction date if mentioned (YYYY-MM-DD format), null if not mentioned
 
 **Price format examples to handle:**
 - "$ 15 99" → 15.99
 - "$1599" → 15.99  
 - "$15.99" → 15.99
 - "Quantity: 1 $ 15 99" → 15.99
+- "Total: $82.18" → 82.18
 
 **Order email examples:**
 - Amazon orders: Look for "Order #", product names, prices near "Quantity:"
 - Utility bills: Look for "Amount Due", "Total"
 - Subscriptions: Look for "Your subscription" or "Payment"
+- Restaurant receipts (McDonald's, etc.): Look for "Total" (not Subtotal), location name, date
+
+**For McDonald's receipts specifically:**
+- Name should be "McDonald's" or "McDonald's - [Location]" (e.g., "McDonald's - Canon City")
+- Look for "Total" line (not Subtotal, not Tax Amount)
+- Date format: MM/DD/YYYY (e.g., "01/18/2026" → "2026-01-18")
+- Location is usually after store name or in address line
 
 **Company/product name priority:**
 1. For orders: Use the product name if clearly stated
 2. For bills: Use the company name (e.g., "PG&E", "Comcast")
-3. Generic: Use sender domain or subject keywords
+3. For receipts: Use merchant name with location if available (e.g., "McDonald's - Canon City")
+4. Generic: Use sender domain or subject keywords
+
+**Important:**
+- Always use the FINAL TOTAL amount, not subtotal or tax
+- For receipts with tax, use the amount after tax
 
 Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order, return {"error": "not_a_bill"}.""",
                     },
@@ -2890,6 +2907,118 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                 except Exception as e:
                     logger.error(f"Error extracting bill: {e}")
                     return {"type": "text", "content": f"Error extracting bill: {str(e)}"}
+    
+    async def _extract_bill_from_text(self, receipt_text: str) -> dict:
+        """Extract bill information from receipt text and add to budget."""
+        import json
+        import re
+        
+        # Normalize price formats in the receipt text
+        # Fix spaced prices like "$ 15 99" → "$15.99"
+        receipt_text = re.sub(r'\$\s*(\d+)\s+(\d{2})', r'$\1.\2', receipt_text)
+        # Fix concatenated prices like "$1599" at end of price → "$15.99"
+        receipt_text = re.sub(r'\$(\d{2,})(\d{2})(?!\d)', lambda m: f"${m.group(1)}.{m.group(2)}", receipt_text)
+        
+        messages = [
+            {
+                "role": "system",
+                "content": """Extract bill/invoice/receipt information from this text and return JSON with:
+- name: company name or merchant name (e.g., "McDonald's", "McDonald's - Canon City", "Amazon", "Walmart")
+- amount: total amount paid as a number (e.g., 82.18). Look for "Total", "Amount", or final price.
+- due_date: transaction date if mentioned (YYYY-MM-DD format), null if not mentioned
+
+**Receipt format examples:**
+- McDonald's receipts: Look for "Total" at bottom, location name, date/time
+- Restaurant receipts: Look for "Total", "Amount Due", "Grand Total"
+- Store receipts: Look for "Total", "Amount", final price line
+- Online orders: Look for "Order Total", "Total Amount", "Charged"
+
+**Price format examples to handle:**
+- "$ 15 99" → 15.99
+- "$1599" → 15.99  
+- "$15.99" → 15.99
+- "Total: $82.18" → 82.18
+- "Tax Amount: $6.58" → ignore (not total)
+- "Subtotal: $75.60" → ignore (not total)
+
+**For McDonald's receipts specifically:**
+- Name should be "McDonald's" or "McDonald's - [Location]" (e.g., "McDonald's - Canon City")
+- Look for "Total" line (not Subtotal, not Tax Amount)
+- Date format: MM/DD/YYYY (e.g., "01/18/2026" → "2026-01-18")
+- Location is usually after store name or in address line
+
+**Important:**
+- Always use the FINAL TOTAL amount, not subtotal or tax
+- For receipts with tax, use the amount after tax
+- Extract the actual transaction date, not due date
+
+Return ONLY valid JSON, no other text. If this is not a bill, invoice, or receipt, return {"error": "not_a_bill"}.""",
+            },
+            {"role": "user", "content": f"Extract bill/receipt from this text:\n\n{receipt_text}"},
+        ]
+
+        try:
+            parsed = await self.chat_service.chat(messages)
+
+            # Clean up markdown code blocks if present
+            parsed = parsed.strip()
+            code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", parsed)
+            if code_block_match:
+                parsed = code_block_match.group(1).strip()
+            else:
+                json_match = re.search(r"\{[\s\S]*\}", parsed)
+                if json_match:
+                    parsed = json_match.group(0)
+
+            bill_data = json.loads(parsed)
+
+            if bill_data.get("error") == "not_a_bill":
+                return {
+                    "type": "text",
+                    "content": "This text does not appear to contain bill or receipt information.",
+                }
+
+            name = bill_data.get("name", "Unknown Bill")
+            amount = bill_data.get("amount", 0)
+            due_date = bill_data.get("due_date")
+            
+            # Validate and clean amount
+            try:
+                amount = float(amount)
+                if amount <= 0:
+                    return {
+                        "type": "text",
+                        "content": f"Extracted bill '{name}' but amount ({amount}) is invalid. Please add manually with: `budget add {name} <amount>`",
+                    }
+            except (ValueError, TypeError):
+                return {
+                    "type": "text",
+                    "content": f"Extracted bill '{name}' but could not parse amount '{amount}'. Please add manually with: `budget add {name} <amount>`",
+                }
+
+            # Add to budget system using plugin
+            plugin_service = PluginService(self.db)
+            result = await plugin_service.execute_tool_call(
+                "budget", "add", {"name": name, "amount": str(amount)}, self.user.id
+            )
+
+            if "error" in result:
+                return {"type": "text", "content": f"Error adding bill: {result.get('error', 'Unknown error')}"}
+
+            due_str = f"\n📅 Date: {due_date}" if due_date else ""
+            return {
+                "type": "text",
+                "content": f"✅ Bill added from receipt: **{name}**\n\n💵 Amount: ${amount:.2f}{due_str}",
+            }
+
+        except json.JSONDecodeError:
+            return {
+                "type": "text",
+                "content": "Could not extract bill details from receipt. The text may not contain billing information.",
+            }
+        except Exception as e:
+            logger.error(f"Error extracting bill from text: {e}")
+            return {"type": "text", "content": f"Error extracting bill: {str(e)}"}
 
             elif subcommand == "reply":
                 if len(parts) < 4:
