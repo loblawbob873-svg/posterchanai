@@ -64,6 +64,10 @@ def create_cardav_response(multistatus_items: List[Dict]) -> str:
             elif prop_name == 'address-data':
                 # Use CDATA for vCard data to avoid XML escaping issues
                 xml += f'                <C:address-data xmlns:C="urn:ietf:params:xml:ns:carddav"><![CDATA[{prop_value}]]></C:address-data>\n'
+            elif prop_name == 'current-user-principal':
+                # Principal URL for DAV discovery (used by iPhone)
+                principal_href = html.escape(str(prop_value))
+                xml += f'                <D:current-user-principal><D:href>{principal_href}</D:href></D:current-user-principal>\n'
         xml += '            </D:prop>\n            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
     xml += '</D:multistatus>'
     return xml
