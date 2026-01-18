@@ -3462,7 +3462,7 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
         try:
             # Default: browse root directory
             if not subcommand:
-                items = scan_music_directory(directory, recursive)
+                items = scan_music_directory(directory, recursive, db=self.db, user_id=self.user.id)
                 
                 # Cache results
                 _music_cache[self.user.id] = {
@@ -3476,7 +3476,7 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
             # Browse folder
             if subcommand == "browse":
                 subfolder = param if param else ""
-                items = scan_music_directory(directory, recursive, subfolder)
+                items = scan_music_directory(directory, recursive, subfolder, db=self.db, user_id=self.user.id)
 
                 # Cache results
                 _music_cache[self.user.id] = {
