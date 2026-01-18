@@ -246,6 +246,7 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         if depth == "1":
             # List files using proxy
             file_items = proxy.list_files(subpath)
+            logger.info(f"[CalDAV] Listing events in calendar '{cal_name}' (subpath='{subpath}'): found {len(file_items)} items")
             for item in file_items:
                 name = item.get('name', '')
                 if name.endswith('.ics'):
@@ -258,6 +259,7 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
                             "getetag": etag
                         }
                     })
+            logger.info(f"[CalDAV] Added {len([i for i in items if i.get('href', '').endswith('.ics')])} events to PROPFIND response for calendar '{cal_name}'")
     
     # Individual event
     elif path.count('/') == 1 and path.endswith('.ics'):
@@ -354,6 +356,7 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             
             # List matching events from the specified calendar directory using proxy
             file_items = proxy.list_files(subpath)
+            logger.info(f"[CalDAV] REPORT query for calendar '{cal_name}' (subpath='{subpath}'): found {len(file_items)} items")
             for item in file_items:
                 name = item.get('name', '')
                 if name.endswith('.ics'):
@@ -363,6 +366,8 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                             filepath = f"{subpath}/{name}"
                         else:
                             filepath = name
+                        
+                        logger.debug(f"[CalDAV] Processing event file: {filepath}")
                         
                         # Read calendar data using proxy
                         ical_data = proxy.read_file(filepath)
