@@ -160,12 +160,29 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
                 elif item.get('name', '').endswith('.ics'):
                     ics_files.append(item.get('name'))
             
-            # If no subdirectories exist, check if there are loose .ics files
-            # If so, treat the root as a default calendar for backwards compatibility
+            # Check if there are loose .ics files in root (legacy mode)
             has_loose_ics = len(ics_files) > 0
             
+            # Always show calendar subdirectories if they exist
+            for cal_name in sorted(calendar_dirs):
+                # Skip hidden directories
+                if cal_name.startswith('.'):
+                    continue
+                items.append({
+                    "href": f"{base_url}/{quote(cal_name, safe='')}/",
+                    "props": {
+                        "resourcetype": "calendar",
+                        "displayname": cal_name.replace('_', ' ').title(),
+                        "supported-calendar-component-set": "VEVENT,VTODO",
+                        "calendar-description": f"{cal_name} Calendar",
+                        "calendar-color": "#0088FF",
+                        "calendar-timezone": "UTC"
+                    }
+                })
+            
+            # If no calendar subdirectories exist but there are loose .ics files,
+            # show legacy "Calendar" for backwards compatibility
             if not calendar_dirs and has_loose_ics:
-                # Legacy mode: root directory has .ics files, show as "Calendar"
                 items.append({
                     "href": f"{base_url}/calendar/",
                     "props": {
@@ -177,23 +194,20 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
                         "calendar-timezone": "UTC"
                     }
                 })
-            else:
-                # New mode: show actual calendar subdirectories
-                for cal_name in sorted(calendar_dirs):
-                    # Skip hidden directories
-                    if cal_name.startswith('.'):
-                        continue
-                    items.append({
-                        "href": f"{base_url}/{quote(cal_name, safe='')}/",
-                        "props": {
-                            "resourcetype": "calendar",
-                            "displayname": cal_name.replace('_', ' ').title(),
-                            "supported-calendar-component-set": "VEVENT,VTODO",
-                            "calendar-description": f"{cal_name} Calendar",
-                            "calendar-color": "#0088FF",
-                            "calendar-timezone": "UTC"
-                        }
-                    })
+            
+            # If no calendars exist at all, create a default "Calendar" so users can add events
+            if not calendar_dirs and not has_loose_ics:
+                items.append({
+                    "href": f"{base_url}/calendar/",
+                    "props": {
+                        "resourcetype": "calendar",
+                        "displayname": "Calendar",
+                        "supported-calendar-component-set": "VEVENT,VTODO",
+                        "calendar-description": "Default Calendar",
+                        "calendar-color": "#0088FF",
+                        "calendar-timezone": "UTC"
+                    }
+                })
     
     # Individual calendar collection
     elif '/' not in path:
