@@ -471,21 +471,22 @@ def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]
 
 
 def get_user_contacts_config(user_id: int, db: Session = None) -> Optional[Dict[str, str]]:
-    """Get user's CardDAV contacts configuration."""
+    """Get user's CardDAV contacts configuration. Always prioritizes built-in server if enabled."""
     close_db = False
     if db is None:
         db = SessionLocal()
         close_db = True
 
     try:
-        # First check if user wants to use built-in CardDAV
+        # ALWAYS check built-in CardDAV first - this is the native server
         use_builtin = db.query(UserSetting).filter(
             UserSetting.user_id == user_id,
             UserSetting.key == "use_builtin_cardav"
         ).first()
         
-        if use_builtin and use_builtin.value == "true":
-            # Return built-in CardDAV config
+        # If built-in is explicitly enabled OR not set (default to built-in), use built-in
+        if not use_builtin or use_builtin.value == "true":
+            # Return built-in CardDAV config (native server)
             from app.models import User
             from app.models import Setting
             
@@ -498,6 +499,7 @@ def get_user_contacts_config(user_id: int, db: Session = None) -> Optional[Dict[
                 # For built-in server, use localhost since commands run on same server
                 url = f"http://localhost:{port}/carddav/{user.username}/"
                 
+                logger.debug(f"[CardDAV] Using built-in (native) CardDAV server for user {user.username}")
                 return {
                     "url": url,
                     "username": user.username,
@@ -506,7 +508,8 @@ def get_user_contacts_config(user_id: int, db: Session = None) -> Optional[Dict[
                     "builtin": True
                 }
         
-        # Otherwise, use external CardDAV config
+        # Only use external CardDAV if built-in is explicitly disabled
+        logger.debug(f"[CardDAV] Built-in disabled, checking external CardDAV config for user {user_id}")
         setting = db.query(UserSetting).filter(
             UserSetting.user_id == user_id,
             UserSetting.key == "carddav_config"
@@ -517,9 +520,29 @@ def get_user_contacts_config(user_id: int, db: Session = None) -> Optional[Dict[
             try:
                 config = json.loads(setting.value)
                 config["builtin"] = False
+                logger.debug(f"[CardDAV] Using external CardDAV: {config.get('url', 'unknown')}")
                 return config
             except json.JSONDecodeError:
                 logger.error(f"Invalid carddav_config JSON for user {user_id}")
+
+        # Default to built-in if no external config
+        logger.debug(f"[CardDAV] No external config, defaulting to built-in for user {user_id}")
+        from app.models import User
+        from app.models import Setting
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            cardav_port = db.query(Setting).filter(Setting.key == "cardav_port").first()
+            port = cardav_port.value if cardav_port else "8082"
+            url = f"http://localhost:{port}/carddav/{user.username}/"
+            
+            return {
+                "url": url,
+                "username": user.username,
+                "password": "__USE_SESSION_AUTH__",
+                "name": "Built-in CardDAV",
+                "builtin": True
+            }
 
         return None
     finally:
