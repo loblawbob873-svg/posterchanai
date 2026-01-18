@@ -1125,7 +1125,7 @@ def search_contacts(
 
 
 def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Contact]:
-    """Search contacts using user's CardDAV configuration with timeout protection."""
+    """Search contacts using user's CardDAV configuration with timeout protection. Uses storage proxy for built-in server."""
     config = get_user_contacts_config(user_id, db)
     if not config:
         return []
@@ -1133,10 +1133,98 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
     url = config.get('url', '')
     username = config.get('username', '')
     password = config.get('password', '')
+    is_builtin = config.get('builtin', False)
 
     if not url or not username:
         return []
 
+    # If using built-in server, read directly from storage proxy
+    if is_builtin and password == "__USE_SESSION_AUTH__":
+        try:
+            from app.models import User
+            from app.services.dav_storage_proxy import DAVStorageProxy
+            import vobject
+            
+            if db is None:
+                db = SessionLocal()
+            
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return []
+            
+            # Use storage proxy (must be configured)
+            proxy = DAVStorageProxy(db, user.username, 'cardav')
+            
+            # Read all .vcf files from root (legacy mode - contacts in root)
+            file_items = proxy.list_files("")
+            contacts = []
+            query_lower = query.lower()
+            
+            for item in file_items:
+                name = item.get('name', '')
+                if not name.endswith('.vcf'):
+                    continue
+                
+                try:
+                    # Read vCard file using proxy
+                    vcard_data = proxy.read_file(name)
+                    if not vcard_data:
+                        continue
+                    
+                    vcard = vobject.readOne(vcard_data)
+                    
+                    # Get contact info
+                    contact_name = ""
+                    if hasattr(vcard, 'fn'):
+                        contact_name = str(vcard.fn.value)
+                    elif hasattr(vcard, 'n'):
+                        contact_name = str(vcard.n.value)
+                    
+                    emails = []
+                    if hasattr(vcard, 'email_list'):
+                        for em in vcard.email_list:
+                            email_val = str(em.value).strip()
+                            if email_val and email_val not in emails:
+                                emails.append(email_val)
+                    elif hasattr(vcard, 'email'):
+                        email_val = str(vcard.email.value).strip()
+                        if email_val:
+                            emails.append(email_val)
+                    
+                    phone = None
+                    if hasattr(vcard, 'tel'):
+                        phone = str(vcard.tel.value)
+                    
+                    org = None
+                    if hasattr(vcard, 'org'):
+                        org = str(vcard.org.value[0]) if vcard.org.value else None
+                    
+                    note = None
+                    if hasattr(vcard, 'note'):
+                        note = str(vcard.note.value)
+                    
+                    # Check if query matches (empty query matches all)
+                    emails_str = ' '.join(emails)
+                    searchable = f"{contact_name} {emails_str} {phone or ''} {org or ''} {note or ''}".lower()
+                    if not query_lower or query_lower in searchable:
+                        contacts.append(Contact(
+                            uid=str(vcard.uid.value) if hasattr(vcard, 'uid') else name.replace('.vcf', ''),
+                            name=contact_name,
+                            emails=emails,
+                            phone=phone,
+                            organization=org,
+                            note=note
+                        ))
+                except Exception as e:
+                    logger.debug(f"Error parsing vCard {name}: {e}")
+                    continue
+            
+            return contacts
+        except Exception as e:
+            logger.error(f"Error fetching contacts from built-in storage: {e}", exc_info=True)
+            return []
+
+    # External CardDAV server - use HTTP requests
     try:
         # Run with timeout to prevent hanging on slow CardDAV servers
         def fetch_contacts():
@@ -1648,7 +1736,7 @@ def get_contact_by_uid(url: str, username: str, password: str, contact_uid: str)
 
 
 def get_user_contact_by_uid(user_id: int, db: Session, contact_uid: str) -> Optional[Contact]:
-    """Get a contact using user's CardDAV configuration."""
+    """Get a contact using user's CardDAV configuration. Uses storage proxy for built-in server."""
     config = get_user_contacts_config(user_id, db)
     if not config:
         return None
@@ -1656,10 +1744,91 @@ def get_user_contact_by_uid(user_id: int, db: Session, contact_uid: str) -> Opti
     url = config.get('url', '')
     username = config.get('username', '')
     password = config.get('password', '')
+    is_builtin = config.get('builtin', False)
 
     if not url or not username:
         return None
 
+    # If using built-in server, read directly from storage proxy
+    if is_builtin and password == "__USE_SESSION_AUTH__":
+        try:
+            from app.models import User
+            from app.services.dav_storage_proxy import DAVStorageProxy
+            import vobject
+            
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return None
+            
+            # Use storage proxy (must be configured)
+            proxy = DAVStorageProxy(db, user.username, 'cardav')
+            
+            # Try to find contact by UID - check all .vcf files
+            file_items = proxy.list_files("")
+            
+            for item in file_items:
+                name = item.get('name', '')
+                if not name.endswith('.vcf'):
+                    continue
+                
+                try:
+                    # Read vCard file using proxy
+                    vcard_data = proxy.read_file(name)
+                    if not vcard_data:
+                        continue
+                    
+                    vcard = vobject.readOne(vcard_data)
+                    vcard_uid = str(vcard.uid.value) if hasattr(vcard, 'uid') else name.replace('.vcf', '')
+                    
+                    if vcard_uid == contact_uid:
+                        # Found the contact - parse and return
+                        contact_name = ""
+                        if hasattr(vcard, 'fn'):
+                            contact_name = str(vcard.fn.value)
+                        elif hasattr(vcard, 'n'):
+                            contact_name = str(vcard.n.value)
+                        
+                        emails = []
+                        if hasattr(vcard, 'email_list'):
+                            for em in vcard.email_list:
+                                email_val = str(em.value).strip()
+                                if email_val and email_val not in emails:
+                                    emails.append(email_val)
+                        elif hasattr(vcard, 'email'):
+                            email_val = str(vcard.email.value).strip()
+                            if email_val:
+                                emails.append(email_val)
+                        
+                        phone = None
+                        if hasattr(vcard, 'tel'):
+                            phone = str(vcard.tel.value)
+                        
+                        org = None
+                        if hasattr(vcard, 'org'):
+                            org = str(vcard.org.value[0]) if vcard.org.value else None
+                        
+                        note = None
+                        if hasattr(vcard, 'note'):
+                            note = str(vcard.note.value)
+                        
+                        return Contact(
+                            uid=vcard_uid,
+                            name=contact_name,
+                            emails=emails,
+                            phone=phone,
+                            organization=org,
+                            note=note
+                        )
+                except Exception as e:
+                    logger.debug(f"Error parsing vCard {name}: {e}")
+                    continue
+            
+            return None
+        except Exception as e:
+            logger.error(f"Error getting contact from built-in storage: {e}", exc_info=True)
+            return None
+
+    # External CardDAV server - use HTTP requests
     return get_contact_by_uid(url, username, password, contact_uid)
 
 
