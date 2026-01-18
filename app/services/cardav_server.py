@@ -438,8 +438,8 @@ def create_cardav_app() -> FastAPI:
     """Create CardDAV FastAPI application."""
     app = FastAPI(title="Posterchanai CardDAV Server")
     
-    @app.get("/.well-known/carddav")
-    async def carddav_discovery():
+    @app.route("/.well-known/carddav", methods=["GET", "HEAD", "OPTIONS"])
+    async def carddav_discovery(request: StarletteRequest):
         """CardDAV discovery endpoint."""
         return Response(
             content="",
