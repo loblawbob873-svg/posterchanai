@@ -1369,7 +1369,7 @@
 /* File Manager Tabs */
 .file-manager-tabs {
     display: flex;
-    gap: 4px;
+    gap: 8px;
     flex-shrink: 0;
 }
 
@@ -1377,11 +1377,12 @@
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     color: var(--text-primary);
-    padding: 6px 12px;
-    border-radius: 4px;
+    padding: 10px 18px;
+    border-radius: 6px;
     cursor: pointer;
     transition: all 0.2s;
-    font-size: 13px;
+    font-size: 14px;
+    font-weight: 500;
     white-space: nowrap;
 }
 
