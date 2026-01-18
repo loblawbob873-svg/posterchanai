@@ -119,9 +119,10 @@ class StorageService:
         return user_path
 
     def get_conversation_path(self, username: str, conversation_id: int) -> Path:
-        """Get the upload directory for a specific conversation"""
+        """Get the upload directory for a specific conversation (in chat subfolder)"""
         safe_conv_id = _sanitize_path_component(str(conversation_id))
-        conv_path = self.get_user_path(username) / safe_conv_id
+        # Store chat attachments in username/chat/conversation_id/
+        conv_path = self.get_user_path(username) / "chat" / safe_conv_id
 
         # Verify path is within upload directory
         if not _validate_path_within_base(conv_path, Path(self.upload_path)):
@@ -422,14 +423,8 @@ class StorageService:
     def delete_conversation_files(self, username: str, conversation_id: int) -> bool:
         """Delete all files for a conversation"""
         try:
-            safe_username = _sanitize_path_component(username)
-            safe_conv_id = _sanitize_path_component(str(conversation_id))
-            conv_path = Path(self.upload_path) / safe_username / safe_conv_id
-
-            # Verify path is within upload directory
-            if not _validate_path_within_base(conv_path, Path(self.upload_path)):
-                logger.warning(f"Path traversal attempt blocked in delete_conversation_files: {username}/{conversation_id}")
-                return False
+            # Use get_conversation_path to ensure correct path structure (username/chat/conversation_id)
+            conv_path = self.get_conversation_path(username, conversation_id)
 
             if conv_path.exists():
                 shutil.rmtree(conv_path)
@@ -459,11 +454,12 @@ class StorageService:
     def get_file_count(self, username: str, conversation_id: int = None) -> int:
         """Count files for a user or specific conversation"""
         try:
-            safe_username = _sanitize_path_component(username)
             if conversation_id:
-                safe_conv_id = _sanitize_path_component(str(conversation_id))
-                target_path = Path(self.upload_path) / safe_username / safe_conv_id
+                # Use get_conversation_path for conversation-specific count
+                target_path = self.get_conversation_path(username, conversation_id)
             else:
+                # Count all files in user directory
+                safe_username = _sanitize_path_component(username)
                 target_path = Path(self.upload_path) / safe_username
 
             # Verify path is within upload directory
@@ -492,18 +488,16 @@ class StorageService:
             parts = image_url.strip('/').split('/')
             if len(parts) >= 4 and parts[0] == 'api' and parts[1] == 'files':
                 username = unquote(parts[2])
-                conv_id = parts[3]
+                conv_id = int(parts[3])
                 filename = unquote(parts[4]) if len(parts) > 4 else None
 
                 if filename:
-                    # Sanitize all path components to prevent traversal
-                    safe_username = _sanitize_path_component(username)
-                    safe_conv_id = _sanitize_path_component(conv_id)
+                    # Use get_conversation_path to get correct path structure
+                    conv_path = self.get_conversation_path(username, conv_id)
                     safe_filename = _sanitize_path_component(filename)
+                    file_path = conv_path / safe_filename
 
-                    file_path = Path(self.upload_path) / safe_username / safe_conv_id / safe_filename
-
-                    # Verify path is within upload directory
+                    # Verify path is within upload directory (already checked by get_conversation_path)
                     if not _validate_path_within_base(file_path, Path(self.upload_path)):
                         logger.warning(f"Path traversal attempt blocked: {image_url}")
                         return None

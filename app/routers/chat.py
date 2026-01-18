@@ -195,9 +195,10 @@ async def serve_file(
         )
 
     # Local file serving
-    # Get file path
+    # Get file path using storage service method to ensure correct path structure
     storage = StorageService(db)
-    file_path = Path(storage.upload_path) / username / str(conversation_id) / filename
+    conv_path = storage.get_conversation_path(username, conversation_id)
+    file_path = conv_path / filename
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
