@@ -120,33 +120,49 @@ async def export_contacts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Export all contacts as a single vCard (.vcf) file."""
+    """Export all contacts as a single vCard (.vcf) file. Uses storage proxy if configured."""
     try:
-        from app.services.cardav_server import get_user_cardav_path
+        from app.services.dav_storage_proxy import DAVStorageProxy
         import vobject
         
-        # Get user's CardDAV path
-        cardav_path = get_user_cardav_path(current_user, db)
-        
-        if not cardav_path.exists():
-            raise HTTPException(status_code=404, detail="CardDAV directory not found")
+        # Use storage proxy (will fallback to local if not configured)
+        proxy = DAVStorageProxy(db, current_user.username, 'cardav')
         
         # Read all .vcf files and combine them
         combined_vcards = []
         contact_count = 0
         
-        for vcf_file in cardav_path.glob("*.vcf"):
-            try:
-                with open(vcf_file, 'r', encoding='utf-8') as f:
-                    vcard_data = f.read()
+        # Get all .vcf files from root and subdirectories
+        def collect_contacts(subpath: str = ""):
+            """Recursively collect contacts from addressbook directories."""
+            nonlocal contact_count
+            items = proxy.list_files(subpath)
+            
+            for item in items:
+                name = item.get('name', '')
+                item_type = item.get('type', 'file')
                 
-                # Validate it's a valid vCard
-                vcard = vobject.readOne(vcard_data)
-                combined_vcards.append(vcard_data)
-                contact_count += 1
-            except Exception as e:
-                logger.warning(f"Error reading {vcf_file}: {e}")
-                continue
+                if item_type == 'directory':
+                    # Recursively process subdirectories (addressbook subdirectories)
+                    new_subpath = f"{subpath}/{name}" if subpath else name
+                    collect_contacts(new_subpath)
+                elif name.endswith('.vcf'):
+                    # Read and process .vcf file
+                    try:
+                        filepath = f"{subpath}/{name}" if subpath else name
+                        vcard_data = proxy.read_file(filepath)
+                        
+                        if vcard_data:
+                            # Validate it's a valid vCard
+                            vcard = vobject.readOne(vcard_data)
+                            combined_vcards.append(vcard_data)
+                            contact_count += 1
+                    except Exception as e:
+                        logger.warning(f"Error reading {filepath}: {e}")
+                        continue
+        
+        # Start collecting from root
+        collect_contacts()
         
         if contact_count == 0:
             raise HTTPException(status_code=404, detail="No contacts found to export")
@@ -175,9 +191,9 @@ async def import_contacts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Import contacts from vCard (.vcf) file."""
+    """Import contacts from vCard (.vcf) file. Uses storage proxy if configured."""
     try:
-        from app.services.cardav_server import get_user_cardav_path
+        from app.services.dav_storage_proxy import DAVStorageProxy
         import vobject
         import uuid
         
@@ -185,9 +201,8 @@ async def import_contacts(
         vcf_data = await file.read()
         vcf_data = vcf_data.decode('utf-8')
         
-        # Get user's CardDAV path
-        cardav_path = get_user_cardav_path(current_user, db)
-        cardav_path.mkdir(parents=True, exist_ok=True)
+        # Use storage proxy (will fallback to local if not configured)
+        proxy = DAVStorageProxy(db, current_user.username, 'cardav')
         
         imported_count = 0
         error_count = 0
@@ -225,17 +240,23 @@ async def import_contacts(
                     vcard.add('uid')
                     vcard.uid.value = contact_uid
                 
+                # Build filepath
+                filepath = f"{contact_uid}.vcf"
+                
                 # Check if contact already exists
-                vcf_file = cardav_path / f"{contact_uid}.vcf"
-                if vcf_file.exists():
+                if proxy.file_exists(filepath):
                     logger.debug(f"Contact {contact_uid} already exists, skipping")
                     skipped_count += 1
                     continue
                 
-                # Save vCard to file
+                # Save vCard to file using proxy
                 vcard_data = vcard.serialize()
-                with open(vcf_file, 'w', encoding='utf-8') as f:
-                    f.write(vcard_data)
+                success = proxy.write_file(filepath, vcard_data)
+                
+                if not success:
+                    logger.warning(f"Failed to save contact {contact_uid}")
+                    error_count += 1
+                    continue
                 
                 imported_count += 1
             except Exception as e:
@@ -263,16 +284,15 @@ async def import_from_cardav_server(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Import contacts from another CardDAV server."""
+    """Import contacts from another CardDAV server. Uses storage proxy if configured."""
     try:
         import caldav
-        from app.services.cardav_server import get_user_cardav_path
+        from app.services.dav_storage_proxy import DAVStorageProxy
         import vobject
         import uuid
         
-        # Get user's CardDAV path
-        cardav_path = get_user_cardav_path(current_user, db)
-        cardav_path.mkdir(parents=True, exist_ok=True)
+        # Use storage proxy (will fallback to local if not configured)
+        proxy = DAVStorageProxy(db, current_user.username, 'cardav')
         
         # Connect to CardDAV server
         client = caldav.DAVClient(
