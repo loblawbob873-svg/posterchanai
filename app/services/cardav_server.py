@@ -294,12 +294,20 @@ def create_cardav_app() -> FastAPI:
             credentials = base64.b64decode(auth_header[6:]).decode('utf-8')
             username, password = credentials.split(':', 1)
         except:
-            return Response(content="Invalid credentials", status_code=401)
+            return Response(
+                content="Invalid credentials",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+            )
         
         # Verify user
         user = db.query(User).filter(User.username == username).first()
         if not user or not verify_password(password, user.password_hash):
-            return Response(content="Invalid credentials", status_code=401)
+            return Response(
+                content="Invalid credentials",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+            )
         
         # Get depth header for PROPFIND
         depth = request.headers.get("Depth", "0")
