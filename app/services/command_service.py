@@ -3683,8 +3683,8 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                 # Shuffle tracks
                 rand_module.shuffle(all_tracks)
                 
-                # Limit to 200 tracks to prevent UI freeze
-                MAX_SHUFFLE_TRACKS = 200
+                # Limit to 1000 tracks to prevent UI freeze
+                MAX_SHUFFLE_TRACKS = 1000
                 tracks_to_play = all_tracks[:MAX_SHUFFLE_TRACKS]
 
                 # Update cache with ALL shuffled tracks (for browsing)
