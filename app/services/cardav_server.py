@@ -82,28 +82,102 @@ def get_contact_uid_from_vcard(vcard_data: str) -> Optional[str]:
 
 async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") -> Response:
     """Handle PROPFIND request."""
+    from urllib.parse import quote
     cardav_path = get_user_cardav_path(user, db)
-    base_url = f"/carddav/{user.username}"
+    encoded_username = quote(user.username, safe='')
+    base_url = f"/carddav/{encoded_username}"
     
     items = []
     
-    # Root addressbook collection
-    if path == user.username or path == f"{user.username}/" or not path:
+    # Normalize path
+    path = path.rstrip('/')
+    if path.startswith(user.username):
+        path = path[len(user.username):].lstrip('/')
+    if path.startswith(encoded_username):
+        path = path[len(encoded_username):].lstrip('/')
+    
+    # Root addressbook home - container for addressbooks
+    if not path or path == '':
         items.append({
             "href": f"{base_url}/",
             "props": {
-                "resourcetype": "addressbook",
-                "displayname": "Contacts"
+                "resourcetype": "collection",
+                "displayname": f"{user.username}'s Addressbooks"
             }
         })
+        
+        # If depth=1, list addressbooks
+        if depth == "1":
+            # Check for addressbook subdirectories
+            addressbook_dirs = []
+            if cardav_path.exists():
+                for item in cardav_path.iterdir():
+                    if item.is_dir() and not item.name.startswith('.'):
+                        addressbook_dirs.append(item.name)
+            
+            # If no subdirectories, check for loose .vcf files (legacy mode)
+            has_loose_vcf = False
+            if cardav_path.exists():
+                has_loose_vcf = any(cardav_path.glob("*.vcf"))
+            
+            if not addressbook_dirs and has_loose_vcf:
+                # Legacy mode: show root as default addressbook
+                items.append({
+                    "href": f"{base_url}/contacts/",
+                    "props": {
+                        "resourcetype": "addressbook",
+                        "displayname": "Contacts"
+                    }
+                })
+            else:
+                # New mode: show actual addressbook subdirectories
+                for abook_name in sorted(addressbook_dirs):
+                    items.append({
+                        "href": f"{base_url}/{quote(abook_name, safe='')}/",
+                        "props": {
+                            "resourcetype": "addressbook",
+                            "displayname": abook_name.replace('_', ' ').title()
+                        }
+                    })
     
-    # If depth=1, list contacts
-    if depth == "1" and (path == user.username or path == f"{user.username}/" or not path):
-        # List all .vcf files
-        for vcf_file in cardav_path.glob("*.vcf"):
-            contact_uid = vcf_file.stem
+    # Individual addressbook
+    elif '/' not in path:
+        abook_name = path
+        abook_dir = cardav_path / abook_name if abook_name != 'contacts' else cardav_path
+        
+        items.append({
+            "href": f"{base_url}/{quote(abook_name, safe='')}/",
+            "props": {
+                "resourcetype": "addressbook",
+                "displayname": abook_name.replace('_', ' ').title() if abook_name != 'contacts' else "Contacts"
+            }
+        })
+        
+        # If depth=1, list contacts
+        if depth == "1" and abook_dir.exists():
+            for vcf_file in abook_dir.glob("*.vcf"):
+                contact_uid = vcf_file.stem
+                items.append({
+                    "href": f"{base_url}/{quote(abook_name, safe='')}/{contact_uid}.vcf",
+                    "props": {
+                        "getcontenttype": "text/vcard; charset=utf-8",
+                        "getetag": str(vcf_file.stat().st_mtime)
+                    }
+                })
+    
+    # Individual contact
+    elif path.count('/') == 1 and path.endswith('.vcf'):
+        parts = path.split('/')
+        abook_name = parts[0]
+        contact_file = parts[1]
+        contact_uid = contact_file.replace('.vcf', '')
+        
+        abook_dir = cardav_path / abook_name if abook_name != 'contacts' else cardav_path
+        vcf_file = abook_dir / f"{contact_uid}.vcf"
+        
+        if vcf_file.exists():
             items.append({
-                "href": f"{base_url}/{contact_uid}.vcf",
+                "href": f"{base_url}/{path}",
                 "props": {
                     "getcontenttype": "text/vcard; charset=utf-8",
                     "getetag": str(vcf_file.stat().st_mtime)
@@ -116,9 +190,31 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
 
 async def handle_report(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
     """Handle REPORT request (contact queries)."""
+    from urllib.parse import quote, unquote
     body = await request.body()
     cardav_path = get_user_cardav_path(user, db)
-    base_url = f"/carddav/{user.username}"
+    encoded_username = quote(user.username, safe='')
+    base_url = f"/carddav/{encoded_username}"
+    
+    # Normalize path
+    path = path.rstrip('/')
+    if path.startswith(user.username):
+        path = path[len(user.username):].lstrip('/')
+    if path.startswith(encoded_username):
+        path = path[len(encoded_username):].lstrip('/')
+    
+    # Determine which addressbook we're querying
+    abook_name = None
+    if path and '/' not in path:
+        abook_name = unquote(path)
+    
+    # Determine the addressbook directory
+    if abook_name == 'contacts':
+        abook_dir = cardav_path  # Legacy: root directory
+    elif abook_name:
+        abook_dir = cardav_path / abook_name
+    else:
+        abook_dir = cardav_path  # Default to root
     
     try:
         root = ET.fromstring(body)
@@ -130,36 +226,43 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         
         if query_elem is not None:
             # Addressbook query - list all contacts
-            filter_elem = query_elem.find('.//{urn:ietf:params:xml:ns:carddav}filter')
-            # For now, return all contacts (can add filtering later)
-            
-            for vcf_file in cardav_path.glob("*.vcf"):
-                try:
-                    with open(vcf_file, 'r', encoding='utf-8') as f:
-                        vcard_data = f.read()
-                    
-                    contact_uid = vcf_file.stem
-                    items.append({
-                        "href": f"{base_url}/{contact_uid}.vcf",
-                        "props": {
-                            "getcontenttype": "text/vcard; charset=utf-8",
-                            "getetag": str(vcf_file.stat().st_mtime),
-                            "address-data": vcard_data
-                        }
-                    })
-                except Exception as e:
-                    logger.debug(f"Error processing {vcf_file}: {e}")
-                    continue
+            if abook_dir.exists():
+                for vcf_file in abook_dir.glob("*.vcf"):
+                    try:
+                        with open(vcf_file, 'r', encoding='utf-8') as f:
+                            vcard_data = f.read()
+                        
+                        contact_uid = vcf_file.stem
+                        href_path = f"{abook_name}/{contact_uid}.vcf" if abook_name else f"contacts/{contact_uid}.vcf"
+                        items.append({
+                            "href": f"{base_url}/{href_path}",
+                            "props": {
+                                "getcontenttype": "text/vcard; charset=utf-8",
+                                "getetag": str(vcf_file.stat().st_mtime),
+                                "address-data": vcard_data
+                            }
+                        })
+                    except Exception as e:
+                        logger.debug(f"Error processing {vcf_file}: {e}")
+                        continue
         
         elif multiget_elem is not None:
             # Addressbook multiget - get specific contacts by href
             hrefs = [elem.text for elem in multiget_elem.findall('.//{DAV:}href')]
             for href in hrefs:
-                # Extract UID from href
-                match = re.search(r'/([^/]+)\.vcf$', href)
+                # Extract addressbook name and UID from href
+                match = re.search(r'/([^/]+)/([^/]+)\.vcf$', href)
                 if match:
-                    contact_uid = match.group(1)
-                    vcf_file = cardav_path / f"{contact_uid}.vcf"
+                    href_abook_name = unquote(match.group(1))
+                    contact_uid = match.group(2)
+                    
+                    # Determine addressbook directory
+                    if href_abook_name == 'contacts':
+                        href_abook_dir = cardav_path
+                    else:
+                        href_abook_dir = cardav_path / href_abook_name
+                    
+                    vcf_file = href_abook_dir / f"{contact_uid}.vcf"
                     if vcf_file.exists():
                         try:
                             with open(vcf_file, 'r', encoding='utf-8') as f:
@@ -184,13 +287,22 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
 
 async def handle_get(path: str, user: User, db: Session) -> Response:
     """Handle GET request (retrieve contact)."""
+    from urllib.parse import unquote
     cardav_path = get_user_cardav_path(user, db)
     
-    # Extract contact UID from path
-    match = re.search(r'/([^/]+)\.vcf$', path)
+    # Extract addressbook name and contact UID from path
+    match = re.search(r'/([^/]+)/([^/]+)\.vcf$', path)
     if match:
-        contact_uid = match.group(1)
-        vcf_file = cardav_path / f"{contact_uid}.vcf"
+        abook_name = unquote(match.group(1))
+        contact_uid = match.group(2)
+        
+        # Determine addressbook directory
+        if abook_name == 'contacts':
+            abook_dir = cardav_path  # Legacy: root directory
+        else:
+            abook_dir = cardav_path / abook_name
+        
+        vcf_file = abook_dir / f"{contact_uid}.vcf"
         if vcf_file.exists():
             try:
                 with open(vcf_file, 'r', encoding='utf-8') as f:
@@ -205,6 +317,7 @@ async def handle_get(path: str, user: User, db: Session) -> Response:
 
 async def handle_put(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
     """Handle PUT request (create/update contact)."""
+    from urllib.parse import unquote
     body = await request.body()
     cardav_path = get_user_cardav_path(user, db)
     
@@ -213,6 +326,19 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
         
         # Extract UID from vCard data
         contact_uid = get_contact_uid_from_vcard(vcard_data)
+        
+        # Extract addressbook name from path
+        match = re.search(r'/([^/]+)/([^/]+)\.vcf$', path)
+        if match:
+            abook_name = unquote(match.group(1))
+            path_uid = match.group(2)
+            if contact_uid and contact_uid != path_uid:
+                logger.warning(f"UID mismatch: path={path_uid}, vcard={contact_uid}, using path UID")
+            contact_uid = path_uid
+        else:
+            # Legacy path or no addressbook specified
+            abook_name = 'contacts'
+        
         if not contact_uid:
             # Generate UID if not present
             contact_uid = str(uuid.uuid4())
@@ -223,12 +349,19 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
             vcard.uid.value = contact_uid
             vcard_data = vcard.serialize()
         
+        # Determine addressbook directory
+        if abook_name == 'contacts':
+            abook_dir = cardav_path  # Legacy: root directory
+        else:
+            abook_dir = cardav_path / abook_name
+            abook_dir.mkdir(parents=True, exist_ok=True)
+        
         # Save to file
-        vcf_file = cardav_path / f"{contact_uid}.vcf"
+        vcf_file = abook_dir / f"{contact_uid}.vcf"
         with open(vcf_file, 'w', encoding='utf-8') as f:
             f.write(vcard_data)
         
-        logger.info(f"Saved contact {contact_uid} for user {user.username}")
+        logger.info(f"Saved contact {contact_uid} for user {user.username} in addressbook {abook_name}")
         return Response(content="", status_code=201)
     except Exception as e:
         logger.error(f"Error saving contact: {e}")
@@ -237,17 +370,26 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
 
 async def handle_delete(path: str, user: User, db: Session) -> Response:
     """Handle DELETE request."""
+    from urllib.parse import unquote
     cardav_path = get_user_cardav_path(user, db)
     
-    # Extract contact UID from path
-    match = re.search(r'/([^/]+)\.vcf$', path)
+    # Extract addressbook name and contact UID from path
+    match = re.search(r'/([^/]+)/([^/]+)\.vcf$', path)
     if match:
-        contact_uid = match.group(1)
-        vcf_file = cardav_path / f"{contact_uid}.vcf"
+        abook_name = unquote(match.group(1))
+        contact_uid = match.group(2)
+        
+        # Determine addressbook directory
+        if abook_name == 'contacts':
+            abook_dir = cardav_path  # Legacy: root directory
+        else:
+            abook_dir = cardav_path / abook_name
+        
+        vcf_file = abook_dir / f"{contact_uid}.vcf"
         if vcf_file.exists():
             try:
                 vcf_file.unlink()
-                logger.info(f"Deleted contact {contact_uid} for user {user.username}")
+                logger.info(f"Deleted contact {contact_uid} from addressbook {abook_name} for user {user.username}")
                 return Response(content="", status_code=204)
             except Exception as e:
                 logger.error(f"Error deleting contact: {e}")
@@ -264,6 +406,34 @@ async def handle_mkcol(path: str, user: User, db: Session) -> Response:
     return Response(content="", status_code=201)
 
 
+async def handle_proppatch(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
+    """Handle PROPPATCH request (set addressbook properties)."""
+    body = await request.body()
+    
+    try:
+        # Parse the PROPPATCH request
+        root = ET.fromstring(body)
+        
+        # For now, accept changes without storing them
+        # Properties are hardcoded in handle_propfind
+        
+        xml = '''<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+    <D:response>
+        <D:href>{}</D:href>
+        <D:propstat>
+            <D:prop/>
+            <D:status>HTTP/1.1 200 OK</D:status>
+        </D:propstat>
+    </D:response>
+</D:multistatus>'''.format(path)
+        
+        return Response(content=xml, media_type="application/xml", status_code=207)
+    except Exception as e:
+        logger.error(f"Error handling PROPPATCH: {e}")
+        return Response(content="", status_code=500)
+
+
 def create_cardav_app() -> FastAPI:
     """Create CardDAV FastAPI application."""
     app = FastAPI(title="Posterchanai CardDAV Server")
@@ -277,7 +447,7 @@ def create_cardav_app() -> FastAPI:
             headers={"Location": "/carddav/"}
         )
     
-    @app.route("/carddav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "REPORT", "MKCOL"])
+    @app.route("/carddav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL"])
     async def carddav_handler(path: str, request: StarletteRequest, db: Session = Depends(get_db)):
         """Handle CardDAV requests."""
         # Extract username from Basic Auth
@@ -317,6 +487,8 @@ def create_cardav_app() -> FastAPI:
         
         if method == "PROPFIND":
             return await handle_propfind(path, user, db, depth)
+        elif method == "PROPPATCH":
+            return await handle_proppatch(path, user, db, request)
         elif method == "REPORT":
             return await handle_report(path, user, db, request)
         elif method == "GET":
