@@ -479,9 +479,39 @@ class StorageService:
             return 0
 
     def load_image_as_base64(self, image_url: str) -> str | None:
-        """Load image from URL path and return as base64"""
+        """Load image from URL path and return as base64. Uses storage proxy if configured."""
         from urllib.parse import unquote
 
+        # Check if storage server is configured - proxy request if so
+        storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        if storage_server_url and storage_server_url.value:
+            url = storage_server_url.value.strip()
+            if url.startswith(('http://', 'https://')):
+                try:
+                    # Proxy the file request to storage server
+                    import httpx
+                    storage_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
+                    headers = {}
+                    if storage_token and storage_token.value:
+                        headers["Authorization"] = f"Bearer {storage_token.value}"
+                    
+                    # Request the file from storage server
+                    file_url = f"{url.rstrip('/')}{image_url}"
+                    logger.info(f"[STORAGE PROXY] Loading image from: {file_url}")
+                    
+                    with httpx.Client(timeout=30.0) as client:
+                        response = client.get(file_url, headers=headers)
+                        if response.status_code == 200:
+                            # Convert to base64
+                            return base64.b64encode(response.content).decode('utf-8')
+                        else:
+                            logger.error(f"[STORAGE PROXY] Failed to load image: {response.status_code}")
+                            return None
+                except Exception as e:
+                    logger.error(f"[STORAGE PROXY] Error loading image: {e}")
+                    return None
+
+        # Local filesystem access (original code)
         # URL is like /api/files/username/conv_id/filename.png
         # Extract path parts
         try:
