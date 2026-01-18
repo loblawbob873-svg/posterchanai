@@ -1964,17 +1964,46 @@ async def _proxy_get_thumbnail(storage_server_url: str, username: str, file_path
         
         # Use synchronous requests in thread pool
         def _sync_proxy():
-            response = requests.get(url, headers=headers, params=params, timeout=60)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.error(f"[FILES] Failed to proxy get_thumbnail: {response.status_code} - {response.text}")
-                raise Exception(f"Storage server error: {response.status_code}")
+            try:
+                from requests.exceptions import RequestException, Timeout, ConnectionError as RequestsConnectionError
+                response = requests.get(url, headers=headers, params=params, timeout=60)
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    logger.error(f"[FILES] Failed to proxy get_thumbnail: {response.status_code} - {response.text[:500]}")
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Storage server error: {response.status_code}"
+                    )
+            except Timeout:
+                logger.error(f"[FILES] Timeout proxying get_thumbnail to {url}")
+                raise HTTPException(
+                    status_code=504,
+                    detail="Storage server timeout while generating thumbnail"
+                )
+            except RequestsConnectionError as e:
+                logger.error(f"[FILES] Connection error proxying get_thumbnail to {url}: {e}")
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Storage server connection error: {str(e)}"
+                )
+            except RequestException as e:
+                logger.error(f"[FILES] Request error proxying get_thumbnail to {url}: {e}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Storage server request error: {str(e)}"
+                )
         
         return await asyncio.to_thread(_sync_proxy)
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         logger.error(f"[FILES] Error proxying get_thumbnail: {e}", exc_info=True)
-        raise
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating thumbnail: {str(e)}"
+        )
 
 
 async def _proxy_move_files(storage_server_url: str, username: str, file_paths: List[str], destination: str, db: Session):
