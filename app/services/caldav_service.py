@@ -31,6 +31,113 @@ CALDAV_OPERATION_TIMEOUT = 10  # Timeout for individual operations
 _caldav_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="caldav_worker")
 
 
+def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datetime, calendar_name: str, db: Session) -> List[CalendarEvent]:
+    """Get events directly from built-in CalDAV storage using storage proxy."""
+    try:
+        from app.models import User
+        from app.services.dav_storage_proxy import DAVStorageProxy
+        from icalendar import Calendar as ICalendar
+        from dateutil import parser as date_parser
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return []
+        
+        # Use storage proxy (must be configured)
+        proxy = DAVStorageProxy(db, user.username, 'caldav')
+        
+        # Determine calendar subpath
+        if calendar_name == "Built-in Calendar" or calendar_name == "Calendar":
+            # Legacy mode - check root for .ics files
+            subpath = ""
+        else:
+            # Calendar subdirectory
+            subpath = calendar_name
+        
+        # List all .ics files in the calendar
+        file_items = proxy.list_files(subpath)
+        events = []
+        
+        # Ensure dates are timezone-aware for comparison
+        if start_date.tzinfo is None:
+            from datetime import timezone
+            start_date = start_date.replace(tzinfo=timezone.utc)
+        if end_date.tzinfo is None:
+            from datetime import timezone
+            end_date = end_date.replace(tzinfo=timezone.utc)
+        
+        for item in file_items:
+            name = item.get('name', '')
+            if not name.endswith('.ics'):
+                continue
+            
+            try:
+                # Read .ics file using proxy
+                ical_data = proxy.read_file(f"{subpath}/{name}" if subpath else name)
+                if not ical_data:
+                    continue
+                
+                # Parse iCalendar data
+                cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+                
+                # Process all VEVENT components
+                for component in cal.walk():
+                    if component.name == "VEVENT":
+                        # Get start time
+                        dtstart = component.get('dtstart')
+                        if not dtstart:
+                            continue
+                        
+                        event_start = dtstart.dt
+                        if isinstance(event_start, datetime):
+                            # Make timezone-aware if naive
+                            if event_start.tzinfo is None:
+                                from datetime import timezone
+                                event_start = event_start.replace(tzinfo=timezone.utc)
+                            
+                            # Check if event is in date range
+                            if event_start < start_date or event_start > end_date:
+                                continue
+                            
+                            # Get end time
+                            dtend = component.get('dtend')
+                            event_end = None
+                            if dtend:
+                                event_end = dtend.dt
+                                if isinstance(event_end, datetime):
+                                    if event_end.tzinfo is None:
+                                        from datetime import timezone
+                                        event_end = event_end.replace(tzinfo=timezone.utc)
+                            
+                            # Convert to naive local for CalendarEvent
+                            event_start_naive = to_naive_local(event_start)
+                            event_end_naive = to_naive_local(event_end) if event_end else None
+                            
+                            # Get event details
+                            summary = str(component.get('summary', '')) if component.get('summary') else "No Title"
+                            description = str(component.get('description', '')) if component.get('description') else None
+                            location = str(component.get('location', '')) if component.get('location') else None
+                            uid = str(component.get('uid', '')) if component.get('uid') else ""
+                            
+                            events.append(CalendarEvent(
+                                uid=uid,
+                                summary=summary,
+                                description=description,
+                                start=event_start_naive,
+                                end=event_end_naive,
+                                location=location,
+                                calendar_name=calendar_name
+                            ))
+            except Exception as e:
+                logger.debug(f"Error parsing event file {name}: {e}")
+                continue
+        
+        return events
+    except Exception as e:
+        logger.error(f"Error getting events from built-in storage: {e}", exc_info=True)
+        return []
+
+
 def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
     """Save event directly to built-in CalDAV storage (uses storage proxy if configured)."""
     try:
@@ -523,7 +630,7 @@ def get_all_user_events(
     end_date: datetime,
     db: Session = None
 ) -> List[CalendarEvent]:
-    """Get events from all user's calendars for a date range with timeout protection."""
+    """Get events from all user's calendars for a date range with timeout protection. Uses storage proxy for built-in server."""
     calendars = get_user_calendars(user_id, db)
     all_events = []
 
@@ -532,18 +639,25 @@ def get_all_user_events(
         username = cal_config.get('username', '')
         password = cal_config.get('password', '')
         name = cal_config.get('name', 'Calendar')
+        is_builtin = cal_config.get('builtin', False)
 
         if url and username:
             try:
-                # Run with timeout to prevent one slow calendar from blocking everything
-                def fetch_calendar():
-                    return get_events_for_date_range(url, username, password, start_date, end_date, name)
-
-                events = run_with_timeout(fetch_calendar, timeout=CALDAV_OPERATION_TIMEOUT)
-                if events:
-                    all_events.extend(events)
+                # If using built-in server, read directly from storage proxy
+                if is_builtin and password == "__USE_SESSION_AUTH__":
+                    events = _get_events_from_builtin(user_id, start_date, end_date, name, db)
+                    if events:
+                        all_events.extend(events)
                 else:
-                    logger.warning(f"Skipping calendar {name} - fetch timed out or failed")
+                    # External CalDAV server - use HTTP requests with timeout
+                    def fetch_calendar():
+                        return get_events_for_date_range(url, username, password, start_date, end_date, name)
+
+                    events = run_with_timeout(fetch_calendar, timeout=CALDAV_OPERATION_TIMEOUT)
+                    if events:
+                        all_events.extend(events)
+                    else:
+                        logger.warning(f"Skipping calendar {name} - fetch timed out or failed")
             except Exception as e:
                 logger.error(f"Error fetching from calendar {name}: {e}")
                 # Continue to next calendar instead of failing completely
