@@ -351,8 +351,12 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                             start_dt = date_parser.parse(start_str.replace('Z', '+00:00'))
                             end_dt = date_parser.parse(end_str.replace('Z', '+00:00'))
                             time_range = (start_dt, end_dt)
-                        except:
+                            logger.info(f"[CalDAV] Time range filter: {start_str} to {end_str}")
+                        except Exception as e:
+                            logger.warning(f"[CalDAV] Error parsing time range: {e}")
                             pass
+            else:
+                logger.info(f"[CalDAV] No time range filter - returning all events")
             
             # List matching events from the specified calendar directory using proxy
             file_items = proxy.list_files(subpath)
@@ -380,30 +384,37 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                         include_event = True
                         if time_range:
                             include_event = False
-                            cal = ICalendar.from_ical(ical_data.encode('utf-8'))
-                            for component in cal.walk():
-                                if component.name in ("VEVENT", "VTODO"):
-                                    dtstart = component.get('dtstart')
-                                    if dtstart:
-                                        event_start = dtstart.dt
-                                        # Handle both datetime and date objects
-                                        if isinstance(event_start, datetime):
-                                            if time_range[0] <= event_start <= time_range[1]:
-                                                include_event = True
-                                                break
-                                        else:
-                                            # Date object - convert to datetime for comparison
-                                            from datetime import date
-                                            if isinstance(event_start, date):
-                                                # Check if the date falls within range
-                                                event_datetime = datetime.combine(event_start, datetime.min.time())
-                                                if time_range[0].date() <= event_start <= time_range[1].date():
+                            try:
+                                cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+                                for component in cal.walk():
+                                    if component.name in ("VEVENT", "VTODO"):
+                                        dtstart = component.get('dtstart')
+                                        if dtstart:
+                                            event_start = dtstart.dt
+                                            # Handle both datetime and date objects
+                                            if isinstance(event_start, datetime):
+                                                if time_range[0] <= event_start <= time_range[1]:
                                                     include_event = True
+                                                    logger.debug(f"[CalDAV] Event {name} matches time range: {event_start}")
                                                     break
-                                    else:
-                                        # No start time, include it anyway
-                                        include_event = True
-                                        break
+                                            else:
+                                                # Date object - convert to datetime for comparison
+                                                from datetime import date
+                                                if isinstance(event_start, date):
+                                                    # Check if the date falls within range
+                                                    if time_range[0].date() <= event_start <= time_range[1].date():
+                                                        include_event = True
+                                                        logger.debug(f"[CalDAV] Event {name} (date) matches time range: {event_start}")
+                                                        break
+                                        else:
+                                            # No start time, include it anyway
+                                            include_event = True
+                                            logger.debug(f"[CalDAV] Event {name} has no dtstart, including")
+                                            break
+                            except Exception as e:
+                                logger.warning(f"[CalDAV] Error parsing iCalendar for time range check {name}: {e}")
+                                # If we can't parse, include it anyway
+                                include_event = True
                         
                         if include_event:
                             event_uid = name.replace('.ics', '')
