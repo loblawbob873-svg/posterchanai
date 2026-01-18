@@ -113,9 +113,12 @@ def get_event_uid_from_ical(ical_data: str) -> Optional[str]:
 
 
 async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") -> Response:
-    """Handle PROPFIND request."""
+    """Handle PROPFIND request. Uses storage proxy if configured."""
     from urllib.parse import quote
-    caldav_path = get_user_caldav_path(user, db)
+    from app.services.dav_storage_proxy import DAVStorageProxy
+    
+    # Use storage proxy (will fallback to local if not configured)
+    proxy = DAVStorageProxy(db, user.username, 'caldav')
     encoded_username = quote(user.username, safe='')
     base_url = f"/caldav/{encoded_username}"
     
@@ -145,18 +148,21 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         
         # If depth=1, list child calendars
         if depth == "1":
+            # List files using proxy
+            file_items = proxy.list_files("")
+            
             # Check for calendar subdirectories
             calendar_dirs = []
-            if caldav_path.exists():
-                for item in caldav_path.iterdir():
-                    if item.is_dir():
-                        calendar_dirs.append(item.name)
+            ics_files = []
+            for item in file_items:
+                if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
+                    calendar_dirs.append(item.get('name'))
+                elif item.get('name', '').endswith('.ics'):
+                    ics_files.append(item.get('name'))
             
             # If no subdirectories exist, check if there are loose .ics files
             # If so, treat the root as a default calendar for backwards compatibility
-            has_loose_ics = False
-            if caldav_path.exists():
-                has_loose_ics = any(caldav_path.glob("*.ics"))
+            has_loose_ics = len(ics_files) > 0
             
             if not calendar_dirs and has_loose_ics:
                 # Legacy mode: root directory has .ics files, show as "Calendar"
@@ -193,7 +199,7 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
     elif '/' not in path:
         # This is a calendar name (e.g., "calendar" or "work" or "personal")
         cal_name = path
-        cal_dir = caldav_path / cal_name if cal_name != 'calendar' else caldav_path
+        subpath = "" if cal_name == 'calendar' else cal_name
         
         items.append({
             "href": f"{base_url}/{quote(cal_name, safe='')}/",
@@ -208,17 +214,21 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         })
         
         # If depth=1, list events in this calendar
-        if depth == "1" and cal_dir.exists():
-            # List all .ics files
-            for ics_file in cal_dir.glob("*.ics"):
-                event_uid = ics_file.stem
-                items.append({
-                    "href": f"{base_url}/{quote(cal_name, safe='')}/{event_uid}.ics",
-                    "props": {
-                        "getcontenttype": "text/calendar; charset=utf-8",
-                        "getetag": str(ics_file.stat().st_mtime)
-                    }
-                })
+        if depth == "1":
+            # List files using proxy
+            file_items = proxy.list_files(subpath)
+            for item in file_items:
+                name = item.get('name', '')
+                if name.endswith('.ics'):
+                    event_uid = name.replace('.ics', '')
+                    etag = str(item.get('modified', item.get('mtime', 0)))
+                    items.append({
+                        "href": f"{base_url}/{quote(cal_name, safe='')}/{event_uid}.ics",
+                        "props": {
+                            "getcontenttype": "text/calendar; charset=utf-8",
+                            "getetag": etag
+                        }
+                    })
     
     # Individual event
     elif path.count('/') == 1 and path.endswith('.ics'):
@@ -227,15 +237,28 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         event_file = parts[1]
         event_uid = event_file.replace('.ics', '')
         
-        cal_dir = caldav_path / cal_name if cal_name != 'calendar' else caldav_path
-        ics_file = cal_dir / f"{event_uid}.ics"
+        # Build filepath
+        if cal_name == 'calendar':
+            filepath = f"{event_uid}.ics"
+        else:
+            filepath = f"{cal_name}/{event_uid}.ics"
         
-        if ics_file.exists():
+        # Check if file exists using proxy
+        if proxy.file_exists(filepath):
+            # Get file info for etag
+            subpath = "" if cal_name == 'calendar' else cal_name
+            file_items = proxy.list_files(subpath)
+            etag = "0"
+            for item in file_items:
+                if item.get('name') == f"{event_uid}.ics":
+                    etag = str(item.get('modified', item.get('mtime', 0)))
+                    break
+            
             items.append({
                 "href": f"{base_url}/{path}",
                 "props": {
                     "getcontenttype": "text/calendar; charset=utf-8",
-                    "getetag": str(ics_file.stat().st_mtime)
+                    "getetag": etag
                 }
             })
     
@@ -244,10 +267,14 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
 
 
 async def handle_report(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
-    """Handle REPORT request (calendar queries)."""
+    """Handle REPORT request (calendar queries). Uses storage proxy if configured."""
     from urllib.parse import quote, unquote
+    from app.services.dav_storage_proxy import DAVStorageProxy
+    
     body = await request.body()
-    caldav_path = get_user_caldav_path(user, db)
+    
+    # Use storage proxy (will fallback to local if not configured)
+    proxy = DAVStorageProxy(db, user.username, 'caldav')
     encoded_username = quote(user.username, safe='')
     base_url = f"/caldav/{encoded_username}"
     
@@ -263,13 +290,13 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
     if path and '/' not in path:
         cal_name = unquote(path)
     
-    # Determine the calendar directory
+    # Determine the calendar subpath
     if cal_name == 'calendar':
-        cal_dir = caldav_path  # Legacy: root directory
+        subpath = ""  # Legacy: root directory
     elif cal_name:
-        cal_dir = caldav_path / cal_name
+        subpath = cal_name
     else:
-        cal_dir = caldav_path  # Default to root
+        subpath = ""  # Default to root
     
     try:
         root = ET.fromstring(body)
@@ -296,12 +323,22 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                         except:
                             pass
             
-            # List matching events from the specified calendar directory
-            if cal_dir.exists():
-                for ics_file in cal_dir.glob("*.ics"):
+            # List matching events from the specified calendar directory using proxy
+            file_items = proxy.list_files(subpath)
+            for item in file_items:
+                name = item.get('name', '')
+                if name.endswith('.ics'):
                     try:
-                        with open(ics_file, 'r', encoding='utf-8') as f:
-                            ical_data = f.read()
+                        # Build filepath
+                        if subpath:
+                            filepath = f"{subpath}/{name}"
+                        else:
+                            filepath = name
+                        
+                        # Read calendar data using proxy
+                        ical_data = proxy.read_file(filepath)
+                        if not ical_data:
+                            continue
                         
                         # Check time range if specified
                         include_event = True
@@ -333,18 +370,19 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                         break
                         
                         if include_event:
-                            event_uid = ics_file.stem
+                            event_uid = name.replace('.ics', '')
                             href_path = f"{cal_name}/{event_uid}.ics" if cal_name else f"calendar/{event_uid}.ics"
+                            etag = str(item.get('modified', item.get('mtime', 0)))
                             items.append({
                                 "href": f"{base_url}/{href_path}",
                                 "props": {
                                     "getcontenttype": "text/calendar; charset=utf-8",
-                                    "getetag": str(ics_file.stat().st_mtime),
+                                    "getetag": etag,
                                     "calendar-data": ical_data
                                 }
                             })
                     except Exception as e:
-                        logger.debug(f"Error processing {ics_file}: {e}")
+                        logger.debug(f"Error processing {name}: {e}")
                         continue
         
         elif multiget_elem is not None:
@@ -357,32 +395,41 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                     href_cal_name = unquote(match.group(1))
                     event_uid = match.group(2)
                     
-                    # Determine calendar directory
+                    # Build filepath
                     if href_cal_name == 'calendar':
-                        href_cal_dir = caldav_path
+                        filepath = f"{event_uid}.ics"
                     else:
-                        href_cal_dir = caldav_path / href_cal_name
+                        filepath = f"{href_cal_name}/{event_uid}.ics"
                     
-                    ics_file = href_cal_dir / f"{event_uid}.ics"
-                    if ics_file.exists():
+                    # Check if file exists and read using proxy
+                    if proxy.file_exists(filepath):
                         try:
-                            with open(ics_file, 'r', encoding='utf-8') as f:
-                                ical_data = f.read()
-                            items.append({
-                                "href": href,
-                                "props": {
-                                    "getcontenttype": "text/calendar; charset=utf-8",
-                                    "getetag": str(ics_file.stat().st_mtime),
-                                    "calendar-data": ical_data
-                                }
-                            })
+                            ical_data = proxy.read_file(filepath)
+                            if ical_data:
+                                # Get etag from file listing
+                                href_subpath = "" if href_cal_name == 'calendar' else href_cal_name
+                                file_items = proxy.list_files(href_subpath)
+                                etag = "0"
+                                for item in file_items:
+                                    if item.get('name') == f"{event_uid}.ics":
+                                        etag = str(item.get('modified', item.get('mtime', 0)))
+                                        break
+                                
+                                items.append({
+                                    "href": href,
+                                    "props": {
+                                        "getcontenttype": "text/calendar; charset=utf-8",
+                                        "getetag": etag,
+                                        "calendar-data": ical_data
+                                    }
+                                })
                         except Exception as e:
-                            logger.debug(f"Error reading {ics_file}: {e}")
+                            logger.debug(f"Error reading {filepath}: {e}")
         
         xml = create_caldav_response(items)
         return Response(content=xml, media_type="application/xml", status_code=207)
     except Exception as e:
-        logger.error(f"Error handling REPORT: {e}")
+        logger.error(f"Error handling REPORT: {e}", exc_info=True)
         return Response(content="", status_code=500)
 
 
