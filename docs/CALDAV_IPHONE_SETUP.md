@@ -18,7 +18,19 @@ Nginx reverse proxy handles HTTPS termination and routes requests:
 
 ## iPhone Calendar Setup
 
-### Step 1: Add CalDAV Account
+### Option 1: Automatic Setup (Recommended)
+
+1. **Login to your account**: Open `https://ai.poster.place` in Safari on your iPhone
+2. **Download profile**: Visit `https://ai.poster.place/caldav/profile` 
+3. **Install profile**: 
+   - Tap "Allow" to download
+   - Go to Settings → General → VPN & Device Management
+   - Tap "PosterChan Calendar - [your username]"
+   - Tap "Install" and enter your iPhone passcode
+   - Enter your CalDAV password when prompted
+4. **Done!** Your calendar will appear in the Calendar app
+
+### Option 2: Manual Setup
 
 1. Open **Settings** → **Calendar** → **Accounts**
 2. Tap **Add Account** → **Other**
@@ -27,7 +39,7 @@ Nginx reverse proxy handles HTTPS termination and routes requests:
 ### Step 2: Enter Server Details
 
 - **Server**: `ai.poster.place`
-- **Username**: `verita84@poster.place` (or your full email)
+- **Username**: Your username (e.g., `verita84@poster.place`)
 - **Password**: Your account password
 - **Description**: PosterChan AI Calendar (or any name you like)
 
@@ -36,7 +48,7 @@ Nginx reverse proxy handles HTTPS termination and routes requests:
 The iPhone will:
 1. Contact `https://ai.poster.place/.well-known/caldav`
 2. Get redirected to `https://ai.poster.place/caldav/`
-3. Authenticate and discover your calendar at `/caldav/verita84@poster.place/`
+3. Authenticate and discover your calendar at `/caldav/[your-username]/`
 
 **Important**: The autodiscovery may try multiple paths including `/calendar/dav/` - both paths are supported via nginx proxy.
 
@@ -58,7 +70,7 @@ The iPhone will:
 ### Step 2: Enter Server Details
 
 - **Server**: `ai.poster.place`
-- **Username**: `verita84@poster.place`
+- **Username**: Your username (e.g., `verita84@poster.place`)
 - **Password**: Your account password
 - **Description**: PosterChan AI Contacts
 
@@ -67,7 +79,7 @@ The iPhone will:
 The iPhone will:
 1. Contact `https://ai.poster.place/.well-known/carddav`
 2. Get redirected to `https://ai.poster.place/carddav/`
-3. Authenticate and discover your contacts at `/carddav/verita84@poster.place/`
+3. Authenticate and discover your contacts at `/carddav/[your-username]/`
 
 ### Step 4: Verify
 
@@ -163,7 +175,7 @@ Wait 10-15 seconds for the app to fully restart, then test again.
 
 **Check Event Files Exist**:
 ```bash
-ssh 192.168.0.1 "ls -lah /var/lib/posterchanai/users/verita84/caldav/"
+ssh 192.168.0.1 "ls -lah /var/lib/posterchanai/users/[your-username]/caldav/"
 ```
 You should see `.ics` files for each event/todo.
 
@@ -196,7 +208,7 @@ location /caldav/ {
 3. Nginx proxies: `https://ai.poster.place/caldav/` → `http://localhost:8081/caldav/`
 4. CalDAV server authenticates user via Basic Auth
 5. CalDAV server returns multistatus XML with calendar collection info
-6. iPhone discovers: `https://ai.poster.place/caldav/verita84@poster.place/`
+6. iPhone discovers: `https://ai.poster.place/caldav/[username]/`
 7. iPhone performs `PROPFIND` (Depth: 1) to list events
 8. CalDAV server returns all `.ics` files from user's caldav directory
 
@@ -217,7 +229,7 @@ Same as CalDAV but with `/carddav/` paths and `.vcf` files.
 
 Events/Todos:
 ```
-/var/lib/posterchanai/users/verita84/caldav/
+/var/lib/posterchanai/users/[username]/caldav/
   ├── event-uid-1.ics
   ├── event-uid-2.ics
   └── todo-uid-3.ics
@@ -225,7 +237,7 @@ Events/Todos:
 
 Contacts:
 ```
-/var/lib/posterchanai/users/verita84/carddav/
+/var/lib/posterchanai/users/[username]/carddav/
   ├── contact-uid-1.vcf
   ├── contact-uid-2.vcf
   └── contact-uid-3.vcf
