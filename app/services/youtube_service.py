@@ -396,32 +396,40 @@ def _download_with_binary(url: str, output_dir: str) -> DownloadResult:
         return DownloadResult(success=False, error=str(e))
 
 
-async def download_and_upload_to_webdav(
+async def download_and_save_to_music(
     url: str,
     user_id: int,
     db,
     subfolder: str = "YouTube"
 ) -> DownloadResult:
     """
-    Download YouTube video as MP3 and upload to user's WebDAV music folder.
+    Download YouTube video as MP3 and save to user's local music folder.
 
     Args:
         url: YouTube video URL
-        user_id: User ID for WebDAV config lookup
+        user_id: User ID for music directory lookup
         db: Database session
         subfolder: Subfolder within music library (default: "YouTube")
 
     Returns:
-        DownloadResult with success status and WebDAV path
+        DownloadResult with success status and local path
     """
-    from app.services.webdav_music_service import get_user_webdav_config, upload_to_webdav
+    from app.services.local_music_service import get_user_music_config
+    from pathlib import Path
 
-    # Check WebDAV config
-    config = get_user_webdav_config(user_id, db)
-    if not config or not config.get('url'):
+    # Check music directory config
+    config = get_user_music_config(user_id, db)
+    if not config or not config.get('directory'):
         return DownloadResult(
             success=False,
-            error="WebDAV music not configured. Go to Settings > Music to set up your WebDAV music folder."
+            error="Music directory not configured. Go to Settings > Music to set up your local music folder."
+        )
+
+    music_dir = Path(config['directory'])
+    if not music_dir.exists() or not music_dir.is_dir():
+        return DownloadResult(
+            success=False,
+            error="Music directory does not exist or is not accessible."
         )
 
     # Check yt-dlp available
@@ -431,46 +439,28 @@ async def download_and_upload_to_webdav(
             error="yt-dlp not installed. Install with: pip install yt-dlp"
         )
 
-    # Create temp directory for download
-    temp_dir = tempfile.mkdtemp(prefix='ytdl_')
+    # Create subfolder if needed
+    target_dir = music_dir / subfolder
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        # Download
-        logger.info(f"Downloading YouTube video: {url}")
-        result = download_as_mp3(url, temp_dir)
+        # Download directly to target directory
+        logger.info(f"Downloading YouTube video to: {target_dir}")
+        result = download_as_mp3(url, str(target_dir))
 
-        if not result.success:
-            return result
-
-        # Upload to WebDAV
-        logger.info(f"Uploading to WebDAV: {result.filename}")
-        upload_result = upload_to_webdav(
-            url=config['url'],
-            username=config['username'],
-            password=config['password'],
-            local_file_path=result.local_path,
-            remote_filename=result.filename,
-            subfolder=subfolder
-        )
-
-        if upload_result['success']:
-            result.webdav_path = upload_result['path']
-            logger.info(f"Successfully uploaded: {result.webdav_path}")
-        else:
-            result.success = False
-            result.error = f"Upload failed: {upload_result.get('error', 'Unknown error')}"
+        if result.success:
+            # Update path to be relative to music directory
+            result.webdav_path = f"{subfolder}/{result.filename}"
+            logger.info(f"Successfully saved: {result.webdav_path}")
 
         return result
 
-    finally:
-        # Cleanup temp directory
-        try:
-            shutil.rmtree(temp_dir)
-        except Exception as e:
-            logger.warning(f"Failed to cleanup temp dir: {e}")
+    except Exception as e:
+        logger.error(f"Download error: {e}")
+        return DownloadResult(success=False, error=str(e))
 
 
-async def download_video_and_upload_to_webdav(
+async def download_video_and_save_to_music(
     url: str,
     user_id: int,
     db,
@@ -478,26 +468,34 @@ async def download_video_and_upload_to_webdav(
     quality: str = "best"
 ) -> DownloadResult:
     """
-    Download YouTube video (not just audio) and upload to user's WebDAV folder.
+    Download YouTube video (not just audio) and save to user's local music folder.
 
     Args:
         url: YouTube video URL
-        user_id: User ID for WebDAV config lookup
+        user_id: User ID for music directory lookup
         db: Database session
-        subfolder: Subfolder within WebDAV (default: "YouTube Videos")
+        subfolder: Subfolder within music directory (default: "YouTube Videos")
         quality: Video quality preference (default: "best")
 
     Returns:
-        DownloadResult with success status and WebDAV path
+        DownloadResult with success status and local path
     """
-    from app.services.webdav_music_service import get_user_webdav_config
+    from app.services.local_music_service import get_user_music_config
+    from pathlib import Path
 
-    # Check WebDAV config
-    config = get_user_webdav_config(user_id, db)
-    if not config or not config.get('url'):
+    # Check music directory config
+    config = get_user_music_config(user_id, db)
+    if not config or not config.get('directory'):
         return DownloadResult(
             success=False,
-            error="WebDAV not configured. Go to Settings > Music to set up your WebDAV folder."
+            error="Music directory not configured. Go to Settings > Music to set up your local music folder."
+        )
+
+    music_dir = Path(config['directory'])
+    if not music_dir.exists() or not music_dir.is_dir():
+        return DownloadResult(
+            success=False,
+            error="Music directory does not exist or is not accessible."
         )
 
     # Check yt-dlp available
@@ -507,142 +505,25 @@ async def download_video_and_upload_to_webdav(
             error="yt-dlp not installed. Install with: pip install yt-dlp"
         )
 
-    # Create temp directory for download
-    temp_dir = tempfile.mkdtemp(prefix='ytdl_video_')
+    # Create subfolder if needed
+    target_dir = music_dir / subfolder
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        # Download video
-        logger.info(f"Downloading YouTube video: {url}")
-        result = download_as_video(url, temp_dir, quality)
+        # Download video directly to target directory
+        logger.info(f"Downloading YouTube video to: {target_dir}")
+        result = download_as_video(url, str(target_dir), quality)
 
-        if not result.success:
-            return result
-
-        # Upload to WebDAV (use generic upload function)
-        logger.info(f"Uploading video to WebDAV: {result.filename}")
-        upload_result = upload_video_to_webdav(
-            url=config['url'],
-            username=config['username'],
-            password=config['password'],
-            local_file_path=result.local_path,
-            remote_filename=result.filename,
-            subfolder=subfolder
-        )
-
-        if upload_result['success']:
-            result.webdav_path = upload_result['path']
-            logger.info(f"Successfully uploaded: {result.webdav_path}")
-        else:
-            result.success = False
-            result.error = f"Upload failed: {upload_result.get('error', 'Unknown error')}"
+        if result.success:
+            # Update path to be relative to music directory
+            result.webdav_path = f"{subfolder}/{result.filename}"
+            logger.info(f"Successfully saved: {result.webdav_path}")
 
         return result
 
-    finally:
-        # Cleanup temp directory
-        try:
-            shutil.rmtree(temp_dir)
-        except Exception as e:
-            logger.warning(f"Failed to cleanup temp dir: {e}")
-
-
-def upload_video_to_webdav(url: str, username: str, password: str,
-                          local_file_path: str, remote_filename: str,
-                          subfolder: str = "Downloads") -> Dict[str, Any]:
-    """
-    Upload a video file to WebDAV (similar to upload_to_webdav but for videos).
-
-    Args:
-        url: Base WebDAV URL
-        username: WebDAV username
-        password: WebDAV password
-        local_file_path: Path to local file to upload
-        remote_filename: Filename to use on remote
-        subfolder: Subfolder within WebDAV (default: "Downloads")
-
-    Returns:
-        Dict with 'success', 'path', and optionally 'error'
-    """
-    import os
-    from urllib.parse import urlparse, quote
-    import requests
-    from requests.auth import HTTPBasicAuth
-
-    try:
-        # Ensure subfolder exists (create if needed)
-        base_url = url.rstrip('/')
-        folder_url = f"{base_url}/{subfolder}"
-
-        # Try MKCOL to create folder (ignore if exists)
-        try:
-            mkcol_resp = requests.request(
-                'MKCOL', folder_url,
-                auth=HTTPBasicAuth(username, password),
-                timeout=30
-            )
-            # 201 = created, 405 = already exists (both are OK)
-            if mkcol_resp.status_code not in (201, 405, 301):
-                logger.warning(f"MKCOL response: {mkcol_resp.status_code}")
-        except Exception as e:
-            logger.warning(f"MKCOL failed (folder may exist): {e}")
-
-        # Build full remote path - sanitize filename but preserve extension
-        video_extensions = ('.mp4', '.webm', '.mkv', '.flv', '.avi')
-        base_name, ext = os.path.splitext(remote_filename)
-        # Sanitize base name only
-        safe_base = "".join(c for c in base_name if c.isalnum() or c in ' -_.').strip()
-        # Preserve original extension if valid, otherwise default to .mp4
-        if ext.lower() in video_extensions:
-            safe_filename = safe_base + ext
-        else:
-            safe_filename = safe_base + '.mp4'
-        remote_path = f"{folder_url}/{quote(safe_filename, safe='')}"
-
-        # Read local file
-        if not os.path.exists(local_file_path):
-            return {'success': False, 'error': f"Local file not found: {local_file_path}"}
-
-        with open(local_file_path, 'rb') as f:
-            file_data = f.read()
-
-        # Determine content type based on extension
-        ext = os.path.splitext(safe_filename)[1].lower()
-        content_types = {
-            '.mp4': 'video/mp4',
-            '.webm': 'video/webm',
-            '.mkv': 'video/x-matroska',
-            '.flv': 'video/x-flv',
-            '.avi': 'video/x-msvideo'
-        }
-        content_type = content_types.get(ext, 'video/mp4')
-
-        # Upload via PUT
-        headers = {
-            'Content-Type': content_type,
-            'Content-Length': str(len(file_data))
-        }
-
-        resp = requests.put(
-            remote_path,
-            auth=HTTPBasicAuth(username, password),
-            headers=headers,
-            data=file_data,
-            timeout=600  # 10 min timeout for large video files
-        )
-
-        if resp.status_code in (200, 201, 204):
-            # Build the path relative to base
-            parsed = urlparse(url)
-            relative_path = f"{parsed.path.rstrip('/')}/{subfolder}/{safe_filename}"
-            logger.info(f"Successfully uploaded video to WebDAV: {relative_path}")
-            return {'success': True, 'path': relative_path, 'filename': safe_filename}
-        else:
-            logger.error(f"WebDAV upload failed: {resp.status_code} - {resp.text[:200]}")
-            return {'success': False, 'error': f"Upload failed: HTTP {resp.status_code}"}
-
     except Exception as e:
-        logger.error(f"WebDAV video upload error: {e}")
-        return {'success': False, 'error': str(e)}
+        logger.error(f"Download error: {e}")
+        return DownloadResult(success=False, error=str(e))
 
 
 def format_download_result(result: DownloadResult) -> str:

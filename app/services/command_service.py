@@ -68,8 +68,8 @@ from app.services.local_music_service import (
 )
 from app.services.youtube_service import (
     check_ytdlp_available,
-    download_and_upload_to_webdav,
-    download_video_and_upload_to_webdav,
+    download_and_save_to_music,
+    download_video_and_save_to_music,
     extract_youtube_urls,
     format_download_result,
     is_youtube_url,
@@ -832,16 +832,16 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
         target_url = urls[0]
 
-        # Download and upload to WebDAV
+        # Download and save to local music directory
         if is_video:
-            result = await download_video_and_upload_to_webdav(
+            result = await download_video_and_save_to_music(
                 url=target_url,
                 user_id=self.user.id,
                 db=self.db,
                 subfolder="YouTube Videos"
             )
         else:
-            result = await download_and_upload_to_webdav(
+            result = await download_and_save_to_music(
                 url=target_url,
                 user_id=self.user.id,
                 db=self.db
