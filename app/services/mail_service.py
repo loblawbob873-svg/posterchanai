@@ -1385,8 +1385,6 @@ def format_message_detail(msg: EmailMessage, folder: str = "INBOX") -> str:
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("*TUI: Press 'o' to open links in browser*")
-    lines.append("")
 
     # Action buttons - restructured so TUI can easily parse them into actual Button widgets
     reply_cmd = f"mail reply {account_short} {msg_id} "
