@@ -1325,39 +1325,39 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
                         vcard_data = proxy.read_file(filepath)
                         if not vcard_data:
                             continue
-                    
-                    vcard = vobject.readOne(vcard_data)
-                    
-                    # Get contact info
-                    contact_name = ""
-                    if hasattr(vcard, 'fn'):
-                        contact_name = str(vcard.fn.value)
-                    elif hasattr(vcard, 'n'):
-                        contact_name = str(vcard.n.value)
-                    
-                    emails = []
-                    if hasattr(vcard, 'email_list'):
-                        for em in vcard.email_list:
-                            email_val = str(em.value).strip()
-                            if email_val and email_val not in emails:
+                        
+                        vcard = vobject.readOne(vcard_data)
+                        
+                        # Get contact info
+                        contact_name = ""
+                        if hasattr(vcard, 'fn'):
+                            contact_name = str(vcard.fn.value)
+                        elif hasattr(vcard, 'n'):
+                            contact_name = str(vcard.n.value)
+                        
+                        emails = []
+                        if hasattr(vcard, 'email_list'):
+                            for em in vcard.email_list:
+                                email_val = str(em.value).strip()
+                                if email_val and email_val not in emails:
+                                    emails.append(email_val)
+                        elif hasattr(vcard, 'email'):
+                            email_val = str(vcard.email.value).strip()
+                            if email_val:
                                 emails.append(email_val)
-                    elif hasattr(vcard, 'email'):
-                        email_val = str(vcard.email.value).strip()
-                        if email_val:
-                            emails.append(email_val)
-                    
-                    phone = None
-                    if hasattr(vcard, 'tel'):
-                        phone = str(vcard.tel.value)
-                    
-                    org = None
-                    if hasattr(vcard, 'org'):
-                        org = str(vcard.org.value[0]) if vcard.org.value else None
-                    
-                    note = None
-                    if hasattr(vcard, 'note'):
-                        note = str(vcard.note.value)
-                    
+                        
+                        phone = None
+                        if hasattr(vcard, 'tel'):
+                            phone = str(vcard.tel.value)
+                        
+                        org = None
+                        if hasattr(vcard, 'org'):
+                            org = str(vcard.org.value[0]) if vcard.org.value else None
+                        
+                        note = None
+                        if hasattr(vcard, 'note'):
+                            note = str(vcard.note.value)
+                        
                         # Check if query matches (empty query matches all)
                         emails_str = ' '.join(emails)
                         searchable = f"{contact_name} {emails_str} {phone or ''} {org or ''} {note or ''}".lower()
