@@ -167,6 +167,16 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                             from datetime import timezone
                             event_start = event_start.replace(tzinfo=timezone.utc)
                         
+                        # Get end time first (needed for date range check)
+                        dtend = component.get('dtend')
+                        event_end = None
+                        if dtend:
+                            event_end = dtend.dt
+                            if isinstance(event_end, datetime):
+                                if event_end.tzinfo is None:
+                                    from datetime import timezone
+                                    event_end = event_end.replace(tzinfo=timezone.utc)
+                        
                         # Check if event overlaps with date range
                         # Include events that start within the range OR overlap with the range
                         # An event overlaps if: event_start <= end_date AND (event_end >= start_date OR event_end is None)
@@ -177,16 +187,6 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                             # Event ends before the range (only if we have an end time)
                             continue
                         # Event overlaps with range - include it
-                        
-                        # Get end time
-                        dtend = component.get('dtend')
-                        event_end = None
-                        if dtend:
-                            event_end = dtend.dt
-                            if isinstance(event_end, datetime):
-                                if event_end.tzinfo is None:
-                                    from datetime import timezone
-                                    event_end = event_end.replace(tzinfo=timezone.utc)
                         
                         # Convert to naive local for CalendarEvent
                         event_start_naive = to_naive_local(event_start)
