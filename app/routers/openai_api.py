@@ -222,8 +222,16 @@ def verify_api_key(
 
     if api_key:
         # Update last used timestamp
-        api_key.last_used_at = datetime.utcnow()
-        db.commit()
+        try:
+            from datetime import timezone
+            api_key.last_used_at = datetime.now(timezone.utc)
+            db.commit()
+        except Exception as e:
+            # If commit fails, rollback and continue without updating timestamp
+            db.rollback()
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to update API key last_used_at: {e}")
         # Query user directly since APIKey doesn't have a relationship
         user = db.query(User).filter(User.id == api_key.user_id).first()
         return user

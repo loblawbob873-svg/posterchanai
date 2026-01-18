@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
@@ -100,8 +100,15 @@ def get_current_user(
         
         if api_key:
             # Update last used timestamp
-            api_key.last_used_at = datetime.utcnow()
-            db.commit()
+            try:
+                api_key.last_used_at = datetime.now(timezone.utc)
+                db.commit()
+            except Exception as e:
+                # If commit fails, rollback and continue without updating timestamp
+                db.rollback()
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to update API key last_used_at: {e}")
             
             user = db.query(User).filter(User.id == api_key.user_id).first()
             if user:
