@@ -70,6 +70,7 @@ from app.services.youtube_service import (
     check_ytdlp_available,
     download_and_save_to_music,
     download_video_and_save_to_music,
+    download_video_and_save_to_storage,
     extract_youtube_urls,
     format_download_result,
     is_youtube_url,
@@ -168,7 +169,7 @@ class CommandService:
         "budget": "Check system budget/usage",
         "firewall": "Toggle network firewall",
         "yt": "YouTube search: yt <query>",
-        "ytdl": "Download YouTube: ytdl <url> | ytdl video <url>",
+        "ytdl": "Download YouTube: ytdl <url> (audio to Music) | ytdl video <url> (video to Storage)",
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
         "news": "RSS news (alias for rss sync)",
@@ -775,8 +776,8 @@ class CommandService:
 `yt <url>` - Get AI summary of video transcript
 
 **Download:**
-- `ytdl <url>` - Download as MP3 (audio only) to your WebDAV Music folder
-- `ytdl video <url>` - Download as video (MP4) to your WebDAV folder
+- `ytdl <url>` - Download as MP3 (audio only) to your Music folder
+- `ytdl video <url>` - Download as video (MP4) to your Storage folder
 
 Example: `yt https://youtube.com/watch?v=...`""",
             }
@@ -799,14 +800,14 @@ Example: `yt https://youtube.com/watch?v=...`""",
                 "content": """## YouTube Download
 
 **Usage:**
-- `ytdl <url>` - Download as MP3 (audio only)
-- `ytdl video <url>` - Download as video (MP4)
+- `ytdl <url>` - Download as MP3 (audio only) to Music folder
+- `ytdl video <url>` - Download as video (MP4) to Storage
 
 **Examples:**
 - `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ` - Download audio
 - `ytdl video https://youtube.com/watch?v=dQw4w9WgXcQ` - Download video
 
-**Note:** Requires WebDAV Music to be configured in Settings.""",
+**Note:** Audio goes to Music Dir, Videos go to Storage.""",
             }
 
         # Check if yt-dlp is available
@@ -832,9 +833,9 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
         target_url = urls[0]
 
-        # Download and save to local music directory
+        # Download and save: audio to Music Dir, video to Storage
         if is_video:
-            result = await download_video_and_save_to_music(
+            result = await download_video_and_save_to_storage(
                 url=target_url,
                 user_id=self.user.id,
                 db=self.db,

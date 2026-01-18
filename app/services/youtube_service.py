@@ -526,6 +526,77 @@ async def download_video_and_save_to_music(
         return DownloadResult(success=False, error=str(e))
 
 
+async def download_video_and_save_to_storage(
+    url: str,
+    user_id: int,
+    db,
+    subfolder: str = "YouTube Videos",
+    quality: str = "best"
+) -> DownloadResult:
+    """
+    Download YouTube video and save to user's storage directory.
+
+    Args:
+        url: YouTube video URL
+        user_id: User ID for storage path lookup
+        db: Database session
+        subfolder: Subfolder within storage (default: "YouTube Videos")
+        quality: Video quality preference (default: "best")
+
+    Returns:
+        DownloadResult with success status and local path
+    """
+    from pathlib import Path
+    from app.models import Setting
+    
+    # Get storage base path from settings
+    storage_path_setting = db.query(Setting).filter(Setting.key == "storage_base_path").first()
+    if not storage_path_setting or not storage_path_setting.value:
+        return DownloadResult(
+            success=False,
+            error="Storage path not configured. Contact administrator to set storage_base_path."
+        )
+    
+    storage_base = Path(storage_path_setting.value)
+    if not storage_base.exists() or not storage_base.is_dir():
+        return DownloadResult(
+            success=False,
+            error="Storage path does not exist or is not accessible."
+        )
+
+    # Check yt-dlp available
+    if not check_ytdlp_available():
+        return DownloadResult(
+            success=False,
+            error="yt-dlp not installed. Install with: pip install yt-dlp"
+        )
+
+    # Create user's storage directory and subfolder
+    from app.models import User
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return DownloadResult(success=False, error="User not found")
+    
+    user_storage = storage_base / user.username / subfolder
+    user_storage.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Download video directly to target directory
+        logger.info(f"Downloading YouTube video to: {user_storage}")
+        result = download_as_video(url, str(user_storage), quality)
+
+        if result.success:
+            # Update path to be relative to user's storage
+            result.webdav_path = f"{subfolder}/{result.filename}"
+            logger.info(f"Successfully saved: {result.webdav_path}")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Download error: {e}")
+        return DownloadResult(success=False, error=str(e))
+
+
 def format_download_result(result: DownloadResult) -> str:
     """Format download result for display."""
     if not result.success:
