@@ -448,59 +448,67 @@ def create_cardav_app() -> FastAPI:
         )
     
     @app.route("/carddav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL"])
-    async def carddav_handler(request: StarletteRequest, path: str, db: Session = Depends(get_db)):
+    async def carddav_handler(request: StarletteRequest):
         """Handle CardDAV requests."""
-        # Extract username from Basic Auth
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Basic "):
-            return Response(
-                content="Unauthorized",
-                status_code=401,
-                headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
-            )
+        # Get path parameter
+        path = request.path_params.get("path", "")
         
-        # Parse Basic Auth
+        # Get DB session manually (can't use Depends with @app.route)
+        db = SessionLocal()
         try:
-            credentials = base64.b64decode(auth_header[6:]).decode('utf-8')
-            username, password = credentials.split(':', 1)
-        except:
-            return Response(
-                content="Invalid credentials",
-                status_code=401,
-                headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
-            )
-        
-        # Verify user
-        user = db.query(User).filter(User.username == username).first()
-        if not user or not verify_password(password, user.password_hash):
-            return Response(
-                content="Invalid credentials",
-                status_code=401,
-                headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
-            )
-        
-        # Get depth header for PROPFIND
-        depth = request.headers.get("Depth", "0")
-        
-        # Handle CardDAV methods
-        method = request.method
-        
-        if method == "PROPFIND":
-            return await handle_propfind(path, user, db, depth)
-        elif method == "PROPPATCH":
-            return await handle_proppatch(path, user, db, request)
-        elif method == "REPORT":
-            return await handle_report(path, user, db, request)
-        elif method == "GET":
-            return await handle_get(path, user, db)
-        elif method == "PUT":
-            return await handle_put(path, user, db, request)
-        elif method == "DELETE":
-            return await handle_delete(path, user, db)
-        elif method == "MKCOL":
-            return await handle_mkcol(path, user, db)
-        else:
-            return Response(content="Method not allowed", status_code=405)
+            # Extract username from Basic Auth
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Basic "):
+                return Response(
+                    content="Unauthorized",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                )
+            
+            # Parse Basic Auth
+            try:
+                credentials = base64.b64decode(auth_header[6:]).decode('utf-8')
+                username, password = credentials.split(':', 1)
+            except:
+                return Response(
+                    content="Invalid credentials",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                )
+            
+            # Verify user
+            user = db.query(User).filter(User.username == username).first()
+            if not user or not verify_password(password, user.password_hash):
+                return Response(
+                    content="Invalid credentials",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                )
+            
+            # Get depth header for PROPFIND
+            depth = request.headers.get("Depth", "0")
+            
+            # Handle CardDAV methods
+            method = request.method
+            
+            if method == "PROPFIND":
+                return await handle_propfind(path, user, db, depth)
+            elif method == "PROPPATCH":
+                return await handle_proppatch(path, user, db, request)
+            elif method == "REPORT":
+                return await handle_report(path, user, db, request)
+            elif method == "GET":
+                return await handle_get(path, user, db)
+            elif method == "PUT":
+                return await handle_put(path, user, db, request)
+            elif method == "DELETE":
+                return await handle_delete(path, user, db)
+            elif method == "MKCOL":
+                return await handle_mkcol(path, user, db)
+            else:
+                return Response(content="Method not allowed", status_code=405)
+        finally:
+            db.close()
     
     return app
 
