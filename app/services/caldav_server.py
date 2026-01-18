@@ -417,9 +417,12 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                     "calendar-data": ical_data
                                 }
                             })
+                            logger.debug(f"[CalDAV] Added event {event_uid} to REPORT response")
                     except Exception as e:
-                        logger.debug(f"Error processing {name}: {e}")
+                        logger.warning(f"[CalDAV] Error processing event {name}: {e}", exc_info=True)
                         continue
+            
+            logger.info(f"[CalDAV] REPORT query returning {len(items)} events for calendar '{cal_name}'")
         
         elif multiget_elem is not None:
             # Calendar multiget - get specific events by href
