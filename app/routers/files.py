@@ -1046,9 +1046,9 @@ async def view_file(
             else:
                 raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
         else:
-            raise HTTPException(status_code=500, detail="Storage server not configured. Cannot view files.")
+            pass  # Fall through to local file serving
     
-    # Handle external storage or local fallback (only for external storage)
+    # Handle external storage or local file serving
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
@@ -1087,8 +1087,10 @@ async def view_file(
             # User doesn't have access
             raise HTTPException(status_code=403, detail="Access denied: you don't have permission to access this storage")
         else:
-            # Regular user storage path (should not reach here if proxying is configured)
-            raise HTTPException(status_code=500, detail="Storage server not configured. Cannot view files.")
+            # Regular user storage path - serve from local filesystem
+            full_path = user_path / file_path
+            if not full_path.exists() or not full_path.is_file():
+                raise HTTPException(status_code=404, detail="File not found")
     else:
         raise HTTPException(status_code=400, detail="Invalid file path")
     
