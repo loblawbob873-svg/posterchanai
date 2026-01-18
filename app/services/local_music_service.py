@@ -20,21 +20,40 @@ AUDIO_EXTENSIONS = {
 
 
 def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]:
-    """Get user's local music configuration."""
+    """Get user's local music configuration. Falls back to user storage path if not configured."""
     setting = db.query(UserSetting).filter(
         UserSetting.user_id == user_id,
         UserSetting.key == "local_music_config"
     ).first()
     
-    if not setting or not setting.value:
+    if setting and setting.value:
+        try:
+            config = json.loads(setting.value)
+            return config
+        except json.JSONDecodeError:
+            logger.error(f"Invalid local_music_config JSON for user {user_id}")
+    
+    # Fall back to user storage path + /Music
+    from app.models import User, Setting
+    from pathlib import Path
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
         return None
     
-    try:
-        config = json.loads(setting.value)
-        return config
-    except json.JSONDecodeError:
-        logger.error(f"Invalid local_music_config JSON for user {user_id}")
-        return None
+    # Get storage base path
+    storage_setting = db.query(Setting).filter(Setting.key == "storage_base_path").first()
+    if storage_setting and storage_setting.value:
+        storage_base = Path(storage_setting.value)
+        music_dir = storage_base / user.username / "Music"
+        
+        # Return default config
+        return {
+            'directory': str(music_dir),
+            'recursive': True
+        }
+    
+    return None
 
 
 def save_user_music_config(user_id: int, db: Session, directory: str, recursive: bool = True):

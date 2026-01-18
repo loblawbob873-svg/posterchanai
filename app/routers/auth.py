@@ -463,6 +463,15 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
             music_recursive_scan = music_config.get('recursive', True)
         except json.JSONDecodeError:
             pass
+    
+    # If not configured, use default storage path + /Music
+    if not local_music_dir:
+        from pathlib import Path
+        storage_setting = db.query(Setting).filter(Setting.key == "storage_base_path").first()
+        if storage_setting and storage_setting.value:
+            storage_base = Path(storage_setting.value)
+            default_music_dir = storage_base / current_user.username / "Music"
+            local_music_dir = str(default_music_dir)
 
     return UserSettingsResponse(
         notification_email=current_user.notification_email,
