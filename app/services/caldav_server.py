@@ -842,31 +842,39 @@ async def handle_proppatch(path: str, user: User, db: Session, request: Starlett
         
         # Include all properties that were set/removed in the response
         # iPhone expects the exact same properties returned that it sent
-        for prop in set_props + remove_props:
-            prop_tag = prop.tag
-            prop_text = prop.text if prop.text else ""
-            # Handle namespaced properties correctly
-            if prop_tag.startswith('{DAV:}'):
-                prop_name = prop_tag[6:]  # Remove {DAV:} prefix
-                xml += f'\n                <D:{prop_name}'
-            elif prop_tag.startswith('{urn:ietf:params:xml:ns:caldav}'):
-                prop_name = prop_tag[35:]  # Remove namespace prefix
-                xml += f'\n                <C:{prop_name}'
-            elif '}' in prop_tag:
-                namespace, prop_name = prop_tag.split('}', 1)
-                if 'caldav' in namespace.lower():
-                    xml += f'\n                <C:{prop_name}'
+        if not set_props and not remove_props:
+            # No properties found - return empty prop (some clients send empty PROPPATCH)
+            xml += '\n            </D:prop>'
+        else:
+            for prop in set_props + remove_props:
+                prop_tag = prop.tag
+                prop_text = prop.text if prop.text else ""
+                
+                # Handle namespaced properties correctly
+                if prop_tag.startswith('{DAV:}'):
+                    prop_name = prop_tag[6:]  # Remove {DAV:} prefix
+                    namespace_prefix = 'D'
+                elif prop_tag.startswith('{urn:ietf:params:xml:ns:caldav}'):
+                    prop_name = prop_tag[35:]  # Remove namespace prefix
+                    namespace_prefix = 'C'
+                elif '}' in prop_tag:
+                    namespace, prop_name = prop_tag.split('}', 1)
+                    if 'caldav' in namespace.lower():
+                        namespace_prefix = 'C'
+                    else:
+                        namespace_prefix = 'D'
                 else:
-                    xml += f'\n                <D:{prop_name}'
-            else:
-                xml += f'\n                <D:{prop_tag}'
-            
-            # Add property value if present
-            if prop_text:
-                escaped_text = html.escape(prop_text)
-                xml += f'>{escaped_text}</{prop_tag.split("}")[-1] if "}" in prop_tag else prop_tag}>'
-            else:
-                xml += '/>'
+                    prop_name = prop_tag
+                    namespace_prefix = 'D'
+                
+                xml += f'\n                <{namespace_prefix}:{prop_name}'
+                
+                # Add property value if present
+                if prop_text:
+                    escaped_text = html.escape(prop_text)
+                    xml += f'>{escaped_text}</{namespace_prefix}:{prop_name}>'
+                else:
+                    xml += '/>'
         
         xml += f'''
             </D:prop>
