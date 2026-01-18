@@ -656,8 +656,12 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
         else:
             filepath = f"{cal_name}/{event_uid}.ics"
         
+        # Check if file already exists (update vs create)
+        file_exists = proxy.file_exists(filepath)
+        is_update = file_exists
+        
         # Save to file using proxy
-        logger.info(f"[CalDAV] Saving event {event_uid} to filepath: {filepath}, calendar: {cal_name}")
+        logger.info(f"[CalDAV] Saving event {event_uid} to filepath: {filepath}, calendar: {cal_name}, is_update: {is_update}")
         success = proxy.write_file(filepath, ical_data)
         logger.info(f"[CalDAV] write_file returned: {success} for {filepath}")
         
@@ -688,11 +692,13 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
                 import hashlib
                 etag = hashlib.md5(ical_data.encode('utf-8')).hexdigest()[:16]
             
-            # Return 201 Created with ETag header (iPhone requires this)
-            logger.debug(f"[CalDAV] Returning 201 with ETag: {etag}")
+            # Return appropriate status code: 201 for new, 204 for updates
+            # iPhone expects 201 for new events, 204 for updates
+            status_code = 204 if is_update else 201
+            logger.info(f"[CalDAV] Returning {status_code} with ETag: {etag} for event {event_uid} (is_update: {is_update})")
             return Response(
                 content="",
-                status_code=201,
+                status_code=status_code,
                 headers={"ETag": f'"{etag}"'}
             )
         else:
