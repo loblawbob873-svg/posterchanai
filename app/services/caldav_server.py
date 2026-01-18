@@ -330,19 +330,59 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         subpath = ""  # Default to root
     
     try:
+        logger.info(f"[CalDAV] REPORT request for path: {path}, cal_name: {cal_name}, subpath: {subpath}")
         root = ET.fromstring(body)
-        # Check for calendar-query or calendar-multiget
-        query_elem = root.find('.//{urn:ietf:params:xml:ns:caldav}calendar-query')
-        multiget_elem = root.find('.//{urn:ietf:params:xml:ns:caldav}calendar-multiget')
+        logger.info(f"[CalDAV] Parsed REPORT body, root tag: {root.tag}")
+        
+        # Register namespaces for easier searching
+        namespaces = {
+            'D': 'DAV:',
+            'C': 'urn:ietf:params:xml:ns:caldav'
+        }
+        
+        # Check if root itself is calendar-query or calendar-multiget
+        query_elem = None
+        multiget_elem = None
+        
+        if root.tag.endswith('calendar-query') or root.tag == '{urn:ietf:params:xml:ns:caldav}calendar-query':
+            query_elem = root
+        else:
+            # Check for calendar-query or calendar-multiget as children
+            query_elem = root.find('.//{urn:ietf:params:xml:ns:caldav}calendar-query')
+            if query_elem is None:
+                query_elem = root.find('.//C:calendar-query', namespaces)
+            if query_elem is None:
+                query_elem = root.find('.//calendar-query')
+        
+        if root.tag.endswith('calendar-multiget') or root.tag == '{urn:ietf:params:xml:ns:caldav}calendar-multiget':
+            multiget_elem = root
+        else:
+            multiget_elem = root.find('.//{urn:ietf:params:xml:ns:caldav}calendar-multiget')
+            if multiget_elem is None:
+                multiget_elem = root.find('.//C:calendar-multiget', namespaces)
+            if multiget_elem is None:
+                multiget_elem = root.find('.//calendar-multiget')
+        
+        logger.info(f"[CalDAV] query_elem: {query_elem is not None}, multiget_elem: {multiget_elem is not None}")
         
         items = []
         
         if query_elem is not None:
             # Calendar query - filter by time range
+            namespaces = {'C': 'urn:ietf:params:xml:ns:caldav'}
             filter_elem = query_elem.find('.//{urn:ietf:params:xml:ns:caldav}filter')
+            if filter_elem is None:
+                filter_elem = query_elem.find('.//C:filter', namespaces)
+            if filter_elem is None:
+                filter_elem = query_elem.find('.//filter')
+            
             time_range = None
             if filter_elem is not None:
                 time_range_elem = filter_elem.find('.//{urn:ietf:params:xml:ns:caldav}time-range')
+                if time_range_elem is None:
+                    time_range_elem = filter_elem.find('.//C:time-range', namespaces)
+                if time_range_elem is None:
+                    time_range_elem = filter_elem.find('.//time-range')
                 if time_range_elem is not None:
                     start_str = time_range_elem.get('start', '')
                     end_str = time_range_elem.get('end', '')
@@ -458,7 +498,18 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         
         elif multiget_elem is not None:
             # Calendar multiget - get specific events by href
-            hrefs = [elem.text for elem in multiget_elem.findall('.//{DAV:}href')]
+            namespaces = {'D': 'DAV:'}
+            hrefs = []
+            # Try different namespace formats
+            for elem in multiget_elem.findall('.//{DAV:}href'):
+                hrefs.append(elem.text)
+            if not hrefs:
+                for elem in multiget_elem.findall('.//D:href', namespaces):
+                    hrefs.append(elem.text)
+            if not hrefs:
+                for elem in multiget_elem.findall('.//href'):
+                    hrefs.append(elem.text)
+            logger.info(f"[CalDAV] Multiget request for {len(hrefs)} hrefs")
             for href in hrefs:
                 # Extract calendar name and UID from href
                 match = re.search(r'/([^/]+)/([^/]+)\.ics$', href)
