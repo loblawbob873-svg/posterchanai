@@ -330,13 +330,23 @@ class StorageService:
         storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
         if storage_server_url and storage_server_url.value:
             url = storage_server_url.value.strip()
-            # Check if URL points to same machine - this is likely a misconfiguration
-            if _is_same_machine_url(url):
-                logger.error(f"[STORAGE] storage_server_url points to same machine: {url}. This will cause files to be saved locally. Please use a different machine's URL or leave storage_server_url empty for local storage.")
-            # Proxy to storage server
-            return self._proxy_save_file(url, username, conversation_id, content, original_name)
+            # Validate URL has protocol before proxying
+            if url.startswith(('http://', 'https://')):
+                # Check if URL points to same machine - this is likely a misconfiguration
+                if _is_same_machine_url(url):
+                    logger.error(f"[STORAGE] storage_server_url points to same machine: {url}. This will cause files to be saved locally. Please use a different machine's URL or leave storage_server_url empty for local storage.")
+                try:
+                    # Proxy to storage server
+                    return self._proxy_save_file(url, username, conversation_id, content, original_name)
+                except Exception as e:
+                    # If proxy fails, raise error instead of silently falling back
+                    logger.error(f"[STORAGE] Failed to proxy save_file to {url}: {e}")
+                    raise Exception(f"Failed to save file to storage server: {e}")
+            else:
+                # Invalid URL - raise error
+                raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
         
-        # Local file saving (storage server node)
+        # Local file saving (only when storage server is NOT configured)
         conv_path = self.get_conversation_path(username, conversation_id)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         # Keep extension from original name
@@ -723,10 +733,9 @@ class StorageService:
                     try:
                         return self._proxy_delete_note_attachment(url, username, note_id, filename)
                     except Exception as e:
-                        # If proxy fails, fall back to local storage (per user's "Never fallback" request, this should fail)
-                        # But for now, we'll log and fall back to maintain compatibility
-                        logger.warning(f"[STORAGE] Failed to proxy delete_note_attachment, falling back to local: {e}")
-                        # Fall through to local storage below
+                        # If proxy fails, raise error instead of falling back to local storage
+                        logger.error(f"[STORAGE] Failed to proxy delete_note_attachment to {url}: {e}")
+                        raise Exception(f"Failed to delete note attachment from storage server: {e}")
                 else:
                     logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
         
