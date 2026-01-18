@@ -46,7 +46,8 @@ class DAVStorageProxy:
                 # Test if session is valid by checking if it's bound
                 if db.bind is not None:
                     # Try a simple query to see if session works
-                    test_result = db.execute("SELECT 1").scalar()
+                    from sqlalchemy import text
+                    test_result = db.execute(text("SELECT 1")).scalar()
                     if test_result == 1:
                         # Session seems valid, use it
                         storage_url_setting = db.query(Setting).filter(Setting.key == "storage_server_url").first()
