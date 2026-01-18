@@ -1287,12 +1287,82 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
             # Use storage proxy (must be configured)
             proxy = DAVStorageProxy(db, user.username, 'cardav')
             
-            # Read all .vcf files from root (legacy mode - contacts in root)
-            file_items = proxy.list_files("")
+            # Search all addressbook subdirectories and root
+            root_items = proxy.list_files("")
+            addressbook_dirs = []
+            for item in root_items:
+                if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
+                    addressbook_dirs.append(item.get('name'))
+            
             contacts = []
             query_lower = query.lower()
             
-            for item in file_items:
+            # Search all addressbook subdirectories
+            for addr_dir in addressbook_dirs:
+                file_items = proxy.list_files(addr_dir)
+                for item in file_items:
+                    name = item.get('name', '')
+                    if not name.endswith('.vcf'):
+                        continue
+                    
+                    try:
+                        # Read vCard file using proxy
+                        filepath = f"{addr_dir}/{name}" if addr_dir else name
+                        vcard_data = proxy.read_file(filepath)
+                        if not vcard_data:
+                            continue
+                    
+                    vcard = vobject.readOne(vcard_data)
+                    
+                    # Get contact info
+                    contact_name = ""
+                    if hasattr(vcard, 'fn'):
+                        contact_name = str(vcard.fn.value)
+                    elif hasattr(vcard, 'n'):
+                        contact_name = str(vcard.n.value)
+                    
+                    emails = []
+                    if hasattr(vcard, 'email_list'):
+                        for em in vcard.email_list:
+                            email_val = str(em.value).strip()
+                            if email_val and email_val not in emails:
+                                emails.append(email_val)
+                    elif hasattr(vcard, 'email'):
+                        email_val = str(vcard.email.value).strip()
+                        if email_val:
+                            emails.append(email_val)
+                    
+                    phone = None
+                    if hasattr(vcard, 'tel'):
+                        phone = str(vcard.tel.value)
+                    
+                    org = None
+                    if hasattr(vcard, 'org'):
+                        org = str(vcard.org.value[0]) if vcard.org.value else None
+                    
+                    note = None
+                    if hasattr(vcard, 'note'):
+                        note = str(vcard.note.value)
+                    
+                        # Check if query matches (empty query matches all)
+                        emails_str = ' '.join(emails)
+                        searchable = f"{contact_name} {emails_str} {phone or ''} {org or ''} {note or ''}".lower()
+                        if not query_lower or query_lower in searchable:
+                            contacts.append(Contact(
+                                uid=str(vcard.uid.value) if hasattr(vcard, 'uid') else name.replace('.vcf', ''),
+                                name=contact_name,
+                                emails=emails,
+                                phone=phone,
+                                organization=org,
+                                note=note
+                            ))
+                    except Exception as e:
+                        logger.debug(f"Error parsing vCard {name}: {e}")
+                        continue
+            
+            # Also check root for legacy .vcf files
+            root_file_items = proxy.list_files("")
+            for item in root_file_items:
                 name = item.get('name', '')
                 if not name.endswith('.vcf'):
                     continue
