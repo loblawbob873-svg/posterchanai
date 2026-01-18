@@ -3022,6 +3022,10 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
 
             elif subcommand == "reply":
                 if len(parts) < 4:
+                    return {
+                        "type": "text",
+                        "content": "Usage: `mail reply <account> [folder:]<id> <message>`\n\nExample: `mail reply verita84 123 Thanks for the info!` or `mail reply verita84 INBOX.Archive:456 Thanks!`",
+                    }
         """Extract bill information from receipt text and add to budget."""
         import json
         import re
