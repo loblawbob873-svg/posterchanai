@@ -2974,3 +2974,20 @@ fieldset legend {
     transform: translateY(-2px);
     box-shadow: var(--glow-cyan);
 }
+
+.music-search-results {
+    margin: 12px 0;
+}
+
+.music-info {
+    padding: 4px 8px;
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.music-info:first-child {
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 16px;
+    margin-bottom: 8px;
+}

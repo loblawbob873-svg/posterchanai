@@ -2450,22 +2450,33 @@ class ChatHandler {
             }
         } else if (data.type === 'text' && data.content && data.content.includes('🔍 **Search Results:**')) {
             // Music search results - add play buttons
-            // Parse content and add play buttons for each track
-            let musicHtml = contentHtml;
+            // Work with raw content to parse track numbers
+            const lines = data.content.split('\n');
+            let musicHtml = '<div class="music-search-results">';
             
-            // Replace numbered tracks with tracks that have play buttons
-            musicHtml = musicHtml.replace(/(\d+)\.\s+([^\n]+)\n/g, (match, num, trackName) => {
-                return `<div class="music-track-result">
-                    <span class="track-number">${num}.</span>
-                    <span class="track-name">${trackName}</span>
-                    <button class="btn-action-sm" onclick="window.chatHandler.sendMessage('music play ${num}')" title="Play this track">▶️</button>
-                </div>\n`;
-            });
+            for (const line of lines) {
+                // Match track lines like "1. Track Name"
+                const trackMatch = line.match(/^(\d+)\.\s+(.+)$/);
+                if (trackMatch) {
+                    const num = trackMatch[1];
+                    const trackName = this.escapeHtml(trackMatch[2]);
+                    musicHtml += `<div class="music-track-result">
+                        <span class="track-number">${num}.</span>
+                        <span class="track-name">${trackName}</span>
+                        <button class="btn-action-sm" onclick="window.chatHandler.sendMessage('music play ${num}')" title="Play this track">▶️</button>
+                    </div>`;
+                } else if (line.trim()) {
+                    // Other lines (headers, instructions, etc)
+                    musicHtml += `<div class="music-info">${this.escapeHtml(line)}</div>`;
+                }
+            }
             
-            html = musicHtml;
-            html += `<div class="music-search-actions">
+            musicHtml += '</div>';
+            musicHtml += `<div class="music-search-actions">
                 <button class="btn-action" onclick="window.chatHandler.sendMessage('music queueall')" title="Play all search results">▶️ Play All</button>
             </div>`;
+            
+            html = musicHtml;
         } else if (data.type === 'music_next' && window.musicPlayer) {
             // Skip to next track
             window.musicPlayer.next();
