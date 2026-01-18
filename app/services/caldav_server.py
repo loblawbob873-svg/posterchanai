@@ -797,32 +797,52 @@ async def handle_mkcalendar(path: str, user: User, db: Session) -> Response:
 
 async def handle_proppatch(path: str, user: User, db: Session, request: StarletteRequest) -> Response:
     """Handle PROPPATCH request (set calendar properties)."""
+    from urllib.parse import quote
+    import html
+    
     body = await request.body()
     
     try:
+        logger.info(f"[CalDAV] PROPPATCH request for path: {path}, user: {user.username}")
+        
         # Parse the PROPPATCH request
         root = ET.fromstring(body)
+        
+        # Build proper href (full URL path)
+        encoded_username = quote(user.username, safe='')
+        if path.startswith(user.username) or path.startswith(encoded_username):
+            # Path already includes username, use as-is
+            href = f"/caldav/{path}"
+        else:
+            href = f"/caldav/{encoded_username}/{path}"
+        href = href.rstrip('/') + '/' if href != '/caldav/' else href
         
         # For now, just accept the changes without actually storing them
         # The calendar properties are hardcoded in handle_propfind
         # In a full implementation, you'd store these in a database or file
         
-        # Return success response
-        xml = '''<?xml version="1.0" encoding="utf-8"?>
+        # Return success response with proper href
+        escaped_href = html.escape(href)
+        xml = f'''<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
     <D:response>
-        <D:href>{}</D:href>
+        <D:href>{escaped_href}</D:href>
         <D:propstat>
             <D:prop/>
             <D:status>HTTP/1.1 200 OK</D:status>
         </D:propstat>
     </D:response>
-</D:multistatus>'''.format(path)
+</D:multistatus>'''
         
+        logger.debug(f"[CalDAV] PROPPATCH response for {href}")
         return Response(content=xml, media_type="application/xml", status_code=207)
     except Exception as e:
-        logger.error(f"Error handling PROPPATCH: {e}")
-        return Response(content="", status_code=500)
+        logger.error(f"[CalDAV] Error handling PROPPATCH: {e}", exc_info=True)
+        error_xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:error xmlns:D="DAV:">
+    <D:internal-server-error/>
+</D:error>'''
+        return Response(content=error_xml, media_type="application/xml", status_code=500)
 
 
 def create_caldav_app() -> FastAPI:
