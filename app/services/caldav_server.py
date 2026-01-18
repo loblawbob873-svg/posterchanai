@@ -77,11 +77,11 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
             elif prop_name == 'getetag':
                 xml += f'                <D:getetag>"{html.escape(str(prop_value))}"</D:getetag>\n'
             elif prop_name == 'calendar-data':
-                # Escape XML special characters in calendar data
-                escaped_data = html.escape(prop_value).replace('&lt;', '<').replace('&gt;', '>')  # Don't escape < and > in XML content
-                # But we need to escape them properly for XML CDATA or use proper escaping
-                # Actually, calendar-data should be in CDATA or properly escaped
-                xml += f'                <C:calendar-data xmlns:C="urn:ietf:params:xml:ns:caldav"><![CDATA[{prop_value}]]></C:calendar-data>\n'
+                # Calendar data should be in CDATA, but we need to handle ]]> sequences
+                # If ]]> appears in the data, we need to split the CDATA section
+                # For now, replace ]]> with a safe alternative or escape it
+                safe_data = prop_value.replace(']]>', ']]]]><![CDATA[>')
+                xml += f'                <C:calendar-data xmlns:C="urn:ietf:params:xml:ns:caldav"><![CDATA[{safe_data}]]></C:calendar-data>\n'
             elif prop_name == 'supported-calendar-component-set':
                 xml += '                <C:supported-calendar-component-set xmlns:C="urn:ietf:params:xml:ns:caldav">\n'
                 for comp in prop_value.split(','):
@@ -551,8 +551,13 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         xml = create_caldav_response(items)
         return Response(content=xml, media_type="application/xml", status_code=207)
     except Exception as e:
-        logger.error(f"Error handling REPORT: {e}", exc_info=True)
-        return Response(content="", status_code=500)
+        logger.error(f"[CalDAV] Error handling REPORT: {e}", exc_info=True)
+        # Return a proper error response instead of empty 500
+        error_xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:error xmlns:D="DAV:">
+    <D:internal-server-error/>
+</D:error>'''
+        return Response(content=error_xml, media_type="application/xml", status_code=500)
 
 
 async def handle_get(path: str, user: User, db: Session) -> Response:
@@ -635,14 +640,24 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
         success = proxy.write_file(filepath, ical_data)
         
         if success:
-            logger.info(f"Saved event/todo {event_uid} for user {user.username} in calendar {cal_name}")
-            return Response(content="", status_code=201)
+            logger.info(f"[CalDAV] Saved event/todo {event_uid} for user {user.username} in calendar {cal_name}")
+            # Return 204 No Content for updates, 201 Created for new events
+            # For simplicity, use 204 which is acceptable for both
+            return Response(content="", status_code=204)
         else:
-            logger.error(f"Failed to save event {event_uid}")
-            return Response(content="Error saving event", status_code=500)
+            logger.error(f"[CalDAV] Failed to save event {event_uid}")
+            error_xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:error xmlns:D="DAV:">
+    <D:internal-server-error/>
+</D:error>'''
+            return Response(content=error_xml, media_type="application/xml", status_code=500)
     except Exception as e:
-        logger.error(f"Error saving event: {e}")
-        return Response(content=f"Error: {e}", status_code=500)
+        logger.error(f"[CalDAV] Error saving event: {e}", exc_info=True)
+        error_xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:error xmlns:D="DAV:">
+    <D:internal-server-error/>
+</D:error>'''
+        return Response(content=error_xml, media_type="application/xml", status_code=500)
 
 
 async def handle_delete(path: str, user: User, db: Session) -> Response:
