@@ -19,7 +19,7 @@ logging.basicConfig(
 
 from app.database import init_db, get_db
 from app.auth import get_current_user_optional, create_access_token
-from app.models import User, VerificationToken
+from app.models import User, VerificationToken, Setting
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, news, rag, plugins, mail, music, torrent, contacts, notes, storage, files
 from app.routers.caldav import caldav_router, carddav_router
 from app.services.load_balancer import NoHealthyServersError
@@ -158,6 +158,27 @@ app.include_router(music.router)
 app.include_router(torrent.router)
 app.include_router(notes.router)
 app.include_router(storage.router)
+
+# CalDAV/CardDAV discovery endpoints (redirect to DAV servers)
+@app.get("/.well-known/caldav")
+async def caldav_discovery(request: Request, db: Session = Depends(get_db)):
+    """CalDAV autodiscovery - redirect to CalDAV server."""
+    caldav_port = db.query(Setting).filter(Setting.key == "caldav_port").first()
+    port = caldav_port.value if caldav_port else "8081"
+    
+    # Use same host but different port
+    base_url = f"{request.url.scheme}://{request.url.hostname}:{port}"
+    return RedirectResponse(url=f"{base_url}/caldav/", status_code=301)
+
+@app.get("/.well-known/carddav")
+async def carddav_discovery(request: Request, db: Session = Depends(get_db)):
+    """CardDAV autodiscovery - redirect to CardDAV server."""
+    cardav_port = db.query(Setting).filter(Setting.key == "cardav_port").first()
+    port = cardav_port.value if cardav_port else "8082"
+    
+    # Use same host but different port
+    base_url = f"{request.url.scheme}://{request.url.hostname}:{port}"
+    return RedirectResponse(url=f"{base_url}/carddav/", status_code=301)
 
 # Handle old Joplin resource URLs (:/[resource-id]) - return 404 with helpful message
 # These are legacy URLs from Joplin that should have been converted during migration
