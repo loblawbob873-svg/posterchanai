@@ -175,14 +175,23 @@
     overflow: hidden;
 }
 
+.file-toolbar-search-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    justify-content: flex-end;
+}
+
 .file-manager-search {
     display: flex;
     align-items: center;
     gap: 4px;
     flex: 1;
     min-width: 120px;
-    max-width: 300px;
-    margin: 0 4px;
+    max-width: 400px;
+    margin: 0;
     flex-shrink: 1;
 }
 
@@ -577,8 +586,25 @@
         font-size: 14px;
     }
     
+    .file-toolbar-search-actions {
+        order: 2;
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .file-manager-search {
+        order: 1;
+        flex: 1 1 auto;
+        min-width: 100px;
+        max-width: none;
+        margin: 0;
+    }
+    
     .file-toolbar-actions {
-        order: 4;
+        order: 2;
         flex: 0 0 auto;
     }
     
