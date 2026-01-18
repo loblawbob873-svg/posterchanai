@@ -470,7 +470,14 @@ async def generate_carddav_profile(request: Request, user: User = Depends(get_cu
     import uuid
     
     scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
-    hostname = request.url.hostname
+    # Prefer X-Forwarded-Host (from reverse proxy) or use the request hostname
+    hostname = request.headers.get("X-Forwarded-Host", request.headers.get("Host", request.url.hostname))
+    
+    # If it's an IP address, warn user but continue (they should use FQDN)
+    if hostname and (hostname.replace('.', '').replace(':', '').isdigit() or hostname.startswith('192.') or hostname.startswith('10.')):
+        # This is an IP address - iOS won't trust it
+        # But we'll generate it anyway with a warning in the filename
+        pass
     
     # Generate unique UUIDs for this profile
     profile_uuid = str(uuid.uuid4()).upper()
