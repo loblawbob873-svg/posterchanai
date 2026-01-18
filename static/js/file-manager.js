@@ -1349,15 +1349,9 @@ class FileManager {
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
                          (window.innerWidth <= 768 && 'ontouchstart' in window);
         
+        // Mobile upload area is now hidden - use header buttons (📤 Upload Files, 📁 Upload Directory) instead
         const mobileUploadArea = document.getElementById('mobileUploadArea');
-        const fileManagerGrid = document.getElementById('fileManagerGrid');
-        
-        if (isMobile && mobileUploadArea && fileManagerGrid) {
-            // Show mobile upload area at the top of the grid
-            mobileUploadArea.style.display = 'block';
-            // Add mobile class for styling
-            document.getElementById('fileManagerOverlay')?.classList.add('mobile-device');
-        } else if (mobileUploadArea) {
+        if (mobileUploadArea) {
             mobileUploadArea.style.display = 'none';
         }
     }
