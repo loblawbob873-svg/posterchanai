@@ -1920,11 +1920,14 @@ fieldset legend {
 
 /* User Settings Tabbed Layout */
 .modal-fullscreen {
-    width: 95%;
-    max-width: 900px;
-    display: flex;
-    flex-direction: column;
-    /* Height controlled by components.css for specific modals */
+    width: min(95vw, 900px) !important;
+    max-width: 900px !important;
+    height: calc(100vh - 10px) !important;
+    max-height: calc(100vh - 10px) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    box-sizing: border-box;
+    position: relative;
 }
 .user-settings-body {
     flex: 1;

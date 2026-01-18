@@ -1,17 +1,18 @@
 /* Notes Modal Styles - Modern & Beautiful UI */
 #notesModal .notes-modal-content,
 .notes-modal-content {
-    max-width: 1400px;
-    width: min(95vw, 1400px);
+    max-width: 1400px !important;
+    width: min(95vw, 1400px) !important;
     height: calc(100vh - 10px) !important;
     max-height: calc(100vh - 10px) !important;
     border-radius: 12px;
     overflow: hidden !important;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-    display: flex;
+    display: flex !important;
     flex-direction: column;
     margin: auto;
     box-sizing: border-box;
+    position: relative;
 }
 
 .notes-modal-body {

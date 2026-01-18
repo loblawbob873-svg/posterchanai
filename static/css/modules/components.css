@@ -184,6 +184,8 @@
     max-height: calc(100vh - 10px) !important;
     height: calc(100vh - 10px) !important;
     overflow-y: hidden !important;
+    box-sizing: border-box !important;
+    position: relative !important;
 }
 .modal-content.modal-large {
     max-width: 800px;
