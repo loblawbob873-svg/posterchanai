@@ -641,9 +641,9 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
         
         if success:
             logger.info(f"[CalDAV] Saved event/todo {event_uid} for user {user.username} in calendar {cal_name}")
-            # Return 204 No Content for updates, 201 Created for new events
-            # For simplicity, use 204 which is acceptable for both
-            return Response(content="", status_code=204)
+            # Return 201 Created for new events, 204 No Content for updates
+            # iPhone expects 201 for successful PUT, so use that
+            return Response(content="", status_code=201)
         else:
             logger.error(f"[CalDAV] Failed to save event {event_uid}")
             error_xml = f'''<?xml version="1.0" encoding="utf-8"?>
