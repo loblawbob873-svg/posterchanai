@@ -2451,9 +2451,11 @@ class ChatHandler {
         } else if (data.type === 'text' && data.content && data.content.includes('🔍 **Search Results:**')) {
             // Music search results - add play buttons
             // Work with raw content to parse track numbers
+            console.log('[MUSIC SEARCH] Parsing results:', data.content.substring(0, 200));
             const lines = data.content.split('\n');
             let musicHtml = '<div class="music-search-results">';
             let i = 0;
+            let trackCount = 0;
             
             while (i < lines.length) {
                 const line = lines[i];
@@ -2461,6 +2463,7 @@ class ChatHandler {
                 // Match track lines like "1. Track Name"
                 const trackMatch = line.match(/^(\d+)\.\s+(.+)$/);
                 if (trackMatch) {
+                    trackCount++;
                     const num = trackMatch[1];
                     const trackName = this.escapeHtml(trackMatch[2]);
                     
@@ -2471,6 +2474,7 @@ class ChatHandler {
                         i++; // Skip the details line
                     }
                     
+                    console.log(`[MUSIC SEARCH] Adding track ${num}: ${trackName}`);
                     musicHtml += `<div class="music-track-result">
                         <div class="track-main">
                             <span class="track-number">${num}.</span>
@@ -2478,7 +2482,7 @@ class ChatHandler {
                                 <div class="track-name">${trackName}</div>
                                 ${trackDetails ? `<div class="track-details">${trackDetails}</div>` : ''}
                             </div>
-                            <button class="btn-action-sm" onclick="window.chatHandler.sendMessage('music play ${num}')" title="Play this track">▶️</button>
+                            <button class="btn-action-sm" onclick="console.log('Play clicked for track ${num}'); window.chatHandler.sendMessage('music play ${num}')" title="Play this track">▶️</button>
                         </div>
                     </div>`;
                 } else if (line.trim() && !line.startsWith('📂')) {
@@ -2488,9 +2492,10 @@ class ChatHandler {
                 i++;
             }
             
+            console.log(`[MUSIC SEARCH] Total tracks added: ${trackCount}`);
             musicHtml += '</div>';
             musicHtml += `<div class="music-search-actions">
-                <button class="btn-action" onclick="window.chatHandler.sendMessage('music queueall')" title="Play all search results">▶️ Play All</button>
+                <button class="btn-action" onclick="console.log('Play All clicked'); window.chatHandler.sendMessage('music queueall')" title="Play all search results">▶️ Play All</button>
             </div>`;
             
             html = musicHtml;
