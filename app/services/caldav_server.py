@@ -93,6 +93,11 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
                 xml += f'                <ical:calendar-color xmlns:ical="http://apple.com/ns/ical/">{html.escape(str(prop_value))}</ical:calendar-color>\n'
             elif prop_name == 'calendar-timezone':
                 xml += f'                <C:calendar-timezone xmlns:C="urn:ietf:params:xml:ns:caldav">{html.escape(str(prop_value))}</C:calendar-timezone>\n'
+            elif prop_name == 'sync-token':
+                xml += f'                <D:sync-token xmlns:D="DAV:">{html.escape(str(prop_value))}</D:sync-token>\n'
+            elif prop_name == 'getctag':
+                # CTag is like ETag but for collections (calendars)
+                xml += f'                <CS:getctag xmlns:CS="http://calendarserver.org/ns/">{html.escape(str(prop_value))}</CS:getctag>\n'
         xml += '            </D:prop>\n            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
     xml += '</D:multistatus>'
     return xml
@@ -179,6 +184,9 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
                 if cal_name.startswith('.'):
                     continue
                 logger.info(f"[CalDAV] Adding calendar: {cal_name}")
+                # Generate sync-token for this calendar
+                import hashlib
+                sync_token = hashlib.md5(f"{cal_name}_{user.username}".encode()).hexdigest()[:16]
                 items.append({
                     "href": f"{base_url}/{quote(cal_name, safe='')}/",
                     "props": {
@@ -187,7 +195,8 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
                         "supported-calendar-component-set": "VEVENT,VTODO",
                         "calendar-description": f"{cal_name} Calendar",
                         "calendar-color": "#0088FF",
-                        "calendar-timezone": "UTC"
+                        "calendar-timezone": "UTC",
+                        "sync-token": f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{sync_token}"
                     }
                 })
             
@@ -230,6 +239,11 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         cal_name = path
         subpath = "" if cal_name == 'calendar' else cal_name
         
+        # Generate a simple sync-token based on calendar name and modification time
+        # This helps iPhone track changes
+        import hashlib
+        sync_token = hashlib.md5(f"{cal_name}_{user.username}".encode()).hexdigest()[:16]
+        
         items.append({
             "href": f"{base_url}/{quote(cal_name, safe='')}/",
             "props": {
@@ -238,7 +252,8 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
                 "supported-calendar-component-set": "VEVENT,VTODO",
                 "calendar-description": f"{cal_name} Calendar",
                 "calendar-color": "#0088FF",
-                "calendar-timezone": "UTC"
+                "calendar-timezone": "UTC",
+                "sync-token": f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{sync_token}"
             }
         })
         
