@@ -726,10 +726,25 @@
         height: 36px;
     }
     
+    .file-toolbar-search-actions {
+        width: 100%;
+        order: 2;
+        margin: 4px 0;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .file-manager-search {
+        flex: 1;
+        min-width: 0;
+        margin: 0;
+    }
+    
     .file-toolbar-actions {
-        order: 4;
-        justify-content: flex-end;
-        margin-left: auto;
+        order: 2;
+        flex: 0 0 auto;
+        margin: 0;
     }
     
     /* Even smaller grid on phones */
