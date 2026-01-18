@@ -173,6 +173,7 @@
 #notesModal .modal-content,
 #notesModal .modal-content.notes-modal-content,
 #userSettingsModal .modal-content,
+#userSettingsModal .modal-content.modal-fullscreen,
 #ragModal .modal-content,
 #calendarModal .modal-content,
 #contactsModal .modal-content,
@@ -180,6 +181,7 @@
 #translateModal .modal-content,
 #apiKeysModal .modal-content {
     max-height: calc(100vh - 10px) !important;
+    height: calc(100vh - 10px) !important;
     overflow-y: hidden !important;
 }
 .modal-content.modal-large {
