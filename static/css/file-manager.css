@@ -216,20 +216,21 @@
 }
 
 .file-manager-toolbar {
-    padding: 8px 12px;
+    padding: 12px 16px;
     border-bottom: 1px solid var(--border-color);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 8px;
+    gap: 16px;
     flex-wrap: wrap;
     min-height: auto;
+    background: var(--bg-secondary);
 }
 
 .file-toolbar-actions {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 8px;
     flex-shrink: 0;
 }
 
@@ -257,33 +258,43 @@
 
 .file-view-toggle {
     display: flex;
-    gap: 4px;
+    gap: 6px;
+    padding: 2px;
+    background: var(--bg-primary);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
 }
 
 .file-selection-controls {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 8px;
     flex-wrap: nowrap;
+    padding: 4px 8px;
+    background: var(--bg-primary);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
 }
 
 .file-selection-controls .btn-icon-only {
-    min-width: 28px;
-    height: 28px;
-    padding: 4px;
-    font-size: 14px;
+    min-width: 32px;
+    height: 32px;
+    padding: 6px;
+    font-size: 16px;
 }
 
 .selection-count {
     color: var(--text-secondary);
-    font-size: 11px;
-    margin-left: 2px;
-    padding: 2px 6px;
+    font-size: 12px;
+    margin-left: 8px;
+    padding: 4px 10px;
     background: var(--bg-secondary);
-    border-radius: 4px;
-    min-width: 20px;
+    border-radius: 6px;
+    min-width: 24px;
     text-align: center;
     flex-shrink: 0;
+    font-weight: 500;
+    border: 1px solid var(--border-color);
 }
 
 .btn-danger {
@@ -302,13 +313,14 @@
 }
 
 .view-btn {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
+    background: transparent;
+    border: none;
     color: var(--text-primary);
     padding: 6px 12px;
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.2s;
+    font-size: 14px;
 }
 
 .view-btn:hover {
@@ -319,6 +331,7 @@
     background: var(--accent-color);
     color: var(--accent-text, white);
     border-color: var(--accent-color);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 /* External Storage Styling */
