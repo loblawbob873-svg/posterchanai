@@ -841,12 +841,32 @@ async def handle_proppatch(path: str, user: User, db: Session, request: Starlett
             <D:prop>'''
         
         # Include all properties that were set/removed in the response
+        # iPhone expects the exact same properties returned that it sent
         for prop in set_props + remove_props:
             prop_tag = prop.tag
-            # Remove namespace prefix if present
-            if '}' in prop_tag:
-                prop_tag = prop_tag.split('}')[1]
-            xml += f'\n                <D:{prop_tag}/>'
+            prop_text = prop.text if prop.text else ""
+            # Handle namespaced properties correctly
+            if prop_tag.startswith('{DAV:}'):
+                prop_name = prop_tag[6:]  # Remove {DAV:} prefix
+                xml += f'\n                <D:{prop_name}'
+            elif prop_tag.startswith('{urn:ietf:params:xml:ns:caldav}'):
+                prop_name = prop_tag[35:]  # Remove namespace prefix
+                xml += f'\n                <C:{prop_name}'
+            elif '}' in prop_tag:
+                namespace, prop_name = prop_tag.split('}', 1)
+                if 'caldav' in namespace.lower():
+                    xml += f'\n                <C:{prop_name}'
+                else:
+                    xml += f'\n                <D:{prop_name}'
+            else:
+                xml += f'\n                <D:{prop_tag}'
+            
+            # Add property value if present
+            if prop_text:
+                escaped_text = html.escape(prop_text)
+                xml += f'>{escaped_text}</{prop_tag.split("}")[-1] if "}" in prop_tag else prop_tag}>'
+            else:
+                xml += '/>'
         
         xml += f'''
             </D:prop>
