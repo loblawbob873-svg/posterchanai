@@ -1717,6 +1717,9 @@ fieldset legend {
 }
 .modal-body {
     padding: 24px;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
 }
 .modal-footer {
     padding: 20px 24px;
@@ -1929,6 +1932,8 @@ fieldset legend {
     flex-direction: column;
     overflow: hidden;
     padding: 0 !important;
+    min-height: 0; /* Allow flex child to shrink */
+    height: 100%; /* Take full available height */
 }
 .user-tabs {
     display: flex;
@@ -1961,6 +1966,7 @@ fieldset legend {
     flex: 1;
     overflow-y: auto;
     padding: 24px;
+    min-height: 0; /* Allow flex child to shrink */
 }
 .user-tab-content {
     display: none;
