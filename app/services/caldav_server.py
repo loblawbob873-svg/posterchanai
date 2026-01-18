@@ -100,6 +100,18 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
                 xml += f'                <CS:getctag xmlns:CS="http://calendarserver.org/ns/">{html.escape(str(prop_value))}</CS:getctag>\n'
             elif prop_name == 'calendar-home-set':
                 xml += f'                <C:calendar-home-set xmlns:C="urn:ietf:params:xml:ns:caldav"><D:href xmlns:D="DAV:">{html.escape(str(prop_value))}</D:href></C:calendar-home-set>\n'
+            elif prop_name == 'calendar-user-address-set':
+                xml += f'                <C:calendar-user-address-set xmlns:C="urn:ietf:params:xml:ns:caldav"><D:href xmlns:D="DAV:">{html.escape(str(prop_value))}</D:href></C:calendar-user-address-set>\n'
+            elif prop_name == 'supported-report-set':
+                # Return supported reports for calendars
+                xml += '                <D:supported-report-set xmlns:D="DAV:">\n'
+                xml += '                    <D:supported-report>\n'
+                xml += '                        <D:report><C:calendar-query xmlns:C="urn:ietf:params:xml:ns:caldav"/></D:report>\n'
+                xml += '                    </D:supported-report>\n'
+                xml += '                    <D:supported-report>\n'
+                xml += '                        <D:report><C:calendar-multiget xmlns:C="urn:ietf:params:xml:ns:caldav"/></D:report>\n'
+                xml += '                    </D:supported-report>\n'
+                xml += '                </D:supported-report-set>\n'
         xml += '            </D:prop>\n            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
     xml += '</D:multistatus>'
     return xml
@@ -158,13 +170,14 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
     # Root calendar home - this is NOT a calendar itself, just a container
     if not path or path == '':
         # Return the calendar home collection
-        # iPhone may request calendar-home-set, so we should include it
+        # iPhone may request calendar-home-set and calendar-user-address-set
         items.append({
             "href": f"{base_url}/",
             "props": {
                 "resourcetype": "collection",  # Just a collection, not a calendar
                 "displayname": f"{user.username}'s Calendars",
-                "calendar-home-set": f"{base_url}/"  # Point to itself as the calendar home
+                "calendar-home-set": f"{base_url}/",  # Point to itself as the calendar home
+                "calendar-user-address-set": f"mailto:{user.username}"  # User's email address
             }
         })
         
@@ -201,9 +214,10 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                 if cal_name.startswith('.'):
                     continue
                 logger.info(f"[CalDAV] Adding calendar: {cal_name}")
-                # Generate sync-token for this calendar
+                # Generate sync-token and ctag for this calendar
                 import hashlib
                 sync_token = hashlib.md5(f"{cal_name}_{user.username}".encode()).hexdigest()[:16]
+                ctag = hashlib.md5(f"{cal_name}_{user.username}_ctag".encode()).hexdigest()[:16]
                 items.append({
                     "href": f"{base_url}/{quote(cal_name, safe='')}/",
                     "props": {
@@ -213,7 +227,8 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                         "calendar-description": f"{cal_name} Calendar",
                         "calendar-color": "#0088FF",
                         "calendar-timezone": "UTC",
-                        "sync-token": f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{sync_token}"
+                        "sync-token": f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{sync_token}",
+                        "getctag": ctag
                     }
                 })
             
@@ -256,10 +271,11 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
         cal_name = path
         subpath = "" if cal_name == 'calendar' else cal_name
         
-        # Generate a simple sync-token based on calendar name and modification time
+        # Generate a simple sync-token and ctag based on calendar name
         # This helps iPhone track changes
         import hashlib
         sync_token = hashlib.md5(f"{cal_name}_{user.username}".encode()).hexdigest()[:16]
+        ctag = hashlib.md5(f"{cal_name}_{user.username}_ctag".encode()).hexdigest()[:16]
         
         items.append({
             "href": f"{base_url}/{quote(cal_name, safe='')}/",
@@ -270,7 +286,8 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                 "calendar-description": f"{cal_name} Calendar",
                 "calendar-color": "#0088FF",
                 "calendar-timezone": "UTC",
-                "sync-token": f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{sync_token}"
+                "sync-token": f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{sync_token}",
+                "getctag": ctag
             }
         })
         
