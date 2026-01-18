@@ -173,15 +173,17 @@
 #notesModal .modal-content,
 #notesModal .modal-content.notes-modal-content,
 #userSettingsModal .modal-content,
+#userSettingsModal .modal-content.modal-fullscreen,
+#userSettingsModal > .modal-content,
 #ragModal .modal-content,
 #calendarModal .modal-content,
 #contactsModal .modal-content,
 #newsModal .modal-content,
 #translateModal .modal-content,
 #apiKeysModal .modal-content {
-    max-height: calc(100vh - 10px);
-    height: calc(100vh - 10px);
-    overflow-y: hidden;
+    max-height: calc(100vh - 10px) !important;
+    height: calc(100vh - 10px) !important;
+    overflow-y: hidden !important;
 }
 .modal-content.modal-large {
     max-width: 800px;
