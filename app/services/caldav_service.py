@@ -66,6 +66,9 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
         all_events.extend(root_events)
         
         return all_events
+    except Exception as e:
+        logger.error(f"Error getting events from built-in storage: {e}", exc_info=True)
+        return []
 
 
 def _get_events_from_calendar_dir(proxy: DAVStorageProxy, cal_dir: str, start_date: datetime, end_date: datetime, calendar_name: str) -> List[CalendarEvent]:
@@ -151,9 +154,6 @@ def _get_events_from_calendar_dir(proxy: DAVStorageProxy, cal_dir: str, start_da
             continue
     
     return events
-    except Exception as e:
-        logger.error(f"Error getting events from built-in storage: {e}", exc_info=True)
-        return []
 
 
 def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
