@@ -3682,13 +3682,17 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
 
                 # Shuffle tracks
                 rand_module.shuffle(all_tracks)
+                
+                # Limit to 200 tracks to prevent UI freeze
+                MAX_SHUFFLE_TRACKS = 200
+                tracks_to_play = all_tracks[:MAX_SHUFFLE_TRACKS]
 
-                # Update cache with shuffled tracks
+                # Update cache with ALL shuffled tracks (for browsing)
                 _music_cache[self.user.id] = {"tracks": all_tracks, "folders": [], "current_path": ""}
 
-                # Build playlist data
+                # Build playlist data (limited)
                 playlist_data = []
-                for t in all_tracks:
+                for t in tracks_to_play:
                     title = t['name'].rsplit('.', 1)[0]
                     stream_url = get_stream_url(t['path'])
                     playlist_data.append({
@@ -3698,11 +3702,11 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                         "streamUrl": stream_url
                     })
                 
-                logger.info(f"[MUSIC SHUFFLE] First track path: {all_tracks[0]['path']}, stream_url: {playlist_data[0]['streamUrl']}")
+                logger.info(f"[MUSIC SHUFFLE] Sending {len(playlist_data)} tracks to player (out of {len(all_tracks)} total)")
 
                 return {
                     "type": "music_playlist",
-                    "content": f"🔀 Shuffling {len(all_tracks)} tracks",
+                    "content": f"🔀 Shuffling {len(playlist_data)} tracks (out of {len(all_tracks)} total)",
                     "tracks": playlist_data,
                 }
 
