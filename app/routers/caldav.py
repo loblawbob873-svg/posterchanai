@@ -86,22 +86,32 @@ async def export_calendar(
 @caldav_router.post("/import")
 async def import_calendar(
     file: UploadFile = File(...),
+    calendar_name: str = Form("default"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Import calendar events from iCalendar (.ics) file."""
+    """Import calendar events from iCalendar (.ics) file into a named calendar."""
     try:
         from app.services.caldav_server import get_user_caldav_path
         from icalendar import Calendar
         import uuid
+        import pytz
+        import re
+        
+        # Sanitize calendar name
+        calendar_name = re.sub(r'[^\w\s-]', '', calendar_name)
+        calendar_name = calendar_name.replace(' ', '_')
+        calendar_name = re.sub(r'_+', '_', calendar_name)
+        calendar_name = calendar_name.strip('_').lower() or "default"
         
         # Read uploaded file
         ics_data = await file.read()
         ics_data = ics_data.decode('utf-8')
         
-        # Get user's CalDAV path
+        # Get user's CalDAV path and create calendar subdirectory
         caldav_path = get_user_caldav_path(current_user, db)
-        caldav_path.mkdir(parents=True, exist_ok=True)
+        calendar_dir = caldav_path / calendar_name
+        calendar_dir.mkdir(parents=True, exist_ok=True)
         
         imported_count = 0
         error_count = 0
@@ -112,6 +122,37 @@ async def import_calendar(
             cal = Calendar.from_ical(ics_data)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid iCalendar data: {str(e)}")
+        
+        # Extract all VTIMEZONE components from the imported file
+        vtimezones = {}
+        for component in cal.walk():
+            if component.name == "VTIMEZONE":
+                tzid = str(component.get('TZID', ''))
+                if tzid:
+                    vtimezones[tzid] = component
+        
+        # Helper function to get or create VTIMEZONE
+        def get_vtimezone(tzid):
+            """Get VTIMEZONE component for a timezone ID."""
+            if tzid in vtimezones:
+                return vtimezones[tzid]
+            
+            # Try to create from pytz
+            try:
+                from datetime import datetime
+                tz = pytz.timezone(tzid)
+                now = datetime.now()
+                
+                # Create basic VTIMEZONE component
+                from icalendar import Timezone
+                vtimezone = Timezone()
+                vtimezone.add('TZID', tzid)
+                
+                # Add to cache
+                vtimezones[tzid] = vtimezone
+                return vtimezone
+            except:
+                return None
         
         # Import each event/todo
         for component in cal.walk():
@@ -127,7 +168,7 @@ async def import_calendar(
                     component.add('UID', event_uid)
                 
                 # Check if event already exists
-                ics_file = caldav_path / f"{event_uid}.ics"
+                ics_file = calendar_dir / f"{event_uid}.ics"
                 if ics_file.exists():
                     logger.debug(f"Event {event_uid} already exists, skipping")
                     skipped_count += 1
@@ -137,6 +178,20 @@ async def import_calendar(
                 new_cal = Calendar()
                 new_cal.add('prodid', '-//PosterChan AI//CalDAV Import//EN')
                 new_cal.add('version', '2.0')
+                
+                # Find all timezone IDs referenced in this component
+                component_tzids = set()
+                for prop in component.property_items():
+                    if hasattr(prop[1], 'params') and 'TZID' in prop[1].params:
+                        component_tzids.add(prop[1].params['TZID'])
+                
+                # Add VTIMEZONE components for all referenced timezones
+                for tzid in component_tzids:
+                    vtimezone = get_vtimezone(tzid)
+                    if vtimezone:
+                        new_cal.add_component(vtimezone)
+                
+                # Add the event/todo component
                 new_cal.add_component(component)
                 
                 # Save to file
@@ -152,7 +207,8 @@ async def import_calendar(
         return {
             "success": True,
             "count": imported_count,
-            "message": f"Imported {imported_count} event(s), skipped {skipped_count}, errors {error_count}"
+            "calendar": calendar_name,
+            "message": f"Imported {imported_count} event(s) into '{calendar_name}', skipped {skipped_count}, errors {error_count}"
         }
     except HTTPException:
         raise

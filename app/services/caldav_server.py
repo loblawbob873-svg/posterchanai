@@ -304,27 +304,45 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                             ical_data = f.read()
                         
                         # Check time range if specified
+                        include_event = True
                         if time_range:
+                            include_event = False
                             cal = ICalendar.from_ical(ical_data.encode('utf-8'))
                             for component in cal.walk():
-                                if component.name == "VEVENT":
+                                if component.name in ("VEVENT", "VTODO"):
                                     dtstart = component.get('dtstart')
                                     if dtstart:
                                         event_start = dtstart.dt
+                                        # Handle both datetime and date objects
                                         if isinstance(event_start, datetime):
-                                            if not (time_range[0] <= event_start <= time_range[1]):
-                                                continue
+                                            if time_range[0] <= event_start <= time_range[1]:
+                                                include_event = True
+                                                break
+                                        else:
+                                            # Date object - convert to datetime for comparison
+                                            from datetime import date
+                                            if isinstance(event_start, date):
+                                                # Check if the date falls within range
+                                                event_datetime = datetime.combine(event_start, datetime.min.time())
+                                                if time_range[0].date() <= event_start <= time_range[1].date():
+                                                    include_event = True
+                                                    break
+                                    else:
+                                        # No start time, include it anyway
+                                        include_event = True
+                                        break
                         
-                        event_uid = ics_file.stem
-                        href_path = f"{cal_name}/{event_uid}.ics" if cal_name else f"calendar/{event_uid}.ics"
-                        items.append({
-                            "href": f"{base_url}/{href_path}",
-                            "props": {
-                                "getcontenttype": "text/calendar; charset=utf-8",
-                                "getetag": str(ics_file.stat().st_mtime),
-                                "calendar-data": ical_data
-                            }
-                        })
+                        if include_event:
+                            event_uid = ics_file.stem
+                            href_path = f"{cal_name}/{event_uid}.ics" if cal_name else f"calendar/{event_uid}.ics"
+                            items.append({
+                                "href": f"{base_url}/{href_path}",
+                                "props": {
+                                    "getcontenttype": "text/calendar; charset=utf-8",
+                                    "getetag": str(ics_file.stat().st_mtime),
+                                    "calendar-data": ical_data
+                                }
+                            })
                     except Exception as e:
                         logger.debug(f"Error processing {ics_file}: {e}")
                         continue

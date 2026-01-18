@@ -1193,9 +1193,31 @@ async def import_from_radicale(
         # Get user's CalDAV path
         caldav_path = get_user_caldav_path(current_user, db)
         
-        # Import each calendar
+        # Import each calendar into its own subdirectory
+        calendar_names = []
         for calendar in calendars:
             try:
+                # Get calendar name and sanitize it for directory name
+                import re
+                cal_name = str(calendar.name) if hasattr(calendar, 'name') and calendar.name else "default"
+                # Remove special characters, keep only alphanumeric, spaces, hyphens, underscores
+                cal_name = re.sub(r'[^\w\s-]', '', cal_name)
+                # Replace spaces with underscores
+                cal_name = cal_name.replace(' ', '_')
+                # Remove consecutive underscores
+                cal_name = re.sub(r'_+', '_', cal_name)
+                cal_name = cal_name.strip('_').lower()
+                
+                if not cal_name:
+                    cal_name = "default"
+                
+                # Create subdirectory for this calendar
+                cal_dir = caldav_path / cal_name
+                cal_dir.mkdir(parents=True, exist_ok=True)
+                calendar_names.append(cal_name)
+                
+                logger.info(f"Importing calendar '{cal_name}' from Radicale")
+                
                 # Fetch all events from this calendar
                 events = calendar.events()
                 
@@ -1204,12 +1226,14 @@ async def import_from_radicale(
                         # Get the iCalendar data
                         ical_data = event.data
                         
-                        # Parse to extract UID
+                        # Parse to extract UID and component type
                         cal = ICalendar.from_ical(ical_data)
                         event_uid = None
+                        component_type = None
                         for component in cal.walk():
-                            if component.name == "VEVENT":
+                            if component.name in ("VEVENT", "VTODO"):
                                 event_uid = str(component.get('uid'))
+                                component_type = component.name
                                 break
                         
                         if not event_uid:
@@ -1217,8 +1241,8 @@ async def import_from_radicale(
                             import uuid
                             event_uid = str(uuid.uuid4())
                         
-                        # Save to user's CalDAV directory
-                        ics_file = caldav_path / f"{event_uid}.ics"
+                        # Save to calendar's subdirectory
+                        ics_file = cal_dir / f"{event_uid}.ics"
                         with open(ics_file, 'wb') as f:
                             f.write(ical_data)
                         
@@ -1228,15 +1252,16 @@ async def import_from_radicale(
                         error_count += 1
                         continue
             except Exception as e:
-                logger.warning(f"Error importing calendar {calendar.name}: {e}")
+                logger.warning(f"Error importing calendar: {e}")
                 error_count += 1
                 continue
         
         return {
             "success": True,
-            "message": f"Imported {imported_count} events from Radicale",
+            "message": f"Imported {imported_count} events from {len(calendar_names)} calendar(s): {', '.join(calendar_names)}",
             "imported": imported_count,
-            "errors": error_count
+            "errors": error_count,
+            "calendars": calendar_names
         }
     except Exception as e:
         logger.error(f"Error importing from Radicale: {e}", exc_info=True)
