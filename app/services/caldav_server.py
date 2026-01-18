@@ -361,9 +361,17 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             # List matching events from the specified calendar directory using proxy
             file_items = proxy.list_files(subpath)
             logger.info(f"[CalDAV] REPORT query for calendar '{cal_name}' (subpath='{subpath}'): found {len(file_items)} items")
+            
+            ics_count = 0
+            processed_count = 0
+            read_failed_count = 0
+            time_filtered_count = 0
+            added_count = 0
+            
             for item in file_items:
                 name = item.get('name', '')
                 if name.endswith('.ics'):
+                    ics_count += 1
                     try:
                         # Build filepath
                         if subpath:
@@ -371,13 +379,16 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                         else:
                             filepath = name
                         
-                        logger.debug(f"[CalDAV] Processing event file: {filepath}")
+                        logger.debug(f"[CalDAV] Processing event file {ics_count}/{len([i for i in file_items if i.get('name', '').endswith('.ics')])}: {filepath}")
                         
                         # Read calendar data using proxy
                         ical_data = proxy.read_file(filepath)
                         if not ical_data:
+                            read_failed_count += 1
                             logger.warning(f"[CalDAV] Failed to read event file: {filepath}")
                             continue
+                        
+                        processed_count += 1
                         logger.debug(f"[CalDAV] Read event file {filepath}: {len(ical_data)} bytes")
                         
                         # Check time range if specified
@@ -428,11 +439,21 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                     "calendar-data": ical_data
                                 }
                             })
-                            logger.debug(f"[CalDAV] Added event {event_uid} to REPORT response")
+                            added_count += 1
+                            if added_count <= 5 or added_count % 100 == 0:
+                                logger.info(f"[CalDAV] Added event {added_count}: {event_uid}")
+                        else:
+                            time_filtered_count += 1
                     except Exception as e:
                         logger.warning(f"[CalDAV] Error processing event {name}: {e}", exc_info=True)
                         continue
             
+            logger.info(f"[CalDAV] REPORT query summary for calendar '{cal_name}':")
+            logger.info(f"  - Total .ics files: {ics_count}")
+            logger.info(f"  - Successfully read: {processed_count}")
+            logger.info(f"  - Failed to read: {read_failed_count}")
+            logger.info(f"  - Filtered by time range: {time_filtered_count}")
+            logger.info(f"  - Added to response: {added_count}")
             logger.info(f"[CalDAV] REPORT query returning {len(items)} events for calendar '{cal_name}'")
         
         elif multiget_elem is not None:
