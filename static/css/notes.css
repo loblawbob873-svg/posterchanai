@@ -476,7 +476,7 @@
     flex: 1 1 0;
     display: flex;
     flex-direction: column;
-    min-height: 400px; /* Increased minimum height for textarea */
+    min-height: 0; /* Changed from 400px to allow proper flex sizing */
     max-height: 100%;
     position: relative;
     overflow: hidden !important;
@@ -1162,14 +1162,14 @@
     
     .notes-editor-content {
         flex: 1 1 0;
-        min-height: 250px; /* Increased minimum height even on small screens */
+        min-height: 0; /* Changed from 250px to allow proper flex sizing */
         max-height: 100%;
     }
     
     #noteContentInput,
     .notes-content-preview {
         flex: 1 1 0;
-        min-height: 250px; /* Increased minimum height even on small screens */
+        min-height: 0; /* Changed from 250px to allow proper flex sizing */
         max-height: 100%;
     }
 }
