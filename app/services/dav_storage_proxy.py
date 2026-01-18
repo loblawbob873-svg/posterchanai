@@ -58,20 +58,25 @@ class DAVStorageProxy:
             api_path = f"{self.base_path}/{subpath}" if subpath else self.base_path
             api_path = api_path.rstrip('/')
             
-            url = f"{self.storage_url}/api/files/list?path={api_path}"
-            logger.debug(f"[{self.dav_type.upper()}] Listing files: {url}")
+            # Use storage server API: /api/storage/list-files?username=...&path=...
+            url = f"{self.storage_url}/api/storage/list-files"
+            params = {
+                "username": self.username,
+                "path": api_path
+            }
+            logger.debug(f"[{self.dav_type.upper()}] Listing files: {url} with path={api_path}")
             
             with httpx.Client(timeout=10.0) as client:
-                response = client.get(url, headers=self._get_headers())
+                response = client.get(url, params=params, headers=self._get_headers())
                 if response.status_code == 200:
                     data = response.json()
-                    items = data.get('items', data.get('files', []))
+                    items = data.get('items', [])
                     return items
                 else:
-                    logger.error(f"[{self.dav_type.upper()}] Storage server returned {response.status_code}")
+                    logger.error(f"[{self.dav_type.upper()}] Storage server returned {response.status_code}: {response.text[:200]}")
                     return []
         except Exception as e:
-            logger.error(f"[{self.dav_type.upper()}] Error listing files: {e}")
+            logger.error(f"[{self.dav_type.upper()}] Error listing files: {e}", exc_info=True)
             return []
     
     def read_file(self, filepath: str) -> Optional[str]:
@@ -82,18 +87,24 @@ class DAVStorageProxy:
         try:
             # Build full path
             api_path = f"{self.base_path}/{filepath}".replace('//', '/')
-            url = f"{self.storage_url}/api/files/{api_path}"
-            logger.debug(f"[{self.dav_type.upper()}] Reading file: {url}")
+            
+            # Use storage server API: /api/storage/view-file?username=...&file_path=...
+            url = f"{self.storage_url}/api/storage/view-file"
+            params = {
+                "username": self.username,
+                "file_path": api_path
+            }
+            logger.debug(f"[{self.dav_type.upper()}] Reading file: {url} with file_path={api_path}")
             
             with httpx.Client(timeout=10.0) as client:
-                response = client.get(url, headers=self._get_headers())
+                response = client.get(url, params=params, headers=self._get_headers())
                 if response.status_code == 200:
                     return response.text
                 else:
                     logger.error(f"[{self.dav_type.upper()}] Failed to read {filepath}: {response.status_code}")
                     return None
         except Exception as e:
-            logger.error(f"[{self.dav_type.upper()}] Error reading file {filepath}: {e}")
+            logger.error(f"[{self.dav_type.upper()}] Error reading file {filepath}: {e}", exc_info=True)
             return None
     
     def write_file(self, filepath: str, content: str) -> bool:
@@ -104,25 +115,28 @@ class DAVStorageProxy:
         try:
             # Build full path
             api_path = f"{self.base_path}/{filepath}".replace('//', '/')
-            url = f"{self.storage_url}/api/files/save"
+            
+            # Use storage server API: /api/storage/save-text-file
+            url = f"{self.storage_url}/api/storage/save-text-file"
             logger.debug(f"[{self.dav_type.upper()}] Writing file: {api_path}")
             
-            # Storage server expects path and content
+            # Storage server expects form data: username, path, content
             payload = {
+                "username": self.username,
                 "path": api_path,
                 "content": content
             }
             
             with httpx.Client(timeout=10.0) as client:
-                response = client.post(url, json=payload, headers=self._get_headers())
+                response = client.post(url, data=payload, headers=self._get_headers())
                 if response.status_code in (200, 201):
                     logger.info(f"[{self.dav_type.upper()}] Saved {filepath}")
                     return True
                 else:
-                    logger.error(f"[{self.dav_type.upper()}] Failed to save {filepath}: {response.status_code}")
+                    logger.error(f"[{self.dav_type.upper()}] Failed to save {filepath}: {response.status_code} - {response.text[:200]}")
                     return False
         except Exception as e:
-            logger.error(f"[{self.dav_type.upper()}] Error writing file {filepath}: {e}")
+            logger.error(f"[{self.dav_type.upper()}] Error writing file {filepath}: {e}", exc_info=True)
             return False
     
     def delete_file(self, filepath: str) -> bool:
@@ -133,21 +147,25 @@ class DAVStorageProxy:
         try:
             # Build full path
             api_path = f"{self.base_path}/{filepath}".replace('//', '/')
-            url = f"{self.storage_url}/api/files/delete"
+            
+            # Use storage server API: /api/storage/delete-file?username=...&file_path=...
+            url = f"{self.storage_url}/api/storage/delete-file"
+            params = {
+                "username": self.username,
+                "file_path": api_path
+            }
             logger.debug(f"[{self.dav_type.upper()}] Deleting file: {api_path}")
             
-            payload = {"path": api_path}
-            
             with httpx.Client(timeout=10.0) as client:
-                response = client.post(url, json=payload, headers=self._get_headers())
+                response = client.delete(url, params=params, headers=self._get_headers())
                 if response.status_code in (200, 204):
                     logger.info(f"[{self.dav_type.upper()}] Deleted {filepath}")
                     return True
                 else:
-                    logger.error(f"[{self.dav_type.upper()}] Failed to delete {filepath}: {response.status_code}")
+                    logger.error(f"[{self.dav_type.upper()}] Failed to delete {filepath}: {response.status_code} - {response.text[:200]}")
                     return False
         except Exception as e:
-            logger.error(f"[{self.dav_type.upper()}] Error deleting file {filepath}: {e}")
+            logger.error(f"[{self.dav_type.upper()}] Error deleting file {filepath}: {e}", exc_info=True)
             return False
     
     def file_exists(self, filepath: str) -> bool:

@@ -1835,6 +1835,80 @@ async def move_files(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/save-text-file")
+async def save_text_file(
+    request: FastAPIRequest,
+    username: str = Form(...),
+    path: str = Form(...),
+    content: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """
+    Save a text file to a specific path. Used by DAV storage proxy for .ics and .vcf files.
+    Only accessible on storage server node.
+    """
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    storage_server_token = safe_query_setting(db, "storage_server_token")
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    # Sanitize and validate path
+    try:
+        safe_path = Path(*[_sanitize_path_component(p) for p in path.split('/') if p])
+        full_path = user_path / safe_path
+        
+        # Validate path is within user directory
+        if not _validate_path_within_base(full_path, user_path):
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Create parent directories if needed
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    
+    # Run file write in thread pool
+    def _save_text_file_sync():
+        try:
+            full_path.write_text(content, encoding='utf-8')
+            return str(full_path.relative_to(user_path))
+        except Exception as e:
+            raise Exception(f"Error saving file: {e}")
+    
+    try:
+        relative_path = await asyncio.to_thread(_save_text_file_sync)
+        
+        # Invalidate file cache
+        try:
+            from app.routers.files import get_file_cache
+            cache = get_file_cache(db)
+            parent_path = '/'.join(path.split('/')[:-1]) if '/' in path else ""
+            cache.invalidate(f"{username}:")
+            if parent_path:
+                cache.invalidate(f"{username}:{parent_path}")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+        
+        return {"message": "File saved successfully", "path": relative_path}
+    except Exception as e:
+        logger.error(f"Error saving text file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/delete-files-bulk")
 async def delete_files_bulk(
     request: FastAPIRequest,
