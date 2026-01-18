@@ -1916,13 +1916,25 @@ fieldset legend {
 }
 
 /* User Settings Tabbed Layout */
-.modal-fullscreen:not(#userSettingsModal .modal-content):not(#ragModal .modal-content):not(#calendarModal .modal-content):not(#contactsModal .modal-content):not(#newsModal .modal-content):not(#translateModal .modal-content):not(#apiKeysModal .modal-content) {
+.modal-fullscreen {
     width: 95%;
     max-width: 900px;
     height: 90vh;
     max-height: 90vh;
     display: flex;
     flex-direction: column;
+}
+
+/* Override for specific modals that need full height */
+#userSettingsModal .modal-fullscreen,
+#ragModal .modal-fullscreen,
+#calendarModal .modal-fullscreen,
+#contactsModal .modal-fullscreen,
+#newsModal .modal-fullscreen,
+#translateModal .modal-fullscreen,
+#apiKeysModal .modal-fullscreen {
+    height: calc(100vh - 10px) !important;
+    max-height: calc(100vh - 10px) !important;
 }
 .user-settings-body {
     flex: 1;
