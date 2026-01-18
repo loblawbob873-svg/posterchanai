@@ -21,8 +21,12 @@ AUDIO_EXTENSIONS = {
 
 def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]:
     """Get user's local music configuration. Falls back to user storage path if not configured.
-    Always resolves paths relative to user storage."""
+    Returns raw path if storage proxy is configured, resolved path otherwise."""
     from app.models import User, Setting
+    
+    # Check if storage proxy is configured
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    use_proxy = storage_server_url and storage_server_url.value
     
     setting = db.query(UserSetting).filter(
         UserSetting.user_id == user_id,
@@ -34,7 +38,12 @@ def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]
             config = json.loads(setting.value)
             directory = config.get('directory', '')
             
-            # Always resolve relative paths (paths starting with / but not containing username)
+            # If using storage proxy, return raw path (don't resolve to filesystem)
+            if use_proxy:
+                logger.info(f"[MUSIC CONFIG] Using storage proxy, returning raw path: {directory}")
+                return config
+            
+            # For local filesystem: resolve relative paths (paths starting with / but not containing username)
             if directory and directory.startswith('/') and not directory.startswith('//'):
                 user = db.query(User).filter(User.id == user_id).first()
                 upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
@@ -52,7 +61,15 @@ def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]
         except json.JSONDecodeError:
             logger.error(f"Invalid local_music_config JSON for user {user_id}")
     
-    # Fall back to user storage path + /Music (using upload_path like File Manager)
+    # Fall back to default path
+    if use_proxy:
+        # For proxy, use simple relative path
+        return {
+            'directory': '/Music',
+            'recursive': True
+        }
+    
+    # For local filesystem, use full resolved path
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return None
