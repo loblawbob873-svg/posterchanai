@@ -18,7 +18,7 @@ logging.basicConfig(
 )
 
 from app.database import init_db, get_db
-from app.auth import get_current_user_optional, create_access_token
+from app.auth import get_current_user_optional, get_current_user, create_access_token
 from app.models import User, VerificationToken, Setting
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, news, rag, plugins, mail, music, torrent, contacts, notes, storage, files
 from app.routers.caldav import caldav_router, carddav_router
