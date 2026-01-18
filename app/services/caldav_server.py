@@ -578,7 +578,7 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
 
 async def handle_mkcalendar(path: str, user: User, db: Session) -> Response:
     """Handle MKCALENDAR request. Creates a new calendar directory."""
-    from urllib.parse import unquote
+    from urllib.parse import unquote, quote
     from app.services.dav_storage_proxy import DAVStorageProxy
     
     # Normalize path
