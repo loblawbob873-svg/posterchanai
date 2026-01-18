@@ -411,21 +411,22 @@ class Contact:
 
 
 def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]:
-    """Get user's configured CalDAV calendars."""
+    """Get user's configured CalDAV calendars. Always prioritizes built-in server if enabled."""
     close_db = False
     if db is None:
         db = SessionLocal()
         close_db = True
 
     try:
-        # First check if user wants to use built-in CalDAV
+        # ALWAYS check built-in CalDAV first - this is the native server
         use_builtin = db.query(UserSetting).filter(
             UserSetting.user_id == user_id,
             UserSetting.key == "use_builtin_caldav"
         ).first()
         
-        if use_builtin and use_builtin.value == "true":
-            # Return built-in CalDAV config
+        # If built-in is explicitly enabled OR not set (default to built-in), use built-in
+        if not use_builtin or use_builtin.value == "true":
+            # Return built-in CalDAV config (native server)
             from app.models import User
             from app.models import Setting
             
@@ -438,6 +439,7 @@ def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]
                 # For built-in server, use localhost since commands run on same server
                 url = f"http://localhost:{port}/caldav/{user.username}/"
                 
+                logger.debug(f"[CalDAV] Using built-in (native) CalDAV server for user {user.username}")
                 return [{
                     "name": "Built-in Calendar",
                     "url": url,
@@ -446,7 +448,8 @@ def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]
                     "builtin": True
                 }]
         
-        # Otherwise, use external CalDAV calendars
+        # Only use external CalDAV if built-in is explicitly disabled
+        logger.debug(f"[CalDAV] Built-in disabled, checking external CalDAV calendars for user {user_id}")
         calendars = []
         # Get calendar settings (stored as caldav_calendars JSON)
         setting = db.query(UserSetting).filter(
@@ -461,8 +464,29 @@ def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]
                 # Mark as external
                 for cal in calendars:
                     cal["builtin"] = False
+                logger.debug(f"[CalDAV] Found {len(calendars)} external calendars for user {user_id}")
             except json.JSONDecodeError:
                 logger.error(f"Invalid caldav_calendars JSON for user {user_id}")
+
+        # Default to built-in if no external calendars
+        if not calendars:
+            logger.debug(f"[CalDAV] No external calendars, defaulting to built-in for user {user_id}")
+            from app.models import User
+            from app.models import Setting
+            
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                caldav_port = db.query(Setting).filter(Setting.key == "caldav_port").first()
+                port = caldav_port.value if caldav_port else "8081"
+                url = f"http://localhost:{port}/caldav/{user.username}/"
+                
+                return [{
+                    "name": "Built-in Calendar",
+                    "url": url,
+                    "username": user.username,
+                    "password": "__USE_SESSION_AUTH__",
+                    "builtin": True
+                }]
 
         return calendars
     finally:
