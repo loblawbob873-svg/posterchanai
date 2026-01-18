@@ -119,7 +119,7 @@ class NotesBrowser {
                     <span class="folder-icon">📂</span>
                     <span class="folder-name">${this.escapeHtml(folder.name)}</span>
                     ${folder.notes_count > 0 ? `<span class="folder-count">${folder.notes_count}</span>` : ''}
-                    <button class="folder-delete-btn" onclick="event.stopPropagation(); notesBrowserManager.deleteFolder(${folder.id}, '${this.escapeJs(folder.name)}')" title="Delete folder">🗑️</button>
+                    <button class="folder-delete-btn" onclick="event.stopPropagation(); window.notesBrowser.deleteFolder(${folder.id}, '${this.escapeJs(folder.name)}')" title="Delete folder">🗑️</button>
                 </div>
             `;
         });
