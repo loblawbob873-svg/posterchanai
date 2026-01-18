@@ -3462,7 +3462,9 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
         try:
             # Default: browse root directory
             if not subcommand:
+                logger.info(f"[MUSIC CMD] About to scan directory: {directory}")
                 items = scan_music_directory(directory, recursive, db=self.db, user_id=self.user.id)
+                logger.info(f"[MUSIC CMD] Scan returned {len(items)} items")
                 
                 # Cache results
                 _music_cache[self.user.id] = {
@@ -3471,6 +3473,7 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                     "current_path": ""
                 }
                 
+                logger.info(f"[MUSIC CMD] Cached {len(_music_cache[self.user.id]['tracks'])} tracks")
                 return {"type": "text", "content": format_music_browse(items, "")}
 
             # Browse folder
