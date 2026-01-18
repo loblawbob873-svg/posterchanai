@@ -193,11 +193,22 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
         abook_name = path
         subpath = "" if abook_name == 'contacts' else abook_name
         
+        # iPhone needs sync-token and getctag for addressbooks
+        import hashlib
+        if abook_name == 'contacts':
+            sync_token = hashlib.md5(f"contacts_{user.username}".encode()).hexdigest()[:16]
+            ctag = hashlib.md5(f"contacts_{user.username}_ctag".encode()).hexdigest()[:16]
+        else:
+            sync_token = hashlib.md5(f"{abook_name}_{user.username}".encode()).hexdigest()[:16]
+            ctag = hashlib.md5(f"{abook_name}_{user.username}_ctag".encode()).hexdigest()[:16]
+        
         items.append({
             "href": f"{base_url}/{quote(abook_name, safe='')}/",
             "props": {
                 "resourcetype": "addressbook",
-                "displayname": abook_name.replace('_', ' ').title() if abook_name != 'contacts' else "Contacts"
+                "displayname": abook_name.replace('_', ' ').title() if abook_name != 'contacts' else "Contacts",
+                "sync-token": f"http://ai.poster.place/carddav/{quote(user.username, safe='')}/{quote(abook_name, safe='')}/sync-token-{sync_token}",
+                "getctag": ctag
             }
         })
         
