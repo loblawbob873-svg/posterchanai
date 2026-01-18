@@ -171,6 +171,7 @@
 }
 /* Large modals that need full height - don't restrict them */
 #notesModal .modal-content,
+#notesModal .modal-content.notes-modal-content,
 #userSettingsModal .modal-content,
 #ragModal .modal-content,
 #calendarModal .modal-content,
