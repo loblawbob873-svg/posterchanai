@@ -29,6 +29,27 @@ def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]
     if setting and setting.value:
         try:
             config = json.loads(setting.value)
+            directory = config.get('directory', '')
+            
+            # Resolve relative paths (for backwards compatibility with old data)
+            if directory and directory.startswith('/') and not directory.startswith('//'):
+                from app.models import User, Setting
+                user = db.query(User).filter(User.id == user_id).first()
+                storage_setting = db.query(Setting).filter(Setting.key == "storage_base_path").first()
+                
+                if user and storage_setting and storage_setting.value:
+                    storage_base = Path(storage_setting.value)
+                    # If the path doesn't contain the username and is not a full system path,
+                    # treat it as relative to user storage
+                    if user.username not in directory:
+                        # Check if this path actually exists as absolute - if not, resolve it
+                        abs_path = Path(directory)
+                        if not abs_path.exists():
+                            relative_path = directory.lstrip('/')
+                            resolved_directory = str(storage_base / user.username / relative_path)
+                            logger.info(f"Resolved relative path {directory} to {resolved_directory}")
+                            config['directory'] = resolved_directory
+            
             return config
         except json.JSONDecodeError:
             logger.error(f"Invalid local_music_config JSON for user {user_id}")
