@@ -220,7 +220,9 @@ class App {
 
         // Disconnect old WebSocket FIRST to prevent race conditions
         // (old messages arriving while loading new conversation)
-        window.chatHandler.disconnect();
+        if (window.chatHandler) {
+            window.chatHandler.disconnect();
+        }
 
         this.currentConversation = conv;
         this.chatTitle.textContent = conv.title;
@@ -234,14 +236,18 @@ class App {
             const response = await fetch(`/api/conversations/${id}/messages`);
             if (response.ok) {
                 const messages = await response.json();
-                window.chatHandler.loadMessages(messages);
+                if (window.chatHandler) {
+                    window.chatHandler.loadMessages(messages);
+                }
             }
         } catch (err) {
             console.error('Failed to load messages:', err);
         }
 
         // Connect WebSocket for new conversation
-        window.chatHandler.connect(id);
+        if (window.chatHandler) {
+            window.chatHandler.connect(id);
+        }
     }
 
     async createConversation() {
@@ -261,8 +267,10 @@ class App {
                 this.currentConversation = conv;
                 this.chatTitle.textContent = conv.title;
                 this.renderConversationList();
-                window.chatHandler.clear();  // Ensure clean slate
-                window.chatHandler.connect(conv.id);
+                if (window.chatHandler) {
+                    window.chatHandler.clear();  // Ensure clean slate
+                    window.chatHandler.connect(conv.id);
+                }
                 
                 // Return the conversation so callers can wait for it
                 return conv;
@@ -286,14 +294,18 @@ class App {
 
             if (response.ok) {
                 // Disconnect WebSocket
-                window.chatHandler.disconnect();
+                if (window.chatHandler) {
+                    window.chatHandler.disconnect();
+                }
 
                 // Remove from list
                 this.conversations = this.conversations.filter(c => c.id !== this.currentConversation.id);
                 this.currentConversation = null;
 
                 // Clear chat
-                window.chatHandler.clear();
+                if (window.chatHandler) {
+                    window.chatHandler.clear();
+                }
                 this.chatTitle.textContent = 'Select a chat or start a new one';
 
                 // Render list
@@ -318,10 +330,14 @@ class App {
             });
 
             if (response.ok) {
-                window.chatHandler.disconnect();
+                if (window.chatHandler) {
+                    window.chatHandler.disconnect();
+                }
                 this.conversations = [];
                 this.currentConversation = null;
-                window.chatHandler.clear();
+                if (window.chatHandler) {
+                    window.chatHandler.clear();
+                }
                 this.chatTitle.textContent = 'Select a chat or start a new one';
                 this.renderConversationList();
             }
