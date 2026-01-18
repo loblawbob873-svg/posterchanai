@@ -449,7 +449,7 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         except json.JSONDecodeError:
             pass
 
-    # Get local music settings
+    # Get local music settings - return the user's input (not resolved path)
     local_music_dir = None
     music_recursive_scan = True
     music_setting = db.query(UserSetting).filter(
@@ -459,19 +459,15 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
     if music_setting and music_setting.value:
         try:
             music_config = json.loads(music_setting.value)
+            # Return the raw directory path (what the user entered), not the resolved path
             local_music_dir = music_config.get('directory')
             music_recursive_scan = music_config.get('recursive', True)
         except json.JSONDecodeError:
             pass
     
-    # If not configured, use default upload path + /Music (same as File Manager)
+    # If not configured, show default as relative path (not resolved)
     if not local_music_dir:
-        from pathlib import Path
-        upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
-        upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
-        upload_base = Path(upload_path)
-        default_music_dir = upload_base / current_user.username / "Music"
-        local_music_dir = str(default_music_dir)
+        local_music_dir = "/Music"
 
     return UserSettingsResponse(
         notification_email=current_user.notification_email,

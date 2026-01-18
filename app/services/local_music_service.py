@@ -20,7 +20,8 @@ AUDIO_EXTENSIONS = {
 
 
 def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]:
-    """Get user's local music configuration. Falls back to user storage path if not configured."""
+    """Get user's local music configuration. Falls back to user storage path if not configured.
+    Always resolves paths relative to user storage."""
     setting = db.query(UserSetting).filter(
         UserSetting.user_id == user_id,
         UserSetting.key == "local_music_config"
@@ -31,25 +32,20 @@ def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]
             config = json.loads(setting.value)
             directory = config.get('directory', '')
             
-            # Resolve relative paths (for backwards compatibility with old data)
+            # Always resolve relative paths (paths starting with / but not containing username)
             if directory and directory.startswith('/') and not directory.startswith('//'):
                 from app.models import User, Setting
                 user = db.query(User).filter(User.id == user_id).first()
-                # Use upload_path (same as File Manager) instead of storage_base_path
                 upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
                 
                 if user and upload_path_setting and upload_path_setting.value:
                     upload_base = Path(upload_path_setting.value)
-                    # If the path doesn't contain the username and is not a full system path,
-                    # treat it as relative to user storage
+                    # If the path doesn't contain the username, treat it as relative to user storage
                     if user.username not in directory:
-                        # Check if this path actually exists as absolute - if not, resolve it
-                        abs_path = Path(directory)
-                        if not abs_path.exists():
-                            relative_path = directory.lstrip('/')
-                            resolved_directory = str(upload_base / user.username / relative_path)
-                            logger.info(f"Resolved relative path {directory} to {resolved_directory}")
-                            config['directory'] = resolved_directory
+                        relative_path = directory.lstrip('/')
+                        resolved_directory = str(upload_base / user.username / relative_path)
+                        logger.info(f"[MUSIC CONFIG] Resolved {directory} to {resolved_directory}")
+                        config['directory'] = resolved_directory
             
             return config
         except json.JSONDecodeError:
@@ -78,30 +74,11 @@ def get_user_music_config(user_id: int, db: Session) -> Optional[Dict[str, any]]
 
 
 def save_user_music_config(user_id: int, db: Session, directory: str, recursive: bool = True):
-    """Save user's local music configuration."""
-    # Resolve directory path: if it starts with / but is not an absolute system path,
-    # treat it as relative to user storage
-    resolved_directory = directory
-    if directory and directory.startswith('/') and not directory.startswith('//'):
-        # Check if it's a relative path by seeing if it's short and doesn't contain the storage base
-        from app.models import User, Setting
-        user = db.query(User).filter(User.id == user_id).first()
-        # Use upload_path (same as File Manager) instead of storage_base_path
-        upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
-        upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
-        
-        if user:
-            upload_base = Path(upload_path)
-            # If the path doesn't contain the username and is not a full system path,
-            # treat it as relative to user storage
-            if user.username not in directory:
-                # Remove leading slash and append to user storage
-                relative_path = directory.lstrip('/')
-                resolved_directory = str(upload_base / user.username / relative_path)
-                logger.info(f"Resolved relative path /{relative_path} to {resolved_directory}")
-    
+    """Save user's local music configuration. Saves path as-is, resolution happens on read."""
+    # Save the directory path exactly as provided by the user
+    # Resolution will happen in get_user_music_config() and test_directory_access()
     config = {
-        'directory': resolved_directory,
+        'directory': directory,
         'recursive': recursive
     }
     
@@ -112,7 +89,7 @@ def save_user_music_config(user_id: int, db: Session, directory: str, recursive:
     
     if setting:
         setting.value = json.dumps(config)
-        logger.info(f"Updating music config: directory={resolved_directory}, recursive={recursive}")
+        logger.info(f"Updating music config: directory={directory}, recursive={recursive}")
     else:
         setting = UserSetting(
             user_id=user_id,
@@ -120,7 +97,7 @@ def save_user_music_config(user_id: int, db: Session, directory: str, recursive:
             value=json.dumps(config)
         )
         db.add(setting)
-        logger.info(f"Creating music config: directory={resolved_directory}, recursive={recursive}")
+        logger.info(f"Creating music config: directory={directory}, recursive={recursive}")
     
     db.commit()
     return True
