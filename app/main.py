@@ -160,7 +160,7 @@ app.include_router(notes.router)
 app.include_router(storage.router)
 
 # CalDAV/CardDAV discovery endpoints (redirect to DAV servers)
-@app.get("/.well-known/caldav")
+@app.api_route("/.well-known/caldav", methods=["GET", "PROPFIND"])
 async def caldav_discovery(request: Request, db: Session = Depends(get_db)):
     """CalDAV autodiscovery - redirect to CalDAV server."""
     # When behind nginx reverse proxy, redirect to the proxied path (same host/port)
@@ -170,7 +170,7 @@ async def caldav_discovery(request: Request, db: Session = Depends(get_db)):
         base_url += f":{request.url.port}"
     return RedirectResponse(url=f"{base_url}/caldav/", status_code=301)
 
-@app.get("/.well-known/carddav")
+@app.api_route("/.well-known/carddav", methods=["GET", "PROPFIND"])
 async def carddav_discovery(request: Request, db: Session = Depends(get_db)):
     """CardDAV autodiscovery - redirect to CardDAV server."""
     # When behind nginx reverse proxy, redirect to the proxied path (same host/port)

@@ -106,8 +106,17 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
     
     items = []
     
+    # Normalize path - remove trailing slashes and handle /user/ subpath
+    path = path.rstrip('/')
+    # Strip username from path if present
+    if path.startswith(user.username):
+        path = path[len(user.username):].lstrip('/')
+    # Handle /user/ subpath (some clients use this)
+    if path == 'user' or path == '':
+        path = ''
+    
     # Root calendar collection
-    if path == user.username or path == f"{user.username}/" or not path:
+    if not path or path == user.username:
         items.append({
             "href": f"{base_url}/",
             "props": {
@@ -117,7 +126,7 @@ async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") 
         })
     
     # If depth=1, list events
-    if depth == "1" and (path == user.username or path == f"{user.username}/" or not path):
+    if depth == "1" and (not path or path == user.username):
         # List all .ics files
         for ics_file in caldav_path.glob("*.ics"):
             event_uid = ics_file.stem
