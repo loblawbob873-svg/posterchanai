@@ -3019,8 +3019,6 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or receip
         except Exception as e:
             logger.error(f"Error extracting bill from text: {e}")
             return {"type": "text", "content": f"Error extracting bill: {str(e)}"}
-
-            elif subcommand == "reply":
                 if len(parts) < 4:
                     return {
                         "type": "text",
