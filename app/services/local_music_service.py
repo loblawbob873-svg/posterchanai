@@ -137,14 +137,75 @@ def test_directory_access(directory: str, recursive: bool = True) -> Dict[str, a
         return {"success": False, "error": f"Error scanning directory: {str(e)}"}
 
 
-def scan_music_directory(directory: str, recursive: bool = True, subfolder: str = '') -> List[Dict[str, any]]:
+def scan_music_directory(directory: str, recursive: bool = True, subfolder: str = '', db: Session = None, user_id: int = None) -> List[Dict[str, any]]:
     """
     Scan music directory and return list of files and folders.
     Returns a list of items with 'type' (file/folder), 'name', 'path', 'size', etc.
+    Supports storage proxy if configured.
     """
     if not directory:
         return []
     
+    # Check if storage proxy is configured
+    if db and user_id:
+        from app.models import Setting, User
+        storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        
+        if storage_server_url and storage_server_url.value:
+            # Use storage proxy - make HTTP request to list files
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                import httpx
+                # Build path: Music or Music/subfolder
+                api_path = directory.lstrip('/') if directory.startswith('/') else directory
+                if subfolder:
+                    api_path = f"{api_path}/{subfolder}".replace('//', '/')
+                
+                try:
+                    url = f"{storage_server_url.value}/api/files/list?path={api_path}"
+                    logger.info(f"[MUSIC PROXY] Fetching from storage server: {url}")
+                    
+                    # Get auth token
+                    storage_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+                    headers = {}
+                    if storage_token and storage_token.value:
+                        headers["Authorization"] = f"Bearer {storage_token.value}"
+                    
+                    with httpx.Client(timeout=30.0) as client:
+                        response = client.get(url, headers=headers)
+                        if response.status_code == 200:
+                            data = response.json()
+                            # Convert File Manager format to Music format
+                            items = []
+                            for item in data.get('files', []):
+                                if item.get('type') == 'directory':
+                                    items.append({
+                                        'type': 'folder',
+                                        'name': item['name'],
+                                        'path': f"{subfolder}/{item['name']}" if subfolder else item['name'],
+                                        'track_count': 0  # Would need separate request to count
+                                    })
+                                elif item.get('type') == 'file':
+                                    # Check if it's an audio file
+                                    name = item['name']
+                                    ext = Path(name).suffix.lower()
+                                    if ext in AUDIO_EXTENSIONS:
+                                        items.append({
+                                            'type': 'file',
+                                            'name': name,
+                                            'path': f"{subfolder}/{name}" if subfolder else name,
+                                            'size': item.get('size', 0),
+                                            'extension': ext
+                                        })
+                            logger.info(f"[MUSIC PROXY] Found {len(items)} items")
+                            return items
+                        else:
+                            logger.error(f"[MUSIC PROXY] Storage server returned {response.status_code}")
+                except Exception as e:
+                    logger.error(f"[MUSIC PROXY] Error fetching from storage server: {e}")
+                    # Fall through to local access
+    
+    # Local filesystem access (original code)
     base_path = Path(directory)
     if subfolder:
         scan_path = base_path / subfolder

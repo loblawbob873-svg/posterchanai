@@ -244,7 +244,7 @@ async def test_music_directory(
             logger.info(f"[MUSIC TEST] Username found in path, no resolution needed")
     
     logger.info(f"[MUSIC TEST] Testing directory: {directory}")
-    result = test_directory_access(directory, request.recursive)
+    result = test_directory_access(directory, request.recursive, db=db, user_id=current_user.id)
     logger.info(f"[MUSIC TEST] Test result: {result}")
     
     if result['success']:
