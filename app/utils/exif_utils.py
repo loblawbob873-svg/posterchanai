@@ -4,6 +4,8 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -145,13 +147,45 @@ def _parse_exif_date(date_str: str) -> datetime | None:
     return None
 
 
-def batch_restore_timestamps(directory: Path, file_extensions: list[str] = None) -> dict:
+def _process_single_exif_file(
+    file_path: Path,
+    lock: threading.Lock,
+    stats: dict
+) -> None:
+    """
+    Process a single file for EXIF timestamp restoration.
+    Thread-safe helper function for parallel processing.
+    
+    Args:
+        file_path: Path to the file to process
+        lock: Thread lock for stats updates
+        stats: Dictionary with 'processed', 'restored', 'skipped', 'errors' counters
+    """
+    try:
+        if restore_exif_timestamp(file_path):
+            with lock:
+                stats['restored'] += 1
+        else:
+            with lock:
+                stats['skipped'] += 1
+    except Exception as e:
+        logger.error(f"[EXIF] Error processing {file_path}: {e}")
+        with lock:
+            stats['errors'] += 1
+    finally:
+        with lock:
+            stats['processed'] += 1
+
+
+def batch_restore_timestamps(directory: Path, file_extensions: list[str] = None, max_workers: int = None) -> dict:
     """
     Batch restore EXIF timestamps for all media files in a directory.
+    Uses multi-threading for parallel processing to improve performance.
     
     Args:
         directory: Directory to scan
         file_extensions: List of file extensions to process (None = all images/videos)
+        max_workers: Maximum number of worker threads (default: min(32, CPU count * 2))
     
     Returns:
         dict with statistics: {
@@ -174,7 +208,8 @@ def batch_restore_timestamps(directory: Path, file_extensions: list[str] = None)
     
     logger.info(f"[EXIF] Starting batch timestamp restoration in: {directory}")
     
-    # Get all media files
+    # Collect all media files to process
+    media_files = []
     for file_path in directory.rglob('*'):
         if not file_path.is_file():
             continue
@@ -191,16 +226,42 @@ def batch_restore_timestamps(directory: Path, file_extensions: list[str] = None)
             if not (is_image_file(file_path) or is_video_file(file_path)):
                 continue
         
-        stats['processed'] += 1
+        media_files.append(file_path)
+    
+    if not media_files:
+        logger.info(f"[EXIF] No media files found in {directory}")
+        return stats
+    
+    # Determine optimal number of workers
+    if max_workers is None:
+        import os as os_module
+        cpu_count = os_module.cpu_count() or 4
+        # Use more workers for I/O-bound operations (exiftool subprocess calls)
+        # But cap at 32 to avoid too much overhead
+        max_workers = min(32, cpu_count * 2)
+    
+    logger.info(f"[EXIF] Processing {len(media_files)} files using {max_workers} workers")
+    
+    # Thread-safe stats tracking
+    lock = threading.Lock()
+    
+    # Process files in parallel using ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        futures = {
+            executor.submit(_process_single_exif_file, file_path, lock, stats): file_path
+            for file_path in media_files
+        }
         
-        try:
-            if restore_exif_timestamp(file_path):
-                stats['restored'] += 1
-            else:
-                stats['skipped'] += 1
-        except Exception as e:
-            logger.error(f"[EXIF] Error processing {file_path}: {e}")
-            stats['errors'] += 1
+        # Wait for all tasks to complete
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            # Log progress every 100 files or at milestones
+            if completed % 100 == 0 or completed == len(media_files):
+                with lock:
+                    logger.info(f"[EXIF] Progress: {completed}/{len(media_files)} files processed "
+                              f"({stats['restored']} restored, {stats['skipped']} skipped, {stats['errors']} errors)")
     
     logger.info(
         f"[EXIF] Batch complete: {stats['processed']} processed, "
