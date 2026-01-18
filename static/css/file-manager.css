@@ -700,10 +700,19 @@
         font-size: 10px;
     }
     
-    .file-manager-search {
+    .file-toolbar-search-actions {
         width: 100%;
         order: 2;
         margin: 4px 0;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .file-manager-search {
+        flex: 1;
+        min-width: 0;
+        margin: 0;
     }
     
     .file-selection-controls {
