@@ -149,7 +149,7 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
             except Exception as e:
                 logger.debug(f"[CalDAV] Could not parse PROPFIND body: {e}")
     
-    # Use storage proxy (will fallback to local if not configured)
+    # Use storage proxy (must be configured)
     proxy = DAVStorageProxy(db, user.username, 'caldav')
     encoded_username = quote(user.username, safe='')
     base_url = f"/caldav/{encoded_username}"
@@ -363,7 +363,7 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
     
     body = await request.body()
     
-    # Use storage proxy (will fallback to local if not configured)
+    # Use storage proxy (must be configured)
     proxy = DAVStorageProxy(db, user.username, 'caldav')
     encoded_username = quote(user.username, safe='')
     base_url = f"/caldav/{encoded_username}"
@@ -624,7 +624,7 @@ async def handle_get(path: str, user: User, db: Session) -> Response:
     from urllib.parse import unquote
     from app.services.dav_storage_proxy import DAVStorageProxy
     
-    # Use storage proxy (will fallback to local if not configured)
+    # Use storage proxy (must be configured)
     proxy = DAVStorageProxy(db, user.username, 'caldav')
     
     # Extract calendar name and event UID from path
@@ -672,7 +672,7 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
     
     body = await request.body()
     
-    # Use storage proxy (will fallback to local if not configured)
+    # Use storage proxy (must be configured)
     proxy = DAVStorageProxy(db, user.username, 'caldav')
     
     # Log PUT request for debugging
@@ -802,7 +802,7 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
         else:
             filepath = f"{cal_name}/{event_uid}.ics"
         
-        # Use storage proxy (will fallback to local if not configured)
+        # Use storage proxy (must be configured)
         from app.services.dav_storage_proxy import DAVStorageProxy
         proxy = DAVStorageProxy(db, user.username, 'caldav')
         
