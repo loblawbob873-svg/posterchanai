@@ -3690,12 +3690,15 @@ Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order,
                 playlist_data = []
                 for t in all_tracks:
                     title = t['name'].rsplit('.', 1)[0]
+                    stream_url = get_stream_url(t['path'])
                     playlist_data.append({
                         "path": t['path'],
                         "title": title,
                         "artist": "",
-                        "streamUrl": get_stream_url(t['path'])
+                        "streamUrl": stream_url
                     })
+                
+                logger.info(f"[MUSIC SHUFFLE] First track path: {all_tracks[0]['path']}, stream_url: {playlist_data[0]['streamUrl']}")
 
                 return {
                     "type": "music_playlist",
