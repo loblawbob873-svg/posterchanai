@@ -1,4 +1,24 @@
 /* Notes Modal Styles - Modern & Beautiful UI */
+/* Ensure cyberpunk close button styles are not overridden */
+#notesModal .modal-close-cyberpunk,
+#notesModal .btn-icon.modal-close-cyberpunk {
+    width: 40px !important;
+    height: 40px !important;
+    border: 2px solid #ff0066 !important;
+    background: #ff0066 !important;
+    color: #ffffff !important;
+    font-size: 24px !important;
+    box-shadow: 0 0 10px rgba(255, 0, 102, 0.6) !important;
+}
+
+#notesModal .modal-close-cyberpunk:hover {
+    background: #ff0088 !important;
+    box-shadow: 
+        0 0 20px rgba(255, 0, 102, 1),
+        inset 0 0 15px rgba(255, 255, 255, 0.2) !important;
+    transform: scale(1.1) !important;
+}
+
 #notesModal .notes-modal-content,
 .notes-modal-content {
     max-width: 1400px !important;
