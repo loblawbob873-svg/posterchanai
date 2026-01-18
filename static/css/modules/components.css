@@ -170,8 +170,17 @@
     box-shadow: 0 0 50px rgba(0, 255, 255, 0.2);
 }
 /* Large modals that need full height */
+/* Notes modal should NOT be full screen - use auto height */
 #notesModal .modal-content,
-#notesModal .modal-content.notes-modal-content,
+#notesModal .modal-content.notes-modal-content {
+    max-height: 90vh !important;
+    height: auto !important;
+    min-height: 600px !important;
+    overflow-y: hidden !important;
+    box-sizing: border-box !important;
+    position: relative !important;
+}
+
 #userSettingsModal .modal-content,
 #userSettingsModal .modal-content.modal-fullscreen,
 #userSettingsModal > .modal-content,
