@@ -251,19 +251,57 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         subpath = ""  # Default to root
     
     try:
+        logger.info(f"[CardDAV] REPORT request for path: {path}, abook_name: {abook_name}, subpath: {subpath}")
         root = ET.fromstring(body)
-        # Check for addressbook-query or addressbook-multiget
-        query_elem = root.find('.//{urn:ietf:params:xml:ns:carddav}addressbook-query')
-        multiget_elem = root.find('.//{urn:ietf:params:xml:ns:carddav}addressbook-multiget')
+        logger.info(f"[CardDAV] Parsed REPORT body, root tag: {root.tag}")
+        
+        # Register namespaces for easier searching
+        namespaces = {
+            'D': 'DAV:',
+            'C': 'urn:ietf:params:xml:ns:carddav'
+        }
+        
+        # Check if root itself is addressbook-query or addressbook-multiget
+        query_elem = None
+        multiget_elem = None
+        
+        if root.tag.endswith('addressbook-query') or root.tag == '{urn:ietf:params:xml:ns:carddav}addressbook-query':
+            query_elem = root
+        else:
+            # Check for addressbook-query or addressbook-multiget as children
+            query_elem = root.find('.//{urn:ietf:params:xml:ns:carddav}addressbook-query')
+            if query_elem is None:
+                query_elem = root.find('.//C:addressbook-query', namespaces)
+            if query_elem is None:
+                query_elem = root.find('.//addressbook-query')
+        
+        if root.tag.endswith('addressbook-multiget') or root.tag == '{urn:ietf:params:xml:ns:carddav}addressbook-multiget':
+            multiget_elem = root
+        else:
+            multiget_elem = root.find('.//{urn:ietf:params:xml:ns:carddav}addressbook-multiget')
+            if multiget_elem is None:
+                multiget_elem = root.find('.//C:addressbook-multiget', namespaces)
+            if multiget_elem is None:
+                multiget_elem = root.find('.//addressbook-multiget')
+        
+        logger.info(f"[CardDAV] query_elem: {query_elem is not None}, multiget_elem: {multiget_elem is not None}")
         
         items = []
         
         if query_elem is not None:
             # Addressbook query - list all contacts
             file_items = proxy.list_files(subpath)
+            logger.info(f"[CardDAV] REPORT query for addressbook '{abook_name}' (subpath='{subpath}'): found {len(file_items)} items")
+            
+            vcf_count = 0
+            processed_count = 0
+            read_failed_count = 0
+            added_count = 0
+            
             for item in file_items:
                 name = item.get('name', '')
                 if name.endswith('.vcf'):
+                    vcf_count += 1
                     try:
                         # Build filepath
                         if subpath:
@@ -271,27 +309,55 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                         else:
                             filepath = name
                         
+                        logger.debug(f"[CardDAV] Processing contact file {vcf_count}: {filepath}")
+                        
                         # Read contact data using proxy
                         vcard_data = proxy.read_file(filepath)
-                        if vcard_data:
-                            contact_uid = name.replace('.vcf', '')
-                            href_path = f"{abook_name}/{contact_uid}.vcf" if abook_name else f"contacts/{contact_uid}.vcf"
-                            etag = str(item.get('modified', item.get('mtime', 0)))
-                            items.append({
-                                "href": f"{base_url}/{href_path}",
-                                "props": {
-                                    "getcontenttype": "text/vcard; charset=utf-8",
-                                    "getetag": etag,
-                                    "address-data": vcard_data
-                                }
-                            })
+                        if not vcard_data:
+                            read_failed_count += 1
+                            logger.warning(f"[CardDAV] Failed to read contact file: {filepath}")
+                            continue
+                        
+                        processed_count += 1
+                        contact_uid = name.replace('.vcf', '')
+                        href_path = f"{abook_name}/{contact_uid}.vcf" if abook_name else f"contacts/{contact_uid}.vcf"
+                        etag = str(item.get('modified', item.get('mtime', 0)))
+                        items.append({
+                            "href": f"{base_url}/{href_path}",
+                            "props": {
+                                "getcontenttype": "text/vcard; charset=utf-8",
+                                "getetag": etag,
+                                "address-data": vcard_data
+                            }
+                        })
+                        added_count += 1
+                        if added_count <= 5 or added_count % 50 == 0:
+                            logger.info(f"[CardDAV] Added contact {added_count}: {contact_uid}")
                     except Exception as e:
-                        logger.debug(f"Error processing {name}: {e}")
+                        logger.warning(f"[CardDAV] Error processing contact {name}: {e}", exc_info=True)
                         continue
+            
+            logger.info(f"[CardDAV] REPORT query summary for addressbook '{abook_name}':")
+            logger.info(f"  - Total .vcf files: {vcf_count}")
+            logger.info(f"  - Successfully read: {processed_count}")
+            logger.info(f"  - Failed to read: {read_failed_count}")
+            logger.info(f"  - Added to response: {added_count}")
+            logger.info(f"[CardDAV] REPORT query returning {len(items)} contacts for addressbook '{abook_name}'")
         
         elif multiget_elem is not None:
             # Addressbook multiget - get specific contacts by href
-            hrefs = [elem.text for elem in multiget_elem.findall('.//{DAV:}href')]
+            namespaces = {'D': 'DAV:'}
+            hrefs = []
+            # Try different namespace formats
+            for elem in multiget_elem.findall('.//{DAV:}href'):
+                hrefs.append(elem.text)
+            if not hrefs:
+                for elem in multiget_elem.findall('.//D:href', namespaces):
+                    hrefs.append(elem.text)
+            if not hrefs:
+                for elem in multiget_elem.findall('.//href'):
+                    hrefs.append(elem.text)
+            logger.info(f"[CardDAV] Multiget request for {len(hrefs)} hrefs")
             for href in hrefs:
                 # Extract addressbook name and UID from href
                 match = re.search(r'/([^/]+)/([^/]+)\.vcf$', href)
@@ -328,7 +394,7 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         xml = create_cardav_response(items)
         return Response(content=xml, media_type="application/xml", status_code=207)
     except Exception as e:
-        logger.error(f"Error handling REPORT: {e}")
+        logger.error(f"[CardDAV] Error handling REPORT: {e}", exc_info=True)
         return Response(content="", status_code=500)
 
 
