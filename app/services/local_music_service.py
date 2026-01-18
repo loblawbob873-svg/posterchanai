@@ -130,10 +130,12 @@ def test_directory_access(directory: str, recursive: bool = True, db: Session = 
                     response = client.get(url, headers=headers)
                     if response.status_code == 200:
                         data = response.json()
-                        # Count audio files
+                        # Count audio files (storage proxy returns 'items' not 'files')
                         track_count = 0
-                        for item in data.get('files', []):
-                            if item.get('type') == 'file':
+                        storage_items = data.get('items', data.get('files', []))
+                        for item in storage_items:
+                            # Storage proxy uses 'is_directory' not 'type'
+                            if not item.get('is_directory', True) or item.get('type') == 'file':
                                 ext = Path(item['name']).suffix.lower()
                                 if ext in AUDIO_EXTENSIONS:
                                     track_count += 1
@@ -220,16 +222,19 @@ def scan_music_directory(directory: str, recursive: bool = True, subfolder: str 
                         if response.status_code == 200:
                             data = response.json()
                             # Convert File Manager format to Music format
+                            # Storage proxy returns 'items' not 'files'
                             items = []
-                            for item in data.get('files', []):
-                                if item.get('type') == 'directory':
+                            storage_items = data.get('items', data.get('files', []))
+                            for item in storage_items:
+                                # Storage proxy uses 'is_directory' not 'type'
+                                if item.get('is_directory', False) or item.get('type') == 'directory':
                                     items.append({
                                         'type': 'folder',
                                         'name': item['name'],
                                         'path': f"{subfolder}/{item['name']}" if subfolder else item['name'],
                                         'track_count': 0  # Would need separate request to count
                                     })
-                                elif item.get('type') == 'file':
+                                elif not item.get('is_directory', True) or item.get('type') == 'file':
                                     # Check if it's an audio file
                                     name = item['name']
                                     ext = Path(name).suffix.lower()
