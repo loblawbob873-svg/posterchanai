@@ -529,11 +529,22 @@ def create_cardav_app() -> FastAPI:
             
             # Parse Basic Auth
             try:
-                credentials = base64.b64decode(auth_header[6:]).decode('utf-8')
-                username, password = credentials.split(':', 1)
-                logger.debug(f"[CardDAV] Parsed credentials - username: {username}, password length: {len(password)}")
+                auth_data = auth_header[6:]  # Remove "Basic "
+                decoded = base64.b64decode(auth_data).decode('utf-8')
+                if ':' not in decoded:
+                    logger.warning(f"[CardDAV] No colon in decoded credentials")
+                    return Response(
+                        content="Invalid credentials",
+                        status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                    )
+                username, password = decoded.split(':', 1)
+                # Strip any whitespace that might have been introduced
+                username = username.strip()
+                password = password.strip()
+                logger.info(f"[CardDAV] Auth attempt - username: '{username}' (len={len(username)}), password len: {len(password)}")
             except Exception as e:
-                logger.warning(f"[CardDAV] Failed to parse credentials: {e}")
+                logger.warning(f"[CardDAV] Failed to parse credentials: {e}", exc_info=True)
                 return Response(
                     content="Invalid credentials",
                     status_code=401,
@@ -547,7 +558,7 @@ def create_cardav_app() -> FastAPI:
                 username_part = username.split('@')[0]
                 user = db.query(User).filter(User.username.like(f"{username_part}@%")).first()
                 if user:
-                    logger.debug(f"[CardDAV] Matched user by username part: {username} -> {user.username}")
+                    logger.info(f"[CardDAV] Matched user by username part: {username} -> {user.username}")
             
             if not user:
                 logger.warning(f"[CardDAV] User not found: {username}")
@@ -561,21 +572,26 @@ def create_cardav_app() -> FastAPI:
             try:
                 password_valid = verify_password(password, user.password_hash)
                 if not password_valid:
-                    logger.warning(f"[CardDAV] Invalid password for user: {user.username} (auth username: {username}, password chars: {len(password)})")
-                    return Response(
-                        content="Invalid credentials",
-                        status_code=401,
-                        headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
-                    )
+                    # Try with password without stripping (in case whitespace is significant)
+                    password_valid_alt = verify_password(password.strip(), user.password_hash) if password != password.strip() else False
+                    if not password_valid_alt:
+                        logger.warning(f"[CardDAV] Invalid password for user: {user.username} (auth username: '{username}', password len: {len(password)}, hash: {user.password_hash[:20]}...)")
+                        return Response(
+                            content="Invalid credentials",
+                            status_code=401,
+                            headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+                        )
+                    else:
+                        logger.info(f"[CardDAV] Password verified after stripping whitespace")
             except Exception as e:
-                logger.error(f"[CardDAV] Error verifying password: {e}")
+                logger.error(f"[CardDAV] Error verifying password: {e}", exc_info=True)
                 return Response(
                     content="Invalid credentials",
                     status_code=401,
                     headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
                 )
             
-            logger.debug(f"[CardDAV] Authenticated user: {user.username}")
+            logger.info(f"[CardDAV] Successfully authenticated user: {user.username}")
             
             # Get depth header for PROPFIND
             depth = request.headers.get("Depth", "0")
