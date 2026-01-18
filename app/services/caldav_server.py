@@ -601,6 +601,9 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
     # Use storage proxy (will fallback to local if not configured)
     proxy = DAVStorageProxy(db, user.username, 'caldav')
     
+    # Log PUT request for debugging
+    logger.info(f"[CalDAV] PUT request for path: {path}, user: {user.username}, body size: {len(body)} bytes")
+    
     try:
         ical_data = body.decode('utf-8')
         
@@ -641,9 +644,25 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
         
         if success:
             logger.info(f"[CalDAV] Saved event/todo {event_uid} for user {user.username} in calendar {cal_name}")
-            # Return 201 Created for new events, 204 No Content for updates
-            # iPhone expects 201 for successful PUT, so use that
-            return Response(content="", status_code=201)
+            
+            # Get ETag for the saved file (iPhone requires ETag in PUT response)
+            try:
+                # Get file info for ETag
+                file_items = proxy.list_files(cal_name if cal_name != 'calendar' else "")
+                etag = "0"
+                for item in file_items:
+                    if item.get('name') == f"{event_uid}.ics":
+                        etag = str(item.get('modified', item.get('mtime', 0)))
+                        break
+            except:
+                etag = "0"
+            
+            # Return 201 Created with ETag header (iPhone requires this)
+            return Response(
+                content="",
+                status_code=201,
+                headers={"ETag": f'"{etag}"'}
+            )
         else:
             logger.error(f"[CalDAV] Failed to save event {event_uid}")
             error_xml = f'''<?xml version="1.0" encoding="utf-8"?>
