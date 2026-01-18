@@ -770,11 +770,10 @@ class ChatHandler {
         const mailAccountList = document.getElementById('mailAccountList');
         const addMailAccount = document.getElementById('addMailAccount');
 
-        // WebDAV Music elements
-        const webdavMusicUrl = document.getElementById('webdavMusicUrl');
-        const webdavMusicUsername = document.getElementById('webdavMusicUsername');
-        const webdavMusicPassword = document.getElementById('webdavMusicPassword');
-        const testWebdavMusic = document.getElementById('testWebdavMusic');
+        // Local Music elements
+        const localMusicDir = document.getElementById('localMusicDir');
+        const musicRecursiveScan = document.getElementById('musicRecursiveScan');
+        const testLocalMusic = document.getElementById('testLocalMusic');
         const testMusicResult = document.getElementById('testMusicResult');
 
         // Mail account list management
@@ -992,21 +991,17 @@ class ChatHandler {
         }
 
         // Test WebDAV Music connection
-        if (testWebdavMusic) {
-            testWebdavMusic.addEventListener('click', async () => {
+        if (testLocalMusic) {
+            testLocalMusic.addEventListener('click', async () => {
                 testMusicResult.textContent = 'Testing...';
                 testMusicResult.className = 'test-result';
                 try {
-                    // Send form values directly to test endpoint (like custom AI test)
-                    const passwordValue = webdavMusicPassword.value === '********' ? null : webdavMusicPassword.value;
-                    const response = await csrfFetch('/api/music/test', {
+                    const response = await csrfFetch('/api/music/test-directory', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            url: webdavMusicUrl.value.trim(),
-                            username: webdavMusicUsername.value.trim(),
-                            password: passwordValue,
-                            use_stored_password: webdavMusicPassword.value === '********'
+                            directory: localMusicDir.value.trim(),
+                            recursive: musicRecursiveScan.checked
                         })
                     });
                     const data = await response.json();
@@ -1110,9 +1105,8 @@ class ChatHandler {
                             username: data.webdav_music_username,
                             hasPassword: data.webdav_music_has_password
                         });
-                        if (webdavMusicUrl) webdavMusicUrl.value = data.webdav_music_url || '';
-                        if (webdavMusicUsername) webdavMusicUsername.value = data.webdav_music_username || '';
-                        if (webdavMusicPassword) webdavMusicPassword.value = data.webdav_music_has_password ? '********' : '';
+                        if (localMusicDir) localMusicDir.value = data.local_music_dir || '';
+                        if (musicRecursiveScan) musicRecursiveScan.checked = data.music_recursive_scan !== false;
                     }
                 } catch (e) {
                     console.error('Failed to load settings:', e);
@@ -1268,27 +1262,21 @@ class ChatHandler {
 
                 // Add WebDAV Music settings
                 console.log('WebDAV Music elements:', {
-                    urlEl: !!webdavMusicUrl,
-                    usernameEl: !!webdavMusicUsername,
-                    passwordEl: !!webdavMusicPassword,
-                    urlVal: webdavMusicUrl?.value,
-                    usernameVal: webdavMusicUsername?.value,
-                    passwordVal: webdavMusicPassword?.value?.substring(0, 3) + '...'
+                console.log('Local Music settings available:', {
+                    dirEl: !!localMusicDir,
+                    recursiveEl: !!musicRecursiveScan,
+                    dirVal: localMusicDir?.value,
+                    recursiveVal: musicRecursiveScan?.checked
                 });
-                if (webdavMusicUrl) {
-                    settingsData.webdav_music_url = webdavMusicUrl.value.trim();
+                if (localMusicDir) {
+                    settingsData.local_music_dir = localMusicDir.value.trim();
                 }
-                if (webdavMusicUsername) {
-                    settingsData.webdav_music_username = webdavMusicUsername.value.trim();
+                if (musicRecursiveScan) {
+                    settingsData.music_recursive_scan = musicRecursiveScan.checked;
                 }
-                // Only update password if it's not the placeholder
-                if (webdavMusicPassword && webdavMusicPassword.value !== '********') {
-                    settingsData.webdav_music_password = webdavMusicPassword.value;
-                }
-                console.log('WebDAV Music in settingsData:', {
-                    url: settingsData.webdav_music_url,
-                    username: settingsData.webdav_music_username,
-                    hasPassword: !!settingsData.webdav_music_password
+                console.log('Local Music in settingsData:', {
+                    dir: settingsData.local_music_dir,
+                    recursive: settingsData.music_recursive_scan
                 });
 
                 try {
