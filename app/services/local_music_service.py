@@ -258,10 +258,12 @@ def scan_music_directory(directory: str, recursive: bool = True, subfolder: str 
                                     name = item['name']
                                     ext = Path(name).suffix.lower()
                                     if ext in AUDIO_EXTENSIONS:
+                                        # Use the full path from storage server (includes directory)
+                                        full_path = item.get('path', name)
                                         items.append({
                                             'type': 'file',
                                             'name': name,
-                                            'path': f"{subfolder}/{name}" if subfolder else name,
+                                            'path': full_path,  # Full path for streaming
                                             'size': item.get('size', 0),
                                             'extension': ext
                                         })

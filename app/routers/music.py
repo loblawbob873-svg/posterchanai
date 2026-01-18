@@ -116,11 +116,9 @@ async def stream_audio(
         # Stream from storage proxy
         logger.info(f"[MUSIC STREAM PROXY] Proxying stream request")
         try:
-            # Build the file path for the storage proxy (relative to user storage)
-            if directory.startswith('/'):
-                directory = directory.lstrip('/')
-            
-            file_url = f"{storage_server_url.value}/api/files/{directory}/{path}"
+            # The path parameter already includes the full path from storage server (e.g., "Music/filename.mp3")
+            # Don't concatenate with directory
+            file_url = f"{storage_server_url.value}/api/files/{path}"
             headers = {"Authorization": f"Bearer {storage_server_token.value}"}
             
             # Forward range header if present
