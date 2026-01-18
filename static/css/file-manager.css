@@ -1077,10 +1077,7 @@
     font-size: 13px;
 }
 
-/* File Actions */
-.file-item {
-    position: relative;
-}
+/* File Actions - position relative is already set in main .file-item */
 
 .file-actions {
     position: absolute;
