@@ -2788,19 +2788,42 @@ Return ONLY valid JSON, no other text.""",
                     return {"type": "text", "content": f"Message {uid} not found."}
 
                 # Use AI to extract bill details
-                email_content = f"From: {msg.sender}\nSubject: {msg.subject}\nDate: {msg.date}\n\n{msg.body_text}"
+                # First, normalize price formats in the email to help LLM
+                email_body = msg.body_text
+                # Fix spaced prices like "$ 15 99" → "$15.99"
+                email_body = re.sub(r'\$\s*(\d+)\s+(\d{2})', r'$\1.\2', email_body)
+                # Fix concatenated prices like "$1599" at end of price → "$15.99"
+                email_body = re.sub(r'\$(\d{2,})(\d{2})(?!\d)', lambda m: f"${m.group(1)}.{m.group(2)}", email_body)
+                
+                email_content = f"From: {msg.sender}\nSubject: {msg.subject}\nDate: {msg.date}\n\n{email_body}"
 
                 messages = [
                     {
                         "role": "system",
-                        "content": """Extract bill/invoice information from this email and return JSON with:
-- name: bill name or company name (e.g., "Electric Company", "Netflix", "Water Bill")
-- amount: total amount due as a number (e.g., 45.99)
+                        "content": """Extract bill/invoice/order information from this email and return JSON with:
+- name: bill name, company name, or product name (e.g., "Electric Company", "Netflix", "Amazon Order", "Poppy Playtime Toy")
+- amount: total amount due/paid as a number (e.g., 45.99). Look for prices with $ signs, totals, or order amounts.
 - due_date: due date if mentioned (YYYY-MM-DD format), null if not mentioned
 
-Return ONLY valid JSON, no other text. If this is not a bill or invoice, return {"error": "not_a_bill"}.""",
+**Price format examples to handle:**
+- "$ 15 99" → 15.99
+- "$1599" → 15.99  
+- "$15.99" → 15.99
+- "Quantity: 1 $ 15 99" → 15.99
+
+**Order email examples:**
+- Amazon orders: Look for "Order #", product names, prices near "Quantity:"
+- Utility bills: Look for "Amount Due", "Total"
+- Subscriptions: Look for "Your subscription" or "Payment"
+
+**Company/product name priority:**
+1. For orders: Use the product name if clearly stated
+2. For bills: Use the company name (e.g., "PG&E", "Comcast")
+3. Generic: Use sender domain or subject keywords
+
+Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order, return {"error": "not_a_bill"}.""",
                     },
-                    {"role": "user", "content": f"Extract bill from this email:\n\n{email_content}"},
+                    {"role": "user", "content": f"Extract bill/order from this email:\n\n{email_content}"},
                 ]
 
                 try:
@@ -2829,6 +2852,20 @@ Return ONLY valid JSON, no other text. If this is not a bill or invoice, return 
                     name = bill_data.get("name", "Unknown Bill")
                     amount = bill_data.get("amount", 0)
                     due_date = bill_data.get("due_date")
+                    
+                    # Validate and clean amount
+                    try:
+                        amount = float(amount)
+                        if amount <= 0:
+                            return {
+                                "type": "text",
+                                "content": f"Extracted bill '{name}' but amount ({amount}) is invalid. Please add manually with: `budget add {name} <amount>`",
+                            }
+                    except (ValueError, TypeError):
+                        return {
+                            "type": "text",
+                            "content": f"Extracted bill '{name}' but could not parse amount '{amount}'. Please add manually with: `budget add {name} <amount>`",
+                        }
 
                     # Add to budget system using plugin
                     plugin_service = PluginService(self.db)
