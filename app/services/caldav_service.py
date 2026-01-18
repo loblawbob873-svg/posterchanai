@@ -66,7 +66,12 @@ class Contact:
 
 
 def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datetime, calendar_name: str, db: Session) -> List[CalendarEvent]:
-    """Get events directly from built-in CalDAV storage using storage proxy."""
+    """Get events directly from built-in CalDAV storage using storage proxy.
+    
+    When calendar_name is a specific calendar directory (e.g., 'main', 'wwwcanoncityschoolsorg'),
+    only searches that directory. When calendar_name is 'Built-in Calendar' or 'Calendar',
+    searches all directories.
+    """
     try:
         from app.models import User
         from app.services.dav_storage_proxy import DAVStorageProxy
@@ -80,25 +85,37 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
         # Use storage proxy (must be configured)
         proxy = DAVStorageProxy(db, user.username, 'caldav')
         
-        # Search all calendar subdirectories and root
-        # Built-in server may have multiple calendars (main, wwwcanoncityschoolsorg, etc.)
-        root_items = proxy.list_files("")
-        calendar_dirs = []
-        for item in root_items:
-            if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
-                calendar_dirs.append(item.get('name'))
-        
         all_events = []
         
-        # Search all calendar subdirectories
-        for cal_dir in calendar_dirs:
-            cal_events = _get_events_from_calendar_dir(proxy, cal_dir, start_date, end_date, calendar_name)
+        # If calendar_name is a specific calendar directory (not "Built-in Calendar" or "Calendar"),
+        # only search that specific directory
+        if calendar_name and calendar_name not in ("Built-in Calendar", "Calendar"):
+            # This is a specific calendar subdirectory
+            logger.debug(f"[CalDAV] Getting events from specific calendar: {calendar_name}")
+            cal_events = _get_events_from_calendar_dir(proxy, calendar_name, start_date, end_date, calendar_name)
             all_events.extend(cal_events)
+        else:
+            # Search all calendar subdirectories and root
+            # Built-in server may have multiple calendars (main, wwwcanoncityschoolsorg, etc.)
+            logger.debug(f"[CalDAV] Getting events from all calendars (calendar_name={calendar_name})")
+            root_items = proxy.list_files("")
+            calendar_dirs = []
+            for item in root_items:
+                if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
+                    calendar_dirs.append(item.get('name'))
+            
+            # Search all calendar subdirectories
+            for cal_dir in calendar_dirs:
+                cal_events = _get_events_from_calendar_dir(proxy, cal_dir, start_date, end_date, cal_dir)
+                all_events.extend(cal_events)
+                logger.debug(f"[CalDAV] Found {len(cal_events)} events in calendar {cal_dir}")
+            
+            # Also check root for legacy .ics files
+            root_events = _get_events_from_calendar_dir(proxy, "", start_date, end_date, "Calendar")
+            all_events.extend(root_events)
+            logger.debug(f"[CalDAV] Found {len(root_events)} events in root (legacy)")
         
-        # Also check root for legacy .ics files
-        root_events = _get_events_from_calendar_dir(proxy, "", start_date, end_date, calendar_name)
-        all_events.extend(root_events)
-        
+        logger.debug(f"[CalDAV] Total events found: {len(all_events)}")
         return all_events
     except Exception as e:
         logger.error(f"Error getting events from built-in storage: {e}", exc_info=True)
@@ -440,16 +457,64 @@ def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]
                 port = caldav_port.value if caldav_port else "8081"
                 
                 # For built-in server, use localhost since commands run on same server
-                url = f"http://localhost:{port}/caldav/{user.username}/"
+                base_url = f"http://localhost:{port}/caldav/{user.username}/"
                 
-                logger.debug(f"[CalDAV] Using built-in (native) CalDAV server for user {user.username}")
-                return [{
-                    "name": "Built-in Calendar",
-                    "url": url,
-                    "username": user.username,
-                    "password": "__USE_SESSION_AUTH__",  # Special marker for built-in auth
-                    "builtin": True
-                }]
+                # Discover all calendar subdirectories to return one entry per calendar
+                try:
+                    from app.services.dav_storage_proxy import DAVStorageProxy
+                    proxy = DAVStorageProxy(db, user.username, 'caldav')
+                    root_items = proxy.list_files("")
+                    calendar_dirs = []
+                    for item in root_items:
+                        if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
+                            calendar_dirs.append(item.get('name'))
+                    
+                    calendars = []
+                    # Return one calendar entry per subdirectory
+                    for cal_dir in calendar_dirs:
+                        calendars.append({
+                            "name": cal_dir,  # Use actual calendar directory name
+                            "url": f"{base_url}{cal_dir}/",
+                            "username": user.username,
+                            "password": "__USE_SESSION_AUTH__",
+                            "builtin": True
+                        })
+                    
+                    # If no subdirectories, check for legacy .ics files in root
+                    if not calendar_dirs:
+                        root_items = proxy.list_files("")
+                        has_ics_files = any(item.get('name', '').endswith('.ics') for item in root_items)
+                        if has_ics_files:
+                            calendars.append({
+                                "name": "Calendar",  # Legacy calendar name
+                                "url": base_url,
+                                "username": user.username,
+                                "password": "__USE_SESSION_AUTH__",
+                                "builtin": True
+                            })
+                    
+                    # If still no calendars, return default
+                    if not calendars:
+                        calendars.append({
+                            "name": "Built-in Calendar",
+                            "url": base_url,
+                            "username": user.username,
+                            "password": "__USE_SESSION_AUTH__",
+                            "builtin": True
+                        })
+                    
+                    logger.debug(f"[CalDAV] Using built-in (native) CalDAV server for user {user.username}, found {len(calendars)} calendars: {[c['name'] for c in calendars]}")
+                    return calendars
+                except Exception as e:
+                    logger.error(f"[CalDAV] Error discovering calendars for built-in server: {e}", exc_info=True)
+                    # Fallback to single calendar
+                    return [{
+                        "name": "Built-in Calendar",
+                        "url": base_url,
+                        "username": user.username,
+                        "password": "__USE_SESSION_AUTH__",
+                        "builtin": True
+                    }]
         
         # Only use external CalDAV if built-in is explicitly disabled
         logger.debug(f"[CalDAV] Built-in disabled, checking external CalDAV calendars for user {user_id}")
@@ -476,20 +541,69 @@ def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]
             logger.debug(f"[CalDAV] No external calendars, defaulting to built-in for user {user_id}")
             from app.models import User
             from app.models import Setting
+            from app.services.dav_storage_proxy import DAVStorageProxy
             
             user = db.query(User).filter(User.id == user_id).first()
             if user:
                 caldav_port = db.query(Setting).filter(Setting.key == "caldav_port").first()
                 port = caldav_port.value if caldav_port else "8081"
-                url = f"http://localhost:{port}/caldav/{user.username}/"
+                base_url = f"http://localhost:{port}/caldav/{user.username}/"
                 
-                return [{
-                    "name": "Built-in Calendar",
-                    "url": url,
-                    "username": user.username,
-                    "password": "__USE_SESSION_AUTH__",
-                    "builtin": True
-                }]
+                # Discover all calendar subdirectories
+                try:
+                    proxy = DAVStorageProxy(db, user.username, 'caldav')
+                    root_items = proxy.list_files("")
+                    calendar_dirs = []
+                    for item in root_items:
+                        if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
+                            calendar_dirs.append(item.get('name'))
+                    
+                    builtin_calendars = []
+                    # Return one calendar entry per subdirectory
+                    for cal_dir in calendar_dirs:
+                        builtin_calendars.append({
+                            "name": cal_dir,
+                            "url": f"{base_url}{cal_dir}/",
+                            "username": user.username,
+                            "password": "__USE_SESSION_AUTH__",
+                            "builtin": True
+                        })
+                    
+                    # If no subdirectories, check for legacy .ics files in root
+                    if not calendar_dirs:
+                        root_items = proxy.list_files("")
+                        has_ics_files = any(item.get('name', '').endswith('.ics') for item in root_items)
+                        if has_ics_files:
+                            builtin_calendars.append({
+                                "name": "Calendar",
+                                "url": base_url,
+                                "username": user.username,
+                                "password": "__USE_SESSION_AUTH__",
+                                "builtin": True
+                            })
+                    
+                    # If still no calendars, return default
+                    if not builtin_calendars:
+                        builtin_calendars.append({
+                            "name": "Built-in Calendar",
+                            "url": base_url,
+                            "username": user.username,
+                            "password": "__USE_SESSION_AUTH__",
+                            "builtin": True
+                        })
+                    
+                    logger.debug(f"[CalDAV] Defaulting to built-in, found {len(builtin_calendars)} calendars: {[c['name'] for c in builtin_calendars]}")
+                    return builtin_calendars
+                except Exception as e:
+                    logger.error(f"[CalDAV] Error discovering calendars for built-in server: {e}", exc_info=True)
+                    # Fallback to single calendar
+                    return [{
+                        "name": "Built-in Calendar",
+                        "url": base_url,
+                        "username": user.username,
+                        "password": "__USE_SESSION_AUTH__",
+                        "builtin": True
+                    }]
 
         return calendars
     finally:
