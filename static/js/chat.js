@@ -2448,6 +2448,24 @@ class ChatHandler {
             if (data.tracks.length > 0) {
                 window.musicPlayer.play(data.tracks[0]);
             }
+        } else if (data.type === 'text' && data.content && data.content.includes('🔍 **Search Results:**')) {
+            // Music search results - add play buttons
+            // Parse content and add play buttons for each track
+            let musicHtml = contentHtml;
+            
+            // Replace numbered tracks with tracks that have play buttons
+            musicHtml = musicHtml.replace(/(\d+)\.\s+([^\n]+)\n/g, (match, num, trackName) => {
+                return `<div class="music-track-result">
+                    <span class="track-number">${num}.</span>
+                    <span class="track-name">${trackName}</span>
+                    <button class="btn-action-sm" onclick="window.chatHandler.sendMessage('music play ${num}')" title="Play this track">▶️</button>
+                </div>\n`;
+            });
+            
+            html = musicHtml;
+            html += `<div class="music-search-actions">
+                <button class="btn-action" onclick="window.chatHandler.sendMessage('music queueall')" title="Play all search results">▶️ Play All</button>
+            </div>`;
         } else if (data.type === 'music_next' && window.musicPlayer) {
             // Skip to next track
             window.musicPlayer.next();
