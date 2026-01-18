@@ -168,10 +168,15 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                             event_start = event_start.replace(tzinfo=timezone.utc)
                         
                         # Check if event overlaps with date range
-                        # Include events that start before or during the range, or end during/after the range
-                        event_end_for_check = event_end if event_end else event_start
-                        if event_start > end_date or event_end_for_check < start_date:
+                        # Include events that start within the range OR overlap with the range
+                        # An event overlaps if: event_start <= end_date AND (event_end >= start_date OR event_end is None)
+                        if event_start > end_date:
+                            # Event starts after the range
                             continue
+                        if event_end and event_end < start_date:
+                            # Event ends before the range (only if we have an end time)
+                            continue
+                        # Event overlaps with range - include it
                         
                         # Get end time
                         dtend = component.get('dtend')
