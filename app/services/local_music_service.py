@@ -206,6 +206,8 @@ def scan_music_directory(directory: str, recursive: bool = True, subfolder: str 
     Returns a list of items with 'type' (file/folder), 'name', 'path', 'size', etc.
     Supports storage proxy if configured.
     """
+    logger.info(f"[MUSIC SCAN] Called with directory={directory}, subfolder={subfolder}, db={db is not None}, user_id={user_id}")
+    
     if not directory:
         return []
     
