@@ -17,9 +17,13 @@ import requests
 from icalendar import Calendar, Event
 from sqlalchemy.orm import Session
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+import urllib3
 
 from app.database import SessionLocal
 from app.models import User, UserSetting
+
+# Suppress SSL warnings for external CardDAV servers with certificate issues
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
