@@ -220,6 +220,9 @@ async def test_music_directory(
     """Test music directory access and count files."""
     # Resolve directory path the same way as save_user_music_config
     directory = request.directory
+    original_directory = directory  # Keep original for display
+    
+    logger.info(f"[MUSIC TEST] Received directory: '{directory}', user: {current_user.username}")
     
     if directory and directory.startswith('/') and not directory.startswith('//'):
         from app.models import Setting
@@ -229,14 +232,20 @@ async def test_music_directory(
         upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
         upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
         
+        logger.info(f"[MUSIC TEST] upload_path: {upload_path}")
+        
         upload_base = Path(upload_path)
         # If the path doesn't contain the username, treat it as relative to user storage
         if current_user.username not in directory:
             relative_path = directory.lstrip('/')
             directory = str(upload_base / current_user.username / relative_path)
-            logger.info(f"Resolved test path /{relative_path} to {directory}")
+            logger.info(f"[MUSIC TEST] Resolved {original_directory} to {directory}")
+        else:
+            logger.info(f"[MUSIC TEST] Username found in path, no resolution needed")
     
+    logger.info(f"[MUSIC TEST] Testing directory: {directory}")
     result = test_directory_access(directory, request.recursive)
+    logger.info(f"[MUSIC TEST] Test result: {result}")
     
     if result['success']:
         return {
@@ -245,7 +254,11 @@ async def test_music_directory(
             "track_count": result.get('track_count', 0)
         }
     else:
+        # Show both original and resolved path in error
+        error_msg = result['error']
+        if original_directory != directory:
+            error_msg = error_msg.replace(original_directory, f"{original_directory} (resolved to {directory})")
         return {
             "success": False,
-            "error": result['error']
+            "error": error_msg
         }
