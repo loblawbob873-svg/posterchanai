@@ -814,23 +814,21 @@ def update_event_in_calendar(
             logger.info(f"Using built-in CalDAV storage (direct file update) for event {event_uid}")
             
             from app.models import User
-            from app.services.caldav_server import get_user_caldav_path
+            from app.services.dav_storage_proxy import DAVStorageProxy
             from icalendar import Calendar as ICalendar
             
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 return False
             
-            caldav_path = get_user_caldav_path(user, db)
-            ics_file = caldav_path / f"{event_uid}.ics"
+            # Use storage proxy (no local fallback)
+            proxy = DAVStorageProxy(db, user.username, 'caldav')
             
-            if not ics_file.exists():
-                logger.warning(f"Event file not found: {ics_file}")
+            # Read existing event using proxy
+            ical_data = proxy.read_file(f"{event_uid}.ics")
+            if not ical_data:
+                logger.warning(f"Event file not found: {event_uid}.ics")
                 return False
-            
-            # Read and parse existing event
-            with open(ics_file, 'r', encoding='utf-8') as f:
-                ical_data = f.read()
             
             cal = ICalendar.from_ical(ical_data.encode('utf-8'))
             
@@ -876,10 +874,11 @@ def update_event_in_calendar(
                             except Exception as e:
                                 logger.warning(f"Failed to parse RRULE '{rrule}': {e}")
                     
-                    # Save updated event
+                    # Save updated event using proxy
                     updated_ical = cal.to_ical().decode('utf-8')
-                    with open(ics_file, 'w', encoding='utf-8') as f:
-                        f.write(updated_ical)
+                    if not proxy.write_file(f"{event_uid}.ics", updated_ical):
+                        logger.error(f"Failed to save updated event {event_uid}")
+                        return False
                     
                     logger.info(f"Successfully updated event {event_uid} in built-in storage")
                     return True

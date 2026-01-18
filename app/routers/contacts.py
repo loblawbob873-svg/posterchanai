@@ -333,16 +333,17 @@ async def import_from_cardav_server(
                             vcard.add('uid')
                             vcard.uid.value = contact_uid
                         
-                        # Check if contact already exists
-                        vcf_file = cardav_path / f"{contact_uid}.vcf"
-                        if vcf_file.exists():
+                        # Check if contact already exists using proxy
+                        if proxy.file_exists(f"{contact_uid}.vcf"):
                             logger.debug(f"Contact {contact_uid} already exists, skipping")
                             skipped_count += 1
                             continue
                         
-                        # Save to user's CardDAV directory
-                        with open(vcf_file, 'w', encoding='utf-8') as f:
-                            f.write(vcard_data if isinstance(vcard_data, str) else vcard_data.decode('utf-8'))
+                        # Save to user's CardDAV directory using proxy
+                        vcard_content = vcard_data if isinstance(vcard_data, str) else vcard_data.decode('utf-8')
+                        if not proxy.write_file(f"{contact_uid}.vcf", vcard_content):
+                            logger.warning(f"Failed to save contact {contact_uid}")
+                            continue
                         
                         imported_count += 1
                     except Exception as e:

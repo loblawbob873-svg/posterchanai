@@ -93,8 +93,9 @@ class DAVStorageProxy:
     def list_files(self, subpath: str = "") -> List[Dict[str, any]]:
         """List files in DAV directory."""
         if not self.use_proxy:
-            # Fallback to local filesystem
-            return self._list_files_local(subpath)
+            # No fallback to local storage - storage proxy must be configured
+            logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot list files")
+            return []
         
         try:
             # Build path: caldav/subpath or carddav/subpath
@@ -129,7 +130,9 @@ class DAVStorageProxy:
     def read_file(self, filepath: str) -> Optional[str]:
         """Read file content from storage."""
         if not self.use_proxy:
-            return self._read_file_local(filepath)
+            # No fallback to local storage - storage proxy must be configured
+            logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot read file: {filepath}")
+            return None
         
         try:
             # Build full path
@@ -161,7 +164,9 @@ class DAVStorageProxy:
     def write_file(self, filepath: str, content: str) -> bool:
         """Write file content to storage."""
         if not self.use_proxy:
-            return self._write_file_local(filepath, content)
+            # No fallback to local storage - storage proxy must be configured
+            logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot write file: {filepath}")
+            return False
         
         try:
             # Build full path
@@ -193,7 +198,9 @@ class DAVStorageProxy:
     def delete_file(self, filepath: str) -> bool:
         """Delete file from storage."""
         if not self.use_proxy:
-            return self._delete_file_local(filepath)
+            # No fallback to local storage - storage proxy must be configured
+            logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot delete file: {filepath}")
+            return False
         
         try:
             # Build full path
@@ -222,74 +229,10 @@ class DAVStorageProxy:
     def file_exists(self, filepath: str) -> bool:
         """Check if file exists."""
         if not self.use_proxy:
-            return self._file_exists_local(filepath)
+            # No fallback to local storage - storage proxy must be configured
+            logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot check file existence: {filepath}")
+            return False
         
         # Try to read the file - if successful, it exists
-        # read_file already handles fallback to local
         content = self.read_file(filepath)
         return content is not None
-    
-    # Local filesystem fallback methods (for when storage proxy is not configured)
-    
-    def _list_files_local(self, subpath: str = "") -> List[Dict[str, any]]:
-        """List files from local filesystem."""
-        from app.services.storage_service import get_storage_service
-        storage = get_storage_service(self.db)
-        user_path = storage.get_user_path(self.username)
-        dav_path = user_path / self.dav_type / subpath
-        
-        if not dav_path.exists():
-            dav_path.mkdir(parents=True, exist_ok=True)
-            return []
-        
-        items = []
-        for item in dav_path.iterdir():
-            items.append({
-                'name': item.name,
-                'is_directory': item.is_dir(),
-                'size': item.stat().st_size if item.is_file() else 0,
-                'modified': item.stat().st_mtime
-            })
-        return items
-    
-    def _read_file_local(self, filepath: str) -> Optional[str]:
-        """Read file from local filesystem."""
-        from app.services.storage_service import get_storage_service
-        storage = get_storage_service(self.db)
-        user_path = storage.get_user_path(self.username)
-        file_path = user_path / self.dav_type / filepath
-        
-        if file_path.exists():
-            return file_path.read_text(encoding='utf-8')
-        return None
-    
-    def _write_file_local(self, filepath: str, content: str) -> bool:
-        """Write file to local filesystem."""
-        from app.services.storage_service import get_storage_service
-        storage = get_storage_service(self.db)
-        user_path = storage.get_user_path(self.username)
-        file_path = user_path / self.dav_type / filepath
-        
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content, encoding='utf-8')
-        return True
-    
-    def _delete_file_local(self, filepath: str) -> bool:
-        """Delete file from local filesystem."""
-        from app.services.storage_service import get_storage_service
-        storage = get_storage_service(self.db)
-        user_path = storage.get_user_path(self.username)
-        file_path = user_path / self.dav_type / filepath
-        
-        if file_path.exists():
-            file_path.unlink()
-            return True
-        return False
-    
-    def _file_exists_local(self, filepath: str) -> bool:
-        """Check if file exists on local filesystem."""
-        from app.services.storage_service import get_storage_service
-        storage = get_storage_service(self.db)
-        user_path = storage.get_user_path(self.username)
-        file_path = user_path / self.dav_type / filepath
-        return file_path.exists()
