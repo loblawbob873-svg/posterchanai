@@ -372,7 +372,9 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                         # Read calendar data using proxy
                         ical_data = proxy.read_file(filepath)
                         if not ical_data:
+                            logger.warning(f"[CalDAV] Failed to read event file: {filepath}")
                             continue
+                        logger.debug(f"[CalDAV] Read event file {filepath}: {len(ical_data)} bytes")
                         
                         # Check time range if specified
                         include_event = True
