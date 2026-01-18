@@ -29,7 +29,14 @@
     {% block scripts %}{% endblock %}
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+            // Unregister old service workers first
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                for(let registration of registrations) {
+                    registration.unregister();
+                }
+            });
+            // Register new service worker with cache-busting version
+            navigator.serviceWorker.register('/sw.js?v=10', { scope: '/' }).catch(() => {});
         }
     </script>
 </body>
