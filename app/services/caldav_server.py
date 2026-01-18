@@ -119,10 +119,23 @@ def get_event_uid_from_ical(ical_data: str) -> Optional[str]:
     return None
 
 
-async def handle_propfind(path: str, user: User, db: Session, depth: str = "0") -> Response:
+async def handle_propfind(path: str, user: User, db: Session, request: StarletteRequest = None, depth: str = "0") -> Response:
     """Handle PROPFIND request. Uses storage proxy if configured."""
     from urllib.parse import quote
     from app.services.dav_storage_proxy import DAVStorageProxy
+    
+    # Log what properties iPhone is requesting
+    if request:
+        body = await request.body()
+        if body:
+            try:
+                root = ET.fromstring(body)
+                requested_props = root.findall('.//{DAV:}prop/*')
+                if requested_props:
+                    prop_names = [prop.tag for prop in requested_props]
+                    logger.info(f"[CalDAV] PROPFIND requested properties: {prop_names}")
+            except Exception as e:
+                logger.debug(f"[CalDAV] Could not parse PROPFIND body: {e}")
     
     # Use storage proxy (will fallback to local if not configured)
     proxy = DAVStorageProxy(db, user.username, 'caldav')
@@ -1069,7 +1082,7 @@ def create_caldav_app() -> FastAPI:
             )
         
         if method == "PROPFIND":
-            return await handle_propfind(path, user, db, depth)
+            return await handle_propfind(path, user, db, request, depth)
         elif method == "PROPPATCH":
             return await handle_proppatch(path, user, db, request)
         elif method == "REPORT":
