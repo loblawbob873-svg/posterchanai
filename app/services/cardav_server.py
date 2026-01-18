@@ -487,11 +487,26 @@ def create_cardav_app() -> FastAPI:
     
     @app.route("/.well-known/carddav", methods=["GET", "HEAD", "OPTIONS"])
     async def carddav_discovery(request: StarletteRequest):
-        """CardDAV discovery endpoint."""
+        """CardDAV discovery endpoint. Returns 302 redirect to CardDAV principal."""
+        # Get the host from the request
+        host = request.headers.get("Host", "ai.poster.place")
+        # Determine if we're using HTTPS (check X-Forwarded-Proto or assume HTTPS if port 443)
+        scheme = request.headers.get("X-Forwarded-Proto", "https")
+        if not scheme or scheme == "http":
+            # Check if we're behind a proxy that terminates SSL
+            if request.url.scheme == "https" or "443" in str(request.url.port):
+                scheme = "https"
+        
+        # Use absolute URL for redirect (required by some clients like iPhone)
+        redirect_url = f"{scheme}://{host}/carddav/"
+        
         return Response(
             content="",
-            status_code=301,
-            headers={"Location": "/carddav/"}
+            status_code=302,  # Use 302 (Found) instead of 301 (Moved Permanently) for better compatibility
+            headers={
+                "Location": redirect_url,
+                "Cache-Control": "no-cache"
+            }
         )
     
     @app.api_route("/carddav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL", "OPTIONS"])
