@@ -47,14 +47,35 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
         proxy = DAVStorageProxy(db, user.username, 'caldav')
         
         # Determine calendar subpath
-        if calendar_name == "Built-in Calendar" or calendar_name == "Calendar":
-            # Legacy mode - check root for .ics files
+        # Built-in calendar name is "Built-in Calendar", but we need to check all calendar subdirectories
+        # For now, check all calendars (main, wwwcanoncityschoolsorg, etc.)
+        # We'll search all calendar subdirectories
+        subpath = ""
+        
+        # First, check if there are calendar subdirectories
+        root_items = proxy.list_files("")
+        calendar_dirs = []
+        for item in root_items:
+            if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
+                calendar_dirs.append(item.get('name'))
+        
+        # If no subdirectories, use root (legacy mode)
+        if not calendar_dirs:
             subpath = ""
         else:
-            # Calendar subdirectory
-            subpath = calendar_name
+            # Search all calendar subdirectories
+            all_events = []
+            for cal_dir in calendar_dirs:
+                cal_events = _get_events_from_calendar_dir(proxy, cal_dir, start_date, end_date, calendar_name)
+                all_events.extend(cal_events)
+            
+            # Also check root for legacy .ics files
+            root_events = _get_events_from_calendar_dir(proxy, "", start_date, end_date, calendar_name)
+            all_events.extend(root_events)
+            
+            return all_events
         
-        # List all .ics files in the calendar
+        # List all .ics files in the calendar directory
         file_items = proxy.list_files(subpath)
         events = []
         
@@ -73,7 +94,8 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
             
             try:
                 # Read .ics file using proxy
-                ical_data = proxy.read_file(f"{subpath}/{name}" if subpath else name)
+                filepath = f"{subpath}/{name}" if subpath else name
+                ical_data = proxy.read_file(filepath)
                 if not ical_data:
                     continue
                 
@@ -133,6 +155,91 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
                 continue
         
         return events
+
+
+def _get_events_from_calendar_dir(proxy: DAVStorageProxy, cal_dir: str, start_date: datetime, end_date: datetime, calendar_name: str) -> List[CalendarEvent]:
+    """Helper function to get events from a specific calendar directory."""
+    from icalendar import Calendar as ICalendar
+    
+    file_items = proxy.list_files(cal_dir)
+    events = []
+    
+    # Ensure dates are timezone-aware for comparison
+    if start_date.tzinfo is None:
+        from datetime import timezone
+        start_date = start_date.replace(tzinfo=timezone.utc)
+    if end_date.tzinfo is None:
+        from datetime import timezone
+        end_date = end_date.replace(tzinfo=timezone.utc)
+    
+    for item in file_items:
+        name = item.get('name', '')
+        if not name.endswith('.ics'):
+            continue
+        
+        try:
+            # Read .ics file using proxy
+            filepath = f"{cal_dir}/{name}" if cal_dir else name
+            ical_data = proxy.read_file(filepath)
+            if not ical_data:
+                continue
+            
+            # Parse iCalendar data
+            cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+            
+            # Process all VEVENT components
+            for component in cal.walk():
+                if component.name == "VEVENT":
+                    # Get start time
+                    dtstart = component.get('dtstart')
+                    if not dtstart:
+                        continue
+                    
+                    event_start = dtstart.dt
+                    if isinstance(event_start, datetime):
+                        # Make timezone-aware if naive
+                        if event_start.tzinfo is None:
+                            from datetime import timezone
+                            event_start = event_start.replace(tzinfo=timezone.utc)
+                        
+                        # Check if event is in date range
+                        if event_start < start_date or event_start > end_date:
+                            continue
+                        
+                        # Get end time
+                        dtend = component.get('dtend')
+                        event_end = None
+                        if dtend:
+                            event_end = dtend.dt
+                            if isinstance(event_end, datetime):
+                                if event_end.tzinfo is None:
+                                    from datetime import timezone
+                                    event_end = event_end.replace(tzinfo=timezone.utc)
+                        
+                        # Convert to naive local for CalendarEvent
+                        event_start_naive = to_naive_local(event_start)
+                        event_end_naive = to_naive_local(event_end) if event_end else None
+                        
+                        # Get event details
+                        summary = str(component.get('summary', '')) if component.get('summary') else "No Title"
+                        description = str(component.get('description', '')) if component.get('description') else None
+                        location = str(component.get('location', '')) if component.get('location') else None
+                        uid = str(component.get('uid', '')) if component.get('uid') else ""
+                        
+                        events.append(CalendarEvent(
+                            uid=uid,
+                            summary=summary,
+                            description=description,
+                            start=event_start_naive,
+                            end=event_end_naive,
+                            location=location,
+                            calendar_name=calendar_name
+                        ))
+        except Exception as e:
+            logger.debug(f"Error parsing event file {name}: {e}")
+            continue
+    
+    return events
     except Exception as e:
         logger.error(f"Error getting events from built-in storage: {e}", exc_info=True)
         return []
