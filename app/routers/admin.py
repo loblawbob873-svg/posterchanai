@@ -542,17 +542,20 @@ async def rescan_storage(
     from app.routers.files import get_file_cache
     from app.services.thumbnail_service import generate_thumbnails_for_user
     
-    def _scan_user_files(user: User):
+    def _scan_user_files(user_id: int, username: str):
         """Scan files for a single user - includes EXIF, thumbnails, and indexing."""
+        # Create a NEW database session for this thread (SQLite sessions are not thread-safe)
+        from app.database import SessionLocal
+        thread_db = SessionLocal()
         try:
             from app.utils.exif_utils import batch_restore_timestamps
             
-            storage = get_storage_service(db)
-            user_path = storage.get_user_path(user.username)
+            storage = get_storage_service(thread_db)
+            user_path = storage.get_user_path(username)
             
             # Invalidate file cache for this user
-            cache = get_file_cache(db)
-            cache.invalidate(f"{user.username}:")
+            cache = get_file_cache(thread_db)
+            cache.invalidate(f"{username}:")
             
             # Initialize stats
             file_count = 0
@@ -562,18 +565,18 @@ async def rescan_storage(
             
             if user_path.exists():
                 # Step 1: Restore EXIF timestamps for all media files
-                logger.info(f"[File Scan] Step 1/3: Restoring EXIF timestamps for user {user.username}")
+                logger.info(f"[File Scan] Step 1/3: Restoring EXIF timestamps for user {username}")
                 exif_stats = batch_restore_timestamps(user_path)
                 logger.info(f"[File Scan] EXIF stats: {exif_stats['restored']} restored, {exif_stats['processed']} processed")
                 
                 # Step 2: Generate thumbnails
-                logger.info(f"[File Scan] Step 2/3: Generating thumbnails for user {user.username}")
+                logger.info(f"[File Scan] Step 2/3: Generating thumbnails for user {username}")
                 successful, failed = generate_thumbnails_for_user(user_path)
                 thumbnail_stats = {'successful': successful, 'failed': failed}
                 logger.info(f"[File Scan] Thumbnail stats: {successful} generated, {failed} failed")
                 
                 # Step 3: Count files for indexing
-                logger.info(f"[File Scan] Step 3/3: Indexing files for user {user.username}")
+                logger.info(f"[File Scan] Step 3/3: Indexing files for user {username}")
                 for item in user_path.rglob('*'):
                     try:
                         if item.is_file():
@@ -581,13 +584,13 @@ async def rescan_storage(
                         elif item.is_dir():
                             dir_count += 1
                     except Exception as e:
-                        logger.warning(f"Error processing {item} for user {user.username}: {e}")
+                        logger.warning(f"Error processing {item} for user {username}: {e}")
                         continue
             
-            logger.info(f"[File Scan] Complete for {user.username}: {file_count} files, {dir_count} directories")
+            logger.info(f"[File Scan] Complete for {username}: {file_count} files, {dir_count} directories")
             return {
-                "user_id": user.id,
-                "username": user.username,
+                "user_id": user_id,
+                "username": username,
                 "files": file_count,
                 "directories": dir_count,
                 "exif_restored": exif_stats.get('restored', 0),
@@ -597,13 +600,16 @@ async def rescan_storage(
                 "status": "success"
             }
         except Exception as e:
-            logger.error(f"[File Scan] Error scanning user {user.username}: {e}", exc_info=True)
+            logger.error(f"[File Scan] Error scanning user {username}: {e}", exc_info=True)
             return {
-                "user_id": user.id,
-                "username": user.username,
+                "user_id": user_id,
+                "username": username,
                 "status": "error",
                 "error": str(e)
             }
+        finally:
+            # Always close the thread-local database session
+            thread_db.close()
     
     # Run scan in thread pool to avoid blocking
     if user_id:
@@ -612,28 +618,31 @@ async def rescan_storage(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
-        result = await asyncio.to_thread(_scan_user_files, user)
+        # Pass primitive values, not ORM objects (to avoid session issues in threads)
+        result = await asyncio.to_thread(_scan_user_files, user.id, user.username)
         return {
             "message": f"File scan completed for user {user.username}",
             "results": [result]
         }
     else:
-        # Scan all users
-        users = db.query(User).all()
+        # Scan all users - extract primitive values before passing to threads
+        users = [(u.id, u.username) for u in db.query(User).all()]
         results = []
         
         # Scan all users in parallel (but in thread pool)
-        tasks = [asyncio.to_thread(_scan_user_files, user) for user in users]
+        # Each user is a tuple of (user_id, username)
+        tasks = [asyncio.to_thread(_scan_user_files, uid, uname) for uid, uname in users]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Handle any exceptions
         processed_results = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                logger.error(f"[File Scan] Exception for user {users[i].username}: {result}")
+                uid, uname = users[i]
+                logger.error(f"[File Scan] Exception for user {uname}: {result}")
                 processed_results.append({
-                    "user_id": users[i].id,
-                    "username": users[i].username,
+                    "user_id": uid,
+                    "username": uname,
                     "status": "error",
                     "error": str(result)
                 })
