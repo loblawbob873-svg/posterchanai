@@ -589,10 +589,6 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                             time_filtered_count += 1
                             if time_filtered_count <= 3:
                                 logger.debug(f"[CalDAV] Event {name} filtered out by time range")
-                            if added_count <= 5 or added_count % 100 == 0:
-                                logger.info(f"[CalDAV] Added event {added_count}: {event_uid}")
-                        else:
-                            time_filtered_count += 1
                     except Exception as e:
                         logger.warning(f"[CalDAV] Error processing event {name}: {e}", exc_info=True)
                         continue

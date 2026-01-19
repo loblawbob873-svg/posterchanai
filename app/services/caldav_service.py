@@ -743,18 +743,28 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
                     if 'ADR' in line.upper():
                         logger.debug(f"ADR line in serialized: {line.strip()}")
         
+        logger.info(f"[CardDAV] Saving updated contact {contact_uid} to {filepath}")
         success = proxy.write_file(filepath, serialized)
         
         if success:
-            logger.info(f"Updated contact {contact_uid} in built-in storage")
+            logger.info(f"[CardDAV] ✓ Updated contact {contact_uid} in built-in storage")
             # Double-check after save by reading back
             if 'address' in updates and updates.get('address', '').strip():
                 saved_data = proxy.read_file(filepath)
-                if saved_data and ('ADR' in saved_data or 'adr' in saved_data.lower()):
-                    logger.info(f"✓ Address confirmed in saved file for contact {contact_uid}")
+                if saved_data:
+                    if 'ADR' in saved_data or 'adr' in saved_data.lower():
+                        logger.info(f"[CardDAV] ✓ Address confirmed in saved file for contact {contact_uid}")
+                        # Log the ADR line for verification
+                        for line in saved_data.split('\n'):
+                            if 'ADR' in line.upper():
+                                logger.info(f"[CardDAV] ADR line in saved file: {line.strip()}")
+                    else:
+                        logger.error(f"[CardDAV] ❌ Address NOT found in saved file for contact {contact_uid} after write!")
+                        logger.error(f"[CardDAV] Saved file preview: {saved_data[:500]}")
                 else:
-                    logger.error(f"❌ Address NOT found in saved file for contact {contact_uid} after write!")
-                    logger.error(f"Saved file preview: {saved_data[:500] if saved_data else 'None'}")
+                    logger.error(f"[CardDAV] ❌ Could not read saved file to verify address for contact {contact_uid}")
+        else:
+            logger.error(f"[CardDAV] ❌ Failed to save updated contact {contact_uid} to {filepath}")
         return success
     except Exception as e:
         logger.error(f"Error editing contact in built-in storage: {e}")
@@ -3045,19 +3055,42 @@ def get_user_contact_by_uid(user_id: int, db: Session, contact_uid: str) -> Opti
                         
                         # Extract address from ADR field
                         address = None
+                        logger.debug(f"[CardDAV] Checking for address in contact {contact_uid}")
                         if hasattr(vcard, 'adr'):
+                            logger.debug(f"[CardDAV] Found adr attribute, type: {type(vcard.adr)}")
                             # Handle both single ADR object and list of ADR objects
                             adr_objects = []
                             if isinstance(vcard.adr, list):
                                 adr_objects = vcard.adr
+                                logger.debug(f"[CardDAV] adr is a list with {len(adr_objects)} items")
                             else:
                                 adr_objects = [vcard.adr]
                             
                             # Use the first ADR object
                             if adr_objects:
-                                adr = adr_objects[0].value
-                                if isinstance(adr, list) and len(adr) >= 4:
-                                    address_parts = []
+                                adr_prop = adr_objects[0]
+                                adr = adr_prop.value
+                                logger.debug(f"[CardDAV] ADR value type: {type(adr)}")
+                                
+                                # Handle both Address object (from vobject.vcard.Address) and list format
+                                address_parts = []
+                                if isinstance(adr, vobject.vcard.Address):
+                                    # Address object format (what we save)
+                                    if hasattr(adr, 'street') and adr.street:
+                                        address_parts.append(str(adr.street).strip())
+                                    if hasattr(adr, 'city') and adr.city:
+                                        address_parts.append(str(adr.city).strip())
+                                    if hasattr(adr, 'region') and adr.region:
+                                        address_parts.append(str(adr.region).strip())
+                                    if hasattr(adr, 'code') and adr.code:
+                                        address_parts.append(str(adr.code).strip())
+                                    if hasattr(adr, 'country') and adr.country:
+                                        address_parts.append(str(adr.country).strip())
+                                    if address_parts:
+                                        address = ', '.join(address_parts)
+                                        logger.info(f"[CardDAV] ✓ Parsed address from Address object: {address}")
+                                elif isinstance(adr, list) and len(adr) >= 4:
+                                    # List format (legacy)
                                     if len(adr) > 2 and adr[2]:  # street
                                         address_parts.append(str(adr[2]))
                                     if len(adr) > 3 and adr[3]:  # city
@@ -3070,6 +3103,11 @@ def get_user_contact_by_uid(user_id: int, db: Session, contact_uid: str) -> Opti
                                         address_parts.append(str(adr[6]))
                                     if address_parts:
                                         address = ', '.join(address_parts)
+                                        logger.info(f"[CardDAV] ✓ Parsed address from list format: {address}")
+                                else:
+                                    logger.warning(f"[CardDAV] Unknown ADR format: {type(adr)}, value: {adr}")
+                        else:
+                            logger.debug(f"[CardDAV] No adr attribute found in contact {contact_uid}")
                         
                         note = None
                         if hasattr(vcard, 'note'):
