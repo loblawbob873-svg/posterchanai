@@ -1088,8 +1088,27 @@ def create_caldav_app() -> FastAPI:
             )
         
         # Verify password
-        if not verify_password(password, user.password_hash):
+        # Log authentication attempt (but not the actual password)
+        logger.info(f"[CalDAV] Verifying password for user: {user.username} (auth username: {username}, password provided: {bool(password)})")
+        
+        # Check if password hash exists
+        if not user.password_hash:
+            logger.error(f"[CalDAV] User {user.username} has no password hash!")
+            return Response(
+                content="Invalid credentials",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+            )
+        
+        try:
+            password_valid = verify_password(password, user.password_hash)
+        except Exception as e:
+            logger.error(f"[CalDAV] Error verifying password: {e}", exc_info=True)
+            password_valid = False
+        
+        if not password_valid:
             logger.warning(f"[CalDAV] Invalid password for user: {user.username} (auth username: {username})")
+            logger.debug(f"[CalDAV] Password hash exists: {bool(user.password_hash)}, hash length: {len(user.password_hash) if user.password_hash else 0}")
             return Response(
                 content="Invalid credentials",
                 status_code=401,
