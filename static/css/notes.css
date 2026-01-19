@@ -34,6 +34,9 @@
     margin: auto;
     box-sizing: border-box;
     position: relative;
+    /* Prevent fullscreen flash on open */
+    animation: none !important;
+    transform: none !important;
 }
 
 /* NEVER make notes modal fullscreen on desktop - only windowed */

@@ -124,7 +124,9 @@ def get_current_user(
                 logger = logging.getLogger(__name__)
                 logger.warning(f"Failed to update API key last_used_at: {e}")
             
-            user = db.query(User).filter(User.id == api_key.user_id).first()
+            # Access user_id directly from the APIKey object to avoid lazy loading issues
+            user_id = api_key.user_id
+            user = db.query(User).filter(User.id == user_id).first()
             if user:
                 return user
         

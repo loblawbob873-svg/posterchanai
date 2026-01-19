@@ -282,8 +282,8 @@
 .file-selection-controls {
     display: flex;
     align-items: center;
-    gap: 8px;
-    flex-wrap: nowrap;
+    gap: 6px;
+    flex-wrap: wrap;
     padding: 4px 8px;
     background: var(--bg-primary);
     border-radius: 6px;
@@ -293,6 +293,7 @@
     flex-shrink: 0;
     overflow: visible;
     box-sizing: border-box;
+    max-width: 100%;
 }
 
 .file-selection-controls .btn-icon-only {
@@ -1153,15 +1154,17 @@
     top: 6px;
     right: 6px;
     display: flex;
-    gap: 4px;
+    gap: 3px;
     opacity: 0;
     transition: opacity 0.2s;
     z-index: 12; /* Above icon, below checkbox */
-    background: rgba(0, 0, 0, 0.7);
-    padding: 4px;
+    background: rgba(0, 0, 0, 0.8);
+    padding: 3px;
     border-radius: 4px;
     backdrop-filter: blur(6px);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    max-width: calc(100% - 12px);
+    flex-wrap: nowrap;
 }
 
 .file-item:hover .file-actions {
@@ -1172,15 +1175,20 @@
     background: rgba(0, 0, 0, 0.7);
     border: none;
     color: white;
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    max-width: 28px;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 16px;
+    font-size: 14px;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: background 0.2s;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    padding: 0;
 }
 
 .file-action-btn:hover {

@@ -1972,7 +1972,10 @@ function initNotesModal() {
     observer.observe(notesModal, { attributes: true, attributeFilter: ['style'] });
     
     window.openNotesModal = function() {
+        // Prevent fullscreen flash - set size before showing
         notesModal.style.display = 'flex';
+        // Force reflow to ensure modal is sized before visible
+        void notesModal.offsetHeight;
         // Ensure manager is ready immediately
         const manager = ensureNotesManager();
         // Force clear cache and reload when opening modal

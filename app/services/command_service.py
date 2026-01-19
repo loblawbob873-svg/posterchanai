@@ -1890,11 +1890,15 @@ Example: `yt https://youtube.com/watch?v=...`""",
                 # Get this month's events
                 now = datetime.now()
                 start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                # Calculate last day of current month
                 if now.month == 12:
-                    end_date = now.replace(year=now.year + 1, month=1, day=1)
+                    last_day = 31  # December has 31 days
+                    end_date = now.replace(day=31, hour=23, minute=59, second=59)
                 else:
-                    end_date = now.replace(month=now.month + 1, day=1)
-
+                    # Get last day of current month
+                    next_month = now.replace(month=now.month + 1, day=1)
+                    last_day = (next_month - timedelta(days=1)).day
+                    end_date = now.replace(day=last_day, hour=23, minute=59, second=59)
                 events = get_all_user_events(self.user.id, start_date, end_date, self.db)
                 events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
                 return {
@@ -2924,41 +2928,41 @@ Return ONLY valid JSON, no other text.""",
                 messages = [
                     {
                         "role": "system",
-                        "content": """Extract bill/invoice/order/receipt information from this email and return JSON with:
-- name: bill name, company name, or merchant name (e.g., "Electric Company", "Netflix", "Amazon Order", "McDonald's", "McDonald's - Canon City")
-- amount: total amount due/paid as a number (e.g., 45.99). Look for prices with $ signs, totals, or order amounts.
-- due_date: due date or transaction date if mentioned (YYYY-MM-DD format), null if not mentioned
+                        "content": """You are a bill/receipt extraction expert. Extract bill/invoice/receipt information from the provided email and return ONLY valid JSON.
 
-**Price format examples to handle:**
-- "$ 15 99" → 15.99
-- "$1599" → 15.99  
-- "$15.99" → 15.99
-- "Quantity: 1 $ 15 99" → 15.99
-- "Total: $82.18" → 82.18
+**Required JSON format:**
+{
+  "name": "company or merchant name",
+  "amount": 82.18,
+  "due_date": "2026-01-18" or null
+}
 
-**Order email examples:**
-- Amazon orders: Look for "Order #", product names, prices near "Quantity:"
-- Utility bills: Look for "Amount Due", "Total"
-- Subscriptions: Look for "Your subscription" or "Payment"
-- Restaurant receipts (McDonald's, etc.): Look for "Total" (not Subtotal), location name, date
+**Extraction rules:**
+1. **name**: Company/merchant name. For McDonald's, include location if available (e.g., "McDonald's - Canon City")
+2. **amount**: FINAL TOTAL amount as a number (float). Look for:
+   - "Total" (not "Subtotal", not "Tax Amount")
+   - "Amount Due", "Grand Total", "Order Total", "Total Amount", "Charged", "Approved Amount"
+   - Always use the amount AFTER tax if tax is shown separately
+3. **due_date**: Transaction date in YYYY-MM-DD format, or null if not found
 
-**For McDonald's receipts specifically:**
-- Name should be "McDonald's" or "McDonald's - [Location]" (e.g., "McDonald's - Canon City")
-- Look for "Total" line (not Subtotal, not Tax Amount)
-- Date format: MM/DD/YYYY (e.g., "01/18/2026" → "2026-01-18")
-- Location is usually after store name or in address line
+**McDonald's receipt email example:**
+- Subject: "Thanks for placing a mobile order!"
+- Look for "Total" or "Approved Amount" (e.g., "$82.18")
+- Look for date in format "01/18/2026 11:17:48 AM" → "2026-01-18"
+- Location: Usually in subject or body (e.g., "Canon City") → "McDonald's - Canon City"
+- Amount: "Total $82.18" or "Approved Amount: $82.18" → 82.18
 
-**Company/product name priority:**
-1. For orders: Use the product name if clearly stated
-2. For bills: Use the company name (e.g., "PG&E", "Comcast")
-3. For receipts: Use merchant name with location if available (e.g., "McDonald's - Canon City")
-4. Generic: Use sender domain or subject keywords
+**Email format handling:**
+- Emails may have HTML formatting, special characters, or whitespace
+- Look for price patterns: "$82.18", "Total $82.18", "Amount: $82.18"
+- Ignore formatting characters like zero-width spaces (\\u200c)
+- Extract the actual transaction date, not email sent date
 
-**Important:**
-- Always use the FINAL TOTAL amount, not subtotal or tax
-- For receipts with tax, use the amount after tax
-
-Return ONLY valid JSON, no other text. If this is not a bill, invoice, or order, return {"error": "not_a_bill"}.""",
+**Critical:**
+- Return ONLY the JSON object, no markdown, no code blocks, no explanations
+- If not a bill/receipt, return: {"error": "not_a_bill"}
+- Always extract the FINAL TOTAL, never subtotal or tax amount alone
+- Handle formatted email text with special characters and whitespace""",
                     },
                     {"role": "user", "content": f"Extract bill/order from this email:\n\n{email_content}"},
                 ]
