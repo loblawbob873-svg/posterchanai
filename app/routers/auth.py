@@ -921,13 +921,17 @@ async def get_avatar(
                 logger.debug(f"Successfully proxied avatar for {username} from storage server")
                 return result
             except HTTPException as e:
-                logger.error(f"HTTPException proxying avatar for {username}: {e.status_code} - {e.detail}")
-                # NO FALLBACK - if proxy fails, request fails
-                raise
+                # If storage server is unavailable (503/504), fallback to local storage
+                if e.status_code in (503, 504):
+                    logger.warning(f"Storage server unavailable ({e.status_code}), falling back to local storage for avatar: {username}")
+                    # Fall through to local file serving below
+                else:
+                    logger.error(f"HTTPException proxying avatar for {username}: {e.status_code} - {e.detail}")
+                    raise
             except Exception as e:
-                logger.error(f"Error proxying avatar get for {username}: {e}", exc_info=True)
-                # NO FALLBACK - if proxy fails, request fails
-                raise HTTPException(status_code=500, detail=f"Failed to proxy avatar request: {str(e)}")
+                # Connection errors, timeouts, etc. - fallback to local storage
+                logger.warning(f"Error proxying avatar for {username}, falling back to local storage: {e}")
+                # Fall through to local file serving below
         else:
             # Invalid URL - fail explicitly
             raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
