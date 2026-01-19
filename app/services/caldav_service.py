@@ -834,7 +834,7 @@ def get_all_user_events(
 ) -> List[CalendarEvent]:
     """Get events from all user's calendars for a date range with timeout protection. Uses storage proxy for built-in server."""
     calendars = get_user_calendars(user_id, db)
-    logger.debug(f"[Calendar] Found {len(calendars)} calendars for user {user_id}")
+    logger.info(f"[Calendar] Found {len(calendars)} calendars for user {user_id}: {[c.get('name', 'Unknown') for c in calendars]}")
     all_events = []
 
     for cal_config in calendars:
@@ -850,14 +850,17 @@ def get_all_user_events(
             try:
                 # If using built-in server, read directly from storage proxy
                 if is_builtin and password == "__USE_SESSION_AUTH__":
-                    logger.info(f"[Calendar] Using built-in CalDAV server for calendar {name}")
+                    logger.info(f"[Calendar] Using built-in CalDAV server for calendar '{name}'")
                     events = _get_events_from_builtin(user_id, start_date, end_date, name, db)
-                    logger.info(f"[Calendar] Found {len(events)} events from built-in server for calendar {name}")
+                    logger.info(f"[Calendar] Found {len(events)} events from built-in server for calendar '{name}' in range {start_date.date()} to {end_date.date()}")
                     if events:
                         all_events.extend(events)
-                        logger.info(f"[Calendar] Added {len(events)} events from {name}, total now: {len(all_events)}")
+                        logger.info(f"[Calendar] Added {len(events)} events from '{name}', total now: {len(all_events)}")
+                        # Log first few event summaries for debugging
+                        for i, event in enumerate(events[:3]):
+                            logger.info(f"[Calendar]   Event {i+1} from '{name}': {event.summary} on {event.start.date()}")
                     else:
-                        logger.info(f"[Calendar] No events found in calendar {name} for date range {start_date.date()} to {end_date.date()}")
+                        logger.info(f"[Calendar] No events found in calendar '{name}' for date range {start_date.date()} to {end_date.date()}")
                 else:
                     # External CalDAV server - use HTTP requests with timeout
                     def fetch_calendar():
@@ -866,14 +869,16 @@ def get_all_user_events(
                     events = run_with_timeout(fetch_calendar, timeout=CALDAV_OPERATION_TIMEOUT)
                     if events:
                         all_events.extend(events)
+                        logger.info(f"[Calendar] Added {len(events)} events from external calendar '{name}', total now: {len(all_events)}")
                     else:
-                        logger.warning(f"Skipping calendar {name} - fetch timed out or failed")
+                        logger.warning(f"[Calendar] Skipping calendar '{name}' - fetch timed out or failed")
             except Exception as e:
-                logger.error(f"Error fetching from calendar {name}: {e}")
+                logger.error(f"[Calendar] Error fetching from calendar '{name}': {e}", exc_info=True)
                 # Continue to next calendar instead of failing completely
 
     # Sort by start time
     all_events.sort(key=lambda e: e.start)
+    logger.info(f"[Calendar] Total events found across all calendars: {len(all_events)}")
     return all_events
 
 

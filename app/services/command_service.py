@@ -706,9 +706,15 @@ class CommandService:
                 if "error" not in result:
                     return {"type": "text", "content": f"✅ Bill added: {name} - ${float(amount):,.2f}"}
                 action = "add"
-            elif subcommand == "extract" and len(parts) >= 2:
+            elif subcommand == "extract":
                 # Extract bill from receipt text: budget extract <receipt text>
+                if len(parts) < 2:
+                    return {
+                        "type": "text",
+                        "content": "Usage: `budget extract <receipt text>`\n\nExample: `budget extract Mobile Order Receipt Hi Phillip, Thank you for placing your mobile order...`",
+                    }
                 receipt_text = " ".join(parts[1:])
+                logger.info(f"[Budget] Extracting bill from receipt text (length: {len(receipt_text)} chars)")
                 return await self._extract_bill_from_text(receipt_text)
             elif subcommand in ("pay", "paid") and len(parts) >= 2:
                 name = " ".join(parts[1:])
