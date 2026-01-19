@@ -184,6 +184,12 @@ class DAVStorageProxy:
                 else:
                     logger.error(f"[{self.dav_type.upper()}] Storage server returned {response.status_code}: {response.text[:200]}")
                     return []
+        except httpx.ConnectError as e:
+            error_msg = str(e)
+            logger.error(f"[{self.dav_type.upper()}] Cannot connect to storage server: {error_msg}")
+            logger.error(f"[{self.dav_type.upper()}] Storage server may be down. Check if it's running at {self.storage_url}")
+            # Return empty list but log the error clearly
+            return []
         except Exception as e:
             logger.error(f"[{self.dav_type.upper()}] Error listing files: {e}", exc_info=True)
             return []

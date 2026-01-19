@@ -661,6 +661,8 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                 for elem in multiget_elem.findall('.//href'):
                     hrefs.append(elem.text)
             logger.info(f"[CalDAV] Multiget request for {len(hrefs)} hrefs")
+            found_count = 0
+            not_found_count = 0
             for href in hrefs:
                 # Extract calendar name and UID from href
                 match = re.search(r'/([^/]+)/([^/]+)\.ics$', href)
@@ -696,8 +698,26 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                         "calendar-data": ical_data
                                     }
                                 })
+                                found_count += 1
+                                if found_count <= 3:
+                                    logger.info(f"[CalDAV] Multiget: Found and returning event {event_uid} from {filepath}")
+                            else:
+                                not_found_count += 1
+                                if not_found_count <= 3:
+                                    logger.warning(f"[CalDAV] Multiget: File exists but read_file returned None for {filepath}")
                         except Exception as e:
-                            logger.debug(f"Error reading {filepath}: {e}")
+                            logger.warning(f"[CalDAV] Error reading {filepath}: {e}")
+                            not_found_count += 1
+                    else:
+                        not_found_count += 1
+                        if not_found_count <= 3:
+                            logger.debug(f"[CalDAV] Multiget: File not found: {filepath} (href: {href})")
+                else:
+                    # Href doesn't match expected pattern
+                    if len(hrefs) <= 5 or hrefs.index(href) < 3:
+                        logger.debug(f"[CalDAV] Multiget: Href doesn't match pattern: {href}")
+            
+            logger.info(f"[CalDAV] Multiget summary: {found_count} found, {not_found_count} not found, returning {len(items)} items")
         
         elif sync_collection_elem is not None:
             # iPhone sync-collection request - return all events in the calendar
