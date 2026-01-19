@@ -1759,14 +1759,27 @@ def update_event_in_calendar(
                                     except Exception as e:
                                         logger.warning(f"Failed to parse RRULE '{rrule}': {e}")
                             
-                            # Save updated event using proxy to the SAME location it was found
-                            updated_ical = cal.to_ical().decode('utf-8')
-                            if not proxy.write_file(event_filepath, updated_ical):
-                                logger.error(f"[CalDAV] Failed to save updated event {event_uid} to {event_filepath}")
-                                return False
-                            
-                            logger.info(f"[CalDAV] ✓ Successfully updated event {event_uid} in built-in storage at {event_filepath}")
-                            return True
+                    # Save updated event using proxy
+                    # If event was found in root, move it to 'main' directory (iPhone syncs from subdirectories)
+                    save_filepath = event_filepath
+                    if not event_filepath.startswith('main/') and '/' not in event_filepath:
+                        # Event is in root - move it to main directory
+                        save_filepath = f"main/{event_uid}.ics"
+                        logger.info(f"[CalDAV] Moving event from root to 'main' directory: {event_filepath} -> {save_filepath}")
+                        # Delete the old file from root
+                        try:
+                            proxy.delete_file(event_filepath)
+                            logger.info(f"[CalDAV] Deleted old event file from root: {event_filepath}")
+                        except Exception as e:
+                            logger.warning(f"[CalDAV] Could not delete old event file from root: {e}")
+                    
+                    updated_ical = cal.to_ical().decode('utf-8')
+                    if not proxy.write_file(save_filepath, updated_ical):
+                        logger.error(f"[CalDAV] Failed to save updated event {event_uid} to {save_filepath}")
+                        return False
+                    
+                    logger.info(f"[CalDAV] ✓ Successfully updated event {event_uid} in built-in storage at {save_filepath}")
+                    return True
             
             if not event_found:
                 logger.warning(f"[CalDAV] Event component with UID {event_uid} not found in file {event_filepath}")

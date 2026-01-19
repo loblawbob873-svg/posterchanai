@@ -232,8 +232,7 @@ async def search_files(
                             try:
                                 from app.services.thumbnail_service import get_thumbnail_if_exists, generate_thumbnail_for_image
                                 
-                                # Check for stored thumbnail
-                                user_path = storage.get_user_path(current_user.username)
+                                # Check for stored thumbnail (user_path is already defined in outer scope)
                                 thumbnail_path = get_thumbnail_if_exists(user_path, item)
                                 if thumbnail_path and thumbnail_path.exists():
                                     # Use stored thumbnail

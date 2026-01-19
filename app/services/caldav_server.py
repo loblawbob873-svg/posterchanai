@@ -488,6 +488,10 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             # List matching events from the specified calendar directory using proxy
             file_items = proxy.list_files(subpath)
             logger.info(f"[CalDAV] REPORT query for calendar '{cal_name}' (subpath='{subpath}'): found {len(file_items)} items")
+            if time_range:
+                logger.info(f"[CalDAV] Time range filter: {time_range[0]} to {time_range[1]}")
+            else:
+                logger.info(f"[CalDAV] No time range filter - returning all events")
             
             ics_count = 0
             processed_count = 0
@@ -567,6 +571,24 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                 }
                             })
                             added_count += 1
+                            # Log first few events and any matching specific UIDs for debugging
+                            if added_count <= 3 or event_uid in ["6e9ccaba-47d4-48d1-9729-701dd0d6be60"]:
+                                try:
+                                    cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+                                    for component in cal.walk():
+                                        if component.name == "VEVENT":
+                                            summary = str(component.get('summary', ''))
+                                            dtstart = component.get('dtstart')
+                                            if dtstart:
+                                                start_val = dtstart.dt
+                                                logger.info(f"[CalDAV] Returning event #{added_count}: '{summary}' at {start_val} (UID: {event_uid})")
+                                            break
+                                except Exception as e:
+                                    logger.debug(f"[CalDAV] Could not parse event {event_uid} for logging: {e}")
+                        else:
+                            time_filtered_count += 1
+                            if time_filtered_count <= 3:
+                                logger.debug(f"[CalDAV] Event {name} filtered out by time range")
                             if added_count <= 5 or added_count % 100 == 0:
                                 logger.info(f"[CalDAV] Added event {added_count}: {event_uid}")
                         else:
