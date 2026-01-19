@@ -61,6 +61,8 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
     for item in multistatus_items:
         href = html.escape(item.get('href', ''))
         props = item.get('props', {})
+        status = item.get('status', 200)  # Default to 200 OK if not specified
+        
         xml += f'    <D:response>\n        <D:href>{href}</D:href>\n        <D:propstat>\n            <D:prop>\n'
         for prop_name, prop_value in props.items():
             if prop_name == 'resourcetype':
@@ -122,7 +124,12 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
                 xml += '                    <D:privilege><D:bind/></D:privilege>\n'
                 xml += '                    <D:privilege><D:unbind/></D:privilege>\n'
                 xml += '                </D:current-user-privilege-set>\n'
-        xml += '            </D:prop>\n            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
+        
+        # Add status code based on item status
+        if status == 404:
+            xml += '            </D:prop>\n            <D:status>HTTP/1.1 404 Not Found</D:status>\n        </D:propstat>\n    </D:response>\n'
+        else:
+            xml += '            </D:prop>\n            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
     xml += '</D:multistatus>'
     return xml
 
@@ -661,8 +668,15 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                 for elem in multiget_elem.findall('.//href'):
                     hrefs.append(elem.text)
             logger.info(f"[CalDAV] Multiget request for {len(hrefs)} hrefs")
+            # Log first few hrefs to see what iPhone is requesting
+            if hrefs:
+                logger.info(f"[CalDAV] Multiget: First 5 hrefs requested: {hrefs[:5]}")
+                logger.info(f"[CalDAV] Multiget: Last 5 hrefs requested: {hrefs[-5:]}")
             found_count = 0
             not_found_count = 0
+            # Cache file listing to avoid repeated calls
+            file_listing_cache = {}
+            
             for href in hrefs:
                 # Extract calendar name and UID from href
                 match = re.search(r'/([^/]+)/([^/]+)\.ics$', href)
@@ -681,11 +695,13 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                         try:
                             ical_data = proxy.read_file(filepath)
                             if ical_data:
-                                # Get etag from file listing
+                                # Get etag from cached file listing (more efficient)
                                 href_subpath = "" if href_cal_name == 'calendar' else href_cal_name
-                                file_items = proxy.list_files(href_subpath)
+                                if href_subpath not in file_listing_cache:
+                                    file_listing_cache[href_subpath] = proxy.list_files(href_subpath)
+                                
                                 etag = "0"
-                                for item in file_items:
+                                for item in file_listing_cache[href_subpath]:
                                     if item.get('name') == f"{event_uid}.ics":
                                         etag = str(item.get('modified', item.get('mtime', 0)))
                                         break
@@ -696,28 +712,56 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                         "getcontenttype": "text/calendar; charset=utf-8",
                                         "getetag": etag,
                                         "calendar-data": ical_data
-                                    }
+                                    },
+                                    "status": 200  # Explicitly mark as found
                                 })
                                 found_count += 1
                                 if found_count <= 3:
                                     logger.info(f"[CalDAV] Multiget: Found and returning event {event_uid} from {filepath}")
                             else:
+                                # File exists but couldn't read - return 404 so iPhone removes it
+                                items.append({
+                                    "href": href,
+                                    "props": {},
+                                    "status": 404
+                                })
                                 not_found_count += 1
                                 if not_found_count <= 3:
-                                    logger.warning(f"[CalDAV] Multiget: File exists but read_file returned None for {filepath}")
+                                    logger.warning(f"[CalDAV] Multiget: File exists but read_file returned None for {filepath}, returning 404")
                         except Exception as e:
                             logger.warning(f"[CalDAV] Error reading {filepath}: {e}")
+                            # Return 404 for errors so iPhone knows to remove it
+                            items.append({
+                                "href": href,
+                                "props": {},
+                                "status": 404
+                            })
                             not_found_count += 1
                     else:
+                        # File doesn't exist - return 404 so iPhone removes it from cache
+                        items.append({
+                            "href": href,
+                            "props": {},
+                            "status": 404
+                        })
                         not_found_count += 1
                         if not_found_count <= 3:
-                            logger.debug(f"[CalDAV] Multiget: File not found: {filepath} (href: {href})")
+                            logger.debug(f"[CalDAV] Multiget: File not found: {filepath} (href: {href}), returning 404")
                 else:
-                    # Href doesn't match expected pattern
+                    # Href doesn't match expected pattern - return 404
+                    items.append({
+                        "href": href,
+                        "props": {},
+                        "status": 404
+                    })
+                    not_found_count += 1
                     if len(hrefs) <= 5 or hrefs.index(href) < 3:
-                        logger.debug(f"[CalDAV] Multiget: Href doesn't match pattern: {href}")
+                        logger.debug(f"[CalDAV] Multiget: Href doesn't match pattern: {href}, returning 404")
             
-            logger.info(f"[CalDAV] Multiget summary: {found_count} found, {not_found_count} not found, returning {len(items)} items")
+            total_items = len(items)
+            items_with_data = len([i for i in items if i.get('props', {}).get('calendar-data')])
+            items_404 = len([i for i in items if i.get('status') == 404])
+            logger.info(f"[CalDAV] Multiget summary: {found_count} found, {not_found_count} not found, returning {total_items} total items ({items_with_data} with calendar-data, {items_404} with 404 status)")
         
         elif sync_collection_elem is not None:
             # iPhone sync-collection request - return all events in the calendar
