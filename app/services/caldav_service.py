@@ -99,9 +99,10 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
         
         all_events = []
         
-        # If calendar_name is a specific calendar directory (not "Built-in Calendar" or "Calendar"),
+        # If calendar_name is a specific calendar directory (not None, "Built-in Calendar", or "Calendar"),
         # only search that specific directory
-        if calendar_name and calendar_name not in ("Built-in Calendar", "Calendar"):
+        # When calendar_name is None, we want to search ALL calendars
+        if calendar_name and calendar_name not in ("Built-in Calendar", "Calendar", None):
             # This is a specific calendar subdirectory
             logger.info(f"[CalDAV] Getting events from specific calendar directory: '{calendar_name}'")
             cal_events = _get_events_from_calendar_dir(proxy, calendar_name, start_date, end_date, calendar_name)
@@ -110,6 +111,7 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
         else:
             # Search all calendar subdirectories and root
             # Built-in server may have multiple calendars (main, wwwcanoncityschoolsorg, etc.)
+            # This happens when calendar_name is None, "Built-in Calendar", or "Calendar"
             logger.info(f"[CalDAV] Getting events from all calendars (calendar_name={calendar_name})")
             root_items = proxy.list_files("")
             logger.info(f"[CalDAV] Root items from storage proxy: {len(root_items)} items")
@@ -129,16 +131,29 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
             
             # Search all calendar subdirectories
             logger.info(f"[CalDAV] Searching {len(calendar_dirs)} calendar directories: {calendar_dirs}")
-            for cal_dir in calendar_dirs:
-                logger.info(f"[CalDAV] Processing calendar directory: {cal_dir}")
-                cal_events = _get_events_from_calendar_dir(proxy, cal_dir, start_date, end_date, cal_dir)
-                logger.info(f"[CalDAV] Found {len(cal_events)} events in calendar directory '{cal_dir}'")
-                all_events.extend(cal_events)
+            if calendar_dirs:
+                for cal_dir in calendar_dirs:
+                    logger.info(f"[CalDAV] Processing calendar directory: {cal_dir}")
+                    try:
+                        cal_events = _get_events_from_calendar_dir(proxy, cal_dir, start_date, end_date, cal_dir)
+                        logger.info(f"[CalDAV] Found {len(cal_events)} events in calendar directory '{cal_dir}'")
+                        if cal_events:
+                            all_events.extend(cal_events)
+                            # Log sample events for debugging
+                            for i, event in enumerate(cal_events[:3]):
+                                logger.info(f"[CalDAV]   Sample event {i+1} from '{cal_dir}': {event.summary} on {event.start.date()}")
+                    except Exception as e:
+                        logger.error(f"[CalDAV] Error processing calendar directory '{cal_dir}': {e}", exc_info=True)
+            else:
+                logger.warning(f"[CalDAV] No calendar directories found - checking root for legacy .ics files")
             
             # Also check root for legacy .ics files
-            root_events = _get_events_from_calendar_dir(proxy, "", start_date, end_date, "Calendar")
-            all_events.extend(root_events)
-            logger.info(f"[CalDAV] Found {len(root_events)} events in root (legacy)")
+            try:
+                root_events = _get_events_from_calendar_dir(proxy, "", start_date, end_date, "Calendar")
+                all_events.extend(root_events)
+                logger.info(f"[CalDAV] Found {len(root_events)} events in root (legacy)")
+            except Exception as e:
+                logger.error(f"[CalDAV] Error checking root for legacy events: {e}", exc_info=True)
         
         logger.debug(f"[CalDAV] Total events found: {len(all_events)}")
         return all_events
@@ -157,8 +172,15 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
     
     logger.info(f"[CalDAV] _get_events_from_calendar_dir: dir='{cal_dir}', date_range={start_date.date()} to {end_date.date()}")
     
-    file_items = proxy.list_files(cal_dir)
-    logger.info(f"[CalDAV] Found {len(file_items)} items in directory '{cal_dir}'")
+    try:
+        file_items = proxy.list_files(cal_dir)
+        logger.info(f"[CalDAV] Found {len(file_items)} items in directory '{cal_dir}'")
+        if not file_items:
+            logger.warning(f"[CalDAV] No items found in directory '{cal_dir}' - directory may be empty or not exist")
+            return []
+    except Exception as e:
+        logger.error(f"[CalDAV] Error listing files in '{cal_dir}': {e}", exc_info=True)
+        return []
     
     events = []
     ics_count = 0
@@ -172,8 +194,10 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
     for item in file_items:
         name = item.get('name', '')
         if not name.endswith('.ics'):
+            logger.debug(f"[CalDAV] Skipping non-ics file: {name}")
             continue
         ics_count += 1
+        logger.debug(f"[CalDAV] Processing .ics file: {name}")
         
         try:
             # Read .ics file using proxy
@@ -229,20 +253,29 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                         # For non-recurring events, check if event overlaps with date range
                         # For recurring events, we'll expand them later so only skip if completely impossible
                         if not rrule_prop:
-                            # Non-recurring: Check if event starts after range
+                            # Non-recurring: Check if event starts after range (event is completely after)
                             if event_start > end_date:
+                                logger.debug(f"[CalDAV] Skipping event '{component.get('summary', 'No Title')}' - starts after range ({event_start.date()} > {end_date.date()})")
                                 continue
                             
-                            # Non-recurring: Check if event ends before range
+                            # Non-recurring: Check if event ends before range (event is completely before)
                             if event_end is not None and event_end < start_date:
+                                logger.debug(f"[CalDAV] Skipping event '{component.get('summary', 'No Title')}' - ends before range ({event_end.date()} < {start_date.date()})")
                                 continue
                             
-                            # If event starts before range, check if it should be included
+                            # If event starts before range but overlaps, include it
+                            # For events that start before range, we include them if they overlap
                             if event_start < start_date:
                                 if event_end is None:
                                     # Event has no end - include if it started within last 7 days
                                     if (start_date - event_start) > timedelta(days=7):
+                                        logger.debug(f"[CalDAV] Skipping event '{component.get('summary', 'No Title')}' - started too long ago ({event_start.date()})")
                                         continue
+                                elif event_end < start_date:
+                                    # Event ended before range - already handled above, but double-check
+                                    logger.debug(f"[CalDAV] Skipping event '{component.get('summary', 'No Title')}' - ended before range")
+                                    continue
+                                # Otherwise, event overlaps (starts before but ends during/after range) - include it
                         else:
                             # Recurring event: only skip if it DEFINITELY can't have occurrences
                             # Check for UNTIL or COUNT limits that would exclude this range
@@ -1028,9 +1061,9 @@ def get_events_for_date_range(
                             location=str(vevent.location.value) if hasattr(vevent, 'location') else None,
                             calendar_name=calendar_name
                         ))
-                    except Exception as e:
-                        logger.debug(f"Error parsing event: {e}")
-                        continue
+                except Exception as e:
+                    logger.debug(f"Error parsing event: {e}")
+                    continue
             except Exception as e:
                 logger.debug(f"Error fetching events from calendar: {e}")
                 continue
@@ -1038,6 +1071,7 @@ def get_events_for_date_range(
     except Exception as e:
         logger.error(f"Failed to get events from {url}: {e}")
 
+    logger.info(f"[CalDAV] get_events_for_date_range: Found {len(events)} events from {url}")
     return events
 
 
