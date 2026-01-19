@@ -282,8 +282,9 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                 rule = rrulestr(rrule_str, dtstart=event_start)
                                 
                                 # Get occurrences within the date range
-                                # Limit to 100 occurrences to prevent infinite loops
-                                occurrences = list(rule.between(start_date, end_date, inc=True))[:100]
+                                # Increase limit to 1000 to handle monthly/yearly recurring events over long periods
+                                # This ensures we get all occurrences for cal month and cal week commands
+                                occurrences = list(rule.between(start_date, end_date, inc=True))[:1000]
                                 
                                 for occurrence_start in occurrences:
                                     occurrence_end = occurrence_start + event_duration if event_duration else None
@@ -515,10 +516,19 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
                     else:
                         vcard.remove(vcard.adr)
                 
-                # Add new address
-                adr_prop = vcard.add('adr')
-                adr_prop.value = new_adr
-                adr_prop.type_param = 'HOME'
+                # Add new address - after removing all, add() should create a single property
+                vcard.add('adr')
+                # Access the newly added property (should be single, not list, since we removed all)
+                if hasattr(vcard, 'adr'):
+                    if isinstance(vcard.adr, list):
+                        # If still a list (shouldn't happen after removal), use first element
+                        adr_prop = vcard.adr[0] if vcard.adr else None
+                    else:
+                        adr_prop = vcard.adr
+                    
+                    if adr_prop:
+                        adr_prop.value = new_adr
+                        adr_prop.type_param = 'HOME'
             else:
                 # Remove address if empty
                 if hasattr(vcard, 'adr'):
@@ -1054,7 +1064,9 @@ def get_all_user_events(
                 # If using built-in server, read directly from storage proxy
                 if is_builtin and password == "__USE_SESSION_AUTH__":
                     logger.info(f"[Calendar] Using built-in CalDAV server for calendar '{name}'")
-                    events = _get_events_from_builtin(user_id, start_date, end_date, name, db)
+                    # For built-in calendars, always search all calendar directories to get all events
+                    # The calendar name in config is just for display - we want all events from all calendars
+                    events = _get_events_from_builtin(user_id, start_date, end_date, None, db)
                     logger.info(f"[Calendar] Found {len(events)} events from built-in server for calendar '{name}' in range {start_date.date()} to {end_date.date()}")
                     if events:
                         all_events.extend(events)
@@ -2307,10 +2319,19 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                                 else:
                                     vcard.remove(vcard.adr)
                             
-                            # Add new address
-                            adr_prop = vcard.add('adr')
-                            adr_prop.value = new_adr
-                            adr_prop.type_param = 'HOME'
+                            # Add new address - after removing all, add() should create a single property
+                            vcard.add('adr')
+                            # Access the newly added property (should be single, not list, since we removed all)
+                            if hasattr(vcard, 'adr'):
+                                if isinstance(vcard.adr, list):
+                                    # If still a list (shouldn't happen after removal), use first element
+                                    adr_prop = vcard.adr[0] if vcard.adr else None
+                                else:
+                                    adr_prop = vcard.adr
+                                
+                                if adr_prop:
+                                    adr_prop.value = new_adr
+                                    adr_prop.type_param = 'HOME'
                         elif hasattr(vcard, 'adr'):
                             # Remove address if empty - handle list case
                             if isinstance(vcard.adr, list):
@@ -2665,7 +2686,7 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
 
     if not events:
         if cyberpunk:
-            return "📅 No events scheduled.\n\n*Tip: Check `journalctl -u posterchanai -f` for calendar sync logs.*\n\n[➕ Add Event](cmd:cal add )"
+            return "📅 No events scheduled.\n\n[➕ Add Event](cmd:cal add )"
         return "No events found. [Add Event](cmd:cal add )"
 
     lines = []

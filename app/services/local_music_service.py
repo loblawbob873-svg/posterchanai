@@ -350,14 +350,18 @@ def search_music_files(directory: str, query: str, recursive: bool = True, limit
             # Get all items from storage proxy
             all_items = scan_music_directory(directory, recursive, db=db, user_id=user_id)
             
-            # Filter items matching query
+            # Filter items matching query (check both name AND path)
             query_lower = query.lower()
             results = []
             for item in all_items:
                 if len(results) >= limit:
                     break
-                if item['type'] == 'file' and query_lower in item['name'].lower():
-                    results.append(item)
+                if item['type'] == 'file':
+                    # Check name and path for query match
+                    name_match = query_lower in item['name'].lower()
+                    path_match = query_lower in item.get('path', '').lower()
+                    if name_match or path_match:
+                        results.append(item)
             
             logger.info(f"[MUSIC SEARCH PROXY] Found {len(results)} matches")
             return results
@@ -463,7 +467,7 @@ def format_music_browse(items: List[Dict[str, any]], current_path: str = '') -> 
 
 
 def format_music_tracks(tracks: List[Dict[str, any]]) -> str:
-    """Format music track list for display."""
+    """Format music track list for display with play buttons."""
     if not tracks:
         return "🎵 No tracks found matching your search."
     
@@ -472,7 +476,8 @@ def format_music_tracks(tracks: List[Dict[str, any]]) -> str:
         size_mb = track.get('size', 0) / (1024 * 1024)
         ext = track.get('extension', '').upper().replace('.', '')
         # Show relative path for context
-        output.append(f"{idx}. {track['name']}")
+        play_btn = f"[▶️ Play](cmd:music play {idx})"
+        output.append(f"**{idx}.** {track['name']} {play_btn}")
         output.append(f"   📂 {track['path']} [{ext}, {size_mb:.1f} MB]")
     
     output.append(f"\n💡 Found {len(tracks)} tracks")

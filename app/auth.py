@@ -107,11 +107,21 @@ def get_current_user(
             if user:
                 # Now update last used timestamp (after we've already fetched user)
                 try:
+                    # Try to refresh the api_key object to ensure it's in a valid state
+                    # This helps with SQLite session issues, but if refresh fails, try update anyway
+                    try:
+                        db.refresh(api_key)
+                    except Exception:
+                        # If refresh fails, object might still be valid - continue with update
+                        pass
                     api_key.last_used_at = datetime.now(timezone.utc)
                     db.commit()
                 except Exception as e:
                     # If commit fails, rollback but we already have the user
-                    db.rollback()
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass  # Ignore rollback errors
                     logger.warning(f"Failed to update API key last_used_at: {e}")
                 
                 return user

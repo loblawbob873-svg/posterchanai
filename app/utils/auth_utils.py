@@ -42,8 +42,8 @@ def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> t
             user_id = api_key.user_id
             return api_key, user_id
         return None, None
-    except Exception as e:
-        # Handle SQLite session errors
+    except (IndexError, Exception) as e:
+        # Handle SQLite session errors including tuple index out of range
         logger.warning(f"Error querying API key: {e}")
         if max_retries > 0:
             try:
@@ -85,6 +85,14 @@ def get_user_from_api_key(db: Session, user_id: int) -> Optional[User]:
     try:
         user = db.query(User).filter(User.id == user_id).first()
         return user
-    except Exception as e:
-        logger.error(f"Error accessing user for API key: {e}", exc_info=True)
-        return None
+    except (IndexError, Exception) as e:
+        # Handle tuple index out of range and other SQLite errors
+        logger.warning(f"Error accessing user for API key (attempt 1): {e}")
+        try:
+            # Rollback and retry
+            db.rollback()
+            user = db.query(User).filter(User.id == user_id).first()
+            return user
+        except Exception as retry_e:
+            logger.error(f"Error accessing user for API key (retry failed): {retry_e}")
+            return None

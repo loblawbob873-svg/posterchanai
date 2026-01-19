@@ -151,6 +151,31 @@ async def search_files(
     current_user: User = Depends(get_current_user)
 ):
     """Search for files by name or path. Returns matching files with metadata."""
+    # Check if storage server is configured - proxy search if so
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            try:
+                import httpx
+                storage_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+                headers = {"X-Username": current_user.username}
+                if storage_token and storage_token.value:
+                    headers["Authorization"] = f"Bearer {storage_token.value}"
+                
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.get(
+                        f"{url.rstrip('/')}/api/files/search",
+                        params={"query": query},
+                        headers=headers
+                    )
+                    if response.status_code == 200:
+                        return response.json()
+                    else:
+                        logger.error(f"Storage server search failed: {response.status_code}")
+            except Exception as e:
+                logger.error(f"Failed to proxy search to storage server: {e}")
+    
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
@@ -451,16 +476,14 @@ async def get_all_images(
                     # Get modification time for sorting
                     # Use mtime (modification time) which:
                     # - Is preserved by rsync when using -t or -a flags
-                    # - Should match EXIF date after running the storage scan
+                    # - Should match EXIF date after running the storage scan (/api/admin/storage/rescan)
                     # - Represents when the photo was taken, not when it was copied
                     # Only fall back to ctime if mtime is invalid
-                    if stat.st_mtime > 0:
-                        modified_time = stat.st_mtime
-                    elif stat.st_ctime > 0:
-                        modified_time = stat.st_ctime
-                    else:
-                        logger.warning(f"Invalid timestamp for {item}: mtime={stat.st_mtime}, ctime={stat.st_ctime}, using current time")
-                        modified_time = time.time()
+                    modified_time = stat.st_mtime if stat.st_mtime > 0 else (stat.st_ctime if stat.st_ctime > 0 else time.time())
+                    
+                    # Note: For accurate sorting by photo date, run /api/admin/storage/rescan
+                    # which restores file timestamps from EXIF metadata. Without this, files
+                    # may be sorted by copy/upload date rather than when the photo was taken.
                     
                     from app.services.thumbnail_service import is_image_file, is_video_file
                     
