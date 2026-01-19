@@ -1879,7 +1879,8 @@ Example: `yt https://youtube.com/watch?v=...`""",
             elif subcommand in ("week", ""):
                 # Get this week's events
                 today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                week_end = today + timedelta(days=7)
+                # week_end should be end of day 7 (23:59:59), not start of day 8 (00:00:00)
+                week_end = today + timedelta(days=7, hours=23, minutes=59, seconds=59)
                 events = get_all_user_events(self.user.id, today, week_end, self.db)
                 events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
 
