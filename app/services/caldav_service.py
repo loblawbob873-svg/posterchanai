@@ -794,6 +794,10 @@ class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
 
 def create_caldav_client(url: str, username: str, password: str) -> caldav.DAVClient:
     """Create a CalDAV client with timeout configured."""
+    # Don't create caldav client for built-in server - it should use direct storage access
+    if password == "__USE_SESSION_AUTH__" and 'localhost' in url:
+        raise ValueError(f"Cannot create caldav.DAVClient for built-in server. Use _get_events_from_builtin or storage proxy instead.")
+    
     # Create caldav client with timeout via requests session
     try:
         # Create a custom session with timeout
@@ -1131,6 +1135,13 @@ def get_events_for_date_range(
     """Get events from a CalDAV calendar for a date range."""
     events = []
 
+    # Check if this is a built-in calendar - if so, don't use caldav library
+    if password == "__USE_SESSION_AUTH__" and 'localhost' in url:
+        logger.warning(f"[CalDAV] get_events_for_date_range called for built-in calendar - this should use _get_events_from_builtin instead!")
+        logger.warning(f"[CalDAV] URL: {url}, calendar_name: {calendar_name}")
+        # Return empty list - caller should use _get_events_from_builtin instead
+        return []
+
     # Store timezone-aware versions for filtering
     start_date_aware = start_date if start_date.tzinfo else start_date.replace(tzinfo=timezone.utc)
     end_date_aware = end_date if end_date.tzinfo else end_date.replace(tzinfo=timezone.utc)
@@ -1296,6 +1307,12 @@ def get_all_user_events(
                         logger.debug(f"[Calendar] Skipping duplicate built-in calendar config '{name}' (already fetched)")
                 else:
                     # External CalDAV server - use HTTP requests with timeout
+                    # Double-check this isn't a built-in calendar that slipped through
+                    if password == "__USE_SESSION_AUTH__":
+                        logger.error(f"[Calendar] ERROR: Built-in calendar '{name}' is being processed as external! This should not happen.")
+                        logger.error(f"[Calendar] URL: {url}, is_builtin: {is_builtin}, password: {password[:30]}...")
+                        continue  # Skip this calendar to avoid caldav library errors
+                    
                     def fetch_calendar():
                         return get_events_for_date_range(url, username, password, start_date, end_date, name)
 
