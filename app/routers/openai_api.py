@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 from app.database import get_db
 from app.models import Setting, APIKey, User
+from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
 from app.schemas import (
     ChatCompletionRequest,
     ChatCompletionResponse,

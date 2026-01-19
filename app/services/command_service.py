@@ -3,6 +3,7 @@ import logging
 import re
 import threading
 from typing import TYPE_CHECKING, Callable, Optional, Tuple
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 
@@ -48,6 +49,7 @@ from app.services.mail_service import (
 )
 from app.services.nyaa_service import NyaaResult, format_nyaa_results, search_nyaa
 from app.services.plugin_service import PluginService
+from app.utils.date_utils import get_month_end, get_month_start, get_next_month
 from app.services.search_service import SearchService
 from app.services.torrent_service import (
     TorrentResult,
@@ -775,7 +777,7 @@ class CommandService:
         except Exception as e:
             return {"type": "text", "content": f"Firewall error: {str(e)}"}
 
-    async def _extract_bill_from_text(self, receipt_text: str) -> dict:
+    async def _extract_bill_from_text(self, receipt_text: str) -> Optional[dict]:
         """Extract bill information from receipt text and add to budget."""
         import json
         import re
@@ -1888,12 +1890,9 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
             elif subcommand == "month":
                 # Get this month's events
-                import calendar
                 now = datetime.now()
-                start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                # Calculate last day of current month using calendar module
-                last_day = calendar.monthrange(now.year, now.month)[1]
-                end_date = now.replace(day=last_day, hour=23, minute=59, second=59)
+                start_date = get_month_start(now.year, now.month)
+                end_date = get_month_end(now.year, now.month)
                 events = get_all_user_events(self.user.id, start_date, end_date, self.db)
                 events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
                 return {
@@ -1903,19 +1902,10 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
             elif subcommand == "nextmonth":
                 # Get next month's events
-                import calendar
                 now = datetime.now()
-                if now.month == 12:
-                    next_year = now.year + 1
-                    next_month = 1
-                else:
-                    next_year = now.year
-                    next_month = now.month + 1
-                
-                start_date = now.replace(year=next_year, month=next_month, day=1, hour=0, minute=0, second=0, microsecond=0)
-                # Calculate last day of next month using calendar module
-                last_day = calendar.monthrange(next_year, next_month)[1]
-                end_date = start_date.replace(day=last_day, hour=23, minute=59, second=59)
+                next_year, next_month = get_next_month(now.year, now.month)
+                start_date = get_month_start(next_year, next_month)
+                end_date = get_month_end(next_year, next_month)
                 events = get_all_user_events(self.user.id, start_date, end_date, self.db)
                 events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
                 return {

@@ -3,13 +3,17 @@ from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
 import secrets
+import logging
 from fastapi import Depends, HTTPException, status, Request, WebSocket
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, APIKey
+from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
 import os
 import warnings
+
+logger = logging.getLogger(__name__)
 
 # Get or generate a persistent secret key
 def _get_secret_key() -> str:
@@ -93,24 +97,7 @@ def get_current_user(
 
     # Check if this is an API key (starts with sk-)
     if token.startswith("sk-"):
-        try:
-            api_key = db.query(APIKey).filter(
-                APIKey.key == token,
-                APIKey.is_active == True
-            ).first()
-        except Exception as e:
-            # Handle SQLite session errors
-            logger.warning(f"Error querying API key: {e}")
-            try:
-                db.rollback()
-                # Retry once with a fresh query
-                api_key = db.query(APIKey).filter(
-                    APIKey.key == token,
-                    APIKey.is_active == True
-                ).first()
-            except Exception as retry_error:
-                logger.error(f"Error retrying API key query: {retry_error}")
-                api_key = None
+        api_key = query_api_key_with_retry(db, token)
         
         if api_key:
             # Update last used timestamp
@@ -122,16 +109,10 @@ def get_current_user(
                 db.rollback()
                 logger.warning(f"Failed to update API key last_used_at: {e}")
             
-            # Access user_id directly from the APIKey object to avoid lazy loading issues
-            # This prevents SQLite session errors when accessing the relationship
-            try:
-                user_id = api_key.user_id
-                user = db.query(User).filter(User.id == user_id).first()
-                if user:
-                    return user
-            except Exception as e:
-                logger.error(f"Error accessing user for API key: {e}", exc_info=True)
-                # Fall through to raise Invalid API key exception
+            # Get user from API key with proper error handling
+            user = get_user_from_api_key(db, api_key)
+            if user:
+                return user
         
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
