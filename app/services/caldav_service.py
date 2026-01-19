@@ -91,8 +91,9 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
         # only search that specific directory
         if calendar_name and calendar_name not in ("Built-in Calendar", "Calendar"):
             # This is a specific calendar subdirectory
-            logger.debug(f"[CalDAV] Getting events from specific calendar: {calendar_name}")
+            logger.info(f"[CalDAV] Getting events from specific calendar directory: '{calendar_name}'")
             cal_events = _get_events_from_calendar_dir(proxy, calendar_name, start_date, end_date, calendar_name)
+            logger.info(f"[CalDAV] Found {len(cal_events)} events in directory '{calendar_name}'")
             all_events.extend(cal_events)
         else:
             # Search all calendar subdirectories and root
@@ -105,10 +106,11 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
                     calendar_dirs.append(item.get('name'))
             
             # Search all calendar subdirectories
+            logger.info(f"[CalDAV] Searching {len(calendar_dirs)} calendar directories: {calendar_dirs}")
             for cal_dir in calendar_dirs:
                 cal_events = _get_events_from_calendar_dir(proxy, cal_dir, start_date, end_date, cal_dir)
+                logger.info(f"[CalDAV] Found {len(cal_events)} events in calendar directory '{cal_dir}'")
                 all_events.extend(cal_events)
-                logger.debug(f"[CalDAV] Found {len(cal_events)} events in calendar {cal_dir}")
             
             # Also check root for legacy .ics files
             root_events = _get_events_from_calendar_dir(proxy, "", start_date, end_date, "Calendar")
@@ -880,7 +882,26 @@ def get_all_user_events(
 
     # Sort by start time
     all_events.sort(key=lambda e: e.start)
+    
+    # Log summary of all events found
+    logger.info(f"[Calendar] ===== FINAL SUMMARY =====")
+    logger.info(f"[Calendar] Total calendars processed: {len(calendars)}")
     logger.info(f"[Calendar] Total events found across all calendars: {len(all_events)}")
+    if all_events:
+        # Group events by calendar for summary
+        from collections import defaultdict
+        events_by_calendar = defaultdict(list)
+        for event in all_events:
+            events_by_calendar[event.calendar_name].append(event)
+        for cal_name, cal_events in events_by_calendar.items():
+            logger.info(f"[Calendar]   - {cal_name}: {len(cal_events)} events")
+        # Log all event summaries
+        for event in all_events:
+            logger.info(f"[Calendar]   Event: {event.summary} on {event.start.date()} from calendar '{event.calendar_name}'")
+    else:
+        logger.warning(f"[Calendar] WARNING: No events found in any calendar for date range {start_date.date()} to {end_date.date()}")
+    logger.info(f"[Calendar] =========================")
+    
     return all_events
 
 
