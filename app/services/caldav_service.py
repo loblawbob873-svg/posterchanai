@@ -395,15 +395,36 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
                     city = state = postal = country = ''
                 
                 adr_value = ['', '', street, city, state, postal, country]
+                
+                # Handle ADR field - it can be a single object or a list
                 if hasattr(vcard, 'adr'):
-                    vcard.adr.value = adr_value
+                    # Check if adr is a list (multiple addresses) or single object
+                    if isinstance(vcard.adr, list):
+                        # If list, update the first one or add new
+                        if len(vcard.adr) > 0:
+                            vcard.adr[0].value = adr_value
+                        else:
+                            adr_obj = vcard.add('adr')
+                            adr_obj.value = adr_value
+                            adr_obj.type_param = 'HOME'
+                    else:
+                        # Single ADR object
+                        vcard.adr.value = adr_value
                 else:
-                    vcard.add('adr')
-                    vcard.adr.value = adr_value
-                    vcard.adr.type_param = 'HOME'
-            elif hasattr(vcard, 'adr'):
+                    # No ADR field exists, add one
+                    adr_obj = vcard.add('adr')
+                    adr_obj.value = adr_value
+                    adr_obj.type_param = 'HOME'
+            else:
                 # Remove address if empty
-                del vcard.adr
+                if hasattr(vcard, 'adr'):
+                    if isinstance(vcard.adr, list):
+                        # Remove all addresses if list
+                        for adr in list(vcard.adr):
+                            vcard.remove(adr)
+                    else:
+                        # Remove single address
+                        vcard.remove(vcard.adr)
         
         if 'note' in updates:
             if hasattr(vcard, 'note'):
@@ -1513,22 +1534,31 @@ def search_contacts(
                 # Extract address from ADR field (vCard format: ;;;street;city;state;postal;country)
                 address = None
                 if hasattr(vcard, 'adr'):
-                    adr = vcard.adr.value
-                    if isinstance(adr, list) and len(adr) >= 4:
-                        # ADR format: [post_office_box, extended, street, city, state, postal_code, country]
-                        address_parts = []
-                        if len(adr) > 2 and adr[2]:  # street
-                            address_parts.append(str(adr[2]))
-                        if len(adr) > 3 and adr[3]:  # city
-                            address_parts.append(str(adr[3]))
-                        if len(adr) > 4 and adr[4]:  # state
-                            address_parts.append(str(adr[4]))
-                        if len(adr) > 5 and adr[5]:  # postal_code
-                            address_parts.append(str(adr[5]))
-                        if len(adr) > 6 and adr[6]:  # country
-                            address_parts.append(str(adr[6]))
-                        if address_parts:
-                            address = ', '.join(address_parts)
+                    # Handle both single ADR object and list of ADR objects
+                    adr_objects = []
+                    if isinstance(vcard.adr, list):
+                        adr_objects = vcard.adr
+                    else:
+                        adr_objects = [vcard.adr]
+                    
+                    # Use the first ADR object
+                    if adr_objects:
+                        adr = adr_objects[0].value
+                        if isinstance(adr, list) and len(adr) >= 4:
+                            # ADR format: [post_office_box, extended, street, city, state, postal_code, country]
+                            address_parts = []
+                            if len(adr) > 2 and adr[2]:  # street
+                                address_parts.append(str(adr[2]))
+                            if len(adr) > 3 and adr[3]:  # city
+                                address_parts.append(str(adr[3]))
+                            if len(adr) > 4 and adr[4]:  # state
+                                address_parts.append(str(adr[4]))
+                            if len(adr) > 5 and adr[5]:  # postal_code
+                                address_parts.append(str(adr[5]))
+                            if len(adr) > 6 and adr[6]:  # country
+                                address_parts.append(str(adr[6]))
+                            if address_parts:
+                                address = ', '.join(address_parts)
 
                 note = None
                 if hasattr(vcard, 'note'):
