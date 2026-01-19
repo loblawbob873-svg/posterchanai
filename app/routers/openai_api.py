@@ -249,8 +249,14 @@ def verify_api_key(
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to update API key last_used_at: {e}")
         # Query user directly since APIKey doesn't have a relationship
-        user = db.query(User).filter(User.id == api_key.user_id).first()
-        return user
+        # Access user_id directly to avoid lazy loading issues
+        try:
+            user_id = api_key.user_id
+            user = db.query(User).filter(User.id == user_id).first()
+            return user
+        except Exception as e:
+            logger.error(f"Error accessing user for API key: {e}", exc_info=True)
+            raise HTTPException(status_code=401, detail="Invalid API key")
 
     # If global key is not set and user key not found, reject
     if not setting or not setting.value:

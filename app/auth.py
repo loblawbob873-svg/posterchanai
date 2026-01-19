@@ -120,15 +120,18 @@ def get_current_user(
             except Exception as e:
                 # If commit fails, rollback and continue without updating timestamp
                 db.rollback()
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f"Failed to update API key last_used_at: {e}")
             
             # Access user_id directly from the APIKey object to avoid lazy loading issues
-            user_id = api_key.user_id
-            user = db.query(User).filter(User.id == user_id).first()
-            if user:
-                return user
+            # This prevents SQLite session errors when accessing the relationship
+            try:
+                user_id = api_key.user_id
+                user = db.query(User).filter(User.id == user_id).first()
+                if user:
+                    return user
+            except Exception as e:
+                logger.error(f"Error accessing user for API key: {e}", exc_info=True)
+                # Fall through to raise Invalid API key exception
         
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

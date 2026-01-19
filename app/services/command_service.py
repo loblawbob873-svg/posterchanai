@@ -1888,17 +1888,12 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
             elif subcommand == "month":
                 # Get this month's events
+                import calendar
                 now = datetime.now()
                 start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                # Calculate last day of current month
-                if now.month == 12:
-                    last_day = 31  # December has 31 days
-                    end_date = now.replace(day=31, hour=23, minute=59, second=59)
-                else:
-                    # Get last day of current month
-                    next_month = now.replace(month=now.month + 1, day=1)
-                    last_day = (next_month - timedelta(days=1)).day
-                    end_date = now.replace(day=last_day, hour=23, minute=59, second=59)
+                # Calculate last day of current month using calendar module
+                last_day = calendar.monthrange(now.year, now.month)[1]
+                end_date = now.replace(day=last_day, hour=23, minute=59, second=59)
                 events = get_all_user_events(self.user.id, start_date, end_date, self.db)
                 events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
                 return {
@@ -1908,22 +1903,19 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
             elif subcommand == "nextmonth":
                 # Get next month's events
+                import calendar
                 now = datetime.now()
                 if now.month == 12:
-                    start_date = now.replace(
-                        year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0
-                    )
-                    # January has 31 days
-                    end_date = start_date.replace(day=31, hour=23, minute=59, second=59)
+                    next_year = now.year + 1
+                    next_month = 1
                 else:
-                    start_date = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
-                    # Calculate last day of next month
-                    if start_date.month == 12:
-                        last_day = 31
-                    else:
-                        next_next_month = start_date.replace(month=start_date.month + 1, day=1)
-                        last_day = (next_next_month - timedelta(days=1)).day
-                    end_date = start_date.replace(day=last_day, hour=23, minute=59, second=59)
+                    next_year = now.year
+                    next_month = now.month + 1
+                
+                start_date = now.replace(year=next_year, month=next_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+                # Calculate last day of next month using calendar module
+                last_day = calendar.monthrange(next_year, next_month)[1]
+                end_date = start_date.replace(day=last_day, hour=23, minute=59, second=59)
                 events = get_all_user_events(self.user.id, start_date, end_date, self.db)
                 events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
                 return {
