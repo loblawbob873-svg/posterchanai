@@ -39,20 +39,39 @@
         <button class="quick-btn" id="photoGalleryBtn" title="Photo Gallery" onclick="openPhotoGalleryNow();">🖼️ Photos</button>
 <script>
 function openPhotoGalleryNow() {
-    console.log('openPhotoGalleryNow called');
     var v = document.getElementById('cyberpunkPictureViewer');
     if (!v) { alert('Photo viewer not found'); return; }
-    console.log('Viewer found, parent:', v.parentElement.tagName, v.parentElement.id);
     
-    // Move to body if not already there (fixes display issue)
+    // Move to body
     if (v.parentElement !== document.body) {
         document.body.appendChild(v);
-        console.log('Moved viewer to body');
     }
     
-    // Show viewer
+    // Show with high z-index
     v.style.display = 'block';
-    console.log('Set display to block, computed:', getComputedStyle(v).display);
+    v.style.position = 'fixed';
+    v.style.top = '0';
+    v.style.left = '0';
+    v.style.right = '0';
+    v.style.bottom = '0';
+    v.style.zIndex = '999999';
+    
+    // Fix overlay - make it a background, not blocking
+    var overlay = v.querySelector('.cyberpunk-viewer-overlay');
+    if (overlay) {
+        overlay.style.zIndex = '-1';
+    }
+    
+    // Fix container - must be above overlay
+    var container = v.querySelector('.cyberpunk-viewer-container');
+    if (container) {
+        container.style.position = 'relative';
+        container.style.zIndex = '1';
+        container.style.width = '100%';
+        container.style.height = '100%';
+        container.style.display = 'flex';
+        container.style.flexDirection = 'column';
+    }
     
     // Setup close button
     var closeBtn = document.getElementById('pictureViewerCloseBtn');
@@ -63,13 +82,12 @@ function openPhotoGalleryNow() {
         };
     }
     
-    // Load images via fileManager
+    // Load images
     if (window.fileManager) {
         window.fileManager.pictureViewerOpen = true;
         if (window.fileManager.loadAllImages) window.fileManager.loadAllImages();
         if (window.fileManager.setupInfiniteScroll) window.fileManager.setupInfiniteScroll();
     }
-    console.log('openPhotoGalleryNow complete');
 }
 </script>
         <div class="quick-btn-dropdown">
