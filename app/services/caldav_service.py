@@ -238,15 +238,15 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
             cal = ICalendar.from_ical(ical_data.encode('utf-8'))
             
             # Process all VEVENT components
-                    vevent_count = 0
-                    for component in cal.walk():
-                        if component.name == "VEVENT":
-                            vevent_count += 1
-                            summary = component.get('summary', 'No Title')
-                            if vevent_count <= 5:  # Log first 5 events per file for debugging
-                                logger.info(f"[CalDAV] Processing VEVENT #{vevent_count} from {name}: {summary}")
-                            else:
-                                logger.debug(f"[CalDAV] Processing VEVENT #{vevent_count} from {name}: {summary}")
+            vevent_count = 0
+            for component in cal.walk():
+                if component.name == "VEVENT":
+                    vevent_count += 1
+                    summary = component.get('summary', 'No Title')
+                    if vevent_count <= 5:  # Log first 5 events per file for debugging
+                        logger.info(f"[CalDAV] Processing VEVENT #{vevent_count} from {name}: {summary}")
+                    else:
+                        logger.debug(f"[CalDAV] Processing VEVENT #{vevent_count} from {name}: {summary}")
                     # Get start time
                     dtstart = component.get('dtstart')
                     if not dtstart:
