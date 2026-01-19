@@ -112,6 +112,16 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
                 xml += '                        <D:report><C:calendar-multiget xmlns:C="urn:ietf:params:xml:ns:caldav"/></D:report>\n'
                 xml += '                    </D:supported-report>\n'
                 xml += '                </D:supported-report-set>\n'
+            elif prop_name == 'current-user-privilege-set':
+                # Return write privileges to indicate calendar is writable
+                xml += '                <D:current-user-privilege-set xmlns:D="DAV:">\n'
+                xml += '                    <D:privilege><D:read/></D:privilege>\n'
+                xml += '                    <D:privilege><D:write/></D:privilege>\n'
+                xml += '                    <D:privilege><D:write-content/></D:privilege>\n'
+                xml += '                    <D:privilege><D:write-properties/></D:privilege>\n'
+                xml += '                    <D:privilege><D:bind/></D:privilege>\n'
+                xml += '                    <D:privilege><D:unbind/></D:privilege>\n'
+                xml += '                </D:current-user-privilege-set>\n'
         xml += '            </D:prop>\n            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
     xml += '</D:multistatus>'
     return xml
@@ -241,7 +251,8 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                         "calendar-color": "#0088FF",
                         "calendar-timezone": "UTC",
                         "sync-token": f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{sync_token}",
-                        "getctag": ctag
+                        "getctag": ctag,
+                        "current-user-privilege-set": "write"
                     }
                 })
             
@@ -265,7 +276,8 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                         "calendar-color": "#0088FF",
                         "calendar-timezone": "UTC",
                         "sync-token": f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/calendar/sync-token-{sync_token}",
-                        "getctag": ctag
+                        "getctag": ctag,
+                        "current-user-privilege-set": "write"
                     }
                 })
             
@@ -285,7 +297,8 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                         "calendar-color": "#0088FF",
                         "calendar-timezone": "UTC",
                         "sync-token": f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/calendar/sync-token-{sync_token}",
-                        "getctag": ctag
+                        "getctag": ctag,
+                        "current-user-privilege-set": "write"
                     }
                 })
             
@@ -325,7 +338,8 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                 "calendar-color": "#0088FF",
                 "calendar-timezone": "UTC",
                 "sync-token": f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{sync_token}",
-                "getctag": ctag
+                "getctag": ctag,
+                "current-user-privilege-set": "write"
             }
         })
         

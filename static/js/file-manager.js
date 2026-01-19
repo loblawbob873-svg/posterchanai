@@ -2605,8 +2605,21 @@ class FileManager {
             overlay.className = 'cyberpunk-gallery-item-overlay';
             overlay.textContent = imageName;
             
+            // Add delete button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'cyberpunk-gallery-delete-btn';
+            deleteBtn.innerHTML = '🗑️';
+            deleteBtn.title = 'Delete image';
+            deleteBtn.onclick = (e) => {
+                e.stopPropagation(); // Prevent opening viewer when clicking delete
+                if (confirm(`Are you sure you want to delete "${imageName}"?`)) {
+                    this.deleteFile(imagePath);
+                }
+            };
+            
             item.appendChild(img);
             item.appendChild(overlay);
+            item.appendChild(deleteBtn);
             
             // Add play button overlay for videos
             const isVideo = image.type === 'video' || /\.(mp4|avi|mov|mkv|webm|flv|wmv|m4v|3gp|ogv)$/i.test(imageName);
@@ -2749,6 +2762,35 @@ class FileManager {
                 link.click();
                 document.body.removeChild(link);
                 console.log(`Photo Gallery - Downloading original: ${mediaName}`);
+            };
+        }
+        
+        // Update delete button
+        const deleteBtn = document.getElementById('cyberpunkFullscreenDelete');
+        if (deleteBtn) {
+            deleteBtn.onclick = async (e) => {
+                e.stopPropagation();
+                if (confirm(`Are you sure you want to delete "${mediaName}"?`)) {
+                    await this.deleteFile(mediaPath);
+                    // After deletion, allImages array is updated by deleteFile
+                    // Close fullscreen viewer
+                    this.closeFullscreenViewer();
+                    // If there are more images, open the next one (or previous if at end)
+                    if (this.allImages.length > 0) {
+                        // Use the same index, or adjust if we deleted the last item
+                        const newIndex = Math.min(index, this.allImages.length - 1);
+                        if (newIndex >= 0 && newIndex < this.allImages.length) {
+                            // Small delay to ensure allImages is updated
+                            setTimeout(() => {
+                                this.openFullscreenViewer(newIndex);
+                            }, 100);
+                        } else {
+                            this.closeFullscreenViewer();
+                        }
+                    } else {
+                        this.closeFullscreenViewer();
+                    }
+                }
             };
         }
         

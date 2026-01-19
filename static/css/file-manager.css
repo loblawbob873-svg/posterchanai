@@ -1942,6 +1942,43 @@
     opacity: 1;
 }
 
+.cyberpunk-gallery-delete-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 32px;
+    height: 32px;
+    border: 2px solid #ff0066;
+    background: rgba(255, 0, 102, 0.2);
+    color: #ff0066;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    z-index: 5;
+    opacity: 0;
+    transition: all 0.3s;
+    box-shadow: 0 0 10px rgba(255, 0, 102, 0.3);
+}
+
+.cyberpunk-gallery-item:hover .cyberpunk-gallery-delete-btn {
+    opacity: 1;
+}
+
+.cyberpunk-gallery-delete-btn:hover {
+    background: rgba(255, 0, 102, 0.4);
+    box-shadow: 
+        0 0 15px rgba(255, 0, 102, 0.6),
+        inset 0 0 10px rgba(255, 0, 102, 0.2);
+    transform: scale(1.1);
+}
+
+.cyberpunk-gallery-delete-btn:active {
+    transform: scale(0.95);
+}
+
 .cyberpunk-loading {
     grid-column: 1 / -1;
     text-align: center;
@@ -2093,6 +2130,31 @@
 .cyberpunk-fullscreen-download:hover {
     background: rgba(0, 255, 136, 0.4);
     box-shadow: 0 0 20px rgba(0, 255, 136, 0.8);
+    transform: scale(1.1);
+}
+
+.cyberpunk-fullscreen-delete {
+    position: absolute;
+    top: 20px;
+    right: 120px;
+    width: 40px;
+    height: 40px;
+    border: 2px solid #ff0066;
+    background: rgba(255, 0, 102, 0.2);
+    color: #ff0066;
+    font-size: 24px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    z-index: 10;
+    transition: all 0.3s;
+}
+
+.cyberpunk-fullscreen-delete:hover {
+    background: rgba(255, 0, 102, 0.4);
+    box-shadow: 0 0 20px rgba(255, 0, 102, 0.8);
     transform: scale(1.1);
 }
 
