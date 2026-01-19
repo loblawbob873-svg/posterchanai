@@ -3568,18 +3568,64 @@ def delete_event_from_calendar(
             
             # Verify proxy is configured
             if not proxy.use_proxy:
-                logger.error(f"[CalDAV] Storage proxy NOT configured! Cannot delete todo without storage server.")
+                logger.error(f"[CalDAV] Storage proxy NOT configured! Cannot delete event without storage server.")
                 logger.error(f"[CalDAV] Set storage_server_url in Admin settings.")
                 return False
             
-            filepath = f"{event_uid}.ics"
-            success = proxy.delete_file(filepath)
+            # Search for event in all calendar directories (like update_event_in_calendar does)
+            # First try "main" directory (most common location for iPhone sync)
+            event_filepath = None
+            try:
+                root_items = proxy.list_files("")
+                calendar_dirs = [item.get('name') for item in root_items if item.get('is_directory', False) and not item.get('name', '').startswith('.')]
+                logger.debug(f"[CalDAV] Searching for event {event_uid} in calendar directories: {calendar_dirs}")
+                
+                # Search in "main" first (iPhone sync location)
+                if "main" in calendar_dirs:
+                    main_items = proxy.list_files("main")
+                    for item in main_items:
+                        if item.get('name') == f"{event_uid}.ics":
+                            event_filepath = f"main/{event_uid}.ics"
+                            logger.info(f"[CalDAV] Found event in 'main' directory: {event_filepath}")
+                            break
+                
+                # If not found in main, search other calendar directories
+                if not event_filepath:
+                    for cal_dir in calendar_dirs:
+                        if cal_dir == "main":
+                            continue  # Already checked
+                        cal_items = proxy.list_files(cal_dir)
+                        for item in cal_items:
+                            if item.get('name') == f"{event_uid}.ics":
+                                event_filepath = f"{cal_dir}/{event_uid}.ics"
+                                logger.info(f"[CalDAV] Found event in '{cal_dir}' directory: {event_filepath}")
+                                break
+                        if event_filepath:
+                            break
+                
+                # If still not found, check root directory (legacy location)
+                if not event_filepath:
+                    root_items = proxy.list_files("")
+                    for item in root_items:
+                        if item.get('name') == f"{event_uid}.ics" and not item.get('is_directory', False):
+                            event_filepath = f"{event_uid}.ics"
+                            logger.info(f"[CalDAV] Found event in root directory: {event_filepath}")
+                            break
+            except Exception as e:
+                logger.error(f"[CalDAV] Error searching for event {event_uid}: {e}", exc_info=True)
+            
+            if not event_filepath:
+                logger.warning(f"[CalDAV] Event file not found: {event_uid}.ics (searched main, all subdirectories, and root)")
+                return False
+            
+            # Delete the file
+            success = proxy.delete_file(event_filepath)
             
             if success:
-                logger.info(f"Deleted event {event_uid} from built-in storage")
+                logger.info(f"[CalDAV] Deleted event {event_uid} from built-in storage at {event_filepath}")
                 return True
             else:
-                logger.warning(f"Event file not found or failed to delete: {filepath}")
+                logger.warning(f"[CalDAV] Event file not found or failed to delete: {event_filepath}")
                 return False
         
         # Otherwise use CalDAV protocol (for external servers)

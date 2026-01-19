@@ -31,6 +31,24 @@ from app.utils.image_validation import validate_and_clean_image_data, validate_a
 logger = logging.getLogger(__name__)
 
 
+def _is_same_server(storage_url: str) -> bool:
+    """
+    Check if storage_server_url points to the same server (localhost/127.0.0.1).
+    When True, we can use local storage instead of HTTP requests.
+    """
+    if not storage_url:
+        return False
+    
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(storage_url)
+        host = parsed.hostname or ""
+        # Check if it's localhost or 127.0.0.1
+        return host.lower() in ('localhost', '127.0.0.1', '::1', '0.0.0.0') or host == ''
+    except Exception:
+        return False
+
+
 def safe_query_setting(db: Session, key: str) -> Optional[Setting]:
     """Safely query a Setting, handling IndexError and other database errors."""
     try:
@@ -156,42 +174,47 @@ async def search_files(
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
-            try:
-                import httpx
-                storage_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
-                headers = {"X-Username": current_user.username}
-                if storage_token and storage_token.value:
-                    headers["Authorization"] = f"Bearer {storage_token.value}"
-                
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    # Try /api/files/search first (if files_router is registered), then fall back to /api/storage/search
-                    search_urls = [
-                        f"{url.rstrip('/')}/api/files/search",
-                        f"{url.rstrip('/')}/api/storage/search"
-                    ]
-                    response = None
-                    for search_url in search_urls:
-                        try:
-                            response = await client.get(
-                                search_url,
-                                params={"query": query, "username": current_user.username},
-                                headers=headers
-                            )
-                            if response.status_code == 200:
-                                break
-                        except Exception as e:
-                            logger.debug(f"Tried {search_url}, got error: {e}")
-                            continue
+            # If same server, skip HTTP proxy and use local storage directly
+            if _is_same_server(url):
+                logger.debug(f"[FILES] Storage URL points to same server - using local search")
+                # Fall through to local search below
+            else:
+                try:
+                    import httpx
+                    storage_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+                    headers = {"X-Username": current_user.username}
+                    if storage_token and storage_token.value:
+                        headers["Authorization"] = f"Bearer {storage_token.value}"
                     
-                    if response and response.status_code == 200:
-                        return response.json()
-                    else:
-                        if response:
-                            logger.warning(f"Storage server search failed: {response.status_code}, falling back to local search")
+                    async with httpx.AsyncClient(timeout=60.0) as client:
+                        # Try /api/files/search first (if files_router is registered), then fall back to /api/storage/search
+                        search_urls = [
+                            f"{url.rstrip('/')}/api/files/search",
+                            f"{url.rstrip('/')}/api/storage/search"
+                        ]
+                        response = None
+                        for search_url in search_urls:
+                            try:
+                                response = await client.get(
+                                    search_url,
+                                    params={"query": query, "username": current_user.username},
+                                    headers=headers
+                                )
+                                if response.status_code == 200:
+                                    break
+                            except Exception as e:
+                                logger.debug(f"Tried {search_url}, got error: {e}")
+                                continue
+                        
+                        if response and response.status_code == 200:
+                            return response.json()
                         else:
-                            logger.warning(f"Storage server search failed: no response, falling back to local search")
-            except Exception as e:
-                logger.warning(f"Failed to proxy search to storage server: {e}, falling back to local search")
+                            if response:
+                                logger.warning(f"Storage server search failed: {response.status_code}, falling back to local search")
+                            else:
+                                logger.warning(f"Storage server search failed: no response, falling back to local search")
+                except Exception as e:
+                    logger.warning(f"Failed to proxy search to storage server: {e}, falling back to local search")
     
     # Fall through to local search if proxy fails or storage server doesn't have search endpoint
     storage = get_storage_service(db)
@@ -282,23 +305,28 @@ async def get_all_images(
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
-            logger.info(f"[FILES] Proxying get_all_images to storage server: {url}")
-            # Proxy to storage server
-            try:
-                import httpx
-                storage_server_token = safe_query_setting(db, "storage_server_token")
-                
-                headers = {}
-                if storage_server_token and storage_server_token.value:
-                    headers["Authorization"] = f"Bearer {storage_server_token.value}"
-                
-                async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minutes for large scans
-                    response = await client.get(
-                        f"{url}/api/storage/all-images",
-                        params={"username": current_user.username, "limit": limit, "offset": offset},
-                        headers=headers
-                    )
-                    if response.status_code == 200:
+            # If same server, skip HTTP proxy and use local storage directly
+            if _is_same_server(url):
+                logger.debug(f"[FILES] Storage URL points to same server - using local all-images")
+                # Fall through to local storage below
+            else:
+                logger.info(f"[FILES] Proxying get_all_images to storage server: {url}")
+                # Proxy to storage server
+                try:
+                    import httpx
+                    storage_server_token = safe_query_setting(db, "storage_server_token")
+                    
+                    headers = {}
+                    if storage_server_token and storage_server_token.value:
+                        headers["Authorization"] = f"Bearer {storage_server_token.value}"
+                    
+                    async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minutes for large scans
+                        response = await client.get(
+                            f"{url}/api/storage/all-images",
+                            params={"username": current_user.username, "limit": limit, "offset": offset},
+                            headers=headers
+                        )
+                        if response.status_code == 200:
                         try:
                             # Get the JSON response from storage server
                             data = response.json()
@@ -1073,22 +1101,27 @@ async def list_files(
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
-            # Check if this is an external storage path (don't proxy external storage)
-            is_external = False
-            if path:
-                path_parts = path.split('/')
-                if path_parts and path_parts[0]:
-                    mount_point = path_parts[0]
-                    external_storage = db.query(ExternalStorage).filter(
-                        ExternalStorage.mount_point == mount_point,
-                        ExternalStorage.is_active == True
-                    ).first()
-                    if external_storage:
-                        is_external = True
-            
-            if not is_external:
-                # Proxy to storage server - no fallback
-                return await _proxy_list_files(url, current_user.username, path, db)
+            # If same server, skip HTTP proxy and use local storage directly
+            if _is_same_server(url):
+                logger.debug(f"[FILES] Storage URL points to same server - using local list")
+                # Fall through to local storage below
+            else:
+                # Check if this is an external storage path (don't proxy external storage)
+                is_external = False
+                if path:
+                    path_parts = path.split('/')
+                    if path_parts and path_parts[0]:
+                        mount_point = path_parts[0]
+                        external_storage = db.query(ExternalStorage).filter(
+                            ExternalStorage.mount_point == mount_point,
+                            ExternalStorage.is_active == True
+                        ).first()
+                        if external_storage:
+                            is_external = True
+                
+                if not is_external:
+                    # Proxy to storage server - no fallback
+                    return await _proxy_list_files(url, current_user.username, path, db)
     
     # Local file listing (storage server node or when proxy fails or external storage)
     storage = get_storage_service(db)

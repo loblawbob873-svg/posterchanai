@@ -1351,6 +1351,9 @@ def create_caldav_app() -> FastAPI:
         # Handle CalDAV methods
         method = request.method
         
+        # Log all requests for debugging (especially PUT requests from iPhone)
+        logger.info(f"[CalDAV] Request: {method} {path} from user {user.username}")
+        
         # Handle OPTIONS request (required by some clients including iPhone)
         if method == "OPTIONS":
             return Response(

@@ -1,6 +1,7 @@
 """
 Storage proxy helper for CalDAV/CardDAV operations.
 Handles file operations through the storage server API.
+When storage_server_url points to the same server, uses local filesystem directly.
 """
 import logging
 import httpx
@@ -8,8 +9,26 @@ from typing import List, Optional, Dict
 from pathlib import Path
 from sqlalchemy.orm import Session
 from app.models import Setting
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+def _is_same_server(storage_url: str) -> bool:
+    """
+    Check if storage_server_url points to the same server (localhost/127.0.0.1).
+    When True, we can use local filesystem instead of HTTP requests.
+    """
+    if not storage_url:
+        return False
+    
+    try:
+        parsed = urlparse(storage_url)
+        host = parsed.hostname or ""
+        # Check if it's localhost or 127.0.0.1
+        return host.lower() in ('localhost', '127.0.0.1', '::1', '0.0.0.0') or host == ''
+    except Exception:
+        return False
 
 
 class DAVStorageProxy:
@@ -66,9 +85,13 @@ class DAVStorageProxy:
             self.storage_url = storage_url_setting.value if storage_url_setting and storage_url_setting.value else None
             self.storage_token = storage_token_setting.value if storage_token_setting and storage_token_setting.value else None
             self.use_proxy = bool(self.storage_url)
+            self.is_same_server = _is_same_server(self.storage_url) if self.storage_url else False
             
             if self.use_proxy:
-                logger.info(f"[{dav_type.upper()}] Using storage proxy: {self.storage_url}")
+                if self.is_same_server:
+                    logger.info(f"[{dav_type.upper()}] Storage URL points to same server - using local filesystem: {self.storage_url}")
+                else:
+                    logger.info(f"[{dav_type.upper()}] Using storage proxy: {self.storage_url}")
         except Exception as e:
             logger.error(f"[{dav_type.upper()}] Error loading storage proxy config: {e}", exc_info=True)
             # Final fallback: disable proxy
@@ -90,6 +113,16 @@ class DAVStorageProxy:
             headers["Authorization"] = f"Bearer {self.storage_token}"
         return headers
     
+    def _get_local_dav_path(self, subpath: str = "") -> Path:
+        """Get local filesystem path for DAV directory."""
+        from app.services.storage_service import StorageService
+        storage = StorageService(self.db)
+        user_path = storage.get_user_path(self.username)
+        dav_path = user_path / self.base_path
+        if subpath:
+            dav_path = dav_path / subpath
+        return dav_path
+    
     def list_files(self, subpath: str = "") -> List[Dict[str, any]]:
         """List files in DAV directory."""
         if not self.use_proxy:
@@ -97,6 +130,34 @@ class DAVStorageProxy:
             logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot list files")
             return []
         
+        # If same server, use local filesystem
+        if self.is_same_server:
+            try:
+                dav_path = self._get_local_dav_path(subpath)
+                if not dav_path.exists():
+                    return []
+                
+                items = []
+                for item in dav_path.iterdir():
+                    try:
+                        stat = item.stat()
+                        item_info = {
+                            "name": item.name,
+                            "path": str(item.relative_to(dav_path)),
+                            "is_directory": item.is_dir(),
+                            "size": stat.st_size if item.is_file() else 0,
+                            "modified": stat.st_mtime,
+                        }
+                        items.append(item_info)
+                    except Exception as e:
+                        logger.warning(f"[{self.dav_type.upper()}] Error reading item {item}: {e}")
+                        continue
+                return items
+            except Exception as e:
+                logger.error(f"[{self.dav_type.upper()}] Error listing local files: {e}", exc_info=True)
+                return []
+        
+        # Otherwise, use HTTP proxy
         try:
             # Build path: caldav/subpath or carddav/subpath
             api_path = f"{self.base_path}/{subpath}" if subpath else self.base_path
@@ -134,6 +195,21 @@ class DAVStorageProxy:
             logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot read file: {filepath}")
             return None
         
+        # If same server, use local filesystem
+        if self.is_same_server:
+            try:
+                dav_path = self._get_local_dav_path()
+                full_path = dav_path / filepath
+                if full_path.exists() and full_path.is_file():
+                    return full_path.read_text(encoding='utf-8')
+                else:
+                    logger.warning(f"[{self.dav_type.upper()}] File not found: {filepath}")
+                    return None
+            except Exception as e:
+                logger.error(f"[{self.dav_type.upper()}] Error reading local file {filepath}: {e}", exc_info=True)
+                return None
+        
+        # Otherwise, use HTTP proxy
         try:
             # Build full path
             api_path = f"{self.base_path}/{filepath}".replace('//', '/')
@@ -168,6 +244,21 @@ class DAVStorageProxy:
             logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot write file: {filepath}")
             return False
         
+        # If same server, use local filesystem
+        if self.is_same_server:
+            try:
+                dav_path = self._get_local_dav_path()
+                dav_path.mkdir(parents=True, exist_ok=True)
+                full_path = dav_path / filepath
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                full_path.write_text(content, encoding='utf-8')
+                logger.info(f"[{self.dav_type.upper()}] Saved {filepath} locally")
+                return True
+            except Exception as e:
+                logger.error(f"[{self.dav_type.upper()}] Error writing local file {filepath}: {e}", exc_info=True)
+                return False
+        
+        # Otherwise, use HTTP proxy
         try:
             # Build full path
             api_path = f"{self.base_path}/{filepath}".replace('//', '/')
@@ -202,6 +293,27 @@ class DAVStorageProxy:
             logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot delete file: {filepath}")
             return False
         
+        # If same server, use local filesystem
+        if self.is_same_server:
+            try:
+                dav_path = self._get_local_dav_path()
+                full_path = dav_path / filepath
+                if full_path.exists():
+                    if full_path.is_file():
+                        full_path.unlink()
+                    elif full_path.is_dir():
+                        import shutil
+                        shutil.rmtree(full_path)
+                    logger.info(f"[{self.dav_type.upper()}] Deleted {filepath} locally")
+                    return True
+                else:
+                    logger.warning(f"[{self.dav_type.upper()}] File not found for deletion: {filepath}")
+                    return False
+            except Exception as e:
+                logger.error(f"[{self.dav_type.upper()}] Error deleting local file {filepath}: {e}", exc_info=True)
+                return False
+        
+        # Otherwise, use HTTP proxy
         try:
             # Build full path
             api_path = f"{self.base_path}/{filepath}".replace('//', '/')
@@ -233,6 +345,15 @@ class DAVStorageProxy:
             logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot check file existence: {filepath}")
             return False
         
-        # Try to read the file - if successful, it exists
+        # If same server, use local filesystem
+        if self.is_same_server:
+            try:
+                dav_path = self._get_local_dav_path()
+                full_path = dav_path / filepath
+                return full_path.exists() and full_path.is_file()
+            except Exception:
+                return False
+        
+        # Otherwise, try to read the file - if successful, it exists
         content = self.read_file(filepath)
         return content is not None
