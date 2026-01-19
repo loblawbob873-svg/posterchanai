@@ -696,7 +696,9 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
             event_uid = path_uid
         else:
             # Legacy path format or no calendar specified
-            cal_name = 'calendar'
+            # Default to "main" for iPhone sync compatibility (not "calendar" which saves to root)
+            cal_name = 'main'
+            logger.info(f"[CalDAV] No calendar name in path, defaulting to 'main' for iPhone sync compatibility")
         
         if not event_uid:
             # Generate UID if not present
@@ -709,11 +711,14 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
                         component.add('uid', event_uid)
             ical_data = cal.to_ical().decode('utf-8')
         
-        # Build filepath (with calendar subdirectory if not 'calendar')
+        # Build filepath - ALWAYS use calendar subdirectory (prefer "main" for iPhone sync)
+        # Never save to root - iPhone doesn't sync from root
         if cal_name == 'calendar':
-            filepath = f"{event_uid}.ics"
-        else:
-            filepath = f"{cal_name}/{event_uid}.ics"
+            # Legacy "calendar" name - redirect to "main" for iPhone compatibility
+            cal_name = 'main'
+            logger.warning(f"[CalDAV] Redirecting 'calendar' to 'main' for iPhone sync compatibility")
+        
+        filepath = f"{cal_name}/{event_uid}.ics"
         
         # Check if file already exists (update vs create)
         file_exists = proxy.file_exists(filepath)
