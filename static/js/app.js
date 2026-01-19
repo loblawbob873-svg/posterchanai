@@ -991,8 +991,20 @@ function initContactsModal() {
             if (phone !== origPhone) updates.phone = phone;
             if (email !== origEmail) updates.email = email;
             if (organization !== origOrganization) updates.organization = organization;
-            if (address !== origAddress) updates.address = address;
+            // Always include address if it's different from original
+            // This handles both: adding address to empty contact, and changing existing address
+            if (address !== origAddress) {
+                updates.address = address;  // Include even if empty (to clear address)
+            }
             if (note !== origNote) updates.note = note;
+            
+            // Debug logging
+            console.log('Contact update comparison:', {
+                address: address,
+                origAddress: origAddress,
+                addressChanged: address !== origAddress,
+                updates: updates
+            });
 
             if (Object.keys(updates).length === 0) {
                 // No changes

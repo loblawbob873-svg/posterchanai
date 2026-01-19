@@ -1836,7 +1836,24 @@ def search_contacts(
                     # Use the first ADR object
                     if adr_objects:
                         adr = adr_objects[0].value
-                        if isinstance(adr, list) and len(adr) >= 4:
+                        
+                        # Handle vobject.vcard.Address object (what we create when saving)
+                        if hasattr(adr, 'street') or hasattr(adr, 'city'):
+                            # It's a vobject.vcard.Address object
+                            address_parts = []
+                            if hasattr(adr, 'street') and adr.street:
+                                address_parts.append(str(adr.street))
+                            if hasattr(adr, 'city') and adr.city:
+                                address_parts.append(str(adr.city))
+                            if hasattr(adr, 'region') and adr.region:
+                                address_parts.append(str(adr.region))
+                            if hasattr(adr, 'code') and adr.code:
+                                address_parts.append(str(adr.code))
+                            if hasattr(adr, 'country') and adr.country:
+                                address_parts.append(str(adr.country))
+                            if address_parts:
+                                address = ', '.join(address_parts)
+                        elif isinstance(adr, list) and len(adr) >= 4:
                             # ADR format: [post_office_box, extended, street, city, state, postal_code, country]
                             address_parts = []
                             if len(adr) > 2 and adr[2]:  # street
