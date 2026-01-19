@@ -402,21 +402,24 @@ def _process_single_thumbnail(
         
         # OPTIMIZATION: Skip if thumbnail already exists and is up-to-date
         # NOTE: After EXIF restoration, file timestamps may change, so we check carefully
+        # IMPORTANT: Always regenerate thumbnails if source file is newer or equal to thumbnail
+        # This ensures thumbnails are updated after EXIF restoration changes file timestamps
         if thumbnail_path.exists():
             try:
                 thumbnail_mtime = thumbnail_path.stat().st_mtime
                 media_mtime = media_path.stat().st_mtime
-                # Only skip if thumbnail is significantly newer (more than 1 second) to account for EXIF restoration
-                # This ensures thumbnails regenerate if source file was updated by EXIF restoration
-                if thumbnail_mtime > media_mtime + 1:
+                # Only skip if thumbnail is significantly newer (more than 2 seconds) than source
+                # This accounts for EXIF restoration which may make source file older
+                # But we want to regenerate if source is newer or even slightly older (within 2 seconds)
+                if thumbnail_mtime > media_mtime + 2:
                     with lock:
                         stats['successful'] += 1
                         stats['skipped'] += 1
-                    logger.debug(f"[Thumbnail] Skipping {media_path.name} - thumbnail is up-to-date")
+                    logger.debug(f"[Thumbnail] Skipping {media_path.name} - thumbnail is up-to-date (thumb: {thumbnail_mtime}, media: {media_mtime})")
                     return
                 else:
-                    # Thumbnail exists but source is newer or equal - regenerate to be safe
-                    logger.debug(f"[Thumbnail] Regenerating {media_path.name} - source file may have been updated")
+                    # Thumbnail exists but source is newer or equal (or within 2 seconds) - regenerate to be safe
+                    logger.debug(f"[Thumbnail] Regenerating {media_path.name} - source file may have been updated (thumb: {thumbnail_mtime}, media: {media_mtime})")
             except OSError as e:
                 # If we can't check thumbnail, regenerate it
                 logger.debug(f"[Thumbnail] Cannot check thumbnail timestamp for {media_path.name}: {e}, regenerating")

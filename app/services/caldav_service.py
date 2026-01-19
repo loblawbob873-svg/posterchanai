@@ -183,19 +183,24 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                         # Include events that:
                         #   - Start within range: start_date <= event_start <= end_date
                         #   - Overlap with range: event_start < start_date but event_end >= start_date
+                        #   - Start before range but have no end (ongoing/all-day events that might still be relevant)
                         # Exclude events that:
                         #   - Start after range: event_start > end_date
                         #   - End before range: event_end is not None AND event_end < start_date
-                        #   - Start before range with no end: event_start < start_date AND event_end is None
+                        #   - Start more than 7 days before range with no end (likely very old all-day events)
                         if event_start > end_date:
                             # Event starts after the range - skip
                             continue
                         if event_end is not None and event_end < start_date:
                             # Event has an end time and ends before the range - skip
                             continue
+                        # Include events that start before range if they have no end (ongoing/all-day events)
+                        # Only exclude if event starts more than 7 days before range with no end (likely very old all-day events)
                         if event_start < start_date and event_end is None:
-                            # Event starts before range and has no end time - skip (single-day past events)
-                            continue
+                            from datetime import timedelta
+                            if (start_date - event_start) > timedelta(days=7):
+                                # Event starts more than 7 days before range with no end - likely a very old all-day event, skip
+                                continue
                         # Event is within or overlaps with range - include it
                         
                         # Convert to naive local for CalendarEvent
