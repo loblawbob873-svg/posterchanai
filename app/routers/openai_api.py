@@ -215,10 +215,26 @@ def verify_api_key(
         return None  # Global key, no specific user
 
     # Check user API keys
-    api_key = db.query(APIKey).filter(
-        APIKey.key == token,
-        APIKey.is_active == True
-    ).first()
+    try:
+        api_key = db.query(APIKey).filter(
+            APIKey.key == token,
+            APIKey.is_active == True
+        ).first()
+    except Exception as e:
+        # Handle SQLite session errors
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error querying API key: {e}")
+        try:
+            db.rollback()
+            # Retry once with a fresh query
+            api_key = db.query(APIKey).filter(
+                APIKey.key == token,
+                APIKey.is_active == True
+            ).first()
+        except Exception as retry_error:
+            logger.error(f"Error retrying API key query: {retry_error}")
+            api_key = None
 
     if api_key:
         # Update last used timestamp
