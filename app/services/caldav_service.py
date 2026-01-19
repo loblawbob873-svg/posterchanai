@@ -523,6 +523,15 @@ def _save_event_to_builtin(user_id: int, db: Session, ical_data: str, event_uid:
             try:
                 verify_data = proxy.read_file(filepath)
                 if verify_data:
+                    logger.info(f"[CalDAV] ✓ Verified: Event file exists and is readable at {filepath} ({len(verify_data)} bytes)")
+                else:
+                    logger.error(f"[CalDAV] ❌ WARNING: Event file was not found after save at {filepath}")
+            except Exception as e:
+                logger.warning(f"[CalDAV] Could not verify saved event file: {e}")
+            # Verify the file was actually written by trying to read it back
+            try:
+                verify_data = proxy.read_file(filepath)
+                if verify_data:
                     logger.info(f"[CalDAV] ✓ Verified: Event file exists and is readable at {filepath}")
                 else:
                     logger.error(f"[CalDAV] ❌ WARNING: Event file was not found after save at {filepath}")
@@ -1688,63 +1697,79 @@ def update_event_in_calendar(
             cal = ICalendar.from_ical(ical_data.encode('utf-8'))
             
             # Find and update the event component
+            event_found = False
             for component in cal.walk():
-                if component.name == "VEVENT" and str(component.get('uid')) == event_uid:
-                    # Update fields if provided
-                    if summary is not None:
-                        component['summary'] = summary
-                    if description is not None:
-                        component['description'] = description
-                    if start_time is not None:
-                        start_aware = to_local_aware(start_time)
-                        start_utc = start_aware.astimezone(timezone.utc)
-                        component['dtstart'] = start_utc
-                    if end_time is not None:
-                        end_aware = to_local_aware(end_time)
-                        end_utc = end_aware.astimezone(timezone.utc)
-                        component['dtend'] = end_utc
-                    if location is not None:
-                        # Update or add location field
-                        if location.strip():  # Only set if non-empty
-                            component['location'] = location
-                            logger.info(f"[CalDAV] ✓ Updated location to: {location}")
-                        else:
-                            # Remove location if empty string
-                            if 'location' in component:
-                                del component['location']
-                                logger.info(f"[CalDAV] Removed location field")
-                    if rrule is not None:
-                        if rrule == "":
-                            # Remove RRULE
-                            if 'rrule' in component:
-                                del component['rrule']
-                        else:
-                            # Parse and set RRULE
-                            try:
-                                rrule_dict = {}
-                                for part in rrule.split(';'):
-                                    if '=' in part:
-                                        key, value = part.split('=', 1)
-                                        if key.upper() == 'BYDAY':
-                                            rrule_dict[key.lower()] = value.split(',')
-                                        elif value.isdigit():
-                                            rrule_dict[key.lower()] = int(value)
-                                        else:
-                                            rrule_dict[key.lower()] = value
-                                component['rrule'] = rrule_dict
-                            except Exception as e:
-                                logger.warning(f"Failed to parse RRULE '{rrule}': {e}")
-                    
-                    # Save updated event using proxy to the SAME location it was found
-                    updated_ical = cal.to_ical().decode('utf-8')
-                    if not proxy.write_file(event_filepath, updated_ical):
-                        logger.error(f"[CalDAV] Failed to save updated event {event_uid} to {event_filepath}")
-                        return False
-                    
-                    logger.info(f"[CalDAV] ✓ Successfully updated event {event_uid} in built-in storage at {event_filepath}")
-                    return True
+                if component.name == "VEVENT":
+                    # Get UID value - handle both string and vText objects
+                    uid_value = component.get('uid')
+                    if uid_value:
+                        uid_str = str(uid_value) if not hasattr(uid_value, 'value') else str(uid_value.value)
+                        if uid_str == event_uid:
+                            event_found = True
+                            logger.info(f"[CalDAV] Found event component with UID {event_uid} in {event_filepath}")
+                            
+                            # Update fields if provided
+                            if summary is not None:
+                                component['summary'] = summary
+                                logger.info(f"[CalDAV] ✓ Updated summary to: {summary}")
+                            if description is not None:
+                                component['description'] = description
+                                logger.info(f"[CalDAV] ✓ Updated description to: {description[:50]}...")
+                            if start_time is not None:
+                                start_aware = to_local_aware(start_time)
+                                start_utc = start_aware.astimezone(timezone.utc)
+                                component['dtstart'] = start_utc
+                                logger.info(f"[CalDAV] ✓ Updated start_time to: {start_utc}")
+                            if end_time is not None:
+                                end_aware = to_local_aware(end_time)
+                                end_utc = end_aware.astimezone(timezone.utc)
+                                component['dtend'] = end_utc
+                                logger.info(f"[CalDAV] ✓ Updated end_time to: {end_utc}")
+                            if location is not None:
+                                # Update or add location field
+                                if location.strip():  # Only set if non-empty
+                                    component['location'] = location
+                                    logger.info(f"[CalDAV] ✓ Updated location to: {location}")
+                                else:
+                                    # Remove location if empty string
+                                    if 'location' in component:
+                                        del component['location']
+                                        logger.info(f"[CalDAV] Removed location field")
+                            if rrule is not None:
+                                if rrule == "":
+                                    # Remove RRULE
+                                    if 'rrule' in component:
+                                        del component['rrule']
+                                        logger.info(f"[CalDAV] Removed RRULE")
+                                else:
+                                    # Parse and set RRULE
+                                    try:
+                                        rrule_dict = {}
+                                        for part in rrule.split(';'):
+                                            if '=' in part:
+                                                key, value = part.split('=', 1)
+                                                if key.upper() == 'BYDAY':
+                                                    rrule_dict[key.lower()] = value.split(',')
+                                                elif value.isdigit():
+                                                    rrule_dict[key.lower()] = int(value)
+                                                else:
+                                                    rrule_dict[key.lower()] = value
+                                        component['rrule'] = rrule_dict
+                                        logger.info(f"[CalDAV] ✓ Updated RRULE to: {rrule}")
+                                    except Exception as e:
+                                        logger.warning(f"Failed to parse RRULE '{rrule}': {e}")
+                            
+                            # Save updated event using proxy to the SAME location it was found
+                            updated_ical = cal.to_ical().decode('utf-8')
+                            if not proxy.write_file(event_filepath, updated_ical):
+                                logger.error(f"[CalDAV] Failed to save updated event {event_uid} to {event_filepath}")
+                                return False
+                            
+                            logger.info(f"[CalDAV] ✓ Successfully updated event {event_uid} in built-in storage at {event_filepath}")
+                            return True
             
-            logger.warning(f"Event component not found in file for UID {event_uid}")
+            if not event_found:
+                logger.warning(f"[CalDAV] Event component with UID {event_uid} not found in file {event_filepath}")
             return False
         
         # Otherwise use CalDAV protocol (for external servers)

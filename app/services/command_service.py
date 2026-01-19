@@ -2102,18 +2102,26 @@ Return ONLY valid JSON, no other text.""",
                 if len(edit_parts) > 2:
                     change_request += " " + edit_parts[2]
 
-                event = None
-                for cal in calendars:
-                    event = get_event_by_uid(cal["url"], cal["username"], cal["password"], event_uid)
-                    if event:
-                        break
+                # For built-in calendars, skip get_event_by_uid check and go directly to update
+                # (update_event_in_calendar will find the event itself)
+                is_builtin = any(cal.get("password") == "__USE_SESSION_AUTH__" for cal in calendars)
+                
+                if not is_builtin:
+                    # For external calendars, verify event exists first
+                    event = None
+                    for cal in calendars:
+                        if cal.get("password") != "__USE_SESSION_AUTH__":
+                            event = get_event_by_uid(cal["url"], cal["username"], cal["password"], event_uid)
+                            if event:
+                                break
 
-                if not event:
-                    return {"type": "text", "content": "❌ Event not found."}
+                    if not event:
+                        return {"type": "text", "content": "❌ Event not found."}
 
                 change_lower = change_request.lower()
                 if change_lower.startswith("title "):
                     new_title = change_request[6:].strip()
+                    updated = False
                     for cal in calendars:
                         if update_event_in_calendar(
                             cal["url"], cal["username"], cal["password"], event_uid, 
@@ -2121,10 +2129,16 @@ Return ONLY valid JSON, no other text.""",
                             user_id=self.user.id,
                             db=self.db
                         ):
-                            return {"type": "text", "content": f"✅ Updated title to: **{new_title}**"}
+                            updated = True
+                            break
+                    if updated:
+                        return {"type": "text", "content": f"✅ Updated title to: **{new_title}**"}
+                    else:
+                        return {"type": "text", "content": "❌ Failed to update event. Event may not exist or update failed."}
 
                 elif change_lower.startswith("location "):
                     new_location = change_request[9:].strip()
+                    updated = False
                     for cal in calendars:
                         if update_event_in_calendar(
                             cal["url"], cal["username"], cal["password"], event_uid, 
@@ -2132,10 +2146,16 @@ Return ONLY valid JSON, no other text.""",
                             user_id=self.user.id,
                             db=self.db
                         ):
-                            return {"type": "text", "content": f"✅ Updated location to: **{new_location}**"}
+                            updated = True
+                            break
+                    if updated:
+                        return {"type": "text", "content": f"✅ Updated location to: **{new_location}**"}
+                    else:
+                        return {"type": "text", "content": "❌ Failed to update event. Event may not exist or update failed."}
 
                 elif change_lower.startswith("description "):
                     new_description = change_request[12:].strip()
+                    updated = False
                     for cal in calendars:
                         if update_event_in_calendar(
                             cal["url"], cal["username"], cal["password"], event_uid, 
@@ -2143,7 +2163,12 @@ Return ONLY valid JSON, no other text.""",
                             user_id=self.user.id,
                             db=self.db
                         ):
-                            return {"type": "text", "content": f"✅ Updated description to: **{new_description}**"}
+                            updated = True
+                            break
+                    if updated:
+                        return {"type": "text", "content": f"✅ Updated description to: **{new_description}**"}
+                    else:
+                        return {"type": "text", "content": "❌ Failed to update event. Event may not exist or update failed."}
 
                 elif change_lower.startswith("time ") or change_lower.startswith("move "):
                     # AI-based time parsing for edit (abbreviated for size)
@@ -2154,7 +2179,59 @@ Return ONLY valid JSON, no other text.""",
                         "content": f"Rescheduling logic for '{time_request}' triggered (uid: {event_uid}).",
                     }
 
-                return {"type": "text", "content": "Usage: `cal edit <uid> title|location|description|time <value>`"}
+                elif change_lower.startswith("repeat ") or change_lower.startswith("rrule "):
+                    # Parse repeat pattern (e.g., "weekly Mon", "daily", "monthly")
+                    repeat_pattern = change_request.split(maxsplit=1)[1] if len(change_request.split()) > 1 else change_request[7:].strip()
+                    repeat_lower = repeat_pattern.lower()
+                    
+                    # Convert common patterns to RRULE format
+                    rrule_str = None
+                    if repeat_lower == "daily" or repeat_lower.startswith("daily "):
+                        rrule_str = "FREQ=DAILY"
+                    elif repeat_lower == "weekly" or repeat_lower.startswith("weekly "):
+                        # Try to extract day of week
+                        day_map = {"mon": "MO", "tue": "TU", "wed": "WE", "thu": "TH", "fri": "FR", "sat": "SA", "sun": "SU"}
+                        day_found = None
+                        for day_name, day_code in day_map.items():
+                            if day_name in repeat_lower:
+                                day_found = day_code
+                                break
+                        if day_found:
+                            rrule_str = f"FREQ=WEEKLY;BYDAY={day_found}"
+                        else:
+                            rrule_str = "FREQ=WEEKLY"
+                    elif repeat_lower == "monthly" or repeat_lower.startswith("monthly "):
+                        rrule_str = "FREQ=MONTHLY"
+                    elif repeat_lower == "yearly" or repeat_lower.startswith("yearly "):
+                        rrule_str = "FREQ=YEARLY"
+                    elif repeat_lower.startswith("none") or repeat_lower == "no repeat":
+                        rrule_str = ""  # Remove recurrence
+                    else:
+                        # Try to parse as RRULE directly
+                        if "FREQ=" in repeat_pattern.upper():
+                            rrule_str = repeat_pattern
+                        else:
+                            return {"type": "text", "content": f"❌ Unrecognized repeat pattern: {repeat_pattern}. Use: daily, weekly [Mon], monthly, yearly, or RRULE format."}
+                    
+                    updated = False
+                    for cal in calendars:
+                        if update_event_in_calendar(
+                            cal["url"], cal["username"], cal["password"], event_uid, 
+                            rrule=rrule_str,
+                            user_id=self.user.id,
+                            db=self.db
+                        ):
+                            updated = True
+                            break
+                    if updated:
+                        if rrule_str:
+                            return {"type": "text", "content": f"✅ Updated recurrence to: **{repeat_pattern}**"}
+                        else:
+                            return {"type": "text", "content": "✅ Removed recurrence from event."}
+                    else:
+                        return {"type": "text", "content": "❌ Failed to update event. Event may not exist or update failed."}
+
+                return {"type": "text", "content": "Usage: `cal edit <uid> title|location|description|time|repeat <value>`"}
 
             else:
                 return {

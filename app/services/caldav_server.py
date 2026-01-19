@@ -214,10 +214,23 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                 if cal_name.startswith('.'):
                     continue
                 logger.info(f"[CalDAV] Adding calendar: {cal_name}")
-                # Generate sync-token and ctag for this calendar
+                # Generate dynamic sync-token and ctag based on actual calendar contents
+                # This ensures iPhone detects changes when events are added/modified/deleted
                 import hashlib
-                sync_token = hashlib.md5(f"{cal_name}_{user.username}".encode()).hexdigest()[:16]
-                ctag = hashlib.md5(f"{cal_name}_{user.username}_ctag".encode()).hexdigest()[:16]
+                cal_items = proxy.list_files(cal_name)
+                ics_files = [item for item in cal_items if item.get('name', '').endswith('.ics')]
+                # Create hash from file count and latest modification time
+                if ics_files:
+                    # Get the latest modification time from all events
+                    latest_mtime = max(item.get('modified', item.get('mtime', 0)) for item in ics_files)
+                    # Create hash from calendar name, file count, and latest mtime
+                    ctag_data = f"{cal_name}_{user.username}_{len(ics_files)}_{latest_mtime}"
+                else:
+                    # No events yet, use static hash
+                    ctag_data = f"{cal_name}_{user.username}_0"
+                ctag = hashlib.md5(ctag_data.encode()).hexdigest()[:16]
+                sync_token = hashlib.md5(f"{ctag_data}_sync".encode()).hexdigest()[:16]
+                logger.debug(f"[CalDAV] Calendar '{cal_name}': {len(ics_files)} events, ctag={ctag}, sync_token={sync_token}")
                 items.append({
                     "href": f"{base_url}/{quote(cal_name, safe='')}/",
                     "props": {
@@ -237,8 +250,11 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
             if not calendar_dirs and has_loose_ics:
                 logger.info(f"[CalDAV] Adding legacy 'Calendar' (loose .ics files found)")
                 import hashlib
-                sync_token = hashlib.md5(f"calendar_{user.username}".encode()).hexdigest()[:16]
-                ctag = hashlib.md5(f"calendar_{user.username}_ctag".encode()).hexdigest()[:16]
+                # Create dynamic ctag based on actual files
+                latest_mtime = max(item.get('modified', item.get('mtime', 0)) for item in ics_files if item.get('name', '').endswith('.ics'))
+                ctag_data = f"calendar_{user.username}_{len(ics_files)}_{latest_mtime}"
+                ctag = hashlib.md5(ctag_data.encode()).hexdigest()[:16]
+                sync_token = hashlib.md5(f"{ctag_data}_sync".encode()).hexdigest()[:16]
                 items.append({
                     "href": f"{base_url}/calendar/",
                     "props": {
@@ -281,11 +297,23 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
         cal_name = path
         subpath = "" if cal_name == 'calendar' else cal_name
         
-        # Generate a simple sync-token and ctag based on calendar name
-        # This helps iPhone track changes
+        # Generate dynamic sync-token and ctag based on actual calendar contents
+        # This ensures iPhone detects changes when events are added/modified/deleted
         import hashlib
-        sync_token = hashlib.md5(f"{cal_name}_{user.username}".encode()).hexdigest()[:16]
-        ctag = hashlib.md5(f"{cal_name}_{user.username}_ctag".encode()).hexdigest()[:16]
+        cal_items = proxy.list_files(subpath)
+        ics_files = [item for item in cal_items if item.get('name', '').endswith('.ics')]
+        # Create hash from file count and latest modification time
+        if ics_files:
+            # Get the latest modification time from all events
+            latest_mtime = max(item.get('modified', item.get('mtime', 0)) for item in ics_files)
+            # Create hash from calendar name, file count, and latest mtime
+            ctag_data = f"{cal_name}_{user.username}_{len(ics_files)}_{latest_mtime}"
+        else:
+            # No events yet, use static hash
+            ctag_data = f"{cal_name}_{user.username}_0"
+        ctag = hashlib.md5(ctag_data.encode()).hexdigest()[:16]
+        sync_token = hashlib.md5(f"{ctag_data}_sync".encode()).hexdigest()[:16]
+        logger.debug(f"[CalDAV] Individual calendar '{cal_name}': {len(ics_files)} events, ctag={ctag}, sync_token={sync_token}")
         
         items.append({
             "href": f"{base_url}/{quote(cal_name, safe='')}/",

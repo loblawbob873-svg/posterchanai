@@ -184,10 +184,12 @@ async def search_files(
                             continue
                     
                     if response and response.status_code == 200:
-                    if response.status_code == 200:
                         return response.json()
                     else:
-                        logger.warning(f"Storage server search failed: {response.status_code}, falling back to local search")
+                        if response:
+                            logger.warning(f"Storage server search failed: {response.status_code}, falling back to local search")
+                        else:
+                            logger.warning(f"Storage server search failed: no response, falling back to local search")
             except Exception as e:
                 logger.warning(f"Failed to proxy search to storage server: {e}, falling back to local search")
     
@@ -1927,6 +1929,9 @@ async def delete_files_bulk(
     current_user: User = Depends(get_current_user)
 ):
     """Delete multiple files or directories. Proxies to storage server if configured (NO FALLBACK)."""
+    logger.info(f"[FILES] Received delete_files_bulk request for user {current_user.username}: {len(request.file_paths)} file(s)")
+    logger.debug(f"[FILES] Files to delete: {request.file_paths}")
+    
     # Check if storage server is configured - proxy request if so (NO FALLBACK)
     storage_server_url = safe_query_setting(db, "storage_server_url")
     if storage_server_url and storage_server_url.value:
@@ -1934,9 +1939,14 @@ async def delete_files_bulk(
         if url.startswith(('http://', 'https://')):
             logger.info(f"[FILES] Proxying delete_files_bulk to storage server: {url}")
             # Proxy to storage server - NO FALLBACK
-            result = await _proxy_delete_files_bulk(url, current_user.username, request.file_paths, db)
-            logger.info(f"[FILES] Successfully proxied delete_files_bulk to storage server")
-            return result
+            try:
+                result = await _proxy_delete_files_bulk(url, current_user.username, request.file_paths, db)
+                logger.info(f"[FILES] Successfully proxied delete_files_bulk to storage server: {result.get('message', 'OK')}")
+                logger.debug(f"[FILES] Deleted: {result.get('deleted', [])}, Errors: {result.get('errors', [])}")
+                return result
+            except Exception as e:
+                logger.error(f"[FILES] Error proxying delete_files_bulk: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Failed to delete files: {str(e)}")
         else:
             raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
     else:

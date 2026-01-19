@@ -1988,43 +1988,60 @@ async def delete_files_bulk(
         deleted = []
         errors = []
         
+        logger.info(f"[STORAGE] Starting deletion of {len(file_paths)} file(s) for user {username}")
+        
         for file_path in file_paths:
             try:
+                logger.debug(f"[STORAGE] Processing deletion of: {file_path}")
                 # Sanitize and validate path
                 safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
                 full_path = user_path / safe_path
                 
                 # Validate path is within user directory
                 if not _validate_path_within_base(full_path, user_path):
-                    errors.append(f"{file_path}: Access denied")
+                    error_msg = f"{file_path}: Access denied"
+                    logger.warning(f"[STORAGE] {error_msg}")
+                    errors.append(error_msg)
                     continue
                 
                 if not full_path.exists():
-                    errors.append(f"{file_path}: Not found")
+                    error_msg = f"{file_path}: Not found"
+                    logger.warning(f"[STORAGE] {error_msg}")
+                    errors.append(error_msg)
                     continue
                 
                 # Delete the file or directory
                 if full_path.is_file():
+                    logger.info(f"[STORAGE] Deleting file: {full_path}")
                     # Delete thumbnail if it's an image
                     try:
                         from app.services.thumbnail_service import is_image_file, delete_thumbnail
                         if is_image_file(full_path):
                             delete_thumbnail(user_path, full_path)
+                            logger.debug(f"[STORAGE] Deleted thumbnail for {file_path}")
                     except Exception as e:
                         logger.warning(f"Failed to delete thumbnail for {file_path}: {e}")
                     
                     full_path.unlink()
+                    logger.info(f"[STORAGE] ✓ Successfully deleted file: {file_path}")
                 elif full_path.is_dir():
+                    logger.info(f"[STORAGE] Deleting directory: {full_path}")
                     import shutil
                     shutil.rmtree(full_path)
+                    logger.info(f"[STORAGE] ✓ Successfully deleted directory: {file_path}")
                 else:
-                    errors.append(f"{file_path}: Neither file nor directory")
+                    error_msg = f"{file_path}: Neither file nor directory"
+                    logger.warning(f"[STORAGE] {error_msg}")
+                    errors.append(error_msg)
                     continue
                 
                 deleted.append(file_path)
             except Exception as e:
-                errors.append(f"{file_path}: {str(e)}")
+                error_msg = f"{file_path}: {str(e)}"
+                logger.error(f"[STORAGE] Error deleting {file_path}: {e}", exc_info=True)
+                errors.append(error_msg)
         
+        logger.info(f"[STORAGE] Deletion complete: {len(deleted)} deleted, {len(errors)} errors")
         return deleted, errors
     
     try:

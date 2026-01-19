@@ -1223,6 +1223,7 @@ class FileManager {
     
     async deleteFile(filePath) {
         try {
+            console.log(`[FileManager] Deleting file: ${filePath}`);
             // Use the same endpoint as deleteSelected but for a single file
             const response = await csrfFetch('/api/files/delete-bulk', {
                 method: 'POST',
@@ -1231,13 +1232,38 @@ class FileManager {
             });
             
             const data = await response.json();
+            console.log(`[FileManager] Delete response:`, data);
+            
             if (response.ok) {
                 if (data.errors && data.errors.length > 0) {
+                    console.error(`[FileManager] Delete errors:`, data.errors);
                     alert(`Error: ${data.errors.join(', ')}`);
                 } else {
-                    await this.loadFiles(this.currentPath);
+                    console.log(`[FileManager] File deleted successfully, reloading files`);
+                    // Remove deleted file from allImages array if in photo gallery
+                    if (this.allImages && this.allImages.length > 0) {
+                        const beforeCount = this.allImages.length;
+                        this.allImages = this.allImages.filter(img => img.path !== filePath);
+                        console.log(`[FileManager] Removed deleted file from allImages: ${beforeCount} -> ${this.allImages.length}`);
+                        // Re-render the gallery grid if it exists
+                        const grid = document.getElementById('cyberpunkGalleryGrid');
+                        if (grid && typeof this.renderImageGrid === 'function') {
+                            console.log(`[FileManager] Re-rendering photo gallery grid`);
+                            this.renderImageGrid();
+                        }
+                    }
+                    // Check if we're in photo gallery view and reload photos if so
+                    const isPhotoView = document.getElementById('cyberpunkPictureViewer') && 
+                                       document.getElementById('cyberpunkPictureViewer').style.display !== 'none';
+                    if (isPhotoView && typeof this.loadAllImages === 'function') {
+                        console.log(`[FileManager] Reloading photo gallery`);
+                        await this.loadAllImages(true); // Reset and reload
+                    } else {
+                        await this.loadFiles(this.currentPath);
+                    }
                 }
             } else {
+                console.error(`[FileManager] Delete failed:`, data);
                 alert('Error: ' + (data.detail || 'Failed to delete file'));
             }
         } catch (error) {
