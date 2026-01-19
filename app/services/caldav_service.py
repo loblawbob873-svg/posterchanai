@@ -1695,8 +1695,17 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
                         # Extract address from ADR field
                         address = None
                         if hasattr(vcard, 'adr'):
-                            adr = vcard.adr.value
-                            if isinstance(adr, list) and len(adr) >= 4:
+                            # Handle both single ADR object and list of ADR objects
+                            adr_objects = []
+                            if isinstance(vcard.adr, list):
+                                adr_objects = vcard.adr
+                            else:
+                                adr_objects = [vcard.adr]
+                            
+                            # Use the first ADR object
+                            if adr_objects:
+                                adr = adr_objects[0].value
+                                if isinstance(adr, list) and len(adr) >= 4:
                                 address_parts = []
                                 if len(adr) > 2 and adr[2]:  # street
                                     address_parts.append(str(adr[2]))
@@ -1776,8 +1785,17 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
                         # Extract address from ADR field
                         address = None
                         if hasattr(vcard, 'adr'):
-                            adr = vcard.adr.value
-                            if isinstance(adr, list) and len(adr) >= 4:
+                            # Handle both single ADR object and list of ADR objects
+                            adr_objects = []
+                            if isinstance(vcard.adr, list):
+                                adr_objects = vcard.adr
+                            else:
+                                adr_objects = [vcard.adr]
+                            
+                            # Use the first ADR object
+                            if adr_objects:
+                                adr = adr_objects[0].value
+                                if isinstance(adr, list) and len(adr) >= 4:
                                 address_parts = []
                                 if len(adr) > 2 and adr[2]:  # street
                                     address_parts.append(str(adr[2]))
@@ -2455,8 +2473,17 @@ def get_user_contact_by_uid(user_id: int, db: Session, contact_uid: str) -> Opti
                         # Extract address from ADR field
                         address = None
                         if hasattr(vcard, 'adr'):
-                            adr = vcard.adr.value
-                            if isinstance(adr, list) and len(adr) >= 4:
+                            # Handle both single ADR object and list of ADR objects
+                            adr_objects = []
+                            if isinstance(vcard.adr, list):
+                                adr_objects = vcard.adr
+                            else:
+                                adr_objects = [vcard.adr]
+                            
+                            # Use the first ADR object
+                            if adr_objects:
+                                adr = adr_objects[0].value
+                                if isinstance(adr, list) and len(adr) >= 4:
                                 address_parts = []
                                 if len(adr) > 2 and adr[2]:  # street
                                     address_parts.append(str(adr[2]))
