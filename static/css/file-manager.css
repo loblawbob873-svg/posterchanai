@@ -186,6 +186,7 @@
 }
 
 .file-manager-search {
+    grid-column: 3;
     display: flex;
     align-items: center;
     gap: 4px;
@@ -194,7 +195,6 @@
     max-width: 400px;
     margin: 0;
     flex-shrink: 1;
-    grid-column: 3;
     justify-self: stretch;
     overflow: visible;
     box-sizing: border-box;
@@ -223,8 +223,8 @@
 .file-manager-toolbar {
     padding: 12px 16px;
     border-bottom: 1px solid var(--border-color);
-    display: grid;
-    grid-template-columns: auto auto 1fr auto;
+    display: grid !important;
+    grid-template-columns: auto auto 1fr auto !important;
     align-items: center;
     gap: 12px;
     min-height: 60px;
@@ -233,6 +233,60 @@
     box-sizing: border-box;
 }
 
+/* Explicit grid column assignments with high specificity */
+.file-manager-toolbar > .file-manager-tabs {
+    grid-column: 1 !important;
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.file-manager-toolbar > .file-selection-controls {
+    grid-column: 2 !important;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 4px 8px;
+    background: var(--bg-primary);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    justify-self: start;
+    flex-shrink: 0;
+    overflow: visible;
+    box-sizing: border-box;
+    max-width: 100%;
+}
+
+.file-manager-toolbar > .file-manager-search {
+    grid-column: 3 !important;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    min-width: 120px;
+    max-width: 400px;
+    margin: 0;
+    flex-shrink: 1;
+    justify-self: stretch;
+    overflow: visible;
+    box-sizing: border-box;
+}
+
+.file-manager-toolbar > .file-toolbar-actions {
+    grid-column: 4 !important;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    justify-self: end;
+    overflow: visible;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+}
+
+/* Fallback for non-direct children (backwards compatibility) */
 .file-manager-tabs {
     grid-column: 1;
     display: flex;
@@ -258,6 +312,7 @@
 }
 
 .file-manager-search {
+    grid-column: 3;
     display: flex;
     align-items: center;
     gap: 4px;
@@ -266,7 +321,6 @@
     max-width: 400px;
     margin: 0;
     flex-shrink: 1;
-    grid-column: 3;
     justify-self: stretch;
     overflow: visible;
     box-sizing: border-box;
