@@ -621,21 +621,41 @@ async def get_all_images(
             curr_ts = float(img.get('modified', 0) or 0)
             if prev_ts is not None and curr_ts > prev_ts:
                 sort_errors.append((i, img.get('name'), curr_ts, prev_ts))
-                logger.error(f"[FILES] CRITICAL SORT FAILURE at index {i}: {img.get('name')} (ts={curr_ts}) is NEWER than previous (ts={prev_ts})!")
+                logger.warning(f"[FILES] Sort issue at index {i}: {img.get('name')} (ts={curr_ts}) is NEWER than previous (ts={prev_ts})")
+                # Log the actual dates for debugging
+                try:
+                    from datetime import datetime
+                    curr_date = datetime.fromtimestamp(curr_ts).strftime('%Y-%m-%d %H:%M:%S')
+                    prev_date = datetime.fromtimestamp(prev_ts).strftime('%Y-%m-%d %H:%M:%S')
+                    logger.warning(f"[FILES]   Current: {curr_date}, Previous: {prev_date}")
+                except:
+                    pass
             prev_ts = curr_ts
         
         if sort_errors:
-            logger.error(f"[FILES] Found {len(sort_errors)} sorting errors in first 50 images!")
+            logger.warning(f"[FILES] Found {len(sort_errors)} sorting issues in first 50 images")
             # Log first 5 errors with full details
             for idx, name, curr, prev in sort_errors[:5]:
-                logger.error(f"[FILES] Error {idx}: {name} - current={curr}, previous={prev}, diff={curr-prev}")
+                logger.warning(f"[FILES] Issue {idx}: {name} - current={curr}, previous={prev}, diff={curr-prev}")
             # If many errors, the sort might be reversed - try fixing it
             if len(sort_errors) > 10:
-                logger.error("[FILES] Too many errors - attempting to fix by re-sorting...")
+                logger.warning("[FILES] Too many sort issues - attempting to fix by re-sorting...")
                 images.sort(key=sort_key)  # Re-sort
-                logger.error("[FILES] Re-sorted array")
+                logger.warning("[FILES] Re-sorted array")
         else:
             logger.info(f"[FILES] ✓ Sort verified: First 50 images in correct order (newest first)")
+        
+        # Log timestamp range for debugging
+        if images:
+            newest_ts = float(images[0].get('modified', 0) or 0)
+            oldest_ts = float(images[-1].get('modified', 0) or 0) if len(images) > 1 else newest_ts
+            try:
+                from datetime import datetime
+                newest_date = datetime.fromtimestamp(newest_ts).strftime('%Y-%m-%d %H:%M:%S')
+                oldest_date = datetime.fromtimestamp(oldest_ts).strftime('%Y-%m-%d %H:%M:%S')
+                logger.info(f"[FILES] Timestamp range: Newest={newest_date}, Oldest={oldest_date}")
+            except:
+                pass
         
         # Debug: log statistics
         total_scanned = len(images) + skipped_count

@@ -91,9 +91,11 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
         if not proxy.use_proxy:
             logger.error(f"[CalDAV] Storage proxy NOT configured! Set storage_server_url in Admin settings.")
             logger.error(f"[CalDAV] Cannot fetch calendar events without storage server configured.")
+            logger.error(f"[CalDAV] This is why cal week/month shows 0 events - storage server must be configured!")
             return []
         
         logger.info(f"[CalDAV] Storage proxy configured: {proxy.storage_url}")
+        logger.info(f"[CalDAV] Searching for events from {start_date.date()} to {end_date.date()}")
         
         all_events = []
         
@@ -1049,6 +1051,9 @@ def get_all_user_events(
     calendars = get_user_calendars(user_id, db)
     logger.info(f"[Calendar] Found {len(calendars)} calendars for user {user_id}: {[c.get('name', 'Unknown') for c in calendars]}")
     all_events = []
+    
+    # Track if we've already fetched from built-in calendars (to avoid duplicates)
+    builtin_fetched = False
 
     for cal_config in calendars:
         url = cal_config.get('url', '')
@@ -1063,19 +1068,23 @@ def get_all_user_events(
             try:
                 # If using built-in server, read directly from storage proxy
                 if is_builtin and password == "__USE_SESSION_AUTH__":
-                    logger.info(f"[Calendar] Using built-in CalDAV server for calendar '{name}'")
-                    # For built-in calendars, always search all calendar directories to get all events
-                    # The calendar name in config is just for display - we want all events from all calendars
-                    events = _get_events_from_builtin(user_id, start_date, end_date, None, db)
-                    logger.info(f"[Calendar] Found {len(events)} events from built-in server for calendar '{name}' in range {start_date.date()} to {end_date.date()}")
-                    if events:
-                        all_events.extend(events)
-                        logger.info(f"[Calendar] Added {len(events)} events from '{name}', total now: {len(all_events)}")
-                        # Log first few event summaries for debugging
-                        for i, event in enumerate(events[:3]):
-                            logger.info(f"[Calendar]   Event {i+1} from '{name}': {event.summary} on {event.start.date()}")
+                    # Only fetch from built-in calendars once (they all share the same storage)
+                    if not builtin_fetched:
+                        logger.info(f"[Calendar] Fetching from built-in CalDAV server (all calendars)")
+                        # Search all calendar directories to get all events
+                        events = _get_events_from_builtin(user_id, start_date, end_date, None, db)
+                        logger.info(f"[Calendar] Found {len(events)} events from built-in server (all calendars) in range {start_date.date()} to {end_date.date()}")
+                        if events:
+                            all_events.extend(events)
+                            logger.info(f"[Calendar] Added {len(events)} events from all built-in calendars, total now: {len(all_events)}")
+                            # Log first few event summaries for debugging
+                            for i, event in enumerate(events[:5]):
+                                logger.info(f"[Calendar]   Event {i+1}: {event.summary} on {event.start.date()} from calendar '{event.calendar_name}'")
+                        else:
+                            logger.warning(f"[Calendar] No events found in any built-in calendar for date range {start_date.date()} to {end_date.date()}")
+                        builtin_fetched = True
                     else:
-                        logger.info(f"[Calendar] No events found in calendar '{name}' for date range {start_date.date()} to {end_date.date()}")
+                        logger.debug(f"[Calendar] Skipping duplicate built-in calendar config '{name}' (already fetched)")
                 else:
                     # External CalDAV server - use HTTP requests with timeout
                     def fetch_calendar():

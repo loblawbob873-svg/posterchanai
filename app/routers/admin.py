@@ -610,8 +610,10 @@ async def rescan_storage(
             if user_path.exists():
                 # Step 1: Restore EXIF timestamps for all media files
                 logger.info(f"[File Scan] Step 1/3: Restoring EXIF timestamps for user {username}")
+                logger.info(f"[File Scan] This will update file modification times from EXIF metadata")
+                logger.info(f"[File Scan] Files copied via rsync will get their original photo/video dates restored")
                 exif_stats = batch_restore_timestamps(user_path)
-                logger.info(f"[File Scan] EXIF stats: {exif_stats['restored']} restored, {exif_stats['processed']} processed")
+                logger.info(f"[File Scan] EXIF stats: {exif_stats['restored']} restored, {exif_stats['processed']} processed, {exif_stats.get('skipped', 0)} skipped, {exif_stats.get('errors', 0)} errors")
                 
                 # Step 2: Generate thumbnails
                 logger.info(f"[File Scan] Step 2/3: Generating thumbnails for user {username}")

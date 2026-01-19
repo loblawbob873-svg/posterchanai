@@ -42,9 +42,14 @@ def restore_exif_timestamp(file_path: Path) -> bool:
         
         # Determine what EXIF tags to try based on file type
         if is_image_file(file_path):
-            tags_to_try = ['DateTimeOriginal', 'CreateDate', 'DateCreated']
+            tags_to_try = ['DateTimeOriginal', 'CreateDate', 'DateCreated', 'ModifyDate', 'FileModifyDate']
         elif is_video_file(file_path):
-            tags_to_try = ['CreationDate', 'CreateDate', 'DateTimeOriginal', 'MediaCreateDate']
+            # For videos, try more tags as different formats use different metadata
+            tags_to_try = [
+                'CreationDate', 'CreateDate', 'DateTimeOriginal', 'MediaCreateDate',
+                'ModifyDate', 'FileModifyDate', 'TrackCreateDate', 'TrackModifyDate',
+                'MediaModifyDate', 'QuickTime:CreateDate', 'QuickTime:ModifyDate'
+            ]
         else:
             return False
         
@@ -70,26 +75,36 @@ def restore_exif_timestamp(file_path: Path) -> bool:
                 continue
         
         if not exif_date:
-            logger.debug(f"[EXIF] No valid EXIF date found for {file_path.name}")
+            # For files without EXIF, check if file timestamp seems wrong (very recent, suggesting it's a copy date)
+            # If file was modified in the last 24 hours and is an image/video, it might be a fresh copy
+            # In that case, we can't fix it without EXIF, but we'll log it
+            current_mtime = file_path.stat().st_mtime
+            import time
+            file_age_hours = (time.time() - current_mtime) / 3600
+            if file_age_hours < 24:
+                logger.debug(f"[EXIF] No EXIF date found for {file_path.name} (file is {file_age_hours:.1f} hours old - might be a recent copy)")
+            else:
+                logger.debug(f"[EXIF] No valid EXIF date found for {file_path.name}")
             return False
         
         # Get current file modification time
         current_mtime = file_path.stat().st_mtime
         current_dt = datetime.fromtimestamp(current_mtime)
         
-        # Only update if EXIF date is different (to avoid unnecessary writes)
-        if abs((exif_date - current_dt).total_seconds()) > 1:
+        # Always update if EXIF date is available and different (even by 1 second)
+        # This ensures files copied via rsync get their original dates restored
+        if abs((exif_date - current_dt).total_seconds()) > 0.5:
             # Convert datetime to Unix timestamp
             timestamp = exif_date.timestamp()
             
             # Set both access and modification time
             os.utime(str(file_path), (timestamp, timestamp))
             
-            logger.info(f"[EXIF] Restored timestamp for {file_path.name}: {exif_date}")
+            logger.info(f"[EXIF] Restored timestamp for {file_path.name}: {exif_date} (was {current_dt})")
             return True
         else:
-            logger.debug(f"[EXIF] Timestamp already correct for {file_path.name}")
-            return False
+            logger.debug(f"[EXIF] Timestamp already correct for {file_path.name}: {exif_date}")
+            return True  # Return True even if already correct, to count as processed
             
     except Exception as e:
         logger.error(f"[EXIF] Error restoring timestamp for {file_path}: {e}")

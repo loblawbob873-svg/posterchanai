@@ -345,10 +345,88 @@ def search_music_files(directory: str, query: str, recursive: bool = True, limit
     
     if use_proxy:
         # Use storage proxy to search
-        logger.info(f"[MUSIC SEARCH PROXY] Searching via storage proxy")
+        logger.info(f"[MUSIC SEARCH PROXY] Searching via storage proxy, recursive={recursive}")
         try:
-            # Get all items from storage proxy
-            all_items = scan_music_directory(directory, recursive, db=db, user_id=user_id)
+            # For recursive search, we need to get all files from all subdirectories
+            # The storage proxy API might support recursive listing, or we need to do it manually
+            from app.models import User
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                logger.error(f"[MUSIC SEARCH PROXY] User {user_id} not found")
+                return []
+            
+            import httpx
+            storage_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+            headers = {}
+            if storage_token and storage_token.value:
+                headers["Authorization"] = f"Bearer {storage_token.value}"
+            
+            # Use the storage server's search endpoint if available, otherwise scan recursively
+            search_url = f"{storage_server_url.value.rstrip('/')}/api/files/search"
+            logger.info(f"[MUSIC SEARCH PROXY] Using search endpoint: {search_url}")
+            
+            with httpx.Client(timeout=60.0) as client:
+                # Try using the search endpoint first
+                try:
+                    response = client.get(
+                        search_url,
+                        params={"query": query, "path": directory, "recursive": "true" if recursive else "false"},
+                        headers=headers
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        # Filter for audio files only
+                        results = []
+                        files = data.get('files', data.get('items', []))
+                        for item in files:
+                            if len(results) >= limit:
+                                break
+                            # Check if it's an audio file
+                            name = item.get('name', '')
+                            path = item.get('path', name)
+                            ext = Path(name).suffix.lower()
+                            if ext in AUDIO_EXTENSIONS:
+                                results.append({
+                                    'type': 'file',
+                                    'name': name,
+                                    'path': path,
+                                    'size': item.get('size', 0),
+                                    'extension': ext
+                                })
+                        logger.info(f"[MUSIC SEARCH PROXY] Found {len(results)} matches via search endpoint")
+                        return results
+                except Exception as search_err:
+                    logger.debug(f"[MUSIC SEARCH PROXY] Search endpoint failed: {search_err}, falling back to recursive scan")
+            
+            # Fallback: manually scan recursively by getting all items
+            all_items = []
+            if recursive:
+                # Recursively scan all subdirectories
+                def scan_recursive(current_dir):
+                    try:
+                        items = scan_music_directory(directory, False, current_dir, db=db, user_id=user_id)
+                        for item in items:
+                            if item['type'] == 'folder':
+                                # Recursively scan subdirectories
+                                subdir = item['path']
+                                scan_recursive(subdir)
+                            else:
+                                all_items.append(item)
+                    except Exception as e:
+                        logger.warning(f"[MUSIC SEARCH PROXY] Error scanning {current_dir}: {e}")
+                
+                # Start with root directory
+                try:
+                    root_items = scan_music_directory(directory, False, '', db=db, user_id=user_id)
+                    for item in root_items:
+                        if item['type'] == 'folder':
+                            scan_recursive(item['path'])
+                        else:
+                            all_items.append(item)
+                except Exception as e:
+                    logger.error(f"[MUSIC SEARCH PROXY] Error scanning root: {e}")
+            else:
+                all_items = scan_music_directory(directory, False, '', db=db, user_id=user_id)
             
             # Filter items matching query (check both name AND path)
             query_lower = query.lower()
@@ -363,10 +441,10 @@ def search_music_files(directory: str, query: str, recursive: bool = True, limit
                     if name_match or path_match:
                         results.append(item)
             
-            logger.info(f"[MUSIC SEARCH PROXY] Found {len(results)} matches")
+            logger.info(f"[MUSIC SEARCH PROXY] Found {len(results)} matches after filtering {len(all_items)} items")
             return results
         except Exception as e:
-            logger.error(f"[MUSIC SEARCH PROXY] Error: {e}")
+            logger.error(f"[MUSIC SEARCH PROXY] Error: {e}", exc_info=True)
             return []
     
     # Fall back to local filesystem
@@ -389,13 +467,18 @@ def search_music_files(directory: str, query: str, recursive: bool = True, limit
                 break
             
             if item.is_file() and item.suffix in AUDIO_EXTENSIONS:
-                if query_lower in item.name.lower():
+                # Check both filename and full path for query match
+                name_match = query_lower in item.name.lower()
+                relative_path = str(item.relative_to(base_path))
+                path_match = query_lower in relative_path.lower()
+                
+                if name_match or path_match:
                     try:
                         size = item.stat().st_size
                         results.append({
                             'type': 'file',
                             'name': item.name,
-                            'path': str(item.relative_to(base_path)),
+                            'path': relative_path,
                             'size': size,
                             'extension': item.suffix.lower()
                         })
