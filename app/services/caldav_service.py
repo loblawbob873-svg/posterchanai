@@ -440,7 +440,7 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
 
 
 def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
-    """Save event directly to built-in CalDAV storage (uses storage proxy if configured)."""
+    """Save event directly to built-in CalDAV storage (REQUIRES storage proxy - no local fallback)."""
     try:
         from app.models import User
         from app.services.dav_storage_proxy import DAVStorageProxy
@@ -451,8 +451,14 @@ def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
         if not user:
             return False
         
-        # Use storage proxy (will fallback to local if not configured)
+        # Use storage proxy (MUST be configured - no local fallback)
         proxy = DAVStorageProxy(db, user.username, 'caldav')
+        
+        # Verify proxy is configured
+        if not proxy.use_proxy:
+            logger.error(f"[CalDAV] Storage proxy NOT configured! Cannot save event without storage server.")
+            logger.error(f"[CalDAV] Set storage_server_url in Admin settings.")
+            return False
         
         # Parse iCalendar to extract UID
         cal = ICalendar.from_ical(ical_data.encode('utf-8'))
@@ -478,7 +484,7 @@ def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
 
 
 def _save_contact_to_builtin(user_id: int, db: Session, vcard_data: str) -> bool:
-    """Save contact directly to built-in CardDAV storage (uses storage proxy if configured)."""
+    """Save contact directly to built-in CardDAV storage (REQUIRES storage proxy - no local fallback)."""
     try:
         from app.models import User
         from app.services.dav_storage_proxy import DAVStorageProxy
@@ -489,8 +495,14 @@ def _save_contact_to_builtin(user_id: int, db: Session, vcard_data: str) -> bool
         if not user:
             return False
         
-        # Use storage proxy (will fallback to local if not configured)
+        # Use storage proxy (MUST be configured - no local fallback)
         proxy = DAVStorageProxy(db, user.username, 'cardav')
+        
+        # Verify proxy is configured
+        if not proxy.use_proxy:
+            logger.error(f"[CardDAV] Storage proxy NOT configured! Cannot save contact without storage server.")
+            logger.error(f"[CardDAV] Set storage_server_url in Admin settings.")
+            return False
         
         # Parse vCard to extract UID
         try:
@@ -512,7 +524,7 @@ def _save_contact_to_builtin(user_id: int, db: Session, vcard_data: str) -> bool
 
 
 def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: dict) -> bool:
-    """Edit contact directly in built-in CardDAV storage (uses storage proxy if configured)."""
+    """Edit contact directly in built-in CardDAV storage (REQUIRES storage proxy - no local fallback)."""
     try:
         from app.models import User
         from app.services.dav_storage_proxy import DAVStorageProxy
@@ -522,12 +534,18 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
         if not user:
             return False
         
-        # Use storage proxy (will fallback to local if not configured)
+        # Use storage proxy (MUST be configured - no local fallback)
         proxy = DAVStorageProxy(db, user.username, 'cardav')
+        
+        # Verify proxy is configured
+        if not proxy.use_proxy:
+            logger.error(f"[CardDAV] Storage proxy NOT configured! Cannot edit contact without storage server.")
+            logger.error(f"[CardDAV] Set storage_server_url in Admin settings.")
+            return False
         
         filepath = f"{contact_uid}.vcf"
         
-        # Check if file exists
+        # Check if file exists (using proxy - no local fallback)
         if not proxy.file_exists(filepath):
             logger.warning(f"Contact file not found: {filepath}")
             return False
@@ -614,19 +632,18 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
                     else:
                         vcard.remove(vcard.adr)
                 
-                # Add new address - after removing all, add() should create a single property
-                vcard.add('adr')
-                # Access the newly added property (should be single, not list, since we removed all)
-                if hasattr(vcard, 'adr'):
-                    if isinstance(vcard.adr, list):
-                        # If still a list (shouldn't happen after removal), use first element
-                        adr_prop = vcard.adr[0] if vcard.adr else None
-                    else:
-                        adr_prop = vcard.adr
-                    
-                    if adr_prop:
-                        adr_prop.value = new_adr
-                        adr_prop.type_param = 'HOME'
+                # Add new address using vobject's proper API
+                # Create the ADR property with the address value directly
+                adr_prop = vcard.add('adr')
+                adr_prop.value = new_adr
+                adr_prop.type_param = 'HOME'
+                
+                # Verify it was added correctly
+                if not hasattr(vcard, 'adr') or (isinstance(vcard.adr, list) and len(vcard.adr) == 0):
+                    logger.error(f"Failed to add ADR property to contact {contact_uid}")
+                    return False
+                
+                logger.debug(f"Added address to contact {contact_uid}: {address_str}")
             else:
                 # Remove address if empty
                 if hasattr(vcard, 'adr'):
@@ -643,11 +660,29 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
                 vcard.add('note')
                 vcard.note.value = updates['note']
         
+        # Verify address was added before saving
+        if 'address' in updates and updates.get('address', '').strip():
+            if not hasattr(vcard, 'adr'):
+                logger.error(f"Address was not added to contact {contact_uid} before save")
+                return False
+            # Log the address that will be saved for debugging
+            if isinstance(vcard.adr, list):
+                saved_addr = vcard.adr[0].value if vcard.adr else None
+            else:
+                saved_addr = vcard.adr.value if hasattr(vcard.adr, 'value') else None
+            logger.debug(f"Contact {contact_uid} address before save: {saved_addr}")
+        
         # Save updated contact using proxy
-        success = proxy.write_file(filepath, vcard.serialize())
+        serialized = vcard.serialize()
+        success = proxy.write_file(filepath, serialized)
         
         if success:
             logger.info(f"Updated contact {contact_uid} in built-in storage")
+            # Verify address is in serialized data
+            if 'address' in updates and updates.get('address', '').strip():
+                if 'ADR' not in serialized and 'adr' not in serialized.lower():
+                    logger.error(f"Address not found in serialized vCard for contact {contact_uid}")
+                    logger.error(f"Serialized vCard preview: {serialized[:500]}")
         return success
     except Exception as e:
         logger.error(f"Error editing contact in built-in storage: {e}")
@@ -655,7 +690,7 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
 
 
 def _delete_contact_builtin(user_id: int, db: Session, contact_uid: str) -> bool:
-    """Delete contact directly from built-in CardDAV storage (uses storage proxy if configured)."""
+    """Delete contact directly from built-in CardDAV storage (REQUIRES storage proxy - no local fallback)."""
     try:
         from app.models import User
         from app.services.dav_storage_proxy import DAVStorageProxy
@@ -664,8 +699,14 @@ def _delete_contact_builtin(user_id: int, db: Session, contact_uid: str) -> bool
         if not user:
             return False
         
-        # Use storage proxy (will fallback to local if not configured)
+        # Use storage proxy (MUST be configured - no local fallback)
         proxy = DAVStorageProxy(db, user.username, 'cardav')
+        
+        # Verify proxy is configured
+        if not proxy.use_proxy:
+            logger.error(f"[CardDAV] Storage proxy NOT configured! Cannot save contact without storage server.")
+            logger.error(f"[CardDAV] Set storage_server_url in Admin settings.")
+            return False
         
         filepath = f"{contact_uid}.vcf"
         success = proxy.delete_file(filepath)
@@ -1282,8 +1323,8 @@ def add_event_to_calendar(
             # Convert to local timezone-aware, then to UTC for storage
             start_time = to_local_aware(start_time)
             end_time = to_local_aware(end_time)
-            start_utc = start_time.astimezone(tz.utc)
-            end_utc = end_time.astimezone(tz.utc)
+            start_utc = start_time.astimezone(timezone.utc)
+            end_utc = end_time.astimezone(timezone.utc)
 
             cal = Calendar()
             cal.add('prodid', '-//Posterchanai//Calendar//EN')
@@ -1351,8 +1392,8 @@ def add_event_to_calendar(
         end_time = to_local_aware(end_time)
 
         # Convert to UTC for iCalendar storage
-        start_utc = start_time.astimezone(tz.utc)
-        end_utc = end_time.astimezone(tz.utc)
+        start_utc = start_time.astimezone(timezone.utc)
+        end_utc = end_time.astimezone(timezone.utc)
 
         logger.info(f"Storing event: local={start_time} -> UTC={start_utc}")
 
@@ -2446,19 +2487,18 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                                 else:
                                     vcard.remove(vcard.adr)
                             
-                            # Add new address - after removing all, add() should create a single property
-                            vcard.add('adr')
-                            # Access the newly added property (should be single, not list, since we removed all)
-                            if hasattr(vcard, 'adr'):
-                                if isinstance(vcard.adr, list):
-                                    # If still a list (shouldn't happen after removal), use first element
-                                    adr_prop = vcard.adr[0] if vcard.adr else None
-                                else:
-                                    adr_prop = vcard.adr
-                                
-                                if adr_prop:
-                                    adr_prop.value = new_adr
-                                    adr_prop.type_param = 'HOME'
+                            # Add new address using vobject's proper API
+                            # Create the ADR property with the address value directly
+                            adr_prop = vcard.add('adr')
+                            adr_prop.value = new_adr
+                            adr_prop.type_param = 'HOME'
+                            
+                            # Verify it was added correctly
+                            if not hasattr(vcard, 'adr'):
+                                logger.error(f"Failed to add ADR property to contact {contact_uid}")
+                                return False
+                            
+                            logger.debug(f"Added address to contact {contact_uid}: {address_str}")
                         elif hasattr(vcard, 'adr'):
                             # Remove address if empty - handle list case
                             if isinstance(vcard.adr, list):
@@ -3157,8 +3197,14 @@ def delete_todo_from_calendar(
             if not user:
                 return False
             
-            # Use storage proxy (will fallback to local if not configured)
+            # Use storage proxy (MUST be configured - no local fallback)
             proxy = DAVStorageProxy(db, user.username, 'caldav')
+            
+            # Verify proxy is configured
+            if not proxy.use_proxy:
+                logger.error(f"[CalDAV] Storage proxy NOT configured! Cannot delete todo without storage server.")
+                logger.error(f"[CalDAV] Set storage_server_url in Admin settings.")
+                return False
             
             filepath = f"{todo_uid}.ics"
             success = proxy.delete_file(filepath)
@@ -3232,8 +3278,14 @@ def delete_event_from_calendar(
             if not user:
                 return False
             
-            # Use storage proxy (will fallback to local if not configured)
+            # Use storage proxy (MUST be configured - no local fallback)
             proxy = DAVStorageProxy(db, user.username, 'caldav')
+            
+            # Verify proxy is configured
+            if not proxy.use_proxy:
+                logger.error(f"[CalDAV] Storage proxy NOT configured! Cannot delete todo without storage server.")
+                logger.error(f"[CalDAV] Set storage_server_url in Admin settings.")
+                return False
             
             filepath = f"{event_uid}.ics"
             success = proxy.delete_file(filepath)

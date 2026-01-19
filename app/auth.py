@@ -107,15 +107,35 @@ def get_current_user(
             if user:
                 # Now update last used timestamp (after we've already fetched user)
                 try:
-                    # Try to refresh the api_key object to ensure it's in a valid state
-                    # This helps with SQLite session issues, but if refresh fails, try update anyway
+                    # Update last_used_at using direct SQL to avoid SQLite parameter binding issues
+                    # SQLite can have issues with ORM updates, so use raw SQL
                     try:
-                        db.refresh(api_key)
-                    except Exception:
-                        # If refresh fails, object might still be valid - continue with update
-                        pass
-                    api_key.last_used_at = datetime.now(timezone.utc)
-                    db.commit()
+                        from sqlalchemy import text
+                        now_utc = datetime.now(timezone.utc)
+                        # Use parameterized query but with explicit parameter names to avoid SQLite issues
+                        db.execute(
+                            text("UPDATE api_keys SET last_used_at = :last_used_at WHERE id = :id"),
+                            {"last_used_at": now_utc, "id": api_key.id}
+                        )
+                        db.commit()
+                    except Exception as e:
+                        # If direct SQL update fails, try ORM method as fallback
+                        try:
+                            db.rollback()
+                            # Fallback: try refreshing and updating via ORM
+                            try:
+                                db.refresh(api_key)
+                            except Exception:
+                                pass
+                            api_key.last_used_at = datetime.now(timezone.utc)
+                            db.commit()
+                        except Exception as fallback_error:
+                            # If both methods fail, rollback but we already have the user
+                            try:
+                                db.rollback()
+                            except Exception:
+                                pass
+                            logger.warning(f"Failed to update API key last_used_at (both methods): {fallback_error}")
                 except Exception as e:
                     # If commit fails, rollback but we already have the user
                     try:

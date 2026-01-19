@@ -215,7 +215,11 @@ class CommandService:
 
     def parse_command(self, message: str) -> Tuple[Optional[str], str]:
         """Parse message for commands, return (command, argument)"""
-        lower = message.lower().strip()
+        # Remove emojis and other unicode symbols that might interfere with matching
+        import re
+        # Remove common emojis and symbols (✏️, 🔄, etc.) but keep the text
+        cleaned_message = re.sub(r'[✏️🔄📅📆🗓️➕➖✕×]', '', message)
+        lower = cleaned_message.lower().strip()
 
         # Check natural language phrases first (exact match)
         if lower in self.PHRASE_COMMANDS:
@@ -226,6 +230,39 @@ class CommandService:
         if lower.startswith("pay bill "):
             bill_name = message[9:].strip()  # Extract bill name preserving case
             return "budget", f"pay {bill_name}"
+        
+        # Check for natural language calendar commands (before canonical commands)
+        # These patterns must be checked BEFORE "calendar" command to avoid confusion
+        calendar_patterns = [
+            ("show calendar for next month", "nextmonth"),
+            ("show calendar next month", "nextmonth"),
+            ("calendar for next month", "nextmonth"),
+            ("next month calendar", "nextmonth"),
+            ("show calendar for this month", "month"),
+            ("show calendar this month", "month"),
+            ("calendar for this month", "month"),
+            ("this month calendar", "month"),
+            ("show calendar for the week", "week"),
+            ("show calendar this week", "week"),
+            ("calendar for the week", "week"),
+            ("this week calendar", "week"),
+            ("show calendar for today", "today"),
+            ("show calendar today", "today"),
+            ("calendar for today", "today"),
+            ("today calendar", "today"),
+            ("show calendar", "week"),
+            ("show schedule", "week"),
+        ]
+        for pattern, replacement in calendar_patterns:
+            # Check if message matches pattern (exact or with trailing content)
+            if lower == pattern:
+                return "cal", replacement
+            elif lower.startswith(pattern):
+                # Check if what follows is just whitespace, emojis, or nothing
+                remaining = lower[len(pattern):].strip()
+                # If remaining is empty or just emojis/symbols, it's a match
+                if not remaining or re.match(r'^[✏️🔄📅📆🗓️➕➖✕×\s]*$', remaining):
+                    return "cal", replacement
         
         # Check for natural language note commands (before canonical commands)
         note_patterns = [
@@ -1919,16 +1956,29 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
             elif subcommand == "nextmonth":
                 # Get next month's events
+                import logging
+                logger = logging.getLogger(__name__)
                 now = datetime.now()
                 next_year, next_month = get_next_month(now.year, now.month)
                 start_date = get_month_start(next_year, next_month)
                 end_date = get_month_end(next_year, next_month)
-                events = get_all_user_events(self.user.id, start_date, end_date, self.db)
-                events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
-                return {
-                    "type": "text",
-                    "content": f"## ◈ SCHEDULE FOR {start_date.strftime('%B %Y').upper()} ◈\n\n{events_text}",
-                }
+                logger.info(f"[cal nextmonth] Fetching events for user {self.user.id} from {start_date.date()} to {end_date.date()}")
+                logger.info(f"[cal nextmonth] User has {len(calendars)} calendars configured")
+                
+                try:
+                    events = get_all_user_events(self.user.id, start_date, end_date, self.db)
+                    logger.info(f"[cal nextmonth] Found {len(events)} events")
+                    events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
+                    return {
+                        "type": "text",
+                        "content": f"## ◈ SCHEDULE FOR {start_date.strftime('%B %Y').upper()} ◈\n\n{events_text}",
+                    }
+                except Exception as e:
+                    logger.error(f"[cal nextmonth] Error fetching events: {e}", exc_info=True)
+                    return {
+                        "type": "text",
+                        "content": f"❌ Error fetching calendar events: {str(e)}\n\nTry again or check server logs.",
+                    }
 
             elif subcommand == "add":
                 if not param:
