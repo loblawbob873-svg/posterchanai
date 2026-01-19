@@ -196,6 +196,8 @@
     flex-shrink: 1;
     grid-column: 3;
     justify-self: stretch;
+    overflow: visible;
+    box-sizing: border-box;
 }
 
 .file-search-input {
@@ -225,8 +227,10 @@
     grid-template-columns: auto auto 1fr auto;
     align-items: center;
     gap: 12px;
-    min-height: auto;
+    min-height: 60px;
     background: var(--bg-secondary);
+    overflow: visible;
+    box-sizing: border-box;
 }
 
 .file-toolbar-actions {
@@ -236,6 +240,8 @@
     flex-shrink: 0;
     grid-column: 4;
     justify-self: end;
+    overflow: visible;
+    flex-wrap: nowrap;
 }
 
 .btn-icon {
@@ -252,6 +258,10 @@
     justify-content: center;
     min-width: 36px;
     height: 36px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    overflow: visible;
+    white-space: nowrap;
 }
 
 .btn-icon:hover {
@@ -281,6 +291,8 @@
     grid-column: 2;
     justify-self: start;
     flex-shrink: 0;
+    overflow: visible;
+    box-sizing: border-box;
 }
 
 .file-selection-controls .btn-icon-only {
@@ -1423,6 +1435,8 @@
     flex-shrink: 0;
     grid-column: 1;
     white-space: nowrap;
+    overflow: visible;
+    box-sizing: border-box;
 }
 
 .tab-btn {
