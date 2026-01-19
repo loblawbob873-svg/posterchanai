@@ -29,61 +29,10 @@
 <script src="/static/js/tts.js"></script>
 <script src="/static/js/stt.js"></script>
 <script src="/static/js/chat.js?v=27"></script>
-<script src="/static/js/app.js?v=10"></script>
+<script src="/static/js/app.js?v=11"></script>
 <script src="/static/js/apikeys.js?v=2"></script>
 <script src="/static/js/rag.js"></script>
 <script src="/static/js/notes.js?v=3"></script>
     <script src="/static/js/notes-browser.js?v=2"></script>
-<script src="/static/js/file-manager.js?v=3"></script>
-<script>
-// Photo Gallery - direct handler that runs immediately
-(function() {
-    function showPhotoViewer() {
-        console.log('[PhotoFix] showPhotoViewer called');
-        var viewer = document.getElementById('cyberpunkPictureViewer');
-        if (viewer) {
-            viewer.style.display = 'block';
-            viewer.style.visibility = 'visible';
-            viewer.style.opacity = '1';
-            console.log('[PhotoFix] Viewer display set to block');
-            if (window.fileManager && typeof window.fileManager.loadAllImages === 'function') {
-                console.log('[PhotoFix] Loading images...');
-                window.fileManager.loadAllImages();
-            }
-        } else {
-            console.error('[PhotoFix] cyberpunkPictureViewer NOT IN DOM');
-            alert('Photo Gallery not loaded. Please refresh.');
-        }
-    }
-    
-    // Expose globally
-    window.showPhotoViewer = showPhotoViewer;
-    
-    // Attach handler when DOM ready
-    function attachHandler() {
-        var btn = document.getElementById('photoGalleryBtn');
-        if (btn) {
-            // Remove any existing onclick
-            btn.onclick = null;
-            // Add our handler with capture phase
-            btn.addEventListener('click', function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                showPhotoViewer();
-            }, true);
-            console.log('[PhotoFix] Handler attached to photoGalleryBtn');
-        } else {
-            console.error('[PhotoFix] photoGalleryBtn not found');
-        }
-    }
-    
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', attachHandler);
-    } else {
-        attachHandler();
-    }
-    // Also try after a delay
-    setTimeout(attachHandler, 500);
-})();
-</script>
+<script src="/static/js/file-manager.js?v=4"></script>
 {% endblock %}

@@ -93,27 +93,32 @@ class App {
         const openPhotoGallery = () => {
             console.log('Photo Gallery button clicked');
             
-            // Wait for fileManager to be ready if not already
-            const openViewer = () => {
-                if (window.fileManager && typeof window.fileManager.openPictureViewer === 'function') {
-                    console.log('fileManager exists, calling openPictureViewer');
-                    try {
-                        window.fileManager.openPictureViewer();
-                        // Close the user menu
-                        const userMenuContainer = document.querySelector('.user-menu-container');
-                        if (userMenuContainer) {
-                            userMenuContainer.classList.remove('open');
-                        }
-                    } catch (err) {
-                        console.error('Error opening picture viewer:', err);
-                    }
-                } else {
-                    console.warn('window.fileManager not ready yet, waiting...');
-                    // Retry after a short delay (up to 2 seconds)
-                    setTimeout(openViewer, 100);
+            // Show viewer element directly first (don't wait for fileManager)
+            const viewer = document.getElementById('cyberpunkPictureViewer');
+            if (viewer) {
+                console.log('Showing picture viewer directly');
+                viewer.style.display = 'block';
+                
+                // Close the user menu
+                const userMenuContainer = document.querySelector('.user-menu-container');
+                if (userMenuContainer) {
+                    userMenuContainer.classList.remove('open');
                 }
-            };
-            openViewer();
+                
+                // Then load images via fileManager if available
+                if (window.fileManager) {
+                    window.fileManager.pictureViewerOpen = true;
+                    if (typeof window.fileManager.loadAllImages === 'function') {
+                        window.fileManager.loadAllImages();
+                    }
+                    if (typeof window.fileManager.setupInfiniteScroll === 'function') {
+                        window.fileManager.setupInfiniteScroll();
+                    }
+                }
+            } else {
+                console.error('cyberpunkPictureViewer not found in DOM');
+                alert('Photo Gallery not available. Please refresh.');
+            }
         };
         
         // Picture viewer button (in sidebar - may not exist anymore)
