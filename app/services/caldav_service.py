@@ -1706,19 +1706,19 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
                             if adr_objects:
                                 adr = adr_objects[0].value
                                 if isinstance(adr, list) and len(adr) >= 4:
-                                address_parts = []
-                                if len(adr) > 2 and adr[2]:  # street
-                                    address_parts.append(str(adr[2]))
-                                if len(adr) > 3 and adr[3]:  # city
-                                    address_parts.append(str(adr[3]))
-                                if len(adr) > 4 and adr[4]:  # state
-                                    address_parts.append(str(adr[4]))
-                                if len(adr) > 5 and adr[5]:  # postal_code
-                                    address_parts.append(str(adr[5]))
-                                if len(adr) > 6 and adr[6]:  # country
-                                    address_parts.append(str(adr[6]))
-                                if address_parts:
-                                    address = ', '.join(address_parts)
+                                    address_parts = []
+                                    if len(adr) > 2 and adr[2]:  # street
+                                        address_parts.append(str(adr[2]))
+                                    if len(adr) > 3 and adr[3]:  # city
+                                        address_parts.append(str(adr[3]))
+                                    if len(adr) > 4 and adr[4]:  # state
+                                        address_parts.append(str(adr[4]))
+                                    if len(adr) > 5 and adr[5]:  # postal_code
+                                        address_parts.append(str(adr[5]))
+                                    if len(adr) > 6 and adr[6]:  # country
+                                        address_parts.append(str(adr[6]))
+                                    if address_parts:
+                                        address = ', '.join(address_parts)
                         
                         note = None
                         if hasattr(vcard, 'note'):
@@ -1796,19 +1796,19 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
                             if adr_objects:
                                 adr = adr_objects[0].value
                                 if isinstance(adr, list) and len(adr) >= 4:
-                                address_parts = []
-                                if len(adr) > 2 and adr[2]:  # street
-                                    address_parts.append(str(adr[2]))
-                                if len(adr) > 3 and adr[3]:  # city
-                                    address_parts.append(str(adr[3]))
-                                if len(adr) > 4 and adr[4]:  # state
-                                    address_parts.append(str(adr[4]))
-                                if len(adr) > 5 and adr[5]:  # postal_code
-                                    address_parts.append(str(adr[5]))
-                                if len(adr) > 6 and adr[6]:  # country
-                                    address_parts.append(str(adr[6]))
-                                if address_parts:
-                                    address = ', '.join(address_parts)
+                                    address_parts = []
+                                    if len(adr) > 2 and adr[2]:  # street
+                                        address_parts.append(str(adr[2]))
+                                    if len(adr) > 3 and adr[3]:  # city
+                                        address_parts.append(str(adr[3]))
+                                    if len(adr) > 4 and adr[4]:  # state
+                                        address_parts.append(str(adr[4]))
+                                    if len(adr) > 5 and adr[5]:  # postal_code
+                                        address_parts.append(str(adr[5]))
+                                    if len(adr) > 6 and adr[6]:  # country
+                                        address_parts.append(str(adr[6]))
+                                    if address_parts:
+                                        address = ', '.join(address_parts)
                         
                         note = None
                         if hasattr(vcard, 'note'):
@@ -2484,19 +2484,19 @@ def get_user_contact_by_uid(user_id: int, db: Session, contact_uid: str) -> Opti
                             if adr_objects:
                                 adr = adr_objects[0].value
                                 if isinstance(adr, list) and len(adr) >= 4:
-                                address_parts = []
-                                if len(adr) > 2 and adr[2]:  # street
-                                    address_parts.append(str(adr[2]))
-                                if len(adr) > 3 and adr[3]:  # city
-                                    address_parts.append(str(adr[3]))
-                                if len(adr) > 4 and adr[4]:  # state
-                                    address_parts.append(str(adr[4]))
-                                if len(adr) > 5 and adr[5]:  # postal_code
-                                    address_parts.append(str(adr[5]))
-                                if len(adr) > 6 and adr[6]:  # country
-                                    address_parts.append(str(adr[6]))
-                                if address_parts:
-                                    address = ', '.join(address_parts)
+                                    address_parts = []
+                                    if len(adr) > 2 and adr[2]:  # street
+                                        address_parts.append(str(adr[2]))
+                                    if len(adr) > 3 and adr[3]:  # city
+                                        address_parts.append(str(adr[3]))
+                                    if len(adr) > 4 and adr[4]:  # state
+                                        address_parts.append(str(adr[4]))
+                                    if len(adr) > 5 and adr[5]:  # postal_code
+                                        address_parts.append(str(adr[5]))
+                                    if len(adr) > 6 and adr[6]:  # country
+                                        address_parts.append(str(adr[6]))
+                                    if address_parts:
+                                        address = ', '.join(address_parts)
                         
                         note = None
                         if hasattr(vcard, 'note'):
