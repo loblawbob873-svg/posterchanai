@@ -21,11 +21,11 @@
 
 #notesModal .notes-modal-content,
 .notes-modal-content {
-    max-width: 1400px !important;
-    width: min(95vw, 1400px) !important;
+    max-width: 1600px !important;
+    width: min(98vw, 1600px) !important;
     height: auto !important;
-    max-height: 90vh !important;
-    min-height: 600px !important;
+    max-height: 95vh !important;
+    min-height: 700px !important;
     border-radius: 12px;
     overflow: hidden !important;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
@@ -40,11 +40,11 @@
 @media (min-width: 769px) {
     #notesModal .notes-modal-content,
     .notes-modal-content {
-        width: min(95vw, 1400px) !important;
+        width: min(98vw, 1600px) !important;
         height: auto !important;
-        max-height: 90vh !important;
-        min-height: 600px !important;
-        max-width: 1400px !important;
+        max-height: 95vh !important;
+        min-height: 700px !important;
+        max-width: 1600px !important;
         border-radius: 12px !important;
         margin: auto !important;
     }
@@ -54,7 +54,7 @@
     display: flex;
     flex: 1 1 0;
     min-height: 0;
-    max-height: 100%;
+    max-height: calc(95vh - 80px); /* Account for header */
     gap: 0;
     padding: 0;
     background: var(--bg-primary);
@@ -889,13 +889,13 @@
 @media (max-width: 768px) and (min-width: 481px) {
     #notesModal .notes-modal-content,
     .notes-modal-content {
-        width: min(95vw, 1200px) !important;
+        width: min(98vw, 1400px) !important;
         height: auto !important;
-        max-height: 90vh !important;
-        min-height: 500px !important;
+        max-height: 95vh !important;
+        min-height: 650px !important;
         border-radius: 12px !important;
         margin: auto !important;
-        max-width: 1200px !important;
+        max-width: 1400px !important;
     }
     
     .notes-modal-body {
