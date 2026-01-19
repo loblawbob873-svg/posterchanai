@@ -8,7 +8,7 @@
                 <button class="btn-icon-only" id="fileManagerUploadDirBtn" title="Upload Directory">📁</button>
                 <button class="btn-icon-only" id="fileManagerNewFolderBtn" title="New Folder">📂</button>
                 <button class="btn-icon-only" id="fileManagerScanBtn" title="Scan Storage (EXIF/Thumbnails)">🔄</button>
-                <button class="btn-icon-only" id="fileManagerPictureViewerBtn" title="Photo Gallery">🖼️</button>
+                <button class="btn-icon-only" id="fileManagerPictureViewerBtn" title="Photo Gallery" onclick="event.stopPropagation();if(window.fileManager)window.fileManager.close();openPhotoGalleryNow();">🖼️</button>
             </div>
             <button class="btn-icon modal-close modal-close-cyberpunk" id="fileManagerCloseBtn">✕</button>
         </div>

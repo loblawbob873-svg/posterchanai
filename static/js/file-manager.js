@@ -111,10 +111,10 @@ class FileManager {
             this.scanStorage();
         });
         
-        // Picture viewer button
-        attachButtonListener('fileManagerPictureViewerBtn', () => {
-            this.openPictureViewer();
-        });
+        // Picture viewer button - handled by inline onclick in HTML
+        // attachButtonListener('fileManagerPictureViewerBtn', () => {
+        //     this.openPictureViewer();
+        // });
         
         // Selection controls
         attachButtonListener('fileManagerSelectAllBtn', () => this.selectAll());
