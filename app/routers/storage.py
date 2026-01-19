@@ -797,12 +797,42 @@ async def get_all_images(
                     relative_path = str(item.relative_to(user_path))
                     
                     # Get modification time for sorting
-                    # CRITICAL: Use the MAXIMUM of mtime and ctime to get the most recent timestamp
-                    # This handles cases where:
-                    # - Files uploaded via file manager get current mtime
-                    # - Files copied/moved might have old mtime but new ctime
-                    # - We want to show files by when they were added to the system, not when originally created
-                    modified_time = max(stat.st_mtime, stat.st_ctime) if stat.st_mtime > 0 and stat.st_ctime > 0 else (stat.st_mtime if stat.st_mtime > 0 else stat.st_ctime)
+                    # Use mtime (modification time) which should match photo date after EXIF restoration
+                    # Only fall back to ctime if mtime is invalid
+                    modified_time = stat.st_mtime if stat.st_mtime > 0 else (stat.st_ctime if stat.st_ctime > 0 else time.time())
+                    
+                    # Try to extract date from filename if modification time seems wrong
+                    # Common patterns: YYYYMMDD, YYYYMMDD_HHMMSS, etc.
+                    filename = item.name
+                    import re
+                    match = re.search(r'(\d{4})(\d{2})(\d{2})(?:[_-](\d{2})(\d{2})(\d{2}))?', filename)
+                    if match:
+                        year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+                        hour, minute, second = 0, 0, 0
+                        if match.group(4):  # Has time component
+                            hour, minute, second = int(match.group(4)), int(match.group(5)), int(match.group(6))
+                        try:
+                            from datetime import datetime
+                            filename_date = datetime(year, month, day, hour, minute, second)
+                            filename_timestamp = filename_date.timestamp()
+                            
+                            # If filename date is significantly older than modification time (more than 30 days difference),
+                            # OR if mtime is very recent but filename suggests old date,
+                            # use filename date instead. This handles cases where files were copied but have old photo dates.
+                            current_time = time.time()
+                            mtime_age_days = (current_time - modified_time) / 86400
+                            filename_age_days = (current_time - filename_timestamp) / 86400
+                            
+                            mtime_is_recent = mtime_age_days < 7  # Modified within last week
+                            filename_is_old = filename_age_days > 30  # Filename suggests date older than 30 days
+                            
+                            if filename_age_days > (mtime_age_days + 30) or (mtime_is_recent and filename_is_old):
+                                # Filename suggests much older date than modification time
+                                # Use filename date for sorting
+                                modified_time = filename_timestamp
+                                logger.info(f"[STORAGE] Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(stat.st_mtime)}, mtime_age={mtime_age_days:.1f}d, filename_age={filename_age_days:.1f}d)")
+                        except (ValueError, OverflowError):
+                            pass  # Invalid date, use mtime
                     
                     # Fallback to current time if both are invalid
                     if modified_time <= 0:
@@ -925,16 +955,17 @@ async def get_all_images(
                     logger.warning(f"Failed to convert modified time for {img.get('path', 'unknown')}: {e}, using 0.0")
                     img['modified'] = 0.0
         
-        # Sort by modified time descending (newest first), then by path ascending for stability
-        # CRITICAL: Sort by negative timestamp to ensure newest first (higher timestamp = newer)
+        # Sort by modified time descending (newest first), then by path for stability
+        # Use positive timestamps with reverse=True for clarity
         def sort_key(img):
             modified = float(img.get('modified', 0) or 0)
             path = str(img.get('path', '')).lower()
-            # Return tuple: (negative_modified, path) so higher timestamps sort first
-            return (-modified, path)
+            # Return tuple: (modified, path) - we'll use reverse=True to get descending order
+            return (modified, path)
         
-        # Sort the list
-        images.sort(key=sort_key)
+        # Sort the list - descending by modified time (newest first)
+        # reverse=True means higher timestamps (newer files) come first
+        images.sort(key=sort_key, reverse=True)
         
         # Double-check: verify sort worked
         prev_ts = None
@@ -952,8 +983,9 @@ async def get_all_images(
                 logger.error(f"[STORAGE] Error {idx}: {name} - current={curr}, previous={prev}, diff={curr-prev}")
             if len(sort_errors) > 10:
                 logger.error("[STORAGE] Too many errors - attempting to fix by re-sorting...")
+                # CRITICAL: Must use reverse=True to keep newest first!
                 images.sort(key=sort_key, reverse=True)
-                logger.error("[STORAGE] Re-sorted array")
+                logger.error("[STORAGE] Re-sorted array with reverse=True (newest first)")
         else:
             logger.info(f"[STORAGE] ✓ Sort verified: First 50 images in correct order (newest first)")
         

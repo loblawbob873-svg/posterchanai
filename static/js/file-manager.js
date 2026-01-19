@@ -196,10 +196,31 @@ class FileManager {
         const clearSearchBtn = document.getElementById('fileManagerClearSearchBtn');
         
         if (searchInput) {
+            // Debounce search to avoid too many API calls
+            let searchTimeout = null;
             searchInput.addEventListener('input', (e) => {
-                this.searchQuery = e.target.value.trim().toLowerCase();
-                this.filterFiles();
-                clearSearchBtn.style.display = this.searchQuery ? 'block' : 'none';
+                const query = e.target.value.trim();
+                this.searchQuery = query.toLowerCase();
+                
+                // Clear previous timeout
+                if (searchTimeout) {
+                    clearTimeout(searchTimeout);
+                }
+                
+                // If query is empty, clear search and show current directory
+                if (!query) {
+                    this.clearSearch();
+                    clearSearchBtn.style.display = 'none';
+                    return;
+                }
+                
+                // Show clear button
+                clearSearchBtn.style.display = 'block';
+                
+                // Debounce: wait 300ms after user stops typing before searching
+                searchTimeout = setTimeout(() => {
+                    this.performSearch(query);
+                }, 300);
             });
             
             searchInput.addEventListener('keydown', (e) => {
@@ -608,10 +629,64 @@ class FileManager {
         `;
     }
     
+    async performSearch(query) {
+        if (!query || !query.trim()) {
+            this.clearSearch();
+            return;
+        }
+        
+        console.log('FileManager: Performing search for:', query);
+        const grid = document.getElementById('fileManagerGrid');
+        if (grid) {
+            grid.innerHTML = '<div class="file-manager-loading">Searching for "' + this.escapeHtml(query) + '"...</div>';
+        }
+        
+        try {
+            const searchUrl = `/api/files/search?query=${encodeURIComponent(query)}`;
+            console.log('FileManager: Fetching search URL:', searchUrl);
+            const response = await fetch(searchUrl);
+            console.log('FileManager: Search response status:', response.status);
+            
+            if (response.ok) {
+                const data = await response.json();
+                console.log('FileManager: Search returned', data.results ? data.results.length : 0, 'results');
+                this.filteredFiles = data.results || [];
+                this.currentFiles = data.results || []; // Update currentFiles for navigation
+                
+                if (this.filteredFiles.length === 0) {
+                    if (grid) {
+                        grid.innerHTML = `<div class="file-manager-empty">No files found matching "${this.escapeHtml(query)}"</div>`;
+                    }
+                } else {
+                    this.renderFiles();
+                }
+                
+                // Update breadcrumb to show search results
+                const breadcrumb = document.getElementById('fileManagerBreadcrumb');
+                if (breadcrumb) {
+                    breadcrumb.innerHTML = `<span class="breadcrumb-item">Search results for "${this.escapeHtml(query)}" (${this.filteredFiles.length} found)</span>`;
+                }
+            } else {
+                const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+                console.error('FileManager: Search error:', error);
+                if (grid) {
+                    grid.innerHTML = `<div class="file-manager-error">Error: ${this.escapeHtml(error.detail || 'Search failed')}</div>`;
+                }
+            }
+        } catch (error) {
+            console.error('FileManager: Error performing search:', error);
+            if (grid) {
+                grid.innerHTML = `<div class="file-manager-error">Error: Search failed. Please try again.</div>`;
+            }
+        }
+    }
+    
     filterFiles() {
         if (!this.searchQuery) {
             this.filteredFiles = [...this.currentFiles]; // Copy array
         } else {
+            // If we have a search query but haven't performed backend search yet,
+            // filter current files as fallback
             const query = this.searchQuery.toLowerCase();
             this.filteredFiles = this.currentFiles.filter(item => {
                 const name = item.name.toLowerCase();
@@ -622,17 +697,19 @@ class FileManager {
         this.renderFiles();
     }
     
-    clearSearch() {
+    async clearSearch() {
         const searchInput = document.getElementById('fileManagerSearchInput');
         const clearSearchBtn = document.getElementById('fileManagerClearSearchBtn');
         if (searchInput) {
             searchInput.value = '';
             this.searchQuery = '';
-            this.filterFiles();
         }
         if (clearSearchBtn) {
             clearSearchBtn.style.display = 'none';
         }
+        
+        // Reload current directory to show normal file list
+        await this.loadFiles(this.currentPath);
     }
     
     renderFiles() {
