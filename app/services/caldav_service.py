@@ -528,12 +528,6 @@ def _save_event_to_builtin(user_id: int, db: Session, ical_data: str, event_uid:
                     logger.error(f"[CalDAV] ❌ WARNING: Event file was not found after save at {filepath}")
             except Exception as e:
                 logger.warning(f"[CalDAV] Could not verify saved event file: {e}")
-            # Verify the file was actually written by trying to read it back
-            try:
-                verify_data = proxy.read_file(filepath)
-                if verify_data:
-                    logger.info(f"[CalDAV] ✓ Verified: Event file exists and is readable at {filepath}")
-                else:
                     logger.error(f"[CalDAV] ❌ WARNING: Event file was not found after save at {filepath}")
             except Exception as e:
                 logger.warning(f"[CalDAV] Could not verify saved event file: {e}")
@@ -3251,6 +3245,9 @@ def format_contacts_for_display(contacts: List[Contact]) -> str:
 
         if contact.organization:
             lines.append(f"   🏢 {contact.organization}")
+
+        if contact.address:
+            lines.append(f"   📍 {contact.address}")
 
         if contact.note:
             lines.append(f"   📝 {contact.note}")

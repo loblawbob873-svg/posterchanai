@@ -478,7 +478,8 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                             start_dt = date_parser.parse(start_str.replace('Z', '+00:00'))
                             end_dt = date_parser.parse(end_str.replace('Z', '+00:00'))
                             time_range = (start_dt, end_dt)
-                            logger.info(f"[CalDAV] Time range filter: {start_str} to {end_str}")
+                            logger.info(f"[CalDAV] Time range filter: {start_str} to {end_str} (iPhone query)")
+                            logger.info(f"[CalDAV] This will return events between {start_dt} and {end_dt}")
                         except Exception as e:
                             logger.warning(f"[CalDAV] Error parsing time range: {e}")
                             pass
@@ -572,7 +573,18 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                             })
                             added_count += 1
                             # Log first few events and any matching specific UIDs for debugging
-                            if added_count <= 3 or event_uid in ["6e9ccaba-47d4-48d1-9729-701dd0d6be60"]:
+                            # Also log events with "test" in the summary
+                            event_summary_lower = ""
+                            try:
+                                cal_test = ICalendar.from_ical(ical_data.encode('utf-8'))
+                                for comp in cal_test.walk():
+                                    if comp.name == "VEVENT":
+                                        event_summary_lower = str(comp.get('summary', '')).lower()
+                                        break
+                            except:
+                                pass
+                            
+                            if added_count <= 3 or event_uid in ["6e9ccaba-47d4-48d1-9729-701dd0d6be60"] or "test" in event_summary_lower:
                                 try:
                                     cal = ICalendar.from_ical(ical_data.encode('utf-8'))
                                     for component in cal.walk():
@@ -600,6 +612,11 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             logger.info(f"  - Filtered by time range: {time_filtered_count}")
             logger.info(f"  - Added to response: {added_count}")
             logger.info(f"[CalDAV] REPORT query returning {len(items)} events for calendar '{cal_name}'")
+            # Log first few event summaries for debugging
+            if added_count > 0 and added_count <= 5:
+                logger.info(f"[CalDAV] First {added_count} events returned (all shown above)")
+            elif added_count > 5:
+                logger.info(f"[CalDAV] First 3 events shown above, {added_count - 3} more events in response")
         
         elif multiget_elem is not None:
             # Calendar multiget - get specific events by href
