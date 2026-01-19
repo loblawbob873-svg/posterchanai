@@ -161,9 +161,11 @@ def _process_single_exif_file(
         lock: Thread lock for stats updates
         stats: Dictionary with 'processed', 'restored', 'skipped', 'errors' counters
     """
+    # Increment processed counter at the start to ensure all files are counted
+    with lock:
+        stats['processed'] += 1
+    
     try:
-        with lock:
-            stats['processed'] += 1
         if restore_exif_timestamp(file_path):
             with lock:
                 stats['restored'] += 1
@@ -174,9 +176,6 @@ def _process_single_exif_file(
         logger.error(f"[EXIF] Error processing {file_path}: {e}")
         with lock:
             stats['errors'] += 1
-    finally:
-        with lock:
-            stats['processed'] += 1
 
 
 def batch_restore_timestamps(directory: Path, file_extensions: list[str] = None, max_workers: int = None) -> dict:

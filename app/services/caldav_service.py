@@ -813,9 +813,14 @@ def get_events_for_date_range(
     """Get events from a CalDAV calendar for a date range."""
     events = []
 
-    # Ensure start/end dates are naive for comparison
-    start_date = to_naive_local(start_date)
-    end_date = to_naive_local(end_date)
+    # Store timezone-aware versions for filtering
+    from datetime import timezone
+    start_date_aware = start_date if start_date.tzinfo else start_date.replace(tzinfo=timezone.utc)
+    end_date_aware = end_date if end_date.tzinfo else end_date.replace(tzinfo=timezone.utc)
+    
+    # Convert to naive for caldav library (it expects naive datetimes)
+    start_date_naive = to_naive_local(start_date)
+    end_date_naive = to_naive_local(end_date)
 
     try:
         client = create_caldav_client(url, username, password)
@@ -830,36 +835,60 @@ def get_events_for_date_range(
 
         for cal in calendars:
             try:
-                cal_events = cal.date_search(start=start_date, end=end_date, expand=True)
+                # Use date_search with expand=True to get all events in range
+                # Note: caldav library's date_search should handle overlapping events, but we'll also filter manually
+                cal_events = cal.date_search(start=start_date_naive, end=end_date_naive, expand=True)
                 for event in cal_events:
                     try:
                         vevent = event.vobject_instance.vevent
 
-                        # Get start time (convert to naive local)
+                        # Get start time
                         start = vevent.dtstart.value
 
                         # Handle naive datetimes - assume they're UTC if from CalDAV
-                        if isinstance(start, datetime) and start.tzinfo is None:
-                            # Naive datetime from CalDAV is typically UTC
-                            from datetime import timezone as tz
-                            start = start.replace(tzinfo=tz.utc)
+                        if isinstance(start, datetime):
+                            if start.tzinfo is None:
+                                from datetime import timezone as tz
+                                start_aware = start.replace(tzinfo=tz.utc)
+                            else:
+                                start_aware = start
+                        else:
+                            # It's a date, convert to datetime
+                            start_aware = datetime.combine(start, datetime.min.time()).replace(tzinfo=timezone.utc)
 
-                        start_dt = to_naive_local(start)
-
-                        # Get end time (convert to naive local)
+                        # Get end time
                         end_dt = None
+                        end_aware = None
                         if hasattr(vevent, 'dtend'):
                             end_val = vevent.dtend.value
-                            if isinstance(end_val, datetime) and end_val.tzinfo is None:
-                                from datetime import timezone as tz
-                                end_val = end_val.replace(tzinfo=tz.utc)
-                            end_dt = to_naive_local(end_val)
+                            if isinstance(end_val, datetime):
+                                if end_val.tzinfo is None:
+                                    from datetime import timezone as tz
+                                    end_aware = end_val.replace(tzinfo=tz.utc)
+                                else:
+                                    end_aware = end_val
+                                end_dt = to_naive_local(end_aware)
+                            elif end_val:
+                                # It's a date
+                                end_aware = datetime.combine(end_val, datetime.min.time()).replace(tzinfo=timezone.utc)
+                                end_dt = to_naive_local(end_aware)
+
+                        # Apply same filtering logic as built-in server
+                        # Check if event overlaps with range
+                        if start_aware > end_date_aware:
+                            continue
+                        if end_aware is not None and end_aware < start_date_aware:
+                            continue
+                        if start_aware < start_date_aware and end_aware is None:
+                            from datetime import timedelta
+                            if (start_date_aware - start_aware) > timedelta(days=7):
+                                continue
 
                         events.append(CalendarEvent(
                             uid=str(vevent.uid.value) if hasattr(vevent, 'uid') else "",
                             summary=str(vevent.summary.value) if hasattr(vevent, 'summary') else "No Title",
                             description=str(vevent.description.value) if hasattr(vevent, 'description') else None,
-                            start=start_dt,
+                            start=to_naive_local(start_aware),
                             end=end_dt,
                             location=str(vevent.location.value) if hasattr(vevent, 'location') else None,
                             calendar_name=calendar_name
