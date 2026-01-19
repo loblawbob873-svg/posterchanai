@@ -1478,10 +1478,10 @@
 
 /* File Manager Tabs */
 .file-manager-tabs {
+    grid-column: 1;
     display: flex;
     gap: 8px;
     flex-shrink: 0;
-    grid-column: 1;
     white-space: nowrap;
     overflow: visible;
     box-sizing: border-box;
