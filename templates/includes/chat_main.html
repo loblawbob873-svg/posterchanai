@@ -36,7 +36,28 @@
         </div>
         <button class="quick-btn" id="notesBrowseBtn" title="Browse Notes">📝 Notes</button>
         <button class="quick-btn" id="fileManagerBtn" title="File Manager" onclick="if(window.fileManager){window.fileManager.open();}else{console.error('FileManager not initialized');}">📁 Files</button>
-        <button class="quick-btn" id="photoGalleryBtn" title="Photo Gallery" onclick="var t=document.createElement('div');t.id='testOverlay';t.innerHTML='<h1 style=color:white;text-align:center;margin-top:200px>PHOTO GALLERY TEST - Click to close</h1>';t.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;background:red;z-index:999999;cursor:pointer;';t.onclick=function(){t.remove();};document.body.appendChild(t);console.log('Test overlay added');">🖼️ Photos</button>
+        <button class="quick-btn" id="photoGalleryBtn" title="Photo Gallery" onclick="openPhotoGalleryNow();">🖼️ Photos</button>
+<script>
+function openPhotoGalleryNow() {
+    var v = document.getElementById('cyberpunkPictureViewer');
+    if (!v) { alert('Viewer not found'); return; }
+    
+    // Move to body if not already there
+    if (v.parentElement !== document.body) {
+        document.body.appendChild(v);
+    }
+    
+    // Force show with inline styles
+    v.style.cssText = 'display:block !important;position:fixed !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100vw !important;height:100vh !important;z-index:999999 !important;';
+    
+    // Mark as open for fileManager
+    if (window.fileManager) {
+        window.fileManager.pictureViewerOpen = true;
+        if (window.fileManager.loadAllImages) window.fileManager.loadAllImages();
+        if (window.fileManager.setupInfiniteScroll) window.fileManager.setupInfiniteScroll();
+    }
+}
+</script>
         <div class="quick-btn-dropdown">
             <button class="quick-btn dropdown-toggle" id="searchDropdownBtn">🌐 Web ▾</button>
             <div class="dropdown-menu" id="searchDropdownMenu">
