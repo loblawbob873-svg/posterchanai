@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/storage", tags=["storage"])
 
+# Also add routes under /api/files for compatibility with main server proxy
+files_router = APIRouter(prefix="/api/files", tags=["files"])
+
 
 def safe_query_setting(db: Session, key: str) -> Optional[Setting]:
     """Safely query a Setting, handling IndexError and other database errors."""
@@ -2046,3 +2049,96 @@ async def delete_files_bulk(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/search")
+async def search_files_storage(
+    query: str = Query(..., description="Search query (filename or path)"),
+    username: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional),
+    request: FastAPIRequest = None
+):
+    """Search for files by name or path on storage server. Returns matching files with metadata."""
+    # Check if this is a server-to-server request
+    storage_server_token = safe_query_setting(db, "storage_server_token")
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        auth_header = request.headers.get("Authorization", "") if request else ""
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user and current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    storage = StorageService(db)
+    user_path = storage.get_user_path(username)
+    
+    # Run file search in thread pool to prevent blocking
+    def _search_files_sync():
+        """Synchronous file search function."""
+        results = []
+        query_lower = query.lower()
+        
+        try:
+            # Recursively search through user's files
+            for item in user_path.rglob('*'):
+                try:
+                    # Skip directories
+                    if item.is_dir():
+                        continue
+                    
+                    # Check if filename or path matches query
+                    filename = item.name.lower()
+                    relative_path = str(item.relative_to(user_path)).lower()
+                    
+                    if query_lower in filename or query_lower in relative_path:
+                        stat = item.stat()
+                        is_dir = item.is_dir()
+                        
+                        item_info = {
+                            "name": item.name,
+                            "path": str(item.relative_to(user_path)),
+                            "is_directory": is_dir,
+                            "size": stat.st_size if not is_dir else 0,
+                            "modified": stat.st_mtime,
+                        }
+                        
+                        results.append(item_info)
+                except Exception as e:
+                    logger.warning(f"Error processing file {item}: {e}")
+                    continue
+        except Exception as e:
+            logger.error(f"Error searching files: {e}")
+            raise Exception(f"Error searching files: {e}")
+        
+        # Sort by modified time (newest first)
+        results.sort(key=lambda x: x.get('modified', 0), reverse=True)
+        return results
+    
+    try:
+        results = await asyncio.to_thread(_search_files_sync)
+        return {
+            "query": query,
+            "results": results,
+            "count": len(results)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Also register under /api/files for compatibility
+@files_router.get("/search")
+async def search_files_files(
+    query: str = Query(..., description="Search query (filename or path)"),
+    username: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional),
+    request: FastAPIRequest = None
+):
+    """Search endpoint under /api/files for compatibility with main server proxy."""
+    return await search_files_storage(query, username, db, current_user, request)

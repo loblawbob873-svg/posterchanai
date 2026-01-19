@@ -164,18 +164,34 @@ async def search_files(
                     headers["Authorization"] = f"Bearer {storage_token.value}"
                 
                 async with httpx.AsyncClient(timeout=60.0) as client:
-                    response = await client.get(
+                    # Try /api/files/search first (if files_router is registered), then fall back to /api/storage/search
+                    search_urls = [
                         f"{url.rstrip('/')}/api/files/search",
-                        params={"query": query},
-                        headers=headers
-                    )
+                        f"{url.rstrip('/')}/api/storage/search"
+                    ]
+                    response = None
+                    for search_url in search_urls:
+                        try:
+                            response = await client.get(
+                                search_url,
+                                params={"query": query, "username": current_user.username},
+                                headers=headers
+                            )
+                            if response.status_code == 200:
+                                break
+                        except Exception as e:
+                            logger.debug(f"Tried {search_url}, got error: {e}")
+                            continue
+                    
+                    if response and response.status_code == 200:
                     if response.status_code == 200:
                         return response.json()
                     else:
-                        logger.error(f"Storage server search failed: {response.status_code}")
+                        logger.warning(f"Storage server search failed: {response.status_code}, falling back to local search")
             except Exception as e:
-                logger.error(f"Failed to proxy search to storage server: {e}")
+                logger.warning(f"Failed to proxy search to storage server: {e}, falling back to local search")
     
+    # Fall through to local search if proxy fails or storage server doesn't have search endpoint
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     

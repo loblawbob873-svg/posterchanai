@@ -158,6 +158,9 @@ app.include_router(music.router)
 app.include_router(torrent.router)
 app.include_router(notes.router)
 app.include_router(storage.router)
+# Also include files_router if it exists (for storage server compatibility)
+if hasattr(storage, 'files_router'):
+    app.include_router(storage.files_router)
 
 # CalDAV/CardDAV discovery endpoints (redirect to DAV servers)
 @app.api_route("/.well-known/caldav", methods=["GET", "PROPFIND"])

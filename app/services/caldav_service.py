@@ -439,7 +439,7 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
     return events
 
 
-def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
+def _save_event_to_builtin(user_id: int, db: Session, ical_data: str, event_uid: str = None) -> bool:
     """Save event directly to built-in CalDAV storage (REQUIRES storage proxy - no local fallback)."""
     try:
         from app.models import User
@@ -460,16 +460,23 @@ def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
             logger.error(f"[CalDAV] Set storage_server_url in Admin settings.")
             return False
         
-        # Parse iCalendar to extract UID
-        cal = ICalendar.from_ical(ical_data.encode('utf-8'))
-        event_uid = None
-        for component in cal.walk():
-            if component.name in ("VEVENT", "VTODO"):
-                event_uid = str(component.get('uid', uuid.uuid4()))
-                break
-        
+        # Use provided UID or parse from iCalendar data
         if not event_uid:
-            event_uid = str(uuid.uuid4())
+            cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+            for component in cal.walk():
+                if component.name in ("VEVENT", "VTODO"):
+                    uid_value = component.get('uid', '')
+                    if uid_value:
+                        event_uid = str(uid_value)
+                    else:
+                        event_uid = str(uuid.uuid4())
+                    break
+            
+            if not event_uid:
+                event_uid = str(uuid.uuid4())
+                logger.warning(f"[CalDAV] No UID found in iCalendar data, generated new UID: {event_uid}")
+        else:
+            logger.debug(f"[CalDAV] Using provided event UID: {event_uid}")
         
         # Determine which calendar directory to save to
         # ALWAYS prefer "main" calendar directory for iPhone sync compatibility
@@ -507,10 +514,20 @@ def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
             filepath = f"main/{event_uid}.ics"
             logger.warning(f"[CalDAV] calendar_subpath was None, defaulting to 'main' directory")
         
+        logger.info(f"[CalDAV] Attempting to save event to: {filepath} (UID: {event_uid})")
         success = proxy.write_file(filepath, ical_data)
         
         if success:
             logger.info(f"[CalDAV] ✓ Saved event to built-in storage: {filepath} (UID: {event_uid})")
+            # Verify the file was actually written by trying to read it back
+            try:
+                verify_data = proxy.read_file(filepath)
+                if verify_data:
+                    logger.info(f"[CalDAV] ✓ Verified: Event file exists and is readable at {filepath}")
+                else:
+                    logger.error(f"[CalDAV] ❌ WARNING: Event file was not found after save at {filepath}")
+            except Exception as e:
+                logger.warning(f"[CalDAV] Could not verify saved event file: {e}")
         else:
             logger.error(f"[CalDAV] ❌ Failed to save event to built-in storage: {filepath} (UID: {event_uid})")
         return success
@@ -1430,7 +1447,13 @@ def add_event_to_calendar(
             cal.add_component(event)
             ical_data = cal.to_ical().decode('utf-8')
             
-            return _save_event_to_builtin(user_id, db, ical_data)
+            logger.info(f"[CalDAV] About to save event '{summary}' to built-in storage (UID: {event_uid})")
+            result = _save_event_to_builtin(user_id, db, ical_data, event_uid=event_uid)
+            if result:
+                logger.info(f"[CalDAV] ✓ Successfully saved event '{summary}' (UID: {event_uid}) to built-in storage")
+            else:
+                logger.error(f"[CalDAV] ❌ Failed to save event '{summary}' (UID: {event_uid}) to built-in storage")
+            return result
 
         # Otherwise use CalDAV protocol (for external servers)
         client = create_caldav_client(url, username, password)
