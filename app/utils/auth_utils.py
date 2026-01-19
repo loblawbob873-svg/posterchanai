@@ -33,19 +33,29 @@ def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> t
         ...     user = db.query(User).filter(User.id == user_id).first()
     """
     try:
-        # Query API key using direct SQL to avoid SQLite parameter binding issues
-        # SQLite can have issues with ORM parameter binding, so use direct SQL
-        from sqlalchemy import text
+        # Query API key using raw connection to avoid SQLite parameter binding issues
+        # SQLite can have issues with SQLAlchemy parameter binding, so use raw connection
+        # Get the actual DBAPI connection from SQLAlchemy
+        raw_conn = db.connection()
+        # For SQLAlchemy 1.4+, connection() returns the connection directly
+        # For older versions, might need raw_conn.connection
+        if hasattr(raw_conn, 'connection'):
+            dbapi_conn = raw_conn.connection
+        else:
+            dbapi_conn = raw_conn
         
-        # Use direct SQL query with named parameters
-        query = text("""
+        cursor = dbapi_conn.cursor()
+        
+        # Use parameterized query with ? placeholder (SQLite native format)
+        cursor.execute("""
             SELECT id, user_id, key, name, created_at, last_used_at, is_active
             FROM api_keys
-            WHERE key = :token AND is_active = 1
+            WHERE key = ? AND is_active = 1
             LIMIT 1
-        """)
+        """, (token,))
         
-        result = db.execute(query, {"token": token}).fetchone()
+        result = cursor.fetchone()
+        cursor.close()
         
         if result:
             # Create APIKey object from result row
@@ -67,15 +77,24 @@ def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> t
         if max_retries > 0:
             try:
                 db.rollback()
-                # Retry once with direct SQL
-                from sqlalchemy import text
-                query = text("""
+                # Retry once with raw connection
+                raw_conn = db.connection()
+                if hasattr(raw_conn, 'connection'):
+                    dbapi_conn = raw_conn.connection
+                else:
+                    dbapi_conn = raw_conn
+                
+                cursor = dbapi_conn.cursor()
+                
+                cursor.execute("""
                     SELECT id, user_id, key, name, created_at, last_used_at, is_active
                     FROM api_keys
-                    WHERE key = :token AND is_active = 1
+                    WHERE key = ? AND is_active = 1
                     LIMIT 1
-                """)
-                result = db.execute(query, {"token": token}).fetchone()
+                """, (token,))
+                
+                result = cursor.fetchone()
+                cursor.close()
                 if result:
                     api_key = APIKey(
                         id=result[0],

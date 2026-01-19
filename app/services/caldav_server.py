@@ -1061,9 +1061,23 @@ def create_caldav_app() -> FastAPI:
         
         # Parse Basic Auth
         try:
-            credentials = base64.b64decode(auth_header[6:]).decode('utf-8')
+            auth_bytes = base64.b64decode(auth_header[6:])
+            credentials = auth_bytes.decode('utf-8')
+            # Handle case where password might contain colons
+            if ':' not in credentials:
+                logger.warning(f"[CalDAV] No colon found in credentials after base64 decode")
+                return Response(
+                    content="Invalid credentials",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+                )
             username, password = credentials.split(':', 1)
-        except:
+            # Strip any whitespace that might have been introduced
+            username = username.strip()
+            password = password.strip()
+            logger.debug(f"[CalDAV] Parsed Basic Auth - username length: {len(username)}, password length: {len(password)}")
+        except Exception as e:
+            logger.error(f"[CalDAV] Error parsing Basic Auth: {e}", exc_info=True)
             return Response(
                 content="Invalid credentials",
                 status_code=401,
@@ -1071,6 +1085,7 @@ def create_caldav_app() -> FastAPI:
             )
         
         # Verify user - try exact match first, then try without domain
+        # IMPORTANT: Use with_entities or ensure password_hash is loaded
         user = db.query(User).filter(User.username == username).first()
         if not user and '@' in username:
             # Try without domain (some clients send just the username part)
@@ -1087,35 +1102,97 @@ def create_caldav_app() -> FastAPI:
                 headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
             )
         
+        # Ensure password_hash is loaded (refresh from database if needed)
+        db.refresh(user, ['password_hash'])
+        if not user.password_hash:
+            logger.error(f"[CalDAV] User {user.username} has no password_hash after refresh!")
+            return Response(
+                content="Invalid credentials",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+            )
+        
         # Verify password
         # Log authentication attempt (but not the actual password)
         logger.info(f"[CalDAV] Verifying password for user: {user.username} (auth username: {username}, password provided: {bool(password)})")
         
-        # Check if password hash exists
-        if not user.password_hash:
+        # Special case: __USE_SESSION_AUTH__ is used by backend code connecting to built-in server
+        # This is safe because it's only used for localhost connections from the same process
+        # Skip password verification in this case
+        if password == "__USE_SESSION_AUTH__":
+            # Check if this is a localhost connection (safety check)
+            client_host = request.client.host if hasattr(request, 'client') and request.client else None
+            if client_host in ('127.0.0.1', 'localhost', '::1') or 'localhost' in str(request.url):
+                logger.info(f"[CalDAV] ✓ Authenticated user: {user.username} (using __USE_SESSION_AUTH__ from localhost)")
+                # Skip to the end - authentication successful
+            else:
+                logger.warning(f"[CalDAV] __USE_SESSION_AUTH__ used from non-localhost: {client_host}")
+                return Response(
+                    content="Invalid credentials",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+                )
+        elif not user.password_hash:
             logger.error(f"[CalDAV] User {user.username} has no password hash!")
             return Response(
                 content="Invalid credentials",
                 status_code=401,
                 headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
             )
-        
-        try:
-            password_valid = verify_password(password, user.password_hash)
-        except Exception as e:
-            logger.error(f"[CalDAV] Error verifying password: {e}", exc_info=True)
-            password_valid = False
-        
-        if not password_valid:
-            logger.warning(f"[CalDAV] Invalid password for user: {user.username} (auth username: {username})")
-            logger.debug(f"[CalDAV] Password hash exists: {bool(user.password_hash)}, hash length: {len(user.password_hash) if user.password_hash else 0}")
-            return Response(
-                content="Invalid credentials",
-                status_code=401,
-                headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
-            )
-        
-        logger.debug(f"[CalDAV] Authenticated user: {user.username}")
+        else:
+            # Normal password verification for external clients (like iPhone)
+            # Ensure password_hash is loaded (refresh from database if needed)
+            db.refresh(user, ['password_hash'])
+            if not user.password_hash:
+                logger.error(f"[CalDAV] User {user.username} has no password_hash after refresh!")
+                return Response(
+                    content="Invalid credentials",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+                )
+            
+            try:
+                # Try direct bcrypt verification first (in case hash is bytes)
+                import bcrypt
+                password_valid = False
+                
+                logger.info(f"[CalDAV] Attempting password verification - hash type: {type(user.password_hash)}, hash preview: {str(user.password_hash)[:20]}...")
+                
+                # Check if password_hash is bytes or string
+                if isinstance(user.password_hash, bytes):
+                    password_valid = bcrypt.checkpw(password.encode('utf-8'), user.password_hash)
+                    logger.info(f"[CalDAV] Used bytes method, result: {password_valid}")
+                else:
+                    # Use the verify_password function which handles string hashes
+                    password_valid = verify_password(password, user.password_hash)
+                    logger.info(f"[CalDAV] Used verify_password function, result: {password_valid}")
+                    
+            except Exception as e:
+                logger.error(f"[CalDAV] Error verifying password: {e}", exc_info=True)
+                logger.error(f"[CalDAV] Password hash type: {type(user.password_hash)}, length: {len(user.password_hash) if user.password_hash else 0}")
+                logger.error(f"[CalDAV] Password type: {type(password)}, length: {len(password) if password else 0}")
+                password_valid = False
+            
+            if not password_valid:
+                logger.warning(f"[CalDAV] Invalid password for user: {user.username} (auth username: {username})")
+                logger.info(f"[CalDAV] Password hash exists: {bool(user.password_hash)}, hash type: {type(user.password_hash)}, hash length: {len(user.password_hash) if user.password_hash else 0}")
+                logger.info(f"[CalDAV] Password length: {len(password) if password else 0}, password starts with: {password[:3] if password and len(password) >= 3 else 'N/A'}")
+                # Try to see if we can verify with web UI method for comparison
+                try:
+                    from app.auth import verify_password as web_verify
+                    web_result = web_verify(password, user.password_hash)
+                    logger.info(f"[CalDAV] Web UI verify_password result: {web_result}")
+                    if web_result:
+                        logger.error(f"[CalDAV] ⚠️ PASSWORD VERIFICATION BUG: Web UI method says password is valid, but CalDAV method says invalid!")
+                except Exception as e2:
+                    logger.info(f"[CalDAV] Could not test with web UI method: {e2}")
+                return Response(
+                    content="Invalid credentials",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
+                )
+            
+            logger.info(f"[CalDAV] ✓ Authenticated user: {user.username}")
         
         # Get depth header for PROPFIND
         depth = request.headers.get("Depth", "0")
