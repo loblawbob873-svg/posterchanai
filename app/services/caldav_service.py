@@ -288,16 +288,17 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                 logger.debug(f"[CalDAV] Including event '{summary}': start={event_start.date()}, end={event_end.date()}, range={start_date.date()} to {end_date.date()}")
                             else:
                                 # Event has no end date - only include if it started recently (within 7 days before range start)
+                                # OR if it started during or after the range start
                                 # This prevents old events with no end date from appearing
                                 days_before_range = (start_date - event_start).days
-                                if days_before_range <= 7 and days_before_range >= 0:
+                                if event_start >= start_date:
+                                    # Event started during or after the range start - include it
+                                    summary = component.get('summary', 'No Title')
+                                    logger.debug(f"[CalDAV] Including event '{summary}': start={event_start.date()}, no end date, started during range")
+                                elif days_before_range <= 7 and days_before_range >= 0:
                                     # Event started within 7 days before the range - include it (it's ongoing)
                                     summary = component.get('summary', 'No Title')
                                     logger.debug(f"[CalDAV] Including ongoing event '{summary}': start={event_start.date()}, {days_before_range} days before range start")
-                                elif event_start <= end_date:
-                                    # Event started during or after the range start - include it
-                                    summary = component.get('summary', 'No Title')
-                                    logger.debug(f"[CalDAV] Including event '{summary}': start={event_start.date()}, no end date, within range")
                                 else:
                                     # Event started too long ago - skip it
                                     summary = component.get('summary', 'No Title')
@@ -1077,12 +1078,18 @@ def get_events_for_date_range(
                         if end_aware is not None and end_aware < start_date_aware:
                             # Event ends before the range - skip
                             continue
-                        if start_aware < start_date_aware and end_aware is None:
-                            # Event has no end date and started before the range
-                            # Only include if it started within 7 days before range start
+                        if end_aware is None:
+                            # Event has no end date - only include if it started recently (within 7 days before range start)
+                            # OR if it started during or after the range start
                             from datetime import timedelta
                             days_before_range = (start_date_aware - start_aware).days
-                            if days_before_range > 7:
+                            if start_aware >= start_date_aware:
+                                # Event started during or after the range start - include it
+                                pass  # Continue to add event
+                            elif days_before_range <= 7 and days_before_range >= 0:
+                                # Event started within 7 days before the range - include it (it's ongoing)
+                                pass  # Continue to add event
+                            else:
                                 # Event started too long ago - skip it
                                 continue
 

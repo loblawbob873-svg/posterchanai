@@ -615,6 +615,12 @@ async def get_all_images(
         images.sort(key=sort_key)
         
         # Immediate verification: check first 50 items are in correct order
+        # Log detailed information about sorting for debugging
+        if images:
+            newest_date = datetime.fromtimestamp(images[0].get('modified', 0)) if images[0].get('modified', 0) > 0 else None
+            oldest_in_first_50 = datetime.fromtimestamp(images[min(49, len(images)-1)].get('modified', 0)) if images[min(49, len(images)-1)].get('modified', 0) > 0 else None
+            logger.info(f"[FILES] Sort verification: Newest={newest_date}, Oldest in first 50={oldest_in_first_50}, Total images={len(images)}")
+        
         prev_ts = None
         sort_errors = []
         for i, img in enumerate(images[:50]):
