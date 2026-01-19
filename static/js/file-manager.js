@@ -2008,7 +2008,27 @@ class FileManager {
         const viewer = document.getElementById('cyberpunkPictureViewer');
         if (viewer) {
             console.log('FileManager: Found picture viewer element, showing...');
+            
+            // Close file manager first
+            this.close();
+            
+            // Move to body if not already there (fixes display issue)
+            if (viewer.parentElement !== document.body) {
+                document.body.appendChild(viewer);
+            }
+            
+            // Show viewer
             viewer.style.display = 'block';
+            
+            // Setup close button
+            const closeBtn = document.getElementById('pictureViewerCloseBtn');
+            if (closeBtn) {
+                closeBtn.onclick = () => {
+                    viewer.style.display = 'none';
+                    this.pictureViewerOpen = false;
+                };
+            }
+            
             this.loadAllImages();
             this.setupInfiniteScroll();
         } else {
