@@ -179,29 +179,36 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                     from datetime import timezone
                                     event_end = event_end.replace(tzinfo=timezone.utc)
                         
-                        # Check if event is in date range [start_date, end_date]
-                        # Include events that:
-                        #   - Start within range: start_date <= event_start <= end_date
-                        #   - Overlap with range: event_start < start_date but event_end >= start_date
-                        #   - Start before range but have no end (ongoing/all-day events that might still be relevant)
+                        # Check if event overlaps with date range [start_date, end_date]
+                        # Event overlaps if:
+                        #   - Starts within range: start_date <= event_start <= end_date
+                        #   - Ends within range: start_date <= event_end <= end_date (if event_end exists)
+                        #   - Spans range: event_start < start_date AND (event_end is None OR event_end > end_date)
+                        #   - Starts before and ends during: event_start < start_date AND event_end >= start_date
                         # Exclude events that:
                         #   - Start after range: event_start > end_date
                         #   - End before range: event_end is not None AND event_end < start_date
                         #   - Start more than 7 days before range with no end (likely very old all-day events)
+                        
+                        # Check if event starts after range
                         if event_start > end_date:
-                            # Event starts after the range - skip
                             continue
+                        
+                        # Check if event ends before range
                         if event_end is not None and event_end < start_date:
-                            # Event has an end time and ends before the range - skip
                             continue
-                        # Include events that start before range if they have no end (ongoing/all-day events)
-                        # Only exclude if event starts more than 7 days before range with no end (likely very old all-day events)
-                        if event_start < start_date and event_end is None:
-                            from datetime import timedelta
-                            if (start_date - event_start) > timedelta(days=7):
-                                # Event starts more than 7 days before range with no end - likely a very old all-day event, skip
-                                continue
-                        # Event is within or overlaps with range - include it
+                        
+                        # If event starts before range, check if it should be included
+                        if event_start < start_date:
+                            if event_end is None:
+                                # Event has no end - include if it started within last 7 days (ongoing event)
+                                from datetime import timedelta
+                                if (start_date - event_start) > timedelta(days=7):
+                                    # Event started more than 7 days ago with no end - likely old all-day event, skip
+                                    continue
+                            # If event has an end and it's >= start_date, it overlaps - include it
+                        
+                        # Event overlaps with range - include it
                         
                         # Convert to naive local for CalendarEvent
                         event_start_naive = to_naive_local(event_start)
