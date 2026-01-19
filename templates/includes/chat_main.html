@@ -39,16 +39,20 @@
         <button class="quick-btn" id="photoGalleryBtn" title="Photo Gallery" onclick="openPhotoGalleryNow();">🖼️ Photos</button>
 <script>
 function openPhotoGalleryNow() {
+    console.log('openPhotoGalleryNow called');
     var v = document.getElementById('cyberpunkPictureViewer');
     if (!v) { alert('Photo viewer not found'); return; }
+    console.log('Viewer found, parent:', v.parentElement.tagName, v.parentElement.id);
     
     // Move to body if not already there (fixes display issue)
     if (v.parentElement !== document.body) {
         document.body.appendChild(v);
+        console.log('Moved viewer to body');
     }
     
     // Show viewer
     v.style.display = 'block';
+    console.log('Set display to block, computed:', getComputedStyle(v).display);
     
     // Setup close button
     var closeBtn = document.getElementById('pictureViewerCloseBtn');
@@ -65,6 +69,7 @@ function openPhotoGalleryNow() {
         if (window.fileManager.loadAllImages) window.fileManager.loadAllImages();
         if (window.fileManager.setupInfiniteScroll) window.fileManager.setupInfiniteScroll();
     }
+    console.log('openPhotoGalleryNow complete');
 }
 </script>
         <div class="quick-btn-dropdown">
