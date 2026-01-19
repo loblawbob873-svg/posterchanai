@@ -401,16 +401,25 @@ def _process_single_thumbnail(
         thumbnail_path = get_thumbnail_path(user_path, media_path)
         
         # OPTIMIZATION: Skip if thumbnail already exists and is up-to-date
+        # NOTE: After EXIF restoration, file timestamps may change, so we check carefully
         if thumbnail_path.exists():
             try:
-                # Check if thumbnail is newer than or equal to source file
-                if thumbnail_path.stat().st_mtime >= media_path.stat().st_mtime:
+                thumbnail_mtime = thumbnail_path.stat().st_mtime
+                media_mtime = media_path.stat().st_mtime
+                # Only skip if thumbnail is significantly newer (more than 1 second) to account for EXIF restoration
+                # This ensures thumbnails regenerate if source file was updated by EXIF restoration
+                if thumbnail_mtime > media_mtime + 1:
                     with lock:
                         stats['successful'] += 1
                         stats['skipped'] += 1
+                    logger.debug(f"[Thumbnail] Skipping {media_path.name} - thumbnail is up-to-date")
                     return
-            except OSError:
+                else:
+                    # Thumbnail exists but source is newer or equal - regenerate to be safe
+                    logger.debug(f"[Thumbnail] Regenerating {media_path.name} - source file may have been updated")
+            except OSError as e:
                 # If we can't check thumbnail, regenerate it
+                logger.debug(f"[Thumbnail] Cannot check thumbnail timestamp for {media_path.name}: {e}, regenerating")
                 pass
         
         # Generate thumbnail based on file type
@@ -423,8 +432,10 @@ def _process_single_thumbnail(
         with lock:
             if generation_success:
                 stats['successful'] += 1
+                logger.debug(f"[Thumbnail] Successfully generated thumbnail for {media_path.name}")
             else:
                 stats['failed'] += 1
+                logger.warning(f"[Thumbnail] Failed to generate thumbnail for {media_path.name}")
                 
     except Exception as e:
         # Log as debug for corrupted/truncated files, error for unexpected issues
@@ -517,7 +528,7 @@ def generate_thumbnails_for_user(
             if completed % 100 == 0 or completed == total:
                 with lock:
                     logger.info(f"[Thumbnail] Progress: {completed}/{total} files processed "
-                              f"({stats['successful']} successful, {stats['skipped']} skipped, {stats['failed']} failed)")
+                              f"({stats['successful']} generated, {stats['skipped']} skipped (up-to-date), {stats['failed']} failed)")
     
     logger.info(f"[Thumbnail] Complete: {stats['successful']} successful "
               f"({stats['skipped']} skipped, already up-to-date), {stats['failed']} failed")
