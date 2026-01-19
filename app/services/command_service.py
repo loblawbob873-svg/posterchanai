@@ -1930,8 +1930,6 @@ Example: `yt https://youtube.com/watch?v=...`""",
                 # This gives us: today, tomorrow, day+2, day+3, day+4, day+5, day+6, day+7 (8 days total)
                 week_end = today + timedelta(days=7, hours=23, minutes=59, seconds=59)
                 
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.info(f"[cal week] Fetching events for user {self.user.id} from {today.date()} to {week_end.date()}")
                 logger.info(f"[cal week] User has {len(calendars)} calendars configured")
                 
@@ -1956,8 +1954,6 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
             elif subcommand == "nextmonth":
                 # Get next month's events
-                import logging
-                logger = logging.getLogger(__name__)
                 now = datetime.now()
                 next_year, next_month = get_next_month(now.year, now.month)
                 start_date = get_month_start(next_year, next_month)
@@ -2014,18 +2010,25 @@ Return ONLY valid JSON, no other text.""",
                 try:
                     import json
                     import re
+                    # Use module-level logger (already imported at top of file)
+                    # logger is defined at module level, so it should be accessible here
 
                     parsed = await self.chat_service.chat(messages)
+                    logger.info(f"[Cal] LLM response for event parsing: {parsed[:200]}...")
                     parsed = parsed.strip()
                     code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", parsed)
                     if code_block_match:
                         parsed = code_block_match.group(1).strip()
+                        logger.debug(f"[Cal] Extracted JSON from code block")
                     else:
                         json_match = re.search(r"\{[\s\S]*\}", parsed)
                         if json_match:
                             parsed = json_match.group(0)
+                            logger.debug(f"[Cal] Extracted JSON from response")
 
+                    logger.info(f"[Cal] Parsing JSON: {parsed[:200]}...")
                     event_data = json.loads(parsed)
+                    logger.info(f"[Cal] Successfully parsed JSON, got event_data keys: {list(event_data.keys())}")
                     summary = event_data.get("summary", param)
                     description = event_data.get("description", "")
                     start_str = event_data.get("start_time", "").replace("Z", "")
@@ -2042,7 +2045,8 @@ Return ONLY valid JSON, no other text.""",
                     end_time = date_parser.parse(end_str) if end_str else start_time + timedelta(hours=1)
 
                     cal = calendars[0]
-                    if add_event_to_calendar(
+                    logger.info(f"[Cal] Calling add_event_to_calendar: summary={summary}, start={start_time}, end={end_time}, location={location}")
+                    result = add_event_to_calendar(
                         cal["url"],
                         cal["username"],
                         cal["password"],
@@ -2054,11 +2058,15 @@ Return ONLY valid JSON, no other text.""",
                         rrule,
                         user_id=self.user.id,
                         db=self.db
-                    ):
+                    )
+                    logger.info(f"[Cal] add_event_to_calendar returned: {result}")
+                    if result:
                         time_str = start_time.strftime("%A, %B %d at %I:%M %p")
                         return {"type": "text", "content": f"✅ Event added: **{summary}**\n\n📅 {time_str}"}
+                    logger.warning(f"[Cal] add_event_to_calendar returned False - event was not saved")
                     return {"type": "text", "content": "❌ Failed to add event to calendar."}
                 except Exception as e:
+                    logger.error(f"[Cal] Exception in cal add command: {e}", exc_info=True)
                     return {"type": "text", "content": f"Error adding event: {str(e)}"}
 
             elif subcommand == "delete":
