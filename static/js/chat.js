@@ -2513,12 +2513,17 @@ class ChatHandler {
             while (i < lines.length) {
                 const line = lines[i];
                 
-                // Match track lines like "1. Track Name"
-                const trackMatch = line.match(/^(\d+)\.\s+(.+)$/);
+                // Match track lines like "1. Track Name" (with or without markdown formatting)
+                // Handle both "1. Track Name" and "**1.** Track Name" formats
+                const trackMatch = line.match(/^(?:\*\*)?(\d+)\.(?:\*\*)?\s+(.+?)(?:\s+\[.*?\])?$/);
                 if (trackMatch) {
                     trackCount++;
                     const num = trackMatch[1];
-                    const trackName = this.escapeHtml(trackMatch[2]);
+                    // Extract track name - remove any markdown links or buttons that might be on the same line
+                    let trackName = trackMatch[2].trim();
+                    // Remove any markdown links like [text](url) that might be at the end
+                    trackName = trackName.replace(/\s*\[.*?\]\(.*?\)\s*$/, '').trim();
+                    trackName = this.escapeHtml(trackName);
                     
                     // Check if next line is the path/details line (starts with 📂)
                     let trackDetails = '';
@@ -2535,7 +2540,7 @@ class ChatHandler {
                                 <div class="track-name">${trackName}</div>
                                 ${trackDetails ? `<div class="track-details">${trackDetails}</div>` : ''}
                             </div>
-                            <button class="btn-action-sm" onclick="console.log('Play clicked for track ${num}'); window.sendMessage('music play ${num}')" title="Play this track">▶️</button>
+                            <button class="btn-action-sm" onclick="(function(){const cmd='music play ${num}';if(window.sendMessage){window.sendMessage(cmd);}else if(window.chatHandler&&window.chatHandler.messageInput){window.chatHandler.messageInput.value=cmd;window.chatHandler.sendMessage();}else{console.error('sendMessage not available');}})();" title="Play this track">▶️</button>
                         </div>
                     </div>`;
                 } else if (line.trim() && !line.startsWith('📂')) {

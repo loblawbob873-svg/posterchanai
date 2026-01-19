@@ -550,7 +550,7 @@ def format_music_browse(items: List[Dict[str, any]], current_path: str = '') -> 
 
 
 def format_music_tracks(tracks: List[Dict[str, any]]) -> str:
-    """Format music track list for display with play buttons."""
+    """Format music track list for display. Frontend will add play buttons automatically."""
     if not tracks:
         return "🎵 No tracks found matching your search."
     
@@ -558,9 +558,9 @@ def format_music_tracks(tracks: List[Dict[str, any]]) -> str:
     for idx, track in enumerate(tracks, 1):
         size_mb = track.get('size', 0) / (1024 * 1024)
         ext = track.get('extension', '').upper().replace('.', '')
-        # Show relative path for context
-        play_btn = f"[▶️ Play](cmd:music play {idx})"
-        output.append(f"**{idx}.** {track['name']} {play_btn}")
+        # Format: "1. Track Name" (frontend regex expects this format)
+        # Frontend will automatically add play buttons via JavaScript
+        output.append(f"{idx}. {track['name']}")
         output.append(f"   📂 {track['path']} [{ext}, {size_mb:.1f} MB]")
     
     output.append(f"\n💡 Found {len(tracks)} tracks")
