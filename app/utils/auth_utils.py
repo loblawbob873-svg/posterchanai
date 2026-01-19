@@ -60,15 +60,15 @@ def get_user_from_api_key(db: Session, api_key: APIKey) -> Optional[User]:
     This function safely accesses the user_id from the APIKey object to avoid
     lazy loading issues that can cause SQLite session errors.
     
+    IMPORTANT: Access user_id immediately while the APIKey is still attached to the session.
+    If the APIKey becomes detached (e.g., after a commit/rollback), accessing user_id will fail.
+    
     Args:
         db: SQLAlchemy database session
-        api_key: The APIKey object
+        api_key: The APIKey object (must still be attached to the session)
     
     Returns:
         The User object if found, None otherwise
-    
-    Raises:
-        Exception: If there's an error accessing the user_id or querying the user
     
     Example:
         >>> api_key = query_api_key_with_retry(db, "sk-...")
@@ -76,9 +76,22 @@ def get_user_from_api_key(db: Session, api_key: APIKey) -> Optional[User]:
         ...     user = get_user_from_api_key(db, api_key)
     """
     try:
-        # Access user_id directly from the APIKey object to avoid lazy loading issues
-        # This prevents SQLite session errors when accessing the relationship
-        user_id = api_key.user_id
+        # CRITICAL: Access user_id immediately while APIKey is still attached to session
+        # If APIKey becomes detached (after commit/rollback), this will fail
+        # So this must be called BEFORE any commits/rollbacks on the session
+        try:
+            user_id = api_key.user_id
+        except Exception as e:
+            # APIKey is detached or deleted - try to refresh it
+            logger.warning(f"APIKey detached, attempting to refresh: {e}")
+            try:
+                db.refresh(api_key)
+                user_id = api_key.user_id
+            except Exception as refresh_error:
+                logger.error(f"Error refreshing APIKey: {refresh_error}", exc_info=True)
+                return None
+        
+        # Now query the user using the stored user_id
         user = db.query(User).filter(User.id == user_id).first()
         return user
     except Exception as e:

@@ -100,18 +100,20 @@ def get_current_user(
         api_key = query_api_key_with_retry(db, token)
         
         if api_key:
-            # Update last used timestamp
-            try:
-                api_key.last_used_at = datetime.now(timezone.utc)
-                db.commit()
-            except Exception as e:
-                # If commit fails, rollback and continue without updating timestamp
-                db.rollback()
-                logger.warning(f"Failed to update API key last_used_at: {e}")
-            
-            # Get user from API key with proper error handling
+            # CRITICAL: Access user_id BEFORE updating last_used_at and committing
+            # Once we commit/rollback, the APIKey might become detached from the session
             user = get_user_from_api_key(db, api_key)
+            
             if user:
+                # Now update last used timestamp (after we've already accessed user_id)
+                try:
+                    api_key.last_used_at = datetime.now(timezone.utc)
+                    db.commit()
+                except Exception as e:
+                    # If commit fails, rollback but we already have the user
+                    db.rollback()
+                    logger.warning(f"Failed to update API key last_used_at: {e}")
+                
                 return user
         
         raise HTTPException(
