@@ -236,13 +236,11 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                     if isinstance(event_start, date) and not isinstance(event_start, datetime):
                         # All-day event - convert date to datetime at midnight
                         is_all_day = True
-                        from datetime import timezone
                         event_start = datetime.combine(event_start, datetime.min.time(), tzinfo=timezone.utc)
                     
                     if isinstance(event_start, datetime):
                         # Make timezone-aware if naive
                         if event_start.tzinfo is None:
-                            from datetime import timezone
                             event_start = event_start.replace(tzinfo=timezone.utc)
                         
                         # Get end time first (needed for date range check)
@@ -252,11 +250,9 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                             event_end = dtend.dt
                             if isinstance(event_end, date) and not isinstance(event_end, datetime):
                                 # All-day event end - convert to datetime at end of day
-                                from datetime import timezone
                                 event_end = datetime.combine(event_end, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc)
                             elif isinstance(event_end, datetime):
                                 if event_end.tzinfo is None:
-                                    from datetime import timezone
                                     event_end = event_end.replace(tzinfo=timezone.utc)
                         
                         # Check for recurring events (RRULE) - these need special handling
@@ -996,7 +992,6 @@ def get_events_for_date_range(
     events = []
 
     # Store timezone-aware versions for filtering
-    from datetime import timezone
     start_date_aware = start_date if start_date.tzinfo else start_date.replace(tzinfo=timezone.utc)
     end_date_aware = end_date if end_date.tzinfo else end_date.replace(tzinfo=timezone.utc)
     
@@ -1030,14 +1025,13 @@ def get_events_for_date_range(
                         # Handle naive datetimes - assume they're UTC if from CalDAV
                         if isinstance(start, datetime):
                             if start.tzinfo is None:
-                                from datetime import timezone as tz
-                                start_aware = start.replace(tzinfo=tz.utc)
+                                start_aware = start.replace(tzinfo=timezone.utc)
                             else:
                                 start_aware = start
                         else:
                             # It's a date, convert to datetime
                             start_aware = datetime.combine(start, datetime.min.time()).replace(tzinfo=timezone.utc)
-
+                        
                         # Get end time
                         end_dt = None
                         end_aware = None
@@ -1045,8 +1039,7 @@ def get_events_for_date_range(
                             end_val = vevent.dtend.value
                             if isinstance(end_val, datetime):
                                 if end_val.tzinfo is None:
-                                    from datetime import timezone as tz
-                                    end_aware = end_val.replace(tzinfo=tz.utc)
+                                    end_aware = end_val.replace(tzinfo=timezone.utc)
                                 else:
                                     end_aware = end_val
                                 end_dt = to_naive_local(end_aware)
@@ -1206,7 +1199,6 @@ def add_event_to_calendar(
                 end_time = start_time + timedelta(hours=1)
 
             # Convert to local timezone-aware, then to UTC for storage
-            from datetime import timezone as tz
             start_time = to_local_aware(start_time)
             end_time = to_local_aware(end_time)
             start_utc = start_time.astimezone(tz.utc)
@@ -1274,7 +1266,6 @@ def add_event_to_calendar(
 
         # Convert to local timezone-aware, then to UTC for storage
         # This ensures consistent handling across CalDAV servers
-        from datetime import timezone as tz
         start_time = to_local_aware(start_time)
         end_time = to_local_aware(end_time)
 
@@ -1461,14 +1452,12 @@ def update_event_in_calendar(
                     if description is not None:
                         component['description'] = description
                     if start_time is not None:
-                        from datetime import timezone as tz
                         start_aware = to_local_aware(start_time)
-                        start_utc = start_aware.astimezone(tz.utc)
+                        start_utc = start_aware.astimezone(timezone.utc)
                         component['dtstart'] = start_utc
                     if end_time is not None:
-                        from datetime import timezone as tz
                         end_aware = to_local_aware(end_time)
-                        end_utc = end_aware.astimezone(tz.utc)
+                        end_utc = end_aware.astimezone(timezone.utc)
                         component['dtend'] = end_utc
                     if location is not None:
                         component['location'] = location

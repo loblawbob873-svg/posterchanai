@@ -24,6 +24,7 @@ class FileManager {
         this.loadingImages = false; // Track if images are currently loading
         this.scrollObserver = null; // Intersection observer for infinite scroll
         this.currentAudioPlayer = null; // Track currently playing audio
+        this.searchTimeout = null; // Search debounce timeout
         this.init();
     }
     
@@ -191,15 +192,15 @@ class FileManager {
         const clearSearchBtn = document.getElementById('fileManagerClearSearchBtn');
         
         if (searchInput) {
-            let searchTimeout = null;
             searchInput.addEventListener('input', (e) => {
                 const query = e.target.value.trim();
                 this.searchQuery = query.toLowerCase();
                 clearSearchBtn.style.display = this.searchQuery ? 'block' : 'none';
                 
                 // Clear previous timeout
-                if (searchTimeout) {
-                    clearTimeout(searchTimeout);
+                if (this.searchTimeout) {
+                    clearTimeout(this.searchTimeout);
+                    this.searchTimeout = null;
                 }
                 
                 // If query is empty, clear search and show current directory
@@ -209,8 +210,9 @@ class FileManager {
                 }
                 
                 // Debounce search API call (wait 300ms after user stops typing)
-                searchTimeout = setTimeout(() => {
+                this.searchTimeout = setTimeout(() => {
                     this.performSearch(query);
+                    this.searchTimeout = null;
                 }, 300);
             });
             
@@ -219,8 +221,9 @@ class FileManager {
                     this.clearSearch();
                 } else if (e.key === 'Enter') {
                     // Perform search immediately on Enter
-                    if (searchTimeout) {
-                        clearTimeout(searchTimeout);
+                    if (this.searchTimeout) {
+                        clearTimeout(this.searchTimeout);
+                        this.searchTimeout = null;
                     }
                     const query = e.target.value.trim();
                     if (query) {
@@ -635,6 +638,10 @@ class FileManager {
             return;
         }
         
+        // Update search query to match what we're searching for
+        this.searchQuery = query.toLowerCase();
+        
+        console.log('FileManager: Performing search for:', query);
         const grid = document.getElementById('fileManagerGrid');
         if (grid) {
             grid.innerHTML = '<div class="file-manager-loading">Searching...</div>';
@@ -642,21 +649,28 @@ class FileManager {
         
         try {
             const response = await fetch(`/api/files/search?query=${encodeURIComponent(query)}`);
+            console.log('FileManager: Search response status:', response.status);
             if (response.ok) {
                 const data = await response.json();
+                console.log('FileManager: Search response data:', data);
                 // Backend returns {query, results, count} or just results array
                 this.filteredFiles = Array.isArray(data) ? data : (data.results || []);
+                console.log('FileManager: Filtered files count:', this.filteredFiles.length);
+                if (this.filteredFiles.length > 0) {
+                    console.log('FileManager: First result:', this.filteredFiles[0]);
+                }
                 this.renderFiles();
             } else {
-                const error = await response.json();
+                const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+                console.error('FileManager: Search error:', error);
                 if (grid) {
                     grid.innerHTML = `<div class="file-manager-error">Error: ${this.escapeHtml(error.detail || 'Search failed')}</div>`;
                 }
             }
         } catch (error) {
-            console.error('Error performing search:', error);
+            console.error('FileManager: Error performing search:', error);
             if (grid) {
-                grid.innerHTML = `<div class="file-manager-error">Error performing search</div>`;
+                grid.innerHTML = `<div class="file-manager-error">Error performing search: ${this.escapeHtml(error.message || 'Unknown error')}</div>`;
             }
         }
     }
@@ -676,6 +690,12 @@ class FileManager {
     }
     
     clearSearch() {
+        // Clear search timeout
+        if (this.searchTimeout) {
+            clearTimeout(this.searchTimeout);
+            this.searchTimeout = null;
+        }
+        
         const searchInput = document.getElementById('fileManagerSearchInput');
         const clearSearchBtn = document.getElementById('fileManagerClearSearchBtn');
         if (searchInput) {
