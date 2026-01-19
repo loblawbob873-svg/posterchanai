@@ -2176,20 +2176,7 @@ class FileManager {
                 // Since backend sorts newest first, we should merge maintaining that order
                 // Combine and re-sort to ensure global order (in case of pagination edge cases)
                 this.allImages = [...this.allImages, ...validImages];
-                // Re-sort to ensure correct order across all loaded images
-                // This is necessary because pagination might have edge cases
-                this.allImages.sort((a, b) => {
-                    const timeA = Number(a.modified) || 0;
-                    const timeB = Number(b.modified) || 0;
-                    if (timeB !== timeA) {
-                        return timeB - timeA; // Descending: newer (higher) timestamps first
-                    }
-                    // Tie-breaker: sort by path for stability
-                    const pathA = (a.path || '').toLowerCase();
-                    const pathB = (b.path || '').toLowerCase();
-                    return pathA.localeCompare(pathB);
-                });
-                // Remove duplicates based on path
+                // Remove duplicates based on path first (before sorting)
                 const seen = new Set();
                 this.allImages = this.allImages.filter(img => {
                     const path = img.path || '';
@@ -2202,9 +2189,16 @@ class FileManager {
             // ALWAYS re-sort after loading to ensure correct order (newest first)
             // This is critical because backend might have issues or pagination might mix things up
             this.allImages.sort((a, b) => {
-                const timeA = Number(a.modified) || 0;
-                const timeB = Number(b.modified) || 0;
-                if (timeB !== timeA) {
+                // Convert to number, handling strings, null, undefined, etc.
+                const timeA = typeof a.modified === 'number' ? a.modified : (typeof a.modified === 'string' ? parseFloat(a.modified) : 0) || 0;
+                const timeB = typeof b.modified === 'number' ? b.modified : (typeof b.modified === 'string' ? parseFloat(b.modified) : 0) || 0;
+                
+                // Ensure we have valid numbers
+                if (isNaN(timeA)) timeA = 0;
+                if (isNaN(timeB)) timeB = 0;
+                
+                // Sort by timestamp descending (newest first)
+                if (Math.abs(timeB - timeA) > 0.001) { // Use small epsilon to avoid floating point issues
                     return timeB - timeA; // Descending: newer (higher) timestamps first
                 }
                 // Tie-breaker: sort by path for stability
@@ -2212,6 +2206,16 @@ class FileManager {
                 const pathB = (b.path || '').toLowerCase();
                 return pathA.localeCompare(pathB);
             });
+            
+            // Debug: Log first few timestamps to verify sorting
+            if (this.allImages.length > 0) {
+                const firstFew = this.allImages.slice(0, 5).map(img => ({
+                    name: img.name,
+                    modified: img.modified,
+                    date: img.modified ? new Date(img.modified * 1000).toISOString() : 'N/A'
+                }));
+                console.log('Photo Gallery - First 5 images after sort:', firstFew);
+            }
             
             this.hasMoreImages = data.has_more || false;
             this.imageLoadOffset += data.images?.length || 0;
