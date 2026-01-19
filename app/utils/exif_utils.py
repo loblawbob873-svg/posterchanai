@@ -93,17 +93,24 @@ def restore_exif_timestamp(file_path: Path) -> bool:
         
         # Always update if EXIF date is available and different (even by 1 second)
         # This ensures files copied via rsync get their original dates restored
-        if abs((exif_date - current_dt).total_seconds()) > 0.5:
+        time_diff_seconds = abs((exif_date - current_dt).total_seconds())
+        if time_diff_seconds > 0.5:
             # Convert datetime to Unix timestamp
             timestamp = exif_date.timestamp()
             
             # Set both access and modification time
             os.utime(str(file_path), (timestamp, timestamp))
             
-            logger.info(f"[EXIF] Restored timestamp for {file_path.name}: {exif_date} (was {current_dt})")
+            # Verify the timestamp was actually updated
+            verify_stat = file_path.stat()
+            verify_mtime = datetime.fromtimestamp(verify_stat.st_mtime)
+            if abs((verify_mtime - exif_date).total_seconds()) > 1.0:
+                logger.warning(f"[EXIF] Timestamp update may have failed for {file_path.name}: set to {exif_date}, but file shows {verify_mtime}")
+            else:
+                logger.info(f"[EXIF] Restored timestamp for {file_path.name}: {exif_date} (was {current_dt}, diff={time_diff_seconds/86400:.1f} days)")
             return True
         else:
-            logger.debug(f"[EXIF] Timestamp already correct for {file_path.name}: {exif_date}")
+            logger.debug(f"[EXIF] Timestamp already correct for {file_path.name}: {exif_date} (diff={time_diff_seconds:.1f}s)")
             return True  # Return True even if already correct, to count as processed
             
     except Exception as e:

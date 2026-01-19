@@ -481,6 +481,12 @@ async def get_all_images(
                     # Only fall back to ctime if mtime is invalid
                     modified_time = stat.st_mtime if stat.st_mtime > 0 else (stat.st_ctime if stat.st_ctime > 0 else time.time())
                     
+                    # Debug: Log if file timestamp seems suspiciously old (more than 1 year old)
+                    # This helps identify files that might not have had EXIF restoration applied
+                    file_age_days = (time.time() - modified_time) / 86400
+                    if file_age_days > 365 and (is_image or is_video):
+                        logger.debug(f"[FILES] Old file timestamp detected: {item.name} has mtime={datetime.fromtimestamp(modified_time).date()} ({file_age_days:.0f} days old) - may need EXIF restoration")
+                    
                     # Note: For accurate sorting by photo date, run /api/admin/storage/rescan
                     # which restores file timestamps from EXIF metadata. Without this, files
                     # may be sorted by copy/upload date rather than when the photo was taken.
@@ -617,8 +623,20 @@ async def get_all_images(
         # Immediate verification: check first 50 items are in correct order
         # Log detailed information about sorting for debugging
         if images:
-            newest_date = datetime.fromtimestamp(images[0].get('modified', 0)) if images[0].get('modified', 0) > 0 else None
-            oldest_in_first_50 = datetime.fromtimestamp(images[min(49, len(images)-1)].get('modified', 0)) if images[min(49, len(images)-1)].get('modified', 0) > 0 else None
+            newest_ts = images[0].get('modified', 0)
+            oldest_in_first_50_ts = images[min(49, len(images)-1)].get('modified', 0) if len(images) > 49 else newest_ts
+            newest_date = datetime.fromtimestamp(newest_ts) if newest_ts > 0 else None
+            oldest_in_first_50 = datetime.fromtimestamp(oldest_in_first_50_ts) if oldest_in_first_50_ts > 0 else None
+            
+            # Check if newest photo is suspiciously old (more than 1 year old)
+            current_time = time.time()
+            if newest_ts > 0:
+                age_days = (current_time - newest_ts) / 86400
+                if age_days > 365:
+                    logger.warning(f"[FILES] ⚠️ WARNING: Newest photo is {age_days:.0f} days old ({newest_date.date() if newest_date else 'N/A'})")
+                    logger.warning(f"[FILES] This suggests EXIF restoration may not have run, or files don't have EXIF dates")
+                    logger.warning(f"[FILES] Run /api/admin/storage/rescan to restore timestamps from EXIF metadata")
+            
             logger.info(f"[FILES] Sort verification: Newest={newest_date}, Oldest in first 50={oldest_in_first_50}, Total images={len(images)}")
         
         prev_ts = None
