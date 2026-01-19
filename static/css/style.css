@@ -1650,24 +1650,7 @@ fieldset legend {
     overflow: auto;
 }
 
-/* Notes modal should use minimal padding */
-#notesModal.modal {
-    padding: 5px !important;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden !important;
-    box-sizing: border-box;
-}
-
-#notesModal .modal-content.notes-modal-content {
-    margin: 0;
-    align-self: center;
-    max-height: 90vh !important;
-    height: auto !important;
-    min-height: 600px !important;
-    overflow: hidden !important;
-    box-sizing: border-box;
-}
+/* Notes modal styles are in notes.css */
 .modal-content {
     background: var(--bg-secondary);
     border-radius: 4px;

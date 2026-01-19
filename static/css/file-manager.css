@@ -221,78 +221,61 @@
 }
 
 /* =====================================================
-   FILE MANAGER TOOLBAR - FIXED LAYOUT
+   FILE MANAGER TOOLBAR
    ===================================================== */
 
-/* Main toolbar container - horizontal row */
 .file-manager-toolbar {
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    align-items: center !important;
-    gap: 12px !important;
-    padding: 10px 16px !important;
-    border-bottom: 1px solid var(--border-color) !important;
-    background: var(--bg-secondary) !important;
-    min-height: 52px !important;
-    overflow: visible !important;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    min-height: 48px;
 }
 
-/* Tabs - left side */
-.file-manager-toolbar .file-manager-tabs {
-    display: flex !important;
-    flex-direction: row !important;
-    gap: 4px !important;
-    flex-shrink: 0 !important;
+.file-manager-tabs {
+    display: flex;
+    gap: 4px;
 }
 
-/* Selection controls - after tabs */
-.file-manager-toolbar .file-selection-controls {
-    display: flex !important;
-    flex-direction: row !important;
-    align-items: center !important;
-    gap: 4px !important;
-    padding: 4px 8px !important;
-    background: var(--bg-primary) !important;
-    border-radius: 6px !important;
-    border: 1px solid var(--border-color) !important;
-    flex-shrink: 0 !important;
+.file-selection-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    background: var(--bg-primary);
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
 }
 
-/* Search and actions - right side, pushed with margin-left auto */
-.file-manager-toolbar .file-toolbar-search-actions {
-    display: flex !important;
-    flex-direction: row !important;
-    align-items: center !important;
-    gap: 8px !important;
-    margin-left: auto !important;
-    flex-shrink: 0 !important;
+.file-toolbar-search-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
 }
 
-/* Search input */
-.file-manager-toolbar .file-manager-search {
-    display: flex !important;
-    align-items: center !important;
-    gap: 4px !important;
+.file-manager-search {
+    display: flex;
+    align-items: center;
 }
 
-.file-manager-toolbar .file-search-input {
-    width: 180px !important;
-    padding: 8px 12px !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: 4px !important;
-    background: var(--bg-primary) !important;
-    color: var(--text-primary) !important;
-    font-size: 14px !important;
+.file-search-input {
+    width: 160px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 13px;
 }
 
-/* Actions buttons */
-.file-manager-toolbar .file-toolbar-actions {
-    display: flex !important;
-    flex-direction: row !important;
-    align-items: center !important;
-    gap: 4px !important;
-    flex-shrink: 0 !important;
+.file-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .btn-icon {
@@ -318,7 +301,6 @@
 .btn-icon:hover {
     background: var(--bg-tertiary);
     border-color: var(--accent-color);
-    transform: rotate(180deg);
 }
 
 .file-view-toggle {
@@ -604,44 +586,32 @@
         flex: 1;
     }
     
-    /* Toolbar on mobile */
+    /* Toolbar on mobile - allow horizontal scroll */
     .file-manager-toolbar {
-        flex-wrap: wrap !important;
-        gap: 8px !important;
-        padding: 8px !important;
+        overflow-x: auto;
+        gap: 6px;
+        padding: 6px 8px;
     }
     
-    .file-manager-toolbar .file-manager-tabs {
-        flex: 0 0 auto !important;
-    }
-    
-    .file-manager-toolbar .file-selection-controls {
-        flex: 0 0 auto !important;
-    }
-    
-    .file-manager-toolbar .file-toolbar-search-actions {
-        flex: 1 1 100% !important;
-        margin-left: 0 !important;
-    }
-    
-    .file-manager-toolbar .file-search-input {
-        width: 100% !important;
-        flex: 1 !important;
+    .file-search-input {
+        width: 120px;
     }
     
     .tab-btn {
-        padding: 6px 10px !important;
-        font-size: 12px !important;
+        padding: 5px 8px;
+        font-size: 11px;
     }
     
-    .file-selection-controls .btn-icon-only {
-        min-width: 34px !important;
-        height: 34px !important;
+    .btn-icon-only {
+        min-width: 32px;
+        height: 32px;
+        font-size: 14px;
     }
     
     .btn-icon {
-        min-width: 34px !important;
-        height: 34px !important;
+        min-width: 32px;
+        height: 32px;
+        padding: 6px;
     }
     
     /* Ensure file grid is visible and properly sized */
