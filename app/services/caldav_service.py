@@ -205,7 +205,11 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
         if not name.endswith('.ics'):
             continue
         ics_count += 1
-        logger.info(f"[CalDAV] Processing .ics file #{ics_count}: {name}")
+        # Only log every 50th file to reduce logging overhead with large calendars
+        if ics_count % 50 == 0 or ics_count <= 5:
+            logger.info(f"[CalDAV] Processing .ics file #{ics_count}: {name}")
+        else:
+            logger.debug(f"[CalDAV] Processing .ics file #{ics_count}: {name}")
         
         try:
             # Read .ics file using proxy
@@ -264,24 +268,41 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                         if not rrule_prop:
                             # Check if event overlaps with the date range
                             # Event overlaps if it starts before or during the range AND (has no end OR ends during or after the range)
-                            event_overlaps = False
                             
-                            if event_start <= end_date:
-                                # Event starts before or during the range
-                                if event_end is None:
-                                    # Event has no end - include it (it's ongoing)
-                                    event_overlaps = True
-                                elif event_end >= start_date:
-                                    # Event ends during or after the range - it overlaps
-                                    event_overlaps = True
-                            
-                            if not event_overlaps:
+                            # First check: event must start before or during the range
+                            if event_start > end_date:
+                                # Event starts after the range - skip it
                                 summary = component.get('summary', 'No Title')
-                                logger.info(f"[CalDAV] Skipping event '{summary}' - no overlap: start={event_start.date()}, end={event_end.date() if event_end else 'None'}, range={start_date.date()} to {end_date.date()}")
+                                logger.debug(f"[CalDAV] Skipping event '{summary}' - starts after range: start={event_start.date()}, range end={end_date.date()}")
                                 continue
-                            # Event overlaps - include it
-                            summary = component.get('summary', 'No Title')
-                            logger.info(f"[CalDAV] Including event '{summary}': start={event_start.date()}, end={event_end.date() if event_end else 'None'}")
+                            
+                            # Second check: if event has an end date, it must end during or after the range
+                            if event_end is not None:
+                                if event_end < start_date:
+                                    # Event ended before the range - skip it
+                                    summary = component.get('summary', 'No Title')
+                                    logger.debug(f"[CalDAV] Skipping event '{summary}' - ended before range: end={event_end.date()}, range start={start_date.date()}")
+                                    continue
+                                # Event overlaps - include it
+                                summary = component.get('summary', 'No Title')
+                                logger.debug(f"[CalDAV] Including event '{summary}': start={event_start.date()}, end={event_end.date()}, range={start_date.date()} to {end_date.date()}")
+                            else:
+                                # Event has no end date - only include if it started recently (within 7 days before range start)
+                                # This prevents old events with no end date from appearing
+                                days_before_range = (start_date - event_start).days
+                                if days_before_range <= 7 and days_before_range >= 0:
+                                    # Event started within 7 days before the range - include it (it's ongoing)
+                                    summary = component.get('summary', 'No Title')
+                                    logger.debug(f"[CalDAV] Including ongoing event '{summary}': start={event_start.date()}, {days_before_range} days before range start")
+                                elif event_start <= end_date:
+                                    # Event started during or after the range start - include it
+                                    summary = component.get('summary', 'No Title')
+                                    logger.debug(f"[CalDAV] Including event '{summary}': start={event_start.date()}, no end date, within range")
+                                else:
+                                    # Event started too long ago - skip it
+                                    summary = component.get('summary', 'No Title')
+                                    logger.debug(f"[CalDAV] Skipping old event with no end date '{summary}': start={event_start.date()}, {days_before_range} days before range start")
+                                    continue
                         else:
                             # Recurring event: only skip if it DEFINITELY can't have occurrences
                             # Check for UNTIL or COUNT limits that would exclude this range
@@ -323,9 +344,9 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                 rule = rrulestr(rrule_str, dtstart=event_start)
                                 
                                 # Get occurrences within the date range
-                                # Increase limit to 1000 to handle monthly/yearly recurring events over long periods
-                                # This ensures we get all occurrences for cal month and cal week commands
-                                occurrences = list(rule.between(start_date, end_date, inc=True))[:1000]
+                                # Limit to 500 occurrences to prevent excessive processing time
+                                # This should be enough for monthly/yearly recurring events over reasonable periods
+                                occurrences = list(rule.between(start_date, end_date, inc=True))[:500]
                                 
                                 for occurrence_start in occurrences:
                                     occurrence_end = occurrence_start + event_duration if event_duration else None
@@ -1051,12 +1072,18 @@ def get_events_for_date_range(
                         # Apply same filtering logic as built-in server
                         # Check if event overlaps with range
                         if start_aware > end_date_aware:
+                            # Event starts after the range - skip
                             continue
                         if end_aware is not None and end_aware < start_date_aware:
+                            # Event ends before the range - skip
                             continue
                         if start_aware < start_date_aware and end_aware is None:
+                            # Event has no end date and started before the range
+                            # Only include if it started within 7 days before range start
                             from datetime import timedelta
-                            if (start_date_aware - start_aware) > timedelta(days=7):
+                            days_before_range = (start_date_aware - start_aware).days
+                            if days_before_range > 7:
+                                # Event started too long ago - skip it
                                 continue
 
                         events.append(CalendarEvent(
@@ -1113,7 +1140,14 @@ def get_all_user_events(
                     if not builtin_fetched:
                         logger.info(f"[Calendar] Fetching from built-in CalDAV server (all calendars)")
                         # Search all calendar directories to get all events
-                        events = _get_events_from_builtin(user_id, start_date, end_date, None, db)
+                        # Use timeout protection to prevent hangs with large calendars
+                        def fetch_builtin():
+                            return _get_events_from_builtin(user_id, start_date, end_date, None, db)
+                        
+                        events = run_with_timeout(fetch_builtin, timeout=CALDAV_OPERATION_TIMEOUT * 2)  # Give built-in more time (20s) since it processes many files
+                        if events is None:
+                            logger.warning(f"[Calendar] Built-in calendar fetch timed out after {CALDAV_OPERATION_TIMEOUT * 2}s")
+                            events = []
                         logger.info(f"[Calendar] Found {len(events)} events from built-in server (all calendars) in range {start_date.date()} to {end_date.date()}")
                         if events:
                             all_events.extend(events)

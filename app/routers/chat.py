@@ -390,7 +390,22 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             return
 
         # Use manager.connect() which handles stopping old streams and returns connection ID
-        conn_id = await manager.connect(user.id, conversation_id, websocket)
+        try:
+            conn_id = await manager.connect(user.id, conversation_id, websocket)
+        except Exception as connect_err:
+            logger.error(f"Failed to connect websocket: {connect_err}", exc_info=True)
+            # Ensure websocket is accepted before trying to send error
+            if websocket.client_state.name != "CONNECTED":
+                try:
+                    await websocket.accept()
+                except Exception:
+                    pass
+            try:
+                await websocket.send_json({"type": "error", "message": "Failed to establish connection"})
+                await websocket.close(code=4000)
+            except Exception:
+                pass
+            return
 
         # Check for and deliver any pending results from previous sessions
         pending = manager.get_pending_results(user.id, conversation_id)
@@ -410,6 +425,10 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
         try:
             while True:
                 try:
+                    # Check if websocket is still connected before receiving
+                    if websocket.client_state.name != "CONNECTED":
+                        logger.debug("WebSocket is not connected, breaking loop")
+                        break
                     # Use receive_text to get better error info, then parse JSON
                     raw_text = await websocket.receive_text()
                     logger.debug(f"Received raw text length: {len(raw_text)}")

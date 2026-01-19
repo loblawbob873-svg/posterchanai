@@ -187,55 +187,79 @@ class FileManager {
             });
         });
         
-        // Search input
-        const searchInput = document.getElementById('fileManagerSearchInput');
-        const clearSearchBtn = document.getElementById('fileManagerClearSearchBtn');
-        
-        if (searchInput) {
-            searchInput.addEventListener('input', (e) => {
-                const query = e.target.value.trim();
-                this.searchQuery = query.toLowerCase();
-                clearSearchBtn.style.display = this.searchQuery ? 'block' : 'none';
-                
-                // Clear previous timeout
-                if (this.searchTimeout) {
-                    clearTimeout(this.searchTimeout);
-                    this.searchTimeout = null;
-                }
-                
-                // If query is empty, clear search and show current directory
-                if (!query) {
-                    this.clearSearch();
-                    return;
-                }
-                
-                // Debounce search API call (wait 300ms after user stops typing)
-                this.searchTimeout = setTimeout(() => {
-                    this.performSearch(query);
-                    this.searchTimeout = null;
-                }, 300);
-            });
+        // Search input - use retry mechanism since modal might not be visible yet
+        const setupSearchInput = (retries = 5) => {
+            const searchInput = document.getElementById('fileManagerSearchInput');
+            const clearSearchBtn = document.getElementById('fileManagerClearSearchBtn');
             
-            searchInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape') {
-                    this.clearSearch();
-                } else if (e.key === 'Enter') {
-                    // Perform search immediately on Enter
+            if (searchInput) {
+                console.log('FileManager: Search input found, setting up event listeners');
+                
+                // Remove existing listeners if any (to prevent duplicates)
+                const newInput = searchInput.cloneNode(true);
+                searchInput.parentNode.replaceChild(newInput, searchInput);
+                const freshInput = document.getElementById('fileManagerSearchInput');
+                
+                freshInput.addEventListener('input', (e) => {
+                    const query = e.target.value.trim();
+                    console.log('FileManager: Search input changed:', query);
+                    this.searchQuery = query.toLowerCase();
+                    if (clearSearchBtn) {
+                        clearSearchBtn.style.display = this.searchQuery ? 'block' : 'none';
+                    }
+                    
+                    // Clear previous timeout
                     if (this.searchTimeout) {
                         clearTimeout(this.searchTimeout);
                         this.searchTimeout = null;
                     }
-                    const query = e.target.value.trim();
-                    if (query) {
-                        this.performSearch(query);
+                    
+                    // If query is empty, clear search and show current directory
+                    if (!query) {
+                        this.clearSearch();
+                        return;
                     }
-                }
-            });
-        }
+                    
+                    // Debounce search API call (wait 300ms after user stops typing)
+                    this.searchTimeout = setTimeout(() => {
+                        console.log('FileManager: Debounced search triggered for:', query);
+                        this.performSearch(query);
+                        this.searchTimeout = null;
+                    }, 300);
+                });
+                
+                freshInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') {
+                        this.clearSearch();
+                    } else if (e.key === 'Enter') {
+                        // Perform search immediately on Enter
+                        if (this.searchTimeout) {
+                            clearTimeout(this.searchTimeout);
+                            this.searchTimeout = null;
+                        }
+                        const query = e.target.value.trim();
+                        if (query) {
+                            console.log('FileManager: Enter pressed, searching for:', query);
+                            this.performSearch(query);
+                        }
+                    }
+                });
+            } else if (retries > 0) {
+                console.log(`FileManager: Search input not found, retrying... (${retries} retries left)`);
+                setTimeout(() => setupSearchInput(retries - 1), 200);
+            } else {
+                console.warn('FileManager: Search input not found after retries');
+            }
+            
+            if (clearSearchBtn) {
+                clearSearchBtn.addEventListener('click', () => {
+                    console.log('FileManager: Clear search button clicked');
+                    this.clearSearch();
+                });
+            }
+        };
         
-        if (clearSearchBtn) {
-            clearSearchBtn.addEventListener('click', () => this.clearSearch());
-        }
+        setupSearchInput();
         
         // Image viewer
         document.getElementById('imageViewerClose')?.addEventListener('click', () => this.closeImageViewer());
@@ -451,6 +475,14 @@ class FileManager {
             
             // Ensure we're on the files tab by default
             this.switchTab('files');
+            
+            // Ensure search input is set up (in case it wasn't ready during init)
+            const searchInput = document.getElementById('fileManagerSearchInput');
+            if (searchInput && !searchInput.dataset.listenerAttached) {
+                console.log('FileManager: Setting up search input on open');
+                // The search input setup is already done in init(), but we verify it here
+                // If it's not set up, the setupSearchInput function will handle it
+            }
             
             await this.loadFiles('');
             console.log('FileManager: Overlay displayed and files loaded');
