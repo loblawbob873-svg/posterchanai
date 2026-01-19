@@ -1462,21 +1462,23 @@ class ChatHandler {
                 // Update CardDAV address
                 const carddavInput = document.getElementById('carddavAddress');
                 const carddavUsername = document.getElementById('carddavUsername');
-                console.log('CardDAV elements:', { input: !!carddavInput, username: !!carddavUsername, url: data.carddav_url });
+                // Check both carddav_url and cardav_url for backwards compatibility
+                const carddavUrl = data.carddav_url || data.cardav_url;
+                console.log('CardDAV elements:', { input: !!carddavInput, username: !!carddavUsername, url: carddavUrl });
                 
                 if (carddavInput) {
-                    if (data.carddav_url) {
-                        let carddavUrl = data.carddav_url;
+                    if (carddavUrl) {
+                        let url = carddavUrl;
                         // Only replace localhost if it's actually localhost
-                        if (carddavUrl.includes('localhost')) {
-                            carddavUrl = carddavUrl.replace('localhost', hostname);
+                        if (url.includes('localhost')) {
+                            url = url.replace('localhost', hostname);
                         }
                         // Ensure protocol matches current page
-                        if (carddavUrl.startsWith('http://') && protocol === 'https:') {
-                            carddavUrl = carddavUrl.replace('http://', 'https://');
+                        if (url.startsWith('http://') && protocol === 'https:') {
+                            url = url.replace('http://', 'https://');
                         }
-                        carddavInput.value = carddavUrl;
-                        console.log('Set CardDAV URL:', carddavUrl);
+                        carddavInput.value = url;
+                        console.log('Set CardDAV URL:', url);
                     } else {
                         carddavInput.value = '';
                         carddavInput.placeholder = 'CardDAV server not enabled (enable in Admin → Site Settings)';

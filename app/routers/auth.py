@@ -879,7 +879,7 @@ async def get_storage_addresses(
         "username": current_user.username,
         "webdav_url": webdav_url,
         "caldav_url": caldav_url,
-        "cardav_url": cardav_url
+        "carddav_url": cardav_url  # Use carddav_url (with 'd') to match JavaScript expectation
     }
     logger.debug(f"Returning storage addresses: {result}")
     return result
