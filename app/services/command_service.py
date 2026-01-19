@@ -2087,7 +2087,15 @@ Return ONLY valid JSON, no other text.""",
                     return {"type": "text", "content": "Usage: `cal get <event_uid>`"}
                 event_uid = param.strip()
                 for cal in calendars:
-                    event = get_event_by_uid(cal["url"], cal["username"], cal["password"], event_uid)
+                    # Pass user_id and db for built-in calendars
+                    event = get_event_by_uid(
+                        cal["url"], 
+                        cal["username"], 
+                        cal["password"], 
+                        event_uid,
+                        user_id=self.user.id if cal.get("password") == "__USE_SESSION_AUTH__" else None,
+                        db=self.db if cal.get("password") == "__USE_SESSION_AUTH__" else None
+                    )
                     if event:
                         details = f"## Event Details\n\n**Title:** {event.summary}\n**Start:** {event.start.strftime('%Y-%m-%d %I:%M %p')}\n"
                         if event.end:
@@ -2119,7 +2127,12 @@ Return ONLY valid JSON, no other text.""",
                     event = None
                     for cal in calendars:
                         if cal.get("password") != "__USE_SESSION_AUTH__":
-                            event = get_event_by_uid(cal["url"], cal["username"], cal["password"], event_uid)
+                            event = get_event_by_uid(
+                                cal["url"], 
+                                cal["username"], 
+                                cal["password"], 
+                                event_uid
+                            )
                             if event:
                                 break
 

@@ -27,6 +27,54 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
+
+def _find_event_filepath(proxy, event_uid: str) -> Optional[str]:
+    """
+    Helper function to find an event file in all calendar directories.
+    Searches in order: main/, other calendar subdirectories, root (legacy).
+    
+    Returns the filepath if found, None otherwise.
+    """
+    try:
+        # Get all calendar directories
+        root_items = proxy.list_files("")
+        calendar_dirs = [item.get('name') for item in root_items if item.get('is_directory', False) and not item.get('name', '').startswith('.')]
+        logger.debug(f"[CalDAV] Searching for event {event_uid} in calendar directories: {calendar_dirs}")
+        
+        # Search in "main" first (iPhone sync location)
+        if "main" in calendar_dirs:
+            main_items = proxy.list_files("main")
+            for item in main_items:
+                if item.get('name') == f"{event_uid}.ics":
+                    filepath = f"main/{event_uid}.ics"
+                    logger.debug(f"[CalDAV] Found event in 'main' directory: {filepath}")
+                    return filepath
+        
+        # If not found in main, search other calendar directories
+        for cal_dir in calendar_dirs:
+            if cal_dir == "main":
+                continue  # Already checked
+            cal_items = proxy.list_files(cal_dir)
+            for item in cal_items:
+                if item.get('name') == f"{event_uid}.ics":
+                    filepath = f"{cal_dir}/{event_uid}.ics"
+                    logger.debug(f"[CalDAV] Found event in '{cal_dir}' directory: {filepath}")
+                    return filepath
+        
+        # If still not found, check root directory (legacy location)
+        root_items = proxy.list_files("")
+        for item in root_items:
+            if item.get('name') == f"{event_uid}.ics" and not item.get('is_directory', False):
+                filepath = f"{event_uid}.ics"
+                logger.debug(f"[CalDAV] Found event in root directory: {filepath}")
+                return filepath
+        
+        logger.debug(f"[CalDAV] Event {event_uid}.ics not found in any directory")
+        return None
+    except Exception as e:
+        logger.error(f"[CalDAV] Error searching for event {event_uid}: {e}", exc_info=True)
+        return None
+
 # Timeout for CalDAV operations (in seconds)
 CALDAV_TIMEOUT = 15  # Reduced from 30 to prevent long hangs
 CALDAV_OPERATION_TIMEOUT = 10  # Timeout for individual operations
@@ -1553,10 +1601,97 @@ def get_event_by_uid(
     url: str,
     username: str,
     password: str,
-    event_uid: str
+    event_uid: str,
+    user_id: Optional[int] = None,
+    db: Optional[Session] = None
 ) -> Optional[CalendarEvent]:
-    """Get a single event by UID."""
+    """Get a single event by UID. Supports both external CalDAV servers and built-in storage."""
     try:
+        # Check if using built-in server
+        if password == "__USE_SESSION_AUTH__" and user_id and db:
+            logger.info(f"[CalDAV] Getting event {event_uid} from built-in storage")
+            from app.models import User
+            from app.services.dav_storage_proxy import DAVStorageProxy
+            from icalendar import Calendar as ICalendar
+            
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return None
+            
+            proxy = DAVStorageProxy(db, user.username, 'caldav')
+            if not proxy.use_proxy:
+                logger.error(f"[CalDAV] Storage proxy not configured")
+                return None
+            
+            # Find event file using helper function
+            event_filepath = _find_event_filepath(proxy, event_uid)
+            if not event_filepath:
+                logger.warning(f"[CalDAV] Event {event_uid} not found")
+                return None
+            
+            # Read and parse event
+            try:
+                ical_data = proxy.read_file(event_filepath)
+                if not ical_data:
+                    return None
+                
+                cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+                for component in cal.walk():
+                    if component.name == "VEVENT":
+                        uid_value = component.get('uid', '')
+                        uid_str = str(uid_value) if not hasattr(uid_value, 'value') else str(uid_value.value)
+                        if uid_str == event_uid:
+                            # Extract event data
+                            summary = str(component.get('summary', ''))
+                            description = str(component.get('description', '')) if component.get('description') else None
+                            location = str(component.get('location', '')) if component.get('location') else None
+                            
+                            dtstart = component.get('dtstart')
+                            if dtstart:
+                                start_dt = dtstart.dt
+                                if not isinstance(start_dt, datetime):
+                                    start_dt = datetime.combine(start_dt, datetime.min.time())
+                                if start_dt.tzinfo is None:
+                                    start_dt = start_dt.replace(tzinfo=timezone.utc)
+                                start_dt = to_local_aware(start_dt)
+                            else:
+                                continue
+                            
+                            dtend = component.get('dtend')
+                            end_dt = None
+                            if dtend:
+                                end_dt = dtend.dt
+                                if not isinstance(end_dt, datetime):
+                                    end_dt = datetime.combine(end_dt, datetime.min.time())
+                                if end_dt.tzinfo is None:
+                                    end_dt = end_dt.replace(tzinfo=timezone.utc)
+                                end_dt = to_local_aware(end_dt)
+                            
+                            rrule_str = None
+                            if component.get('rrule'):
+                                rrule_str = str(component.get('rrule'))
+                            
+                            # Extract calendar name from filepath
+                            calendar_name = "main"
+                            if '/' in event_filepath:
+                                calendar_name = event_filepath.split('/')[0]
+                            
+                            return CalendarEvent(
+                                uid=uid_str,
+                                summary=summary,
+                                description=description,
+                                start=start_dt,
+                                end=end_dt,
+                                location=location,
+                                calendar_name=calendar_name,
+                                rrule=rrule_str
+                            )
+                return None
+            except Exception as e:
+                logger.error(f"[CalDAV] Error reading/parsing event {event_uid}: {e}", exc_info=True)
+                return None
+        
+        # Otherwise use external CalDAV server
         client = create_caldav_client(url, username, password)
 
         try:
@@ -1657,42 +1792,22 @@ def update_event_in_calendar(
             # Use storage proxy (no local fallback)
             proxy = DAVStorageProxy(db, user.username, 'caldav')
             
-            # Search for event in all calendar subdirectories (especially "main")
-            # iPhone syncs from subdirectories, not root
-            event_filepath = None
-            try:
-                # Check "main" first (most common for iPhone)
-                main_data = proxy.read_file(f"main/{event_uid}.ics")
-                if main_data:
-                    event_filepath = f"main/{event_uid}.ics"
-                    ical_data = main_data
-                    logger.info(f"[CalDAV] Found event in 'main' directory: {event_filepath}")
-                else:
-                    # Check root as fallback
-                    root_data = proxy.read_file(f"{event_uid}.ics")
-                    if root_data:
-                        event_filepath = f"{event_uid}.ics"
-                        ical_data = root_data
-                        logger.warning(f"[CalDAV] Found event in root (should be in subdirectory): {event_filepath}")
-                    else:
-                        # Search all subdirectories
-                        root_items = proxy.list_files("")
-                        calendar_dirs = [item.get('name') for item in root_items if item.get('is_directory', False) and not item.get('name', '').startswith('.')]
-                        for cal_dir in calendar_dirs:
-                            if cal_dir == "main":
-                                continue  # Already checked
-                            test_path = f"{cal_dir}/{event_uid}.ics"
-                            test_data = proxy.read_file(test_path)
-                            if test_data:
-                                event_filepath = test_path
-                                ical_data = test_data
-                                logger.info(f"[CalDAV] Found event in '{cal_dir}' directory: {event_filepath}")
-                                break
-            except Exception as e:
-                logger.error(f"[CalDAV] Error searching for event {event_uid}: {e}")
+            # Search for event in all calendar subdirectories using helper function
+            event_filepath = _find_event_filepath(proxy, event_uid)
             
-            if not event_filepath or not ical_data:
-                logger.warning(f"[CalDAV] Event file not found: {event_uid}.ics (searched main, root, and all subdirectories)")
+            if not event_filepath:
+                logger.warning(f"[CalDAV] Event file not found: {event_uid}.ics (searched main, all subdirectories, and root)")
+                return False
+            
+            # Read the event data
+            try:
+                ical_data = proxy.read_file(event_filepath)
+                if not ical_data:
+                    logger.error(f"[CalDAV] Event file found but could not be read: {event_filepath}")
+                    return False
+                logger.info(f"[CalDAV] Found event in '{event_filepath}'")
+            except Exception as e:
+                logger.error(f"[CalDAV] Error reading event file {event_filepath}: {e}", exc_info=True)
                 return False
             
             cal = ICalendar.from_ical(ical_data.encode('utf-8'))
@@ -3572,47 +3687,8 @@ def delete_event_from_calendar(
                 logger.error(f"[CalDAV] Set storage_server_url in Admin settings.")
                 return False
             
-            # Search for event in all calendar directories (like update_event_in_calendar does)
-            # First try "main" directory (most common location for iPhone sync)
-            event_filepath = None
-            try:
-                root_items = proxy.list_files("")
-                calendar_dirs = [item.get('name') for item in root_items if item.get('is_directory', False) and not item.get('name', '').startswith('.')]
-                logger.debug(f"[CalDAV] Searching for event {event_uid} in calendar directories: {calendar_dirs}")
-                
-                # Search in "main" first (iPhone sync location)
-                if "main" in calendar_dirs:
-                    main_items = proxy.list_files("main")
-                    for item in main_items:
-                        if item.get('name') == f"{event_uid}.ics":
-                            event_filepath = f"main/{event_uid}.ics"
-                            logger.info(f"[CalDAV] Found event in 'main' directory: {event_filepath}")
-                            break
-                
-                # If not found in main, search other calendar directories
-                if not event_filepath:
-                    for cal_dir in calendar_dirs:
-                        if cal_dir == "main":
-                            continue  # Already checked
-                        cal_items = proxy.list_files(cal_dir)
-                        for item in cal_items:
-                            if item.get('name') == f"{event_uid}.ics":
-                                event_filepath = f"{cal_dir}/{event_uid}.ics"
-                                logger.info(f"[CalDAV] Found event in '{cal_dir}' directory: {event_filepath}")
-                                break
-                        if event_filepath:
-                            break
-                
-                # If still not found, check root directory (legacy location)
-                if not event_filepath:
-                    root_items = proxy.list_files("")
-                    for item in root_items:
-                        if item.get('name') == f"{event_uid}.ics" and not item.get('is_directory', False):
-                            event_filepath = f"{event_uid}.ics"
-                            logger.info(f"[CalDAV] Found event in root directory: {event_filepath}")
-                            break
-            except Exception as e:
-                logger.error(f"[CalDAV] Error searching for event {event_uid}: {e}", exc_info=True)
+            # Search for event in all calendar directories using helper function
+            event_filepath = _find_event_filepath(proxy, event_uid)
             
             if not event_filepath:
                 logger.warning(f"[CalDAV] Event file not found: {event_uid}.ics (searched main, all subdirectories, and root)")

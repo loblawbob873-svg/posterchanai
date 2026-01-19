@@ -327,221 +327,221 @@ async def get_all_images(
                             headers=headers
                         )
                         if response.status_code == 200:
-                        try:
-                            # Get the JSON response from storage server
-                            data = response.json()
-                            
-                            # Clean it to ensure no bytes slipped through
-                            def _clean_proxy_response(obj, depth=0):
-                                if depth > 10:
-                                    return ""
-                                if obj is None:
-                                    return None
-                                elif isinstance(obj, bytes):
-                                    logger.warning(f"[FILES] Found bytes in proxy response at depth {depth}, converting")
-                                    return obj.decode('utf-8', errors='ignore')
-                                elif isinstance(obj, Path):
-                                    logger.warning(f"[FILES] Found Path in proxy response at depth {depth}, converting")
-                                    return str(obj)
-                                elif isinstance(obj, dict):
-                                    # Preserve all dictionary keys and values
-                                    cleaned = {}
-                                    for k, v in obj.items():
-                                        key_str = str(k) if not isinstance(k, (str, int, float, bool)) else k
-                                        cleaned[key_str] = _clean_proxy_response(v, depth+1)
-                                    return cleaned
-                                elif isinstance(obj, (list, tuple)):
-                                    return [_clean_proxy_response(item, depth+1) for item in obj]
-                                elif isinstance(obj, (str, int, float, bool)):
-                                    return obj
-                                else:
-                                    # Unknown type - convert to string only as last resort
-                                    logger.debug(f"[FILES] Converting unknown type {type(obj)} to string at depth {depth}")
-                                    return str(obj)
-                            
-                            cleaned_data = _clean_proxy_response(data)
-                            
-                            # Verify that images have required fields and filter out invalid ones
-                            if 'images' in cleaned_data and cleaned_data['images']:
-                                valid_images = validate_and_filter_images(cleaned_data['images'], source="proxy")
-                                
-                                # Ensure images are sorted by modified time (newest first)
-                                # Storage server should already sort, but verify and fix if needed
-                                # Also try to extract date from filename if modification time seems wrong
-                                import re
-                                current_time = time.time()
-                                
-                                for img in valid_images:
-                                    if 'modified' in img:
-                                        try:
-                                            img['modified'] = float(img['modified'])
-                                        except (ValueError, TypeError):
-                                            img['modified'] = 0.0
-                                        
-                                        # If filename suggests a much older date than modification time,
-                                        # try to extract date from filename and use that instead
-                                        mtime = img['modified']
-                                        if mtime > 0:
-                                            mtime_age_days = (current_time - mtime) / 86400
-                                            
-                                            # Try to extract date from filename
-                                            filename = img.get('name', '') or img.get('path', '')
-                                            match = re.search(r'(\d{4})(\d{2})(\d{2})(?:[_-](\d{2})(\d{2})(\d{2}))?', filename)
-                                            if match:
-                                                year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
-                                                hour, minute, second = 0, 0, 0
-                                                if match.group(4):  # Has time component
-                                                    hour, minute, second = int(match.group(4)), int(match.group(5)), int(match.group(6))
-                                                try:
-                                                    filename_date = datetime(year, month, day, hour, minute, second)
-                                                    filename_timestamp = filename_date.timestamp()
-                                                    filename_age_days = (current_time - filename_timestamp) / 86400
-                                                    
-                                                    # If filename date is significantly older (more than 30 days older than mtime),
-                                                    # OR if mtime is very recent but filename suggests old date,
-                                                    # use filename date instead. This catches files copied at any time.
-                                                    mtime_is_recent = mtime_age_days < 7  # Modified within last week
-                                                    filename_is_old = filename_age_days > 30  # Filename suggests date older than 30 days
-                                                    
-                                                    if filename_age_days > (mtime_age_days + 30) or (mtime_is_recent and filename_is_old):
-                                                        img['modified'] = filename_timestamp
-                                                        logger.info(f"[FILES] Proxy: Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(mtime)}, mtime_age={mtime_age_days:.1f}d, filename_age={filename_age_days:.1f}d)")
-                                                except (ValueError, OverflowError):
-                                                    pass  # Invalid date, use mtime
-                                
-                                # Sort by modified time descending (newest first)
-                                # reverse=True means higher timestamps (newer files) come first
-                                # CRITICAL: Ensure all modified values are floats before sorting
-                                for img in valid_images:
-                                    if 'modified' in img:
-                                        try:
-                                            img['modified'] = float(img['modified'])
-                                        except (ValueError, TypeError):
-                                            img['modified'] = 0.0
-                                
-                                # Sort by modified time descending (newest first)
-                                valid_images.sort(key=lambda x: float(x.get('modified', 0) or 0), reverse=True)
-                                
-                                # ALWAYS verify sort and log results
-                                if len(valid_images) > 1:
-                                    first_ts = float(valid_images[0].get('modified', 0) or 0)
-                                    last_ts = float(valid_images[-1].get('modified', 0) or 0)
-                                    first_name = valid_images[0].get('name', 'unknown')
-                                    last_name = valid_images[-1].get('name', 'unknown')
-                                    
-                                    if first_ts < last_ts:
-                                        logger.error(f"[FILES] ❌ PROXY SORT ERROR: First timestamp ({first_ts}) is LOWER than last ({last_ts}) - sort is backwards!")
-                                        logger.error(f"[FILES] First image: {first_name} (ts={first_ts}, date={datetime.fromtimestamp(first_ts).isoformat() if first_ts > 0 else 'N/A'})")
-                                        logger.error(f"[FILES] Last image: {last_name} (ts={last_ts}, date={datetime.fromtimestamp(last_ts).isoformat() if last_ts > 0 else 'N/A'})")
-                                        # Fix by reversing
-                                        valid_images.reverse()
-                                        logger.warning(f"[FILES] Fixed by reversing the list")
-                                        # Verify fix
-                                        new_first_ts = float(valid_images[0].get('modified', 0) or 0)
-                                        new_last_ts = float(valid_images[-1].get('modified', 0) or 0)
-                                        if new_first_ts < new_last_ts:
-                                            logger.error(f"[FILES] ❌ REVERSE FIX FAILED! Still backwards after reverse!")
-                                        else:
-                                            logger.info(f"[FILES] ✓ Sort fixed: New first={new_first_ts} ({datetime.fromtimestamp(new_first_ts).isoformat() if new_first_ts > 0 else 'N/A'}), New last={new_last_ts} ({datetime.fromtimestamp(new_last_ts).isoformat() if new_last_ts > 0 else 'N/A'})")
-                                    else:
-                                        # Log verification with first few images
-                                        logger.info(f"[FILES] ✓ Sort verified: First={first_ts} ({datetime.fromtimestamp(first_ts).isoformat() if first_ts > 0 else 'N/A'}, {first_name}), Last={last_ts} ({datetime.fromtimestamp(last_ts).isoformat() if last_ts > 0 else 'N/A'}, {last_name})")
-                                        # Log first 3 images for debugging
-                                        for i in range(min(3, len(valid_images))):
-                                            img = valid_images[i]
-                                            ts = float(img.get('modified', 0) or 0)
-                                            logger.info(f"[FILES]   Image #{i+1}: {img.get('name', 'unknown')} - ts={ts}, date={datetime.fromtimestamp(ts).isoformat() if ts > 0 else 'N/A'}")
-                                
-                                # Update with filtered and sorted valid images
-                                cleaned_data['images'] = valid_images
-                                # Note: total should come from the storage server, not len(valid_images) which is just this page
-                                # Don't override total - use what storage server says
-                                
-                                # Log sample of first few images to verify sorting
-                                if len(valid_images) > 0:
-                                    logger.info(f"[FILES] Proxy: Received {len(valid_images)} images, sorted by modified time (newest first)")
-                                    # Log first 5 images with their timestamps
-                                    for i, img in enumerate(valid_images[:5]):
-                                        ts = float(img.get('modified', 0) or 0)
-                                        date_str = datetime.fromtimestamp(ts).isoformat() if ts > 0 else 'N/A'
-                                        logger.debug(f"[FILES] Image #{i+1}: {img.get('name', 'unknown')} - ts={ts}, date={date_str}")
-                                else:
-                                    logger.warning(f"[FILES] Proxy: Received 0 valid images after filtering")
-                            
-                            # Test serialization before returning
                             try:
-                                import json
-                                # Use custom encoder
-                                class BytesSafeEncoder(json.JSONEncoder):
-                                    def default(self, obj):
-                                        if isinstance(obj, bytes):
-                                            return obj.decode('utf-8', errors='ignore')
-                                        elif isinstance(obj, Path):
-                                            return str(obj)
-                                        return super().default(obj)
-                                test_json = json.dumps(cleaned_data, cls=BytesSafeEncoder)
-                                logger.debug(f"[FILES] Proxy response cleaned and validated: {len(cleaned_data.get('images', []))} images")
-                            except (TypeError, ValueError) as test_err:
-                                logger.error(f"[FILES] Proxy response still has serialization issues after cleaning: {test_err}")
-                                logger.error(f"[FILES] Error type: {type(test_err).__name__}")
-                                # Try to find the problem with detailed logging
-                                problematic_paths = []
-                                def find_problem(obj, path="root", depth=0):
+                                # Get the JSON response from storage server
+                                data = response.json()
+                                
+                                # Clean it to ensure no bytes slipped through
+                                def _clean_proxy_response(obj, depth=0):
                                     if depth > 10:
-                                        return
-                                    try:
-                                        if isinstance(obj, bytes):
-                                            problematic_paths.append(f"{path} (bytes: {obj[:50] if len(obj) > 50 else obj})")
-                                            return
-                                        elif isinstance(obj, Path):
-                                            problematic_paths.append(f"{path} (Path: {obj})")
-                                            return
-                                        elif isinstance(obj, dict):
-                                            for k, v in obj.items():
-                                                find_problem(v, f"{path}.{k}", depth+1)
-                                        elif isinstance(obj, (list, tuple)):
-                                            for i, item in enumerate(obj[:20]):
-                                                find_problem(item, f"{path}[{i}]", depth+1)
-                                        else:
-                                            # Try to serialize this value alone
+                                        return ""
+                                    if obj is None:
+                                        return None
+                                    elif isinstance(obj, bytes):
+                                        logger.warning(f"[FILES] Found bytes in proxy response at depth {depth}, converting")
+                                        return obj.decode('utf-8', errors='ignore')
+                                    elif isinstance(obj, Path):
+                                        logger.warning(f"[FILES] Found Path in proxy response at depth {depth}, converting")
+                                        return str(obj)
+                                    elif isinstance(obj, dict):
+                                        # Preserve all dictionary keys and values
+                                        cleaned = {}
+                                        for k, v in obj.items():
+                                            key_str = str(k) if not isinstance(k, (str, int, float, bool)) else k
+                                            cleaned[key_str] = _clean_proxy_response(v, depth+1)
+                                        return cleaned
+                                    elif isinstance(obj, (list, tuple)):
+                                        return [_clean_proxy_response(item, depth+1) for item in obj]
+                                    elif isinstance(obj, (str, int, float, bool)):
+                                        return obj
+                                    else:
+                                        # Unknown type - convert to string only as last resort
+                                        logger.debug(f"[FILES] Converting unknown type {type(obj)} to string at depth {depth}")
+                                        return str(obj)
+                                
+                                cleaned_data = _clean_proxy_response(data)
+                                
+                                # Verify that images have required fields and filter out invalid ones
+                                if 'images' in cleaned_data and cleaned_data['images']:
+                                    valid_images = validate_and_filter_images(cleaned_data['images'], source="proxy")
+                                    
+                                    # Ensure images are sorted by modified time (newest first)
+                                    # Storage server should already sort, but verify and fix if needed
+                                    # Also try to extract date from filename if modification time seems wrong
+                                    import re
+                                    current_time = time.time()
+                                    
+                                    for img in valid_images:
+                                        if 'modified' in img:
                                             try:
-                                                json.dumps(obj)
-                                            except (TypeError, ValueError) as e:
-                                                problematic_paths.append(f"{path} (type {type(obj).__name__}: {e})")
-                                    except Exception as e:
-                                        problematic_paths.append(f"{path} (error checking: {e})")
-                                find_problem(cleaned_data)
-                                if problematic_paths:
-                                    logger.error(f"[FILES] Found {len(problematic_paths)} problematic paths:")
-                                    for p in problematic_paths[:10]:
-                                        logger.error(f"[FILES]   - {p}")
-                                # Return safe empty response
-                                return {"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False}
-                            
-                            return cleaned_data
-                        except Exception as json_err:
-                            logger.error(f"[FILES] Error parsing/cleaning storage server response: {json_err}", exc_info=True)
-                            raise
-                    else:
-                        # Try to get error details from response
-                        try:
-                            error_data = response.json()
-                            error_detail = error_data.get("detail", error_data.get("message", response.text))
-                        except:
-                            error_detail = response.text or f"HTTP {response.status_code}"
-                        logger.error(f"[FILES] Storage server returned {response.status_code}: {error_detail}")
-                        raise HTTPException(status_code=response.status_code, detail=error_detail)
-            except httpx.TimeoutException:
-                logger.error(f"[FILES] Timeout proxying get_all_images to storage server")
-                raise HTTPException(status_code=504, detail="Storage server timeout")
-            except httpx.ConnectError as e:
-                logger.error(f"[FILES] Cannot connect to storage server: {e}")
-                raise HTTPException(status_code=503, detail=f"Cannot reach storage server: {e}")
-            except HTTPException:
-                raise  # Re-raise HTTP exceptions as-is
-            except Exception as e:
-                logger.error(f"[FILES] Failed to proxy get_all_images: {e}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Failed to get images from storage server: {str(e)}")
+                                                img['modified'] = float(img['modified'])
+                                            except (ValueError, TypeError):
+                                                img['modified'] = 0.0
+                                            
+                                            # If filename suggests a much older date than modification time,
+                                            # try to extract date from filename and use that instead
+                                            mtime = img['modified']
+                                            if mtime > 0:
+                                                mtime_age_days = (current_time - mtime) / 86400
+                                                
+                                                # Try to extract date from filename
+                                                filename = img.get('name', '') or img.get('path', '')
+                                                match = re.search(r'(\d{4})(\d{2})(\d{2})(?:[_-](\d{2})(\d{2})(\d{2}))?', filename)
+                                                if match:
+                                                    year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+                                                    hour, minute, second = 0, 0, 0
+                                                    if match.group(4):  # Has time component
+                                                        hour, minute, second = int(match.group(4)), int(match.group(5)), int(match.group(6))
+                                                    try:
+                                                        filename_date = datetime(year, month, day, hour, minute, second)
+                                                        filename_timestamp = filename_date.timestamp()
+                                                        filename_age_days = (current_time - filename_timestamp) / 86400
+                                                        
+                                                        # If filename date is significantly older (more than 30 days older than mtime),
+                                                        # OR if mtime is very recent but filename suggests old date,
+                                                        # use filename date instead. This catches files copied at any time.
+                                                        mtime_is_recent = mtime_age_days < 7  # Modified within last week
+                                                        filename_is_old = filename_age_days > 30  # Filename suggests date older than 30 days
+                                                        
+                                                        if filename_age_days > (mtime_age_days + 30) or (mtime_is_recent and filename_is_old):
+                                                            img['modified'] = filename_timestamp
+                                                            logger.info(f"[FILES] Proxy: Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(mtime)}, mtime_age={mtime_age_days:.1f}d, filename_age={filename_age_days:.1f}d)")
+                                                    except (ValueError, OverflowError):
+                                                        pass  # Invalid date, use mtime
+                                    
+                                    # Sort by modified time descending (newest first)
+                                    # reverse=True means higher timestamps (newer files) come first
+                                    # CRITICAL: Ensure all modified values are floats before sorting
+                                    for img in valid_images:
+                                        if 'modified' in img:
+                                            try:
+                                                img['modified'] = float(img['modified'])
+                                            except (ValueError, TypeError):
+                                                img['modified'] = 0.0
+                                    
+                                    # Sort by modified time descending (newest first)
+                                    valid_images.sort(key=lambda x: float(x.get('modified', 0) or 0), reverse=True)
+                                    
+                                    # ALWAYS verify sort and log results
+                                    if len(valid_images) > 1:
+                                        first_ts = float(valid_images[0].get('modified', 0) or 0)
+                                        last_ts = float(valid_images[-1].get('modified', 0) or 0)
+                                        first_name = valid_images[0].get('name', 'unknown')
+                                        last_name = valid_images[-1].get('name', 'unknown')
+                                        
+                                        if first_ts < last_ts:
+                                            logger.error(f"[FILES] ❌ PROXY SORT ERROR: First timestamp ({first_ts}) is LOWER than last ({last_ts}) - sort is backwards!")
+                                            logger.error(f"[FILES] First image: {first_name} (ts={first_ts}, date={datetime.fromtimestamp(first_ts).isoformat() if first_ts > 0 else 'N/A'})")
+                                            logger.error(f"[FILES] Last image: {last_name} (ts={last_ts}, date={datetime.fromtimestamp(last_ts).isoformat() if last_ts > 0 else 'N/A'})")
+                                            # Fix by reversing
+                                            valid_images.reverse()
+                                            logger.warning(f"[FILES] Fixed by reversing the list")
+                                            # Verify fix
+                                            new_first_ts = float(valid_images[0].get('modified', 0) or 0)
+                                            new_last_ts = float(valid_images[-1].get('modified', 0) or 0)
+                                            if new_first_ts < new_last_ts:
+                                                logger.error(f"[FILES] ❌ REVERSE FIX FAILED! Still backwards after reverse!")
+                                            else:
+                                                logger.info(f"[FILES] ✓ Sort fixed: New first={new_first_ts} ({datetime.fromtimestamp(new_first_ts).isoformat() if new_first_ts > 0 else 'N/A'}), New last={new_last_ts} ({datetime.fromtimestamp(new_last_ts).isoformat() if new_last_ts > 0 else 'N/A'})")
+                                        else:
+                                            # Log verification with first few images
+                                            logger.info(f"[FILES] ✓ Sort verified: First={first_ts} ({datetime.fromtimestamp(first_ts).isoformat() if first_ts > 0 else 'N/A'}, {first_name}), Last={last_ts} ({datetime.fromtimestamp(last_ts).isoformat() if last_ts > 0 else 'N/A'}, {last_name})")
+                                            # Log first 3 images for debugging
+                                            for i in range(min(3, len(valid_images))):
+                                                img = valid_images[i]
+                                                ts = float(img.get('modified', 0) or 0)
+                                                logger.info(f"[FILES]   Image #{i+1}: {img.get('name', 'unknown')} - ts={ts}, date={datetime.fromtimestamp(ts).isoformat() if ts > 0 else 'N/A'}")
+                                    
+                                    # Update with filtered and sorted valid images
+                                    cleaned_data['images'] = valid_images
+                                    # Note: total should come from the storage server, not len(valid_images) which is just this page
+                                    # Don't override total - use what storage server says
+                                    
+                                    # Log sample of first few images to verify sorting
+                                    if len(valid_images) > 0:
+                                        logger.info(f"[FILES] Proxy: Received {len(valid_images)} images, sorted by modified time (newest first)")
+                                        # Log first 5 images with their timestamps
+                                        for i, img in enumerate(valid_images[:5]):
+                                            ts = float(img.get('modified', 0) or 0)
+                                            date_str = datetime.fromtimestamp(ts).isoformat() if ts > 0 else 'N/A'
+                                            logger.debug(f"[FILES] Image #{i+1}: {img.get('name', 'unknown')} - ts={ts}, date={date_str}")
+                                    else:
+                                        logger.warning(f"[FILES] Proxy: Received 0 valid images after filtering")
+                                
+                                # Test serialization before returning
+                                try:
+                                    import json
+                                    # Use custom encoder
+                                    class BytesSafeEncoder(json.JSONEncoder):
+                                        def default(self, obj):
+                                            if isinstance(obj, bytes):
+                                                return obj.decode('utf-8', errors='ignore')
+                                            elif isinstance(obj, Path):
+                                                return str(obj)
+                                            return super().default(obj)
+                                    test_json = json.dumps(cleaned_data, cls=BytesSafeEncoder)
+                                    logger.debug(f"[FILES] Proxy response cleaned and validated: {len(cleaned_data.get('images', []))} images")
+                                except (TypeError, ValueError) as test_err:
+                                    logger.error(f"[FILES] Proxy response still has serialization issues after cleaning: {test_err}")
+                                    logger.error(f"[FILES] Error type: {type(test_err).__name__}")
+                                    # Try to find the problem with detailed logging
+                                    problematic_paths = []
+                                    def find_problem(obj, path="root", depth=0):
+                                        if depth > 10:
+                                            return
+                                        try:
+                                            if isinstance(obj, bytes):
+                                                problematic_paths.append(f"{path} (bytes: {obj[:50] if len(obj) > 50 else obj})")
+                                                return
+                                            elif isinstance(obj, Path):
+                                                problematic_paths.append(f"{path} (Path: {obj})")
+                                                return
+                                            elif isinstance(obj, dict):
+                                                for k, v in obj.items():
+                                                    find_problem(v, f"{path}.{k}", depth+1)
+                                            elif isinstance(obj, (list, tuple)):
+                                                for i, item in enumerate(obj[:20]):
+                                                    find_problem(item, f"{path}[{i}]", depth+1)
+                                            else:
+                                                # Try to serialize this value alone
+                                                try:
+                                                    json.dumps(obj)
+                                                except (TypeError, ValueError) as e:
+                                                    problematic_paths.append(f"{path} (type {type(obj).__name__}: {e})")
+                                        except Exception as e:
+                                            problematic_paths.append(f"{path} (error checking: {e})")
+                                    find_problem(cleaned_data)
+                                    if problematic_paths:
+                                        logger.error(f"[FILES] Found {len(problematic_paths)} problematic paths:")
+                                        for p in problematic_paths[:10]:
+                                            logger.error(f"[FILES]   - {p}")
+                                        # Return safe empty response
+                                        return {"images": [], "total": 0, "limit": limit, "offset": offset, "has_more": False}
+                                
+                                return cleaned_data
+                            except Exception as json_err:
+                                logger.error(f"[FILES] Error parsing/cleaning storage server response: {json_err}", exc_info=True)
+                                raise
+                        else:
+                            # Try to get error details from response
+                            try:
+                                error_data = response.json()
+                                error_detail = error_data.get("detail", error_data.get("message", response.text))
+                            except:
+                                error_detail = response.text or f"HTTP {response.status_code}"
+                            logger.error(f"[FILES] Storage server returned {response.status_code}: {error_detail}")
+                            raise HTTPException(status_code=response.status_code, detail=error_detail)
+                except httpx.TimeoutException:
+                    logger.error(f"[FILES] Timeout proxying get_all_images to storage server")
+                    raise HTTPException(status_code=504, detail="Storage server timeout")
+                except httpx.ConnectError as e:
+                    logger.error(f"[FILES] Cannot connect to storage server: {e}")
+                    raise HTTPException(status_code=503, detail=f"Cannot reach storage server: {e}")
+                except HTTPException:
+                    raise  # Re-raise HTTP exceptions as-is
+                except Exception as e:
+                    logger.error(f"[FILES] Failed to proxy get_all_images: {e}", exc_info=True)
+                    raise HTTPException(status_code=500, detail=f"Failed to get images from storage server: {str(e)}")
         else:
             raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
     
