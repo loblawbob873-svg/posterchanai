@@ -427,9 +427,21 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             'C': 'urn:ietf:params:xml:ns:caldav'
         }
         
-        # Check if root itself is calendar-query or calendar-multiget
+        # Check if root itself is calendar-query, calendar-multiget, or sync-collection
         query_elem = None
         multiget_elem = None
+        sync_collection_elem = None
+        
+        # Check for sync-collection (used by iPhone)
+        if root.tag.endswith('sync-collection') or root.tag == '{DAV:}sync-collection':
+            sync_collection_elem = root
+            logger.info(f"[CalDAV] iPhone sync-collection request detected")
+        else:
+            sync_collection_elem = root.find('.//{DAV:}sync-collection')
+            if sync_collection_elem is None:
+                sync_collection_elem = root.find('.//D:sync-collection', namespaces)
+            if sync_collection_elem is None:
+                sync_collection_elem = root.find('.//sync-collection')
         
         if root.tag.endswith('calendar-query') or root.tag == '{urn:ietf:params:xml:ns:caldav}calendar-query':
             query_elem = root
@@ -450,7 +462,7 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             if multiget_elem is None:
                 multiget_elem = root.find('.//calendar-multiget')
         
-        logger.info(f"[CalDAV] query_elem: {query_elem is not None}, multiget_elem: {multiget_elem is not None}")
+        logger.info(f"[CalDAV] query_elem: {query_elem is not None}, multiget_elem: {multiget_elem is not None}, sync_collection_elem: {sync_collection_elem is not None}")
         
         items = []
         
@@ -489,6 +501,9 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             # List matching events from the specified calendar directory using proxy
             file_items = proxy.list_files(subpath)
             logger.info(f"[CalDAV] REPORT query for calendar '{cal_name}' (subpath='{subpath}'): found {len(file_items)} items")
+            # Log if this is an iPhone query (no time range = iPhone typically)
+            if not time_range:
+                logger.info(f"[CalDAV] iPhone query detected (no time range) - will return all {len(file_items)} items")
             if time_range:
                 logger.info(f"[CalDAV] Time range filter: {time_range[0]} to {time_range[1]}")
             else:
@@ -669,6 +684,79 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                 })
                         except Exception as e:
                             logger.debug(f"Error reading {filepath}: {e}")
+        
+        elif sync_collection_elem is not None:
+            # iPhone sync-collection request - return all events in the calendar
+            # This is similar to calendar-query but without time filtering
+            logger.info(f"[CalDAV] Handling sync-collection request for calendar '{cal_name}' (iPhone sync)")
+            
+            # List all events from the specified calendar directory using proxy
+            file_items = proxy.list_files(subpath)
+            logger.info(f"[CalDAV] sync-collection for calendar '{cal_name}' (subpath='{subpath}'): found {len(file_items)} items")
+            
+            ics_count = 0
+            processed_count = 0
+            read_failed_count = 0
+            added_count = 0
+            
+            for item in file_items:
+                name = item.get('name', '')
+                if name.endswith('.ics'):
+                    ics_count += 1
+                    try:
+                        # Build filepath
+                        if subpath:
+                            filepath = f"{subpath}/{name}"
+                        else:
+                            filepath = name
+                        
+                        # Read calendar data using proxy
+                        ical_data = proxy.read_file(filepath)
+                        if not ical_data:
+                            read_failed_count += 1
+                            logger.warning(f"[CalDAV] Failed to read event file: {filepath}")
+                            continue
+                        
+                        processed_count += 1
+                        
+                        # Add event to response
+                        event_uid = name.replace('.ics', '')
+                        href_path = f"{cal_name}/{event_uid}.ics" if cal_name else f"calendar/{event_uid}.ics"
+                        etag = str(item.get('modified', item.get('mtime', 0)))
+                        items.append({
+                            "href": f"{base_url}/{href_path}",
+                            "props": {
+                                "getcontenttype": "text/calendar; charset=utf-8",
+                                "getetag": etag,
+                                "calendar-data": ical_data
+                            }
+                        })
+                        added_count += 1
+                        
+                        # Log first few events and any with "test" in summary
+                        if added_count <= 3:
+                            try:
+                                cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+                                for component in cal.walk():
+                                    if component.name == "VEVENT":
+                                        summary = str(component.get('summary', ''))
+                                        dtstart = component.get('dtstart')
+                                        if dtstart:
+                                            start_val = dtstart.dt
+                                            logger.info(f"[CalDAV] sync-collection: Returning event #{added_count}: '{summary}' at {start_val} (UID: {event_uid})")
+                                        break
+                            except Exception as e:
+                                logger.debug(f"[CalDAV] Could not parse event {event_uid} for logging: {e}")
+                    except Exception as e:
+                        logger.warning(f"[CalDAV] Error processing event {name}: {e}", exc_info=True)
+                        continue
+            
+            logger.info(f"[CalDAV] sync-collection summary for calendar '{cal_name}':")
+            logger.info(f"  - Total .ics files: {ics_count}")
+            logger.info(f"  - Successfully read: {processed_count}")
+            logger.info(f"  - Failed to read: {read_failed_count}")
+            logger.info(f"  - Added to response: {added_count}")
+            logger.info(f"[CalDAV] sync-collection returning {len(items)} events for calendar '{cal_name}'")
         
         xml = create_caldav_response(items)
         return Response(content=xml, media_type="application/xml", status_code=207)

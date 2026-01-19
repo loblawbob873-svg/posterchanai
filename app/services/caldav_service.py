@@ -528,9 +528,6 @@ def _save_event_to_builtin(user_id: int, db: Session, ical_data: str, event_uid:
                     logger.error(f"[CalDAV] ❌ WARNING: Event file was not found after save at {filepath}")
             except Exception as e:
                 logger.warning(f"[CalDAV] Could not verify saved event file: {e}")
-                    logger.error(f"[CalDAV] ❌ WARNING: Event file was not found after save at {filepath}")
-            except Exception as e:
-                logger.warning(f"[CalDAV] Could not verify saved event file: {e}")
         else:
             logger.error(f"[CalDAV] ❌ Failed to save event to built-in storage: {filepath} (UID: {event_uid})")
         return success
