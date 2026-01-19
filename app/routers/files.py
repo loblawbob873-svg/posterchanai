@@ -638,10 +638,12 @@ async def get_all_images(
             # Use a very large number for files with no timestamp to push them to the end
             if modified <= 0:
                 modified = 0.0
+            # Reverse path too so if timestamps are equal, newer paths come first
             return (-modified, path)
         
         # Sort the list - this MUST work correctly
         # Double-check that we're sorting in descending order (newest first)
+        # Using negative timestamps with reverse=False means ascending by negative = descending by positive
         images.sort(key=sort_key, reverse=False)  # reverse=False because we use negative timestamps
         
         # Verify sort is correct - first item should have highest timestamp

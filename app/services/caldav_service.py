@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # Timeout for CalDAV operations (in seconds)
 CALDAV_TIMEOUT = 15  # Reduced from 30 to prevent long hangs
 CALDAV_OPERATION_TIMEOUT = 10  # Timeout for individual operations
+CALDAV_BUILTIN_TIMEOUT = 60  # Longer timeout for built-in calendar operations (processes many files)
 
 # Thread pool for running blocking CalDAV operations with timeout
 _caldav_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="caldav_worker")
@@ -1183,15 +1184,17 @@ def get_all_user_events(
                             logger.info(f"[Calendar] fetch_builtin returned {len(result) if result else 0} events")
                             return result
                         
-                        events = run_with_timeout(fetch_builtin, timeout=CALDAV_OPERATION_TIMEOUT * 2)  # Give built-in more time (20s) since it processes many files
+                        events = run_with_timeout(fetch_builtin, timeout=CALDAV_BUILTIN_TIMEOUT)  # Give built-in more time (60s) since it processes many files
+                        logger.info(f"[Calendar] run_with_timeout returned: type={type(events)}, value={events if events is None or (isinstance(events, list) and len(events) <= 3) else f'list with {len(events)} items'}")
                         if events is None:
-                            logger.warning(f"[Calendar] Built-in calendar fetch timed out or returned None after {CALDAV_OPERATION_TIMEOUT * 2}s")
+                            logger.warning(f"[Calendar] Built-in calendar fetch timed out or returned None after {CALDAV_BUILTIN_TIMEOUT}s")
                             events = []
                         elif not isinstance(events, list):
                             logger.error(f"[Calendar] Built-in calendar fetch returned non-list type: {type(events)}, value: {events}")
                             events = []
                         logger.info(f"[Calendar] Found {len(events) if events else 0} events from built-in server (all calendars) in range {start_date.date()} to {end_date.date()}")
                         if events and len(events) > 0:
+                            logger.info(f"[Calendar] About to extend all_events with {len(events)} events. Current all_events length: {len(all_events)}")
                             all_events.extend(events)
                             logger.info(f"[Calendar] Added {len(events)} events from all built-in calendars, total now: {len(all_events)}")
                             # Log first few event summaries for debugging
