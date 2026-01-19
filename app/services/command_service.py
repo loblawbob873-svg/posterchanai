@@ -801,18 +801,26 @@ class CommandService:
 }
 
 **Extraction rules:**
-1. **name**: Company/merchant name. For McDonald's, include location if available (e.g., "McDonald's - Canon City")
+1. **name**: Company/merchant name. For McDonald's, include location if available (e.g., "McDonald's - Canon City"). For Walmart, use "Walmart" or "Walmart Delivery"
 2. **amount**: FINAL TOTAL amount as a number (float). Look for:
    - "Total" (not "Subtotal", not "Tax Amount")
-   - "Amount Due", "Grand Total", "Order Total", "Total Amount", "Charged"
+   - "Amount Due", "Grand Total", "Order Total", "Total Amount", "Charged", "Includes all fees, taxes and discounts"
    - Always use the amount AFTER tax if tax is shown separately
-3. **due_date**: Transaction date in YYYY-MM-DD format, or null if not found
+   - For Walmart: Look for "Order total" followed by amount (e.g., "Order total $7.32" → 7.32)
+3. **due_date**: Transaction date in YYYY-MM-DD format, or null if not found. For delivery orders, use delivery date if transaction date not available
 
 **McDonald's receipt example:**
 - Look for "Total $82.18" near the bottom
 - Location: "CANON C-FREMONT" or address line → "McDonald's - Canon City"
 - Date: "01/18/2026 11:17:45 AM" → "2026-01-18"
 - Amount: "Total $82.18" → 82.18
+
+**Walmart delivery order example:**
+- Subject: "Thanks for your delivery order, [Name]"
+- Look for "Order total" with amount (e.g., "Order total $7.32" or "Includes all fees, taxes and discounts $7.32")
+- Delivery date: "Arrives Mon, Jan 19" → "2026-01-19" (convert day name + date to YYYY-MM-DD)
+- Name: "Walmart" or "Walmart Delivery"
+- Amount: "Order total $7.32" → 7.32
 
 **Price normalization (already done, but be aware):**
 - "$ 15 99" → 15.99
@@ -2923,12 +2931,13 @@ Return ONLY valid JSON, no other text.""",
 }
 
 **Extraction rules:**
-1. **name**: Company/merchant name. For McDonald's, include location if available (e.g., "McDonald's - Canon City")
+1. **name**: Company/merchant name. For McDonald's, include location if available (e.g., "McDonald's - Canon City"). For Walmart, use "Walmart" or "Walmart Delivery"
 2. **amount**: FINAL TOTAL amount as a number (float). Look for:
    - "Total" (not "Subtotal", not "Tax Amount")
    - "Amount Due", "Grand Total", "Order Total", "Total Amount", "Charged", "Approved Amount"
+   - "Includes all fees, taxes and discounts" followed by amount
    - Always use the amount AFTER tax if tax is shown separately
-3. **due_date**: Transaction date in YYYY-MM-DD format, or null if not found
+3. **due_date**: Transaction date in YYYY-MM-DD format, or null if not found. For delivery orders, use delivery date if transaction date not available
 
 **McDonald's receipt email example:**
 - Subject: "Thanks for placing a mobile order!"
@@ -2937,11 +2946,19 @@ Return ONLY valid JSON, no other text.""",
 - Location: Usually in subject or body (e.g., "Canon City") → "McDonald's - Canon City"
 - Amount: "Total $82.18" or "Approved Amount: $82.18" → 82.18
 
+**Walmart delivery order email example:**
+- Subject: "Thanks for your delivery order, [Name]" or similar
+- Look for "Order total" with amount (e.g., "Order total $7.32" or "Includes all fees, taxes and discounts $7.32")
+- Delivery date: "Arrives Mon, Jan 19" → "2026-01-19" (convert day name + date to YYYY-MM-DD, use current year if not specified)
+- Name: "Walmart" or "Walmart Delivery"
+- Amount: "Order total $7.32" → 7.32
+
 **Email format handling:**
 - Emails may have HTML formatting, special characters, or whitespace
-- Look for price patterns: "$82.18", "Total $82.18", "Amount: $82.18"
+- Look for price patterns: "$82.18", "Total $82.18", "Amount: $82.18", "Order total $7.32"
 - Ignore formatting characters like zero-width spaces (\\u200c)
-- Extract the actual transaction date, not email sent date
+- Extract the actual transaction date or delivery date, not email sent date
+- For delivery orders, prefer delivery date over order date if both are present
 
 **Critical:**
 - Return ONLY the JSON object, no markdown, no code blocks, no explanations
