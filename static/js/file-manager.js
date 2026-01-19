@@ -2235,7 +2235,13 @@ class FileManager {
             }
             
             this.hasMoreImages = data.has_more || false;
-            this.imageLoadOffset += data.images?.length || 0;
+            // Update offset based on what we actually received, not what we requested
+            // This ensures we don't skip images if the server returns fewer than requested
+            const receivedCount = data.images?.length || 0;
+            this.imageLoadOffset += receivedCount;
+            
+            // Debug: Log pagination info
+            console.log(`Photo Gallery - Pagination: offset=${this.imageLoadOffset - receivedCount}, received=${receivedCount}, hasMore=${this.hasMoreImages}, total=${data.total || 0}, allImages=${this.allImages.length}`);
             
             // Update count displays
             const countEl = document.querySelector('.photo-gallery-count');
@@ -2327,18 +2333,33 @@ class FileManager {
         // Convert to numbers explicitly to ensure numeric comparison (not string)
         // This MUST happen every time before rendering to ensure correct order
         this.allImages.sort((a, b) => {
-            const timeA = Number(a.modified) || 0;
-            const timeB = Number(b.modified) || 0;
+            let timeA = typeof a.modified === 'number' ? a.modified : (typeof a.modified === 'string' ? parseFloat(a.modified) : 0) || 0;
+            let timeB = typeof b.modified === 'number' ? b.modified : (typeof b.modified === 'string' ? parseFloat(b.modified) : 0) || 0;
+            
+            // Ensure valid numbers
+            if (isNaN(timeA)) timeA = 0;
+            if (isNaN(timeB)) timeB = 0;
+            
             // Descending order (newest first) - higher timestamp comes first
             // timeB - timeA: if B is newer (timeB > timeA), returns positive, B comes before A
-            if (timeB !== timeA) {
+            if (Math.abs(timeB - timeA) > 0.001) { // Use epsilon to avoid floating point issues
                 return timeB - timeA; // Positive if B is newer, negative if A is newer
             }
-            // Timestamps are equal, sort by path for stability
+            // Timestamps are equal, sort by path for stability (reverse path order)
             const pathA = (a.path || '').toLowerCase();
             const pathB = (b.path || '').toLowerCase();
-            return pathA.localeCompare(pathB);
+            return pathB.localeCompare(pathA); // Reverse path order too
         });
+        
+        // Verify sort after rendering sort
+        if (this.allImages.length > 1) {
+            const firstTs = Number(this.allImages[0].modified) || 0;
+            const lastTs = Number(this.allImages[this.allImages.length - 1].modified) || 0;
+            if (firstTs < lastTs) {
+                console.error('Photo Gallery - RENDER SORT ERROR: First < Last, reversing...');
+                this.allImages.reverse();
+            }
+        }
         
         // Debug: log first few to verify sorting
         if (this.allImages.length > 0) {

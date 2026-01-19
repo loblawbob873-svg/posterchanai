@@ -330,11 +330,21 @@ async def get_all_images(
                                             img['modified'] = 0.0
                                 
                                 # Sort by modified time descending (newest first)
+                                # CRITICAL: Sort before pagination to ensure correct order
                                 valid_images.sort(key=lambda x: float(x.get('modified', 0) or 0), reverse=True)
+                                
+                                # Verify sort is correct
+                                if len(valid_images) > 1:
+                                    first_ts = float(valid_images[0].get('modified', 0) or 0)
+                                    last_ts = float(valid_images[-1].get('modified', 0) or 0)
+                                    if first_ts < last_ts:
+                                        logger.warning(f"[FILES] Proxy sort error: First ({first_ts}) < Last ({last_ts}), reversing...")
+                                        valid_images.reverse()
                                 
                                 # Update with filtered and sorted valid images
                                 cleaned_data['images'] = valid_images
-                                cleaned_data['total'] = len(valid_images)
+                                # Note: total should come from the storage server, not len(valid_images) which is just this page
+                                # Don't override total - use what storage server says
                                 
                                 logger.info(f"[FILES] Proxy: Received {len(valid_images)} images, sorted by modified time (newest first)")
                             
@@ -627,24 +637,20 @@ async def get_all_images(
                     logger.warning(f"Failed to convert modified time for {img.get('path', 'unknown')}: {e}, using 0.0")
                     img['modified'] = 0.0
         
-        # Sort by modified time descending (newest first), then by path ascending for stability
-        # CRITICAL: Sort by negative timestamp to ensure newest first (higher timestamp = newer)
-        # This is more reliable than reverse=True with tuple sorting
+        # Sort by modified time descending (newest first), then by path for stability
+        # Use explicit reverse=True for clarity - higher timestamps (newer) come first
         def sort_key(img):
             modified = float(img.get('modified', 0) or 0)
             path = str(img.get('path', '')).lower()
-            # Return tuple: (negative_modified, path) so higher timestamps sort first
-            # Negative because we want descending order: -1800 < -1700, so 1800 comes before 1700
             # Use a very large number for files with no timestamp to push them to the end
             if modified <= 0:
                 modified = 0.0
-            # Reverse path too so if timestamps are equal, newer paths come first
-            return (-modified, path)
+            # Return tuple: (modified, path) - we'll use reverse=True to get descending order
+            return (modified, path)
         
-        # Sort the list - this MUST work correctly
-        # Double-check that we're sorting in descending order (newest first)
-        # Using negative timestamps with reverse=False means ascending by negative = descending by positive
-        images.sort(key=sort_key, reverse=False)  # reverse=False because we use negative timestamps
+        # Sort the list - descending by modified time (newest first)
+        # reverse=True means higher timestamps come first (newest first)
+        images.sort(key=sort_key, reverse=True)
         
         # Verify sort is correct - first item should have highest timestamp
         if len(images) > 1:
@@ -652,9 +658,18 @@ async def get_all_images(
             last_ts = float(images[-1].get('modified', 0) or 0)
             if first_ts < last_ts:
                 logger.error(f"[FILES] ❌ SORT ERROR: First image timestamp ({first_ts}) is LOWER than last ({last_ts}) - sort is backwards!")
+                logger.error(f"[FILES] First image: {images[0].get('name', 'unknown')} (ts={first_ts})")
+                logger.error(f"[FILES] Last image: {images[-1].get('name', 'unknown')} (ts={last_ts})")
                 # Fix it by reversing
                 images.reverse()
                 logger.warning(f"[FILES] Fixed by reversing the list")
+                # Verify fix worked
+                new_first_ts = float(images[0].get('modified', 0) or 0)
+                new_last_ts = float(images[-1].get('modified', 0) or 0)
+                if new_first_ts < new_last_ts:
+                    logger.error(f"[FILES] ❌ REVERSE FIX FAILED! Still backwards after reverse!")
+                else:
+                    logger.info(f"[FILES] ✓ Reverse fix verified: First={new_first_ts}, Last={new_last_ts}")
         
         # Immediate verification: check first 50 items are in correct order
         # Log detailed information about sorting for debugging
