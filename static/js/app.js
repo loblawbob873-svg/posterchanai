@@ -89,36 +89,46 @@ class App {
         // Logout button
         document.getElementById('logoutBtn').addEventListener('click', () => this.logout());
         
-        // Picture viewer button
+        // Photo Gallery button handler (reusable function)
+        const openPhotoGallery = () => {
+            console.log('Photo Gallery button clicked');
+            
+            // Wait for fileManager to be ready if not already
+            const openViewer = () => {
+                if (window.fileManager && typeof window.fileManager.openPictureViewer === 'function') {
+                    console.log('fileManager exists, calling openPictureViewer');
+                    try {
+                        window.fileManager.openPictureViewer();
+                        // Close the user menu
+                        const userMenuContainer = document.querySelector('.user-menu-container');
+                        if (userMenuContainer) {
+                            userMenuContainer.classList.remove('open');
+                        }
+                    } catch (err) {
+                        console.error('Error opening picture viewer:', err);
+                    }
+                } else {
+                    console.warn('window.fileManager not ready yet, waiting...');
+                    // Retry after a short delay (up to 2 seconds)
+                    setTimeout(openViewer, 100);
+                }
+            };
+            openViewer();
+        };
+        
+        // Picture viewer button (in sidebar - may not exist anymore)
         const pictureViewerBtn = document.getElementById('pictureViewerBtn');
         if (pictureViewerBtn) {
-            pictureViewerBtn.addEventListener('click', () => {
-                console.log('Picture Gallery button clicked');
-                
-                // Wait for fileManager to be ready if not already
-                const openViewer = () => {
-                    if (window.fileManager && typeof window.fileManager.openPictureViewer === 'function') {
-                        console.log('fileManager exists, calling openPictureViewer');
-                        try {
-                            window.fileManager.openPictureViewer();
-                            // Close the user menu
-                            const userMenuContainer = document.querySelector('.user-menu-container');
-                            if (userMenuContainer) {
-                                userMenuContainer.classList.remove('open');
-                            }
-                        } catch (err) {
-                            console.error('Error opening picture viewer:', err);
-                        }
-                    } else {
-                        console.warn('window.fileManager not ready yet, waiting...');
-                        // Retry after a short delay
-                        setTimeout(openViewer, 100);
-                    }
-                };
-                openViewer();
-            });
+            pictureViewerBtn.addEventListener('click', openPhotoGallery);
+        }
+        
+        // Photo Gallery button (in chat quick buttons)
+        const photoGalleryBtn = document.getElementById('photoGalleryBtn');
+        if (photoGalleryBtn) {
+            photoGalleryBtn.addEventListener('click', openPhotoGallery);
+            console.log('Photo Gallery button handler attached');
         } else {
-            console.error('pictureViewerBtn not found');
+            console.warn('photoGalleryBtn not found in DOM');
         }
 
         // Mobile menu

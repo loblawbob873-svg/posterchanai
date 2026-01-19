@@ -97,15 +97,15 @@ def get_current_user(
 
     # Check if this is an API key (starts with sk-)
     if token.startswith("sk-"):
-        api_key = query_api_key_with_retry(db, token)
+        # Get api_key AND user_id together to avoid lazy loading issues
+        api_key, user_id = query_api_key_with_retry(db, token)
         
-        if api_key:
-            # CRITICAL: Access user_id BEFORE updating last_used_at and committing
-            # Once we commit/rollback, the APIKey might become detached from the session
-            user = get_user_from_api_key(db, api_key)
+        if api_key and user_id:
+            # Get user using the already-fetched user_id (no lazy loading needed)
+            user = get_user_from_api_key(db, user_id)
             
             if user:
-                # Now update last used timestamp (after we've already accessed user_id)
+                # Now update last used timestamp (after we've already fetched user)
                 try:
                     api_key.last_used_at = datetime.now(timezone.utc)
                     db.commit()

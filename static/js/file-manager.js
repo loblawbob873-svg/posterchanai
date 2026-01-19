@@ -106,6 +106,11 @@ class FileManager {
             this.createNewFolder();
         });
         
+        // Scan storage button
+        attachButtonListener('fileManagerScanBtn', () => {
+            this.scanStorage();
+        });
+        
         // Picture viewer button
         attachButtonListener('fileManagerPictureViewerBtn', () => {
             this.openPictureViewer();
@@ -1431,6 +1436,62 @@ class FileManager {
             alert(`Error creating folder: ${error.message || 'Unknown error'}`);
         } finally {
             this._creatingFolder = false;
+        }
+    }
+    
+    // Scan storage for EXIF timestamps and thumbnails
+    async scanStorage() {
+        console.log('FileManager: scanStorage() called');
+        
+        if (this._scanning) {
+            console.log('FileManager: Scan already in progress');
+            return;
+        }
+        
+        if (!confirm('Scan storage to restore EXIF timestamps and generate thumbnails?\n\nThis may take several minutes for large photo collections.')) {
+            return;
+        }
+        
+        this._scanning = true;
+        const scanBtn = document.getElementById('fileManagerScanBtn');
+        const originalTitle = scanBtn?.getAttribute('title') || '';
+        
+        try {
+            if (scanBtn) {
+                scanBtn.innerHTML = '⏳';
+                scanBtn.setAttribute('title', 'Scanning...');
+                scanBtn.disabled = true;
+            }
+            
+            const response = await csrfFetch('/api/admin/storage/rescan', {
+                method: 'POST'
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                let summary = 'Storage scan completed!\n\n';
+                if (data.results && data.results.length > 0) {
+                    const result = data.results[0];
+                    summary += `Files scanned: ${result.files || 0}\n`;
+                    summary += `EXIF restored: ${result.exif_restored || 0}\n`;
+                    summary += `Thumbnails generated: ${result.thumbnails_generated || 0}`;
+                }
+                alert(summary);
+                await this.loadFiles(this.currentPath);
+            } else {
+                const error = await response.json();
+                throw new Error(error.detail || 'Scan failed');
+            }
+        } catch (error) {
+            console.error('Error scanning storage:', error);
+            alert(`Scan error: ${error.message || 'Unknown error'}`);
+        } finally {
+            this._scanning = false;
+            if (scanBtn) {
+                scanBtn.innerHTML = '🔄';
+                scanBtn.setAttribute('title', originalTitle);
+                scanBtn.disabled = false;
+            }
         }
     }
     

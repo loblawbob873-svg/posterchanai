@@ -145,6 +145,7 @@ def _run_migrations():
         ("custom_ai_url", "VARCHAR(500)"),
         ("custom_ai_model", "VARCHAR(200)"),
         ("custom_ai_api_key", "VARCHAR(500)"),
+        ("custom_llm_prompt", "TEXT"),  # Custom AI instructions from user
         ("custom_image_enabled", "BOOLEAN DEFAULT 0"),
         ("custom_image_url", "VARCHAR(500)"),
         ("rss_enabled", "BOOLEAN DEFAULT 0"),

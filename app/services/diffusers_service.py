@@ -418,14 +418,22 @@ class DiffusersService:
 
                     # VAE optimizations for all devices
                     try:
-                        self._pipe.enable_vae_slicing()
+                        # Use new API to avoid deprecation warning (diffusers 0.40+)
+                        if hasattr(self._pipe, 'vae') and hasattr(self._pipe.vae, 'enable_slicing'):
+                            self._pipe.vae.enable_slicing()
+                        else:
+                            self._pipe.enable_vae_slicing()
                         if self._device == "xpu":
                             logger.info("Intel Arc: enabled VAE slicing")
                     except Exception:
                         pass
 
                     try:
-                        self._pipe.enable_vae_tiling()
+                        # Use new API to avoid deprecation warning (diffusers 0.40+)
+                        if hasattr(self._pipe, 'vae') and hasattr(self._pipe.vae, 'enable_tiling'):
+                            self._pipe.vae.enable_tiling()
+                        else:
+                            self._pipe.enable_vae_tiling()
                         if self._device == "xpu":
                             logger.info("Intel Arc: enabled VAE tiling")
                     except Exception:

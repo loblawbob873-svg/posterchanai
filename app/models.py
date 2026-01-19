@@ -22,6 +22,7 @@ class User(Base):
     custom_ai_url = Column(String(500), nullable=True)
     custom_ai_model = Column(String(200), nullable=True)
     custom_ai_api_key = Column(String(500), nullable=True)
+    custom_llm_prompt = Column(Text, nullable=True)  # Custom instructions for the AI
 
     # Custom Image Generation service settings
     custom_image_enabled = Column(Boolean, default=False)

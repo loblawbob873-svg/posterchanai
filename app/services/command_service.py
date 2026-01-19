@@ -1887,9 +1887,10 @@ Example: `yt https://youtube.com/watch?v=...`""",
                 return {"type": "text", "content": f"## ◈ SCHEDULE - {date_str.upper()} ◈\n\n{events_text}"}
 
             elif subcommand in ("week", ""):
-                # Get this week's events
+                # Get this week's events - show next 7 days from today (including today)
                 today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
                 # week_end should be end of day 7 (23:59:59), not start of day 8 (00:00:00)
+                # This gives us: today, tomorrow, day+2, day+3, day+4, day+5, day+6, day+7 (8 days total)
                 week_end = today + timedelta(days=7, hours=23, minutes=59, seconds=59)
                 events = get_all_user_events(self.user.id, today, week_end, self.db)
                 events_text = format_events_for_display(events, include_description=True, cyberpunk=True)

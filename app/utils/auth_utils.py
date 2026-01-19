@@ -9,12 +9,15 @@ from app.models import APIKey, User
 logger = logging.getLogger(__name__)
 
 
-def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> Optional[APIKey]:
+def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> tuple:
     """
     Query an API key from the database with automatic retry on SQLite session errors.
     
     This function handles SQLite InterfaceError exceptions that can occur due to
     session management issues, automatically rolling back and retrying the query.
+    
+    Returns a tuple of (api_key, user_id) to avoid lazy loading issues.
+    The user_id is eagerly fetched while the session is still valid.
     
     Args:
         db: SQLAlchemy database session
@@ -22,19 +25,23 @@ def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> O
         max_retries: Maximum number of retry attempts (default: 1)
     
     Returns:
-        The APIKey object if found, None otherwise
+        Tuple of (APIKey object, user_id) if found, (None, None) otherwise
     
     Example:
-        >>> api_key = query_api_key_with_retry(db, "sk-...")
-        >>> if api_key:
-        ...     user_id = api_key.user_id
+        >>> api_key, user_id = query_api_key_with_retry(db, "sk-...")
+        >>> if api_key and user_id:
+        ...     user = db.query(User).filter(User.id == user_id).first()
     """
     try:
         api_key = db.query(APIKey).filter(
             APIKey.key == token,
             APIKey.is_active == True
         ).first()
-        return api_key
+        if api_key:
+            # CRITICAL: Eagerly fetch user_id while session is valid
+            user_id = api_key.user_id
+            return api_key, user_id
+        return None, None
     except Exception as e:
         # Handle SQLite session errors
         logger.warning(f"Error querying API key: {e}")
@@ -46,52 +53,36 @@ def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> O
                     APIKey.key == token,
                     APIKey.is_active == True
                 ).first()
-                return api_key
+                if api_key:
+                    user_id = api_key.user_id
+                    return api_key, user_id
+                return None, None
             except Exception as retry_error:
                 logger.error(f"Error retrying API key query: {retry_error}")
-                return None
-        return None
+                return None, None
+        return None, None
 
 
-def get_user_from_api_key(db: Session, api_key: APIKey) -> Optional[User]:
+def get_user_from_api_key(db: Session, user_id: int) -> Optional[User]:
     """
-    Get the User object associated with an API key, with proper error handling.
+    Get the User object associated with an API key user_id.
     
-    This function safely accesses the user_id from the APIKey object to avoid
+    This function takes the user_id directly (already eagerly fetched) to avoid
     lazy loading issues that can cause SQLite session errors.
-    
-    IMPORTANT: Access user_id immediately while the APIKey is still attached to the session.
-    If the APIKey becomes detached (e.g., after a commit/rollback), accessing user_id will fail.
     
     Args:
         db: SQLAlchemy database session
-        api_key: The APIKey object (must still be attached to the session)
+        user_id: The user ID from the API key (already fetched)
     
     Returns:
         The User object if found, None otherwise
     
     Example:
-        >>> api_key = query_api_key_with_retry(db, "sk-...")
-        >>> if api_key:
-        ...     user = get_user_from_api_key(db, api_key)
+        >>> api_key, user_id = query_api_key_with_retry(db, "sk-...")
+        >>> if api_key and user_id:
+        ...     user = get_user_from_api_key(db, user_id)
     """
     try:
-        # CRITICAL: Access user_id immediately while APIKey is still attached to session
-        # If APIKey becomes detached (after commit/rollback), this will fail
-        # So this must be called BEFORE any commits/rollbacks on the session
-        try:
-            user_id = api_key.user_id
-        except Exception as e:
-            # APIKey is detached or deleted - try to refresh it
-            logger.warning(f"APIKey detached, attempting to refresh: {e}")
-            try:
-                db.refresh(api_key)
-                user_id = api_key.user_id
-            except Exception as refresh_error:
-                logger.error(f"Error refreshing APIKey: {refresh_error}", exc_info=True)
-                return None
-        
-        # Now query the user using the stored user_id
         user = db.query(User).filter(User.id == user_id).first()
         return user
     except Exception as e:

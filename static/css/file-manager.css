@@ -220,122 +220,56 @@
     color: var(--text-secondary);
 }
 
+/* =====================================================
+   FILE MANAGER TOOLBAR - SIMPLE ROW LAYOUT
+   ===================================================== */
 .file-manager-toolbar {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border-color);
-    display: grid !important;
-    grid-template-columns: auto auto 1fr auto !important;
-    align-items: center;
-    gap: 12px;
-    min-height: 60px;
-    background: var(--bg-secondary);
-    overflow: visible;
-    box-sizing: border-box;
-}
-
-/* Explicit grid column assignments with high specificity */
-.file-manager-toolbar > .file-manager-tabs {
-    grid-column: 1 !important;
-    display: flex;
-    gap: 4px;
-    flex-shrink: 0;
-    white-space: nowrap;
-}
-
-.file-manager-toolbar > .file-selection-controls {
-    grid-column: 2 !important;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    padding: 4px 8px;
-    background: var(--bg-primary);
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
-    justify-self: start;
-    flex-shrink: 0;
-    overflow: visible;
-    box-sizing: border-box;
-    max-width: 100%;
-}
-
-.file-manager-toolbar > .file-manager-search {
-    grid-column: 3 !important;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex: 1;
-    min-width: 120px;
-    max-width: 400px;
-    margin: 0;
-    flex-shrink: 1;
-    justify-self: stretch;
-    overflow: visible;
-    box-sizing: border-box;
-}
-
-.file-manager-toolbar > .file-toolbar-actions {
-    grid-column: 4 !important;
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-shrink: 0;
-    justify-self: end;
-    overflow: visible;
-    flex-wrap: nowrap;
-    white-space: nowrap;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    min-height: 48px;
 }
 
-/* Fallback for non-direct children (backwards compatibility) */
+/* Tabs */
 .file-manager-tabs {
-    grid-column: 1;
     display: flex;
     gap: 4px;
-    flex-shrink: 0;
 }
 
+/* Selection controls */
 .file-selection-controls {
     display: flex;
     align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    padding: 4px 8px;
+    gap: 4px;
+    padding: 4px 6px;
     background: var(--bg-primary);
     border-radius: 6px;
     border: 1px solid var(--border-color);
-    grid-column: 2;
-    justify-self: start;
-    flex-shrink: 0;
-    overflow: visible;
-    box-sizing: border-box;
-    max-width: 100%;
 }
 
-.file-manager-search {
-    grid-column: 3;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex: 1;
-    min-width: 120px;
-    max-width: 400px;
-    margin: 0;
-    flex-shrink: 1;
-    justify-self: stretch;
-    overflow: visible;
-    box-sizing: border-box;
-}
-
-.file-toolbar-actions {
+/* Search and actions wrapper - push to right */
+.file-toolbar-search-actions {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-shrink: 0;
-    grid-column: 4;
-    justify-self: end;
-    overflow: visible;
-    flex-wrap: nowrap;
-    white-space: nowrap;
+    margin-left: auto;
+}
+
+/* Search input container */
+.file-manager-search {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* Actions (refresh, view toggle) */
+.file-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .btn-icon {
@@ -532,22 +466,16 @@
 /* Responsive styles for medium windows (laptops, small screens) */
 @media (max-width: 1400px) {
     .file-manager-toolbar {
-        padding: 8px 12px;
-        gap: 6px;
+        padding: 10px 12px;
+        gap: 8px;
     }
     
     .file-manager-search {
-        min-width: 100px;
-        max-width: 200px;
-    }
-    
-    .file-search-input {
-        font-size: 13px;
-        padding: 6px 10px;
+        max-width: 250px;
     }
     
     .tab-btn {
-        padding: 5px 10px;
+        padding: 6px 10px;
         font-size: 12px;
     }
 }
@@ -575,42 +503,22 @@
     }
     
     .file-manager-toolbar {
-        gap: 12px;
-        padding: 10px 12px;
-    }
-    
-    .file-selection-controls {
-        gap: 6px;
-        padding: 4px 6px;
+        gap: 8px;
+        padding: 8px 10px;
     }
     
     .file-selection-controls .btn-icon-only {
-        min-width: 30px;
-        height: 30px;
-        padding: 5px;
-        font-size: 14px;
-    }
-    
-    .file-manager-search {
-        min-width: 80px;
-        max-width: 150px;
-        margin: 0 2px;
-    }
-    
-    .file-search-input {
-        font-size: 12px;
-        padding: 5px 8px;
-    }
-    
-    .btn-icon {
-        padding: 6px 10px;
         min-width: 32px;
         height: 32px;
         font-size: 14px;
     }
     
+    .file-manager-search {
+        max-width: 200px;
+    }
+    
     .tab-btn {
-        padding: 4px 8px;
+        padding: 5px 10px;
         font-size: 11px;
     }
 }
@@ -673,77 +581,36 @@
         flex: 1;
     }
     
+    /* Toolbar on mobile: allow scrolling */
     .file-manager-toolbar {
-        flex-direction: row;
-        align-items: center;
-        gap: 10px;
-        padding: 10px;
-        flex-wrap: wrap;
-    }
-    
-    .file-manager-tabs {
-        order: 1;
-        flex: 0 0 auto;
+        overflow-x: auto;
+        gap: 6px;
+        padding: 8px;
     }
     
     .tab-btn {
-        padding: 6px 10px;
-        font-size: 11px;
-    }
-    
-    .file-manager-search {
-        order: 2;
-        flex: 1 1 auto;
-        min-width: 100px;
-        max-width: none;
-        margin: 0;
-    }
-    
-    .file-search-input {
-        font-size: 12px;
         padding: 6px 8px;
-    }
-    
-    .file-selection-controls {
-        order: 3;
-        flex: 0 0 auto;
-        flex-wrap: nowrap;
-        gap: 4px;
+        font-size: 11px;
     }
     
     .file-selection-controls .btn-icon-only {
         min-width: 32px;
         height: 32px;
-        padding: 6px;
-        font-size: 14px;
+        padding: 5px;
+        font-size: 13px;
     }
     
-    .file-toolbar-search-actions {
-        order: 2;
-        flex: 1 1 auto;
-        min-width: 0;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-    
-    .file-manager-search {
-        order: 1;
-        flex: 1 1 auto;
+    .file-search-input {
+        font-size: 13px;
+        padding: 6px 8px;
         min-width: 100px;
-        max-width: none;
-        margin: 0;
-    }
-    
-    .file-toolbar-actions {
-        order: 2;
-        flex: 0 0 auto;
+        max-width: 150px;
     }
     
     .btn-icon {
         min-width: 32px;
         height: 32px;
-        padding: 6px 8px;
+        padding: 6px;
     }
     
     /* Ensure file grid is visible and properly sized */
@@ -827,65 +694,18 @@
 @media (max-width: 480px) {
     .file-manager-toolbar {
         padding: 6px;
-        gap: 4px;
-    }
-    
-    .file-manager-tabs {
-        width: 100%;
-        order: 1;
+        gap: 6px;
     }
     
     .tab-btn {
-        flex: 1;
+        font-size: 11px;
         padding: 6px 8px;
-        font-size: 10px;
-    }
-    
-    .file-toolbar-search-actions {
-        width: 100%;
-        order: 2;
-        margin: 4px 0;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-    
-    .file-manager-search {
-        flex: 1;
-        min-width: 0;
-        margin: 0;
-    }
-    
-    .file-selection-controls {
-        order: 3;
-        justify-content: space-between;
-        width: 100%;
     }
     
     .file-selection-controls .btn-icon-only {
-        min-width: 36px;
-        height: 36px;
-    }
-    
-    .file-toolbar-search-actions {
-        width: 100%;
-        order: 2;
-        margin: 4px 0;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-    
-    .file-manager-search {
-        flex: 1;
-        min-width: 0;
-        margin: 0;
-    }
-    
-    .file-toolbar-actions {
-        order: 2;
-        flex: 0 0 auto;
-        margin: 0;
+        min-width: 38px;
+        height: 38px;
+        font-size: 15px;
     }
     
     /* Even smaller grid on phones */

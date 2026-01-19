@@ -729,6 +729,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             plugin_prompt = plugin_service.build_system_prompt_addition(user.id)
                             if plugin_prompt:
                                 system_prompt += plugin_prompt
+                            
+                            # Add user's custom LLM prompt if set
+                            if hasattr(user, 'custom_llm_prompt') and user.custom_llm_prompt:
+                                system_prompt += f"\n\n## User's Custom Instructions\nThe user has provided these custom instructions that you should follow:\n\n{user.custom_llm_prompt}\n"
+                            
                             messages = [
                                 {"role": "system", "content": system_prompt}
                             ]

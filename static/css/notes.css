@@ -1,68 +1,60 @@
-/* Notes Modal Styles - Modern & Beautiful UI */
-/* Ensure cyberpunk close button styles are not overridden */
-#notesModal .modal-close-cyberpunk,
-#notesModal .btn-icon.modal-close-cyberpunk {
+/* =====================================================
+   NOTES MODAL - FIXED WINDOWED SIZE (NOT FULLSCREEN)
+   ===================================================== */
+
+/* Modal container - centered */
+div#notesModal.modal {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: rgba(0, 0, 0, 0.85) !important;
+    z-index: 2000 !important;
+    padding: 20px !important;
+    box-sizing: border-box !important;
+}
+
+/* Modal content - FIXED SIZE, NOT FULLSCREEN */
+div#notesModal .modal-content.notes-modal-content {
+    width: 1200px !important;
+    max-width: 95vw !important;
+    height: 750px !important;
+    max-height: 90vh !important;
+    min-height: 500px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 12px !important;
+    background: var(--bg-secondary) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5) !important;
+    position: relative !important;
+}
+
+/* Close button */
+div#notesModal .modal-close-cyberpunk {
     width: 40px !important;
     height: 40px !important;
     border: 2px solid #ff0066 !important;
     background: #ff0066 !important;
     color: #ffffff !important;
     font-size: 24px !important;
-    box-shadow: 0 0 10px rgba(255, 0, 102, 0.6) !important;
 }
 
-#notesModal .modal-close-cyberpunk:hover {
-    background: #ff0088 !important;
-    box-shadow: 
-        0 0 20px rgba(255, 0, 102, 1),
-        inset 0 0 15px rgba(255, 255, 255, 0.2) !important;
-    transform: scale(1.1) !important;
-}
-
-#notesModal .notes-modal-content,
-.notes-modal-content {
-    max-width: 1600px !important;
-    width: min(98vw, 1600px) !important;
-    height: auto !important;
-    max-height: 95vh !important;
-    min-height: 700px !important;
-    border-radius: 12px;
-    overflow: hidden !important;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+/* Modal body */
+div#notesModal .notes-modal-body {
     display: flex !important;
-    flex-direction: column;
-    margin: auto;
-    box-sizing: border-box;
-    position: relative;
-    /* Prevent fullscreen flash on open */
-    animation: none !important;
-    transform: none !important;
-}
-
-/* NEVER make notes modal fullscreen on desktop - only windowed */
-@media (min-width: 769px) {
-    #notesModal .notes-modal-content,
-    .notes-modal-content {
-        width: min(98vw, 1600px) !important;
-        height: auto !important;
-        max-height: 95vh !important;
-        min-height: 700px !important;
-        max-width: 1600px !important;
-        border-radius: 12px !important;
-        margin: auto !important;
-    }
-}
-
-.notes-modal-body {
-    display: flex;
-    flex: 1 1 0;
-    min-height: 0;
-    max-height: calc(95vh - 80px); /* Account for header */
-    gap: 0;
-    padding: 0;
-    background: var(--bg-primary);
+    flex: 1 !important;
+    min-height: 0 !important;
     overflow: hidden !important;
-    box-sizing: border-box;
+    background: var(--bg-primary) !important;
 }
 
 /* Sidebar Styles */

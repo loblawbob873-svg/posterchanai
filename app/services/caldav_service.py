@@ -7,7 +7,7 @@ Provides:
 - Daily schedule summaries
 """
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from dataclasses import dataclass
 
@@ -126,18 +126,20 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
 
 
 def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end_date: datetime, calendar_name: str) -> "List[CalendarEvent]":
-    """Helper function to get events from a specific calendar directory."""
+    """Helper function to get events from a specific calendar directory.
+    
+    Handles recurring events by expanding RRULE to generate occurrences within the date range.
+    """
     from icalendar import Calendar as ICalendar
+    from dateutil.rrule import rrulestr
     
     file_items = proxy.list_files(cal_dir)
     events = []
     
     # Ensure dates are timezone-aware for comparison
     if start_date.tzinfo is None:
-        from datetime import timezone
         start_date = start_date.replace(tzinfo=timezone.utc)
     if end_date.tzinfo is None:
-        from datetime import timezone
         end_date = end_date.replace(tzinfo=timezone.utc)
     
     for item in file_items:
@@ -164,6 +166,15 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                         continue
                     
                     event_start = dtstart.dt
+                    is_all_day = False
+                    
+                    # Handle both datetime and date objects (all-day events)
+                    if isinstance(event_start, date) and not isinstance(event_start, datetime):
+                        # All-day event - convert date to datetime at midnight
+                        is_all_day = True
+                        from datetime import timezone
+                        event_start = datetime.combine(event_start, datetime.min.time(), tzinfo=timezone.utc)
+                    
                     if isinstance(event_start, datetime):
                         # Make timezone-aware if naive
                         if event_start.tzinfo is None:
@@ -175,45 +186,53 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                         event_end = None
                         if dtend:
                             event_end = dtend.dt
-                            if isinstance(event_end, datetime):
+                            if isinstance(event_end, date) and not isinstance(event_end, datetime):
+                                # All-day event end - convert to datetime at end of day
+                                from datetime import timezone
+                                event_end = datetime.combine(event_end, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc)
+                            elif isinstance(event_end, datetime):
                                 if event_end.tzinfo is None:
                                     from datetime import timezone
                                     event_end = event_end.replace(tzinfo=timezone.utc)
                         
-                        # Check if event overlaps with date range [start_date, end_date]
-                        # Event overlaps if:
-                        #   - Starts within range: start_date <= event_start <= end_date
-                        #   - Ends within range: start_date <= event_end <= end_date (if event_end exists)
-                        #   - Spans range: event_start < start_date AND (event_end is None OR event_end > end_date)
-                        #   - Starts before and ends during: event_start < start_date AND event_end >= start_date
-                        # Exclude events that:
-                        #   - Start after range: event_start > end_date
-                        #   - End before range: event_end is not None AND event_end < start_date
-                        #   - Start more than 7 days before range with no end (likely very old all-day events)
+                        # Check for recurring events (RRULE) - these need special handling
+                        rrule_prop = component.get('rrule')
                         
-                        # Check if event starts after range
-                        if event_start > end_date:
-                            continue
-                        
-                        # Check if event ends before range
-                        if event_end is not None and event_end < start_date:
-                            continue
-                        
-                        # If event starts before range, check if it should be included
-                        if event_start < start_date:
-                            if event_end is None:
-                                # Event has no end - include if it started within last 7 days (ongoing event)
-                                from datetime import timedelta
-                                if (start_date - event_start) > timedelta(days=7):
-                                    # Event started more than 7 days ago with no end - likely old all-day event, skip
-                                    continue
-                            # If event has an end and it's >= start_date, it overlaps - include it
-                        
-                        # Event overlaps with range - include it
-                        
-                        # Convert to naive local for CalendarEvent
-                        event_start_naive = to_naive_local(event_start)
-                        event_end_naive = to_naive_local(event_end) if event_end else None
+                        # For non-recurring events, check if event overlaps with date range
+                        # For recurring events, we'll expand them later so only skip if completely impossible
+                        if not rrule_prop:
+                            # Non-recurring: Check if event starts after range
+                            if event_start > end_date:
+                                continue
+                            
+                            # Non-recurring: Check if event ends before range
+                            if event_end is not None and event_end < start_date:
+                                continue
+                            
+                            # If event starts before range, check if it should be included
+                            if event_start < start_date:
+                                if event_end is None:
+                                    # Event has no end - include if it started within last 7 days
+                                    if (start_date - event_start) > timedelta(days=7):
+                                        continue
+                        else:
+                            # Recurring event: only skip if it DEFINITELY can't have occurrences
+                            # Check for UNTIL or COUNT limits that would exclude this range
+                            rrule_text = rrule_prop.to_ical().decode('utf-8') if hasattr(rrule_prop, 'to_ical') else str(rrule_prop)
+                            
+                            # If UNTIL is specified and it's before our start_date, skip
+                            if 'UNTIL=' in rrule_text:
+                                try:
+                                    until_str = rrule_text.split('UNTIL=')[1].split(';')[0].split('\n')[0]
+                                    # Parse UNTIL date (format: YYYYMMDD or YYYYMMDDTHHMMSSZ)
+                                    if 'T' in until_str:
+                                        until_date = datetime.strptime(until_str.replace('Z', ''), '%Y%m%dT%H%M%S').replace(tzinfo=timezone.utc)
+                                    else:
+                                        until_date = datetime.strptime(until_str, '%Y%m%d').replace(tzinfo=timezone.utc)
+                                    if until_date < start_date:
+                                        continue  # Recurrence ended before our range
+                                except Exception:
+                                    pass  # If we can't parse, don't skip
                         
                         # Get event details
                         summary = str(component.get('summary', '')) if component.get('summary') else "No Title"
@@ -221,15 +240,72 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                         location = str(component.get('location', '')) if component.get('location') else None
                         uid = str(component.get('uid', '')) if component.get('uid') else ""
                         
-                        events.append(CalendarEvent(
-                            uid=uid,
-                            summary=summary,
-                            description=description,
-                            start=event_start_naive,
-                            end=event_end_naive,
-                            location=location,
-                            calendar_name=calendar_name
-                        ))
+                        # Handle recurring vs non-recurring events (rrule_prop already fetched above)
+                        if rrule_prop:
+                            # This is a recurring event - expand occurrences
+                            try:
+                                # Calculate event duration for recurring instances
+                                event_duration = None
+                                if event_end:
+                                    event_duration = event_end - event_start
+                                
+                                # Build RRULE string from the property
+                                rrule_str = rrule_prop.to_ical().decode('utf-8')
+                                
+                                # Create rrule with dtstart
+                                rule = rrulestr(rrule_str, dtstart=event_start)
+                                
+                                # Get occurrences within the date range
+                                # Limit to 100 occurrences to prevent infinite loops
+                                occurrences = list(rule.between(start_date, end_date, inc=True))[:100]
+                                
+                                for occurrence_start in occurrences:
+                                    occurrence_end = occurrence_start + event_duration if event_duration else None
+                                    
+                                    # Convert to naive local for CalendarEvent
+                                    occ_start_naive = to_naive_local(occurrence_start)
+                                    occ_end_naive = to_naive_local(occurrence_end) if occurrence_end else None
+                                    
+                                    events.append(CalendarEvent(
+                                        uid=f"{uid}_{occurrence_start.isoformat()}",
+                                        summary=summary,
+                                        description=description,
+                                        start=occ_start_naive,
+                                        end=occ_end_naive,
+                                        location=location,
+                                        calendar_name=calendar_name
+                                    ))
+                                
+                                logger.debug(f"[CalDAV] Expanded recurring event '{summary}' to {len(occurrences)} occurrences")
+                            except Exception as rrule_error:
+                                logger.warning(f"[CalDAV] Failed to expand RRULE for '{summary}': {rrule_error}")
+                                # Fall back to adding just the original event
+                                event_start_naive = to_naive_local(event_start)
+                                event_end_naive = to_naive_local(event_end) if event_end else None
+                                events.append(CalendarEvent(
+                                    uid=uid,
+                                    summary=summary,
+                                    description=description,
+                                    start=event_start_naive,
+                                    end=event_end_naive,
+                                    location=location,
+                                    calendar_name=calendar_name
+                                ))
+                        else:
+                            # Non-recurring event - add if it overlaps with range
+                            # Convert to naive local for CalendarEvent
+                            event_start_naive = to_naive_local(event_start)
+                            event_end_naive = to_naive_local(event_end) if event_end else None
+                            
+                            events.append(CalendarEvent(
+                                uid=uid,
+                                summary=summary,
+                                description=description,
+                                start=event_start_naive,
+                                end=event_end_naive,
+                                location=location,
+                                calendar_name=calendar_name
+                            ))
         except Exception as e:
             logger.debug(f"Error parsing event file {name}: {e}")
             continue
@@ -372,9 +448,8 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
                 vcard.org.value = [updates['organization']]
         
         if 'address' in updates:
-            # ADR format: [post_office_box, extended, street, city, state, postal_code, country]
-            # For simplicity, we'll store the address as a single string and parse it
-            address_str = updates['address'].strip()
+            # Parse address string into components
+            address_str = updates.get('address', '').strip()
             if address_str:
                 # Try to parse address components (simple: assume "street, city, state zip, country")
                 address_parts = address_str.split(',')
@@ -394,36 +469,36 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
                     street = address_str
                     city = state = postal = country = ''
                 
-                adr_value = ['', '', street, city, state, postal, country]
+                # Create proper vobject Address object
+                new_adr = vobject.vcard.Address(
+                    street=street,
+                    city=city,
+                    region=state,
+                    code=postal,
+                    country=country,
+                    box='',
+                    extended=''
+                )
                 
-                # Handle ADR field - it can be a single object or a list
+                # Remove existing ADR fields first
                 if hasattr(vcard, 'adr'):
-                    # Check if adr is a list (multiple addresses) or single object
                     if isinstance(vcard.adr, list):
-                        # If list, update the first one or add new
-                        if len(vcard.adr) > 0:
-                            vcard.adr[0].value = adr_value
-                        else:
-                            adr_obj = vcard.add('adr')
-                            adr_obj.value = adr_value
-                            adr_obj.type_param = 'HOME'
+                        for adr in list(vcard.adr):
+                            vcard.remove(adr)
                     else:
-                        # Single ADR object
-                        vcard.adr.value = adr_value
-                else:
-                    # No ADR field exists, add one
-                    adr_obj = vcard.add('adr')
-                    adr_obj.value = adr_value
-                    adr_obj.type_param = 'HOME'
+                        vcard.remove(vcard.adr)
+                
+                # Add new address
+                adr_prop = vcard.add('adr')
+                adr_prop.value = new_adr
+                adr_prop.type_param = 'HOME'
             else:
                 # Remove address if empty
                 if hasattr(vcard, 'adr'):
                     if isinstance(vcard.adr, list):
-                        # Remove all addresses if list
                         for adr in list(vcard.adr):
                             vcard.remove(adr)
                     else:
-                        # Remove single address
                         vcard.remove(vcard.adr)
         
         if 'note' in updates:
@@ -2113,6 +2188,9 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                 if vcf_resp.status_code != 200:
                     continue
 
+                # Capture ETag for conditional update (required by many CardDAV servers)
+                contact_etag = vcf_resp.headers.get('ETag', '')
+                
                 vcard_data = vcf_resp.text
                 vcard = vobject.readOne(vcard_data)
 
@@ -2166,7 +2244,7 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                     if 'address' in updates:
                         address_str = updates.get('address', '').strip()
                         if address_str:
-                            # Parse address into ADR format: [post_office_box, extended, street, city, state, postal_code, country]
+                            # Parse address into ADR components
                             address_parts = address_str.split(',')
                             if len(address_parts) >= 2:
                                 street = address_parts[0].strip()
@@ -2183,15 +2261,36 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                                 street = address_str
                                 city = state = postal = country = ''
                             
-                            adr_value = ['', '', street, city, state, postal, country]
+                            # Create proper vobject Address object
+                            new_adr = vobject.vcard.Address(
+                                street=street,
+                                city=city,
+                                region=state,
+                                code=postal,
+                                country=country,
+                                box='',
+                                extended=''
+                            )
+                            
+                            # Remove existing ADR fields first
                             if hasattr(vcard, 'adr'):
-                                vcard.adr.value = adr_value
-                            else:
-                                vcard.add('adr')
-                                vcard.adr.value = adr_value
-                                vcard.adr.type_param = 'HOME'
+                                if isinstance(vcard.adr, list):
+                                    for adr in list(vcard.adr):
+                                        vcard.remove(adr)
+                                else:
+                                    vcard.remove(vcard.adr)
+                            
+                            # Add new address
+                            adr_prop = vcard.add('adr')
+                            adr_prop.value = new_adr
+                            adr_prop.type_param = 'HOME'
                         elif hasattr(vcard, 'adr'):
-                            del vcard.adr
+                            # Remove address if empty - handle list case
+                            if isinstance(vcard.adr, list):
+                                for adr in list(vcard.adr):
+                                    vcard.remove(adr)
+                            else:
+                                vcard.remove(vcard.adr)
 
                     if 'note' in updates:
                         if updates.get('note'):
@@ -2214,6 +2313,10 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                     put_headers = {
                         'Content-Type': 'text/vcard; charset=utf-8'
                     }
+                    # Add If-Match header if we have an ETag (required by many CardDAV servers)
+                    if contact_etag:
+                        put_headers['If-Match'] = contact_etag
+                    
                     put_resp = requests.put(vcf_url, auth=HTTPBasicAuth(username, password),
                                           headers=put_headers, data=updated_vcard_data, timeout=10, verify=False)
 
@@ -2221,7 +2324,7 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                         logger.info(f"Updated contact with UID: {contact_uid}")
                         return True
                     else:
-                        logger.error(f"Failed to update contact: HTTP {put_resp.status_code}")
+                        logger.error(f"Failed to update contact: HTTP {put_resp.status_code}, Response: {put_resp.text[:500]}")
                         return False
 
             except Exception as e:
@@ -2357,8 +2460,10 @@ def get_contact_by_uid(url: str, username: str, password: str, contact_uid: str)
                     # Extract address from ADR field
                     address = None
                     if hasattr(vcard, 'adr'):
-                        adr = vcard.adr.value
-                        if isinstance(adr, list) and len(adr) >= 4:
+                        # Handle both list and single ADR objects
+                        adr_obj = vcard.adr[0] if isinstance(vcard.adr, list) and len(vcard.adr) > 0 else vcard.adr
+                        adr = adr_obj.value if hasattr(adr_obj, 'value') else None
+                        if adr and isinstance(adr, list) and len(adr) >= 4:
                             address_parts = []
                             if len(adr) > 2 and adr[2]:  # street
                                 address_parts.append(str(adr[2]))

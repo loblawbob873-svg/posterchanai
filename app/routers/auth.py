@@ -478,6 +478,7 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         custom_ai_url=current_user.custom_ai_url,
         custom_ai_model=current_user.custom_ai_model,
         custom_ai_has_api_key=bool(current_user.custom_ai_api_key),
+        custom_llm_prompt=current_user.custom_llm_prompt if hasattr(current_user, 'custom_llm_prompt') else None,
         # Custom Image Generation settings
         custom_image_enabled=current_user.custom_image_enabled or False,
         custom_image_url=current_user.custom_image_url,
@@ -531,6 +532,9 @@ def update_user_settings(
     if settings.custom_ai_api_key is not None:
         # Allow clearing the API key with empty string
         current_user.custom_ai_api_key = settings.custom_ai_api_key if settings.custom_ai_api_key else None
+    if settings.custom_llm_prompt is not None:
+        # Save custom LLM prompt (can be empty to clear)
+        current_user.custom_llm_prompt = settings.custom_llm_prompt if settings.custom_llm_prompt.strip() else None
 
     # Update custom Image Generation settings
     if settings.custom_image_enabled is not None:

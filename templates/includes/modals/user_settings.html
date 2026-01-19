@@ -109,6 +109,27 @@
                             </div>
                         </div>
                     </fieldset>
+
+                    <fieldset>
+                        <legend>Custom AI Training Prompt</legend>
+                        <p class="fieldset-info">Add custom instructions that the AI will always follow. Use this to create shortcuts, define behaviors, or add context the AI should know about you.</p>
+                        <div class="form-group">
+                            <label for="customLlmPrompt">Custom Instructions</label>
+                            <textarea id="customLlmPrompt" rows="8" placeholder="Example:
+When I say 'send accounting this receipt', send an email to accounting@mycompany.com with:
+- Subject: 'Accounting Receipt'
+- Body: 'Hello, Front Desk, attached is a new receipt. Thank you.'
+- Include any attached images
+
+My accountant email: accounting@mycompany.com
+My name: John Smith"></textarea>
+                            <small>These instructions are added to every AI conversation. The AI will follow them when processing your messages.</small>
+                        </div>
+                        <div class="form-group">
+                            <button type="button" class="btn-secondary" id="saveCustomPromptBtn">Save Custom Prompt</button>
+                            <span id="customPromptStatus" class="test-result"></span>
+                        </div>
+                    </fieldset>
                 </div>
 
                 <!-- Calendar & Contacts Tab -->

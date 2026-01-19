@@ -990,6 +990,46 @@ class ChatHandler {
             });
         }
 
+        // Save custom LLM prompt button
+        const saveCustomPromptBtn = document.getElementById('saveCustomPromptBtn');
+        const customPromptStatus = document.getElementById('customPromptStatus');
+        if (saveCustomPromptBtn) {
+            saveCustomPromptBtn.addEventListener('click', async () => {
+                const customLlmPromptEl = document.getElementById('customLlmPrompt');
+                if (!customLlmPromptEl) return;
+                
+                if (customPromptStatus) {
+                    customPromptStatus.textContent = 'Saving...';
+                    customPromptStatus.className = 'test-result';
+                }
+                
+                try {
+                    const response = await csrfFetch('/api/auth/settings', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            custom_llm_prompt: customLlmPromptEl.value
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        if (customPromptStatus) {
+                            customPromptStatus.textContent = '✓ Saved';
+                            customPromptStatus.className = 'test-result success';
+                            setTimeout(() => { customPromptStatus.textContent = ''; }, 3000);
+                        }
+                    } else {
+                        throw new Error('Save failed');
+                    }
+                } catch (e) {
+                    if (customPromptStatus) {
+                        customPromptStatus.textContent = '✗ Failed to save';
+                        customPromptStatus.className = 'test-result error';
+                    }
+                }
+            });
+        }
+
         // Test WebDAV Music connection
         if (testLocalMusic) {
             testLocalMusic.addEventListener('click', async () => {
@@ -1050,6 +1090,10 @@ class ChatHandler {
                             customImageSettings.style.display = data.custom_image_enabled ? 'flex' : 'none';
                         }
                         if (customImageUrl) customImageUrl.value = data.custom_image_url || '';
+
+                        // Load custom LLM prompt
+                        const customLlmPrompt = document.getElementById('customLlmPrompt');
+                        if (customLlmPrompt) customLlmPrompt.value = data.custom_llm_prompt || '';
 
                         // Load news schedule settings
                         if (newsScheduleEnabled) {
@@ -1212,6 +1256,12 @@ class ChatHandler {
                 }
                 if (customImageUrl) {
                     settingsData.custom_image_url = customImageUrl.value.trim();
+                }
+
+                // Add custom LLM prompt
+                const customLlmPromptEl = document.getElementById('customLlmPrompt');
+                if (customLlmPromptEl) {
+                    settingsData.custom_llm_prompt = customLlmPromptEl.value;
                 }
 
                 // Add news schedule settings

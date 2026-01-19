@@ -375,6 +375,7 @@ class UserSettingsUpdate(BaseModel):
     custom_ai_url: Optional[str] = None
     custom_ai_model: Optional[str] = None
     custom_ai_api_key: Optional[str] = None
+    custom_llm_prompt: Optional[str] = None  # Custom AI instructions
     # Custom Image Generation settings
     custom_image_enabled: Optional[bool] = None
     custom_image_url: Optional[str] = None
@@ -408,6 +409,7 @@ class UserSettingsResponse(BaseModel):
     custom_ai_url: Optional[str] = None
     custom_ai_model: Optional[str] = None
     custom_ai_has_api_key: bool = False  # Don't expose actual key
+    custom_llm_prompt: Optional[str] = None  # Custom AI instructions
     # Custom Image Generation settings
     custom_image_enabled: bool = False
     custom_image_url: Optional[str] = None
