@@ -186,18 +186,26 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
     ics_count = 0
     
     # Ensure dates are timezone-aware for comparison
+    # Convert to UTC for consistent comparison
     if start_date.tzinfo is None:
         start_date = start_date.replace(tzinfo=timezone.utc)
+    else:
+        # Convert to UTC if timezone-aware
+        start_date = start_date.astimezone(timezone.utc)
     if end_date.tzinfo is None:
         end_date = end_date.replace(tzinfo=timezone.utc)
+    else:
+        # Convert to UTC if timezone-aware
+        end_date = end_date.astimezone(timezone.utc)
+    
+    logger.debug(f"[CalDAV] Date range (UTC): {start_date} to {end_date}")
     
     for item in file_items:
         name = item.get('name', '')
         if not name.endswith('.ics'):
-            logger.debug(f"[CalDAV] Skipping non-ics file: {name}")
             continue
         ics_count += 1
-        logger.debug(f"[CalDAV] Processing .ics file: {name}")
+        logger.info(f"[CalDAV] Processing .ics file #{ics_count}: {name}")
         
         try:
             # Read .ics file using proxy
@@ -210,8 +218,12 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
             cal = ICalendar.from_ical(ical_data.encode('utf-8'))
             
             # Process all VEVENT components
+            vevent_count = 0
             for component in cal.walk():
                 if component.name == "VEVENT":
+                    vevent_count += 1
+                    summary = component.get('summary', 'No Title')
+                    logger.debug(f"[CalDAV] Processing VEVENT #{vevent_count} from {name}: {summary}")
                     # Get start time
                     dtstart = component.get('dtstart')
                     if not dtstart:
@@ -251,31 +263,29 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                         rrule_prop = component.get('rrule')
                         
                         # For non-recurring events, check if event overlaps with date range
+                        # An event overlaps if: (event_start <= end_date) AND (event_end is None OR event_end >= start_date)
                         # For recurring events, we'll expand them later so only skip if completely impossible
                         if not rrule_prop:
-                            # Non-recurring: Check if event starts after range (event is completely after)
-                            if event_start > end_date:
-                                logger.debug(f"[CalDAV] Skipping event '{component.get('summary', 'No Title')}' - starts after range ({event_start.date()} > {end_date.date()})")
-                                continue
+                            # Check if event overlaps with the date range
+                            # Event overlaps if it starts before or during the range AND (has no end OR ends during or after the range)
+                            event_overlaps = False
                             
-                            # Non-recurring: Check if event ends before range (event is completely before)
-                            if event_end is not None and event_end < start_date:
-                                logger.debug(f"[CalDAV] Skipping event '{component.get('summary', 'No Title')}' - ends before range ({event_end.date()} < {start_date.date()})")
-                                continue
-                            
-                            # If event starts before range but overlaps, include it
-                            # For events that start before range, we include them if they overlap
-                            if event_start < start_date:
+                            if event_start <= end_date:
+                                # Event starts before or during the range
                                 if event_end is None:
-                                    # Event has no end - include if it started within last 7 days
-                                    if (start_date - event_start) > timedelta(days=7):
-                                        logger.debug(f"[CalDAV] Skipping event '{component.get('summary', 'No Title')}' - started too long ago ({event_start.date()})")
-                                        continue
-                                elif event_end < start_date:
-                                    # Event ended before range - already handled above, but double-check
-                                    logger.debug(f"[CalDAV] Skipping event '{component.get('summary', 'No Title')}' - ended before range")
-                                    continue
-                                # Otherwise, event overlaps (starts before but ends during/after range) - include it
+                                    # Event has no end - include it (it's ongoing)
+                                    event_overlaps = True
+                                elif event_end >= start_date:
+                                    # Event ends during or after the range - it overlaps
+                                    event_overlaps = True
+                            
+                            if not event_overlaps:
+                                summary = component.get('summary', 'No Title')
+                                logger.info(f"[CalDAV] Skipping event '{summary}' - no overlap: start={event_start.date()}, end={event_end.date() if event_end else 'None'}, range={start_date.date()} to {end_date.date()}")
+                                continue
+                            # Event overlaps - include it
+                            summary = component.get('summary', 'No Title')
+                            logger.info(f"[CalDAV] Including event '{summary}': start={event_start.date()}, end={event_end.date() if event_end else 'None'}")
                         else:
                             # Recurring event: only skip if it DEFINITELY can't have occurrences
                             # Check for UNTIL or COUNT limits that would exclude this range
@@ -328,7 +338,7 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                     occ_start_naive = to_naive_local(occurrence_start)
                                     occ_end_naive = to_naive_local(occurrence_end) if occurrence_end else None
                                     
-                                    events.append(CalendarEvent(
+                                    event = CalendarEvent(
                                         uid=f"{uid}_{occurrence_start.isoformat()}",
                                         summary=summary,
                                         description=description,
@@ -336,7 +346,9 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                         end=occ_end_naive,
                                         location=location,
                                         calendar_name=calendar_name
-                                    ))
+                                    )
+                                    events.append(event)
+                                    logger.debug(f"[CalDAV] Added recurring occurrence: '{summary}' on {occ_start_naive.date()}")
                                 
                                 logger.debug(f"[CalDAV] Expanded recurring event '{summary}' to {len(occurrences)} occurrences")
                             except Exception as rrule_error:
@@ -354,12 +366,12 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                     calendar_name=calendar_name
                                 ))
                         else:
-                            # Non-recurring event - add if it overlaps with range
+                            # Non-recurring event - add if it overlaps with range (already checked above)
                             # Convert to naive local for CalendarEvent
                             event_start_naive = to_naive_local(event_start)
                             event_end_naive = to_naive_local(event_end) if event_end else None
                             
-                            events.append(CalendarEvent(
+                            event = CalendarEvent(
                                 uid=uid,
                                 summary=summary,
                                 description=description,
@@ -367,7 +379,9 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                 end=event_end_naive,
                                 location=location,
                                 calendar_name=calendar_name
-                            ))
+                            )
+                            events.append(event)
+                            logger.info(f"[CalDAV] Added non-recurring event: '{summary}' on {event_start_naive.date()}")
         except Exception as e:
             logger.warning(f"[CalDAV] Error parsing event file {name}: {e}")
             continue
@@ -1061,9 +1075,9 @@ def get_events_for_date_range(
                             location=str(vevent.location.value) if hasattr(vevent, 'location') else None,
                             calendar_name=calendar_name
                         ))
-                except Exception as e:
-                    logger.debug(f"Error parsing event: {e}")
-                    continue
+                    except Exception as e:
+                        logger.debug(f"Error parsing event: {e}")
+                        continue
             except Exception as e:
                 logger.debug(f"Error fetching events from calendar: {e}")
                 continue
