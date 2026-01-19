@@ -33,27 +33,32 @@ def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> t
         ...     user = db.query(User).filter(User.id == user_id).first()
     """
     try:
-        api_key = db.query(APIKey).filter(
+        # Query API key - use explicit filter conditions to avoid SQLite parameter binding issues
+        # SQLite can have issues with parameterized LIMIT/OFFSET, so we use a simple query
+        result = db.query(APIKey).filter(
             APIKey.key == token,
             APIKey.is_active == True
-        ).first()
-        if api_key:
+        ).all()
+        
+        if result:
+            api_key = result[0]  # Get first result manually to avoid .first() parameter issues
             # CRITICAL: Eagerly fetch user_id while session is valid
             user_id = api_key.user_id
             return api_key, user_id
         return None, None
     except (IndexError, Exception) as e:
-        # Handle SQLite session errors including tuple index out of range
+        # Handle SQLite session errors including tuple index out of range and parameter binding issues
         logger.warning(f"Error querying API key: {e}")
         if max_retries > 0:
             try:
                 db.rollback()
-                # Retry once with a fresh query
-                api_key = db.query(APIKey).filter(
+                # Retry once with a fresh query - use .all() and manual indexing to avoid parameter issues
+                result = db.query(APIKey).filter(
                     APIKey.key == token,
                     APIKey.is_active == True
-                ).first()
-                if api_key:
+                ).all()
+                if result:
+                    api_key = result[0]
                     user_id = api_key.user_id
                     return api_key, user_id
                 return None, None

@@ -320,9 +320,23 @@ async def get_all_images(
                             if 'images' in cleaned_data and cleaned_data['images']:
                                 valid_images = validate_and_filter_images(cleaned_data['images'], source="proxy")
                                 
-                                # Update with filtered valid images
+                                # Ensure images are sorted by modified time (newest first)
+                                # Storage server should already sort, but verify and fix if needed
+                                for img in valid_images:
+                                    if 'modified' in img:
+                                        try:
+                                            img['modified'] = float(img['modified'])
+                                        except (ValueError, TypeError):
+                                            img['modified'] = 0.0
+                                
+                                # Sort by modified time descending (newest first)
+                                valid_images.sort(key=lambda x: float(x.get('modified', 0) or 0), reverse=True)
+                                
+                                # Update with filtered and sorted valid images
                                 cleaned_data['images'] = valid_images
                                 cleaned_data['total'] = len(valid_images)
+                                
+                                logger.info(f"[FILES] Proxy: Received {len(valid_images)} images, sorted by modified time (newest first)")
                             
                             # Test serialization before returning
                             try:
@@ -417,7 +431,13 @@ async def get_all_images(
         
         try:
             # Recursively find all image and video files
+            # Use rglob to scan all subdirectories
+            logger.info(f"[FILES] Starting recursive scan of {user_path}")
+            scanned_count = 0
             for item in user_path.rglob('*'):
+                scanned_count += 1
+                if scanned_count % 1000 == 0:
+                    logger.debug(f"[FILES] Scanned {scanned_count} items so far, found {len(images)} images/videos")
                 try:
                     # Skip directories and non-media files
                     if item.is_dir() or item.suffix.lower() not in media_extensions:
@@ -615,10 +635,24 @@ async def get_all_images(
             path = str(img.get('path', '')).lower()
             # Return tuple: (negative_modified, path) so higher timestamps sort first
             # Negative because we want descending order: -1800 < -1700, so 1800 comes before 1700
+            # Use a very large number for files with no timestamp to push them to the end
+            if modified <= 0:
+                modified = 0.0
             return (-modified, path)
         
         # Sort the list - this MUST work correctly
-        images.sort(key=sort_key)
+        # Double-check that we're sorting in descending order (newest first)
+        images.sort(key=sort_key, reverse=False)  # reverse=False because we use negative timestamps
+        
+        # Verify sort is correct - first item should have highest timestamp
+        if len(images) > 1:
+            first_ts = float(images[0].get('modified', 0) or 0)
+            last_ts = float(images[-1].get('modified', 0) or 0)
+            if first_ts < last_ts:
+                logger.error(f"[FILES] ❌ SORT ERROR: First image timestamp ({first_ts}) is LOWER than last ({last_ts}) - sort is backwards!")
+                # Fix it by reversing
+                images.reverse()
+                logger.warning(f"[FILES] Fixed by reversing the list")
         
         # Immediate verification: check first 50 items are in correct order
         # Log detailed information about sorting for debugging
@@ -688,6 +722,22 @@ async def get_all_images(
         logger.info(f"  - Valid images/videos: {len(images)}")
         logger.info(f"  - Files skipped: {skipped_count}")
         logger.info(f"  - Duplicates removed: {duplicates_removed}")
+        if skipped_reasons:
+            logger.info(f"  - Skip reasons: {dict(skipped_reasons)}")
+        
+        # Log sample of oldest and newest files for debugging
+        if images:
+            logger.info(f"[FILES] Sample files (first 5 - should be newest):")
+            for i, img in enumerate(images[:5]):
+                ts = img.get('modified', 0)
+                date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d') if ts > 0 else 'N/A'
+                logger.info(f"    {i+1}. {img.get('name', 'unknown')} - {date_str} (ts={ts})")
+            if len(images) > 5:
+                logger.info(f"[FILES] Sample files (last 5 - should be oldest):")
+                for i, img in enumerate(images[-5:]):
+                    ts = img.get('modified', 0)
+                    date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d') if ts > 0 else 'N/A'
+                    logger.info(f"    {len(images)-4+i}. {img.get('name', 'unknown')} - {date_str} (ts={ts})")
         if skipped_reasons:
             logger.info(f"  - Skip reasons breakdown: {skipped_reasons}")
         logger.info(f"[FILES] Final count returned to client: {len(images)} images/videos")

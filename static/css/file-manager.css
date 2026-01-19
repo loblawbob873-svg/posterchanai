@@ -1769,6 +1769,10 @@
     letter-spacing: 1px;
     position: relative;
     overflow: hidden;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
 }
 
 .cyberpunk-btn::before {
@@ -1799,6 +1803,25 @@
     box-shadow: inset 0 0 10px rgba(0, 255, 255, 0.3);
 }
 
+.cyberpunk-btn-secondary {
+    border-color: #00ff88;
+    color: #00ff88;
+    background: rgba(0, 255, 136, 0.1);
+    min-width: 36px;
+    min-height: 36px;
+    padding: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.cyberpunk-btn-secondary:hover {
+    background: rgba(0, 255, 136, 0.2);
+    box-shadow: 
+        0 0 10px rgba(0, 255, 136, 0.6),
+        inset 0 0 10px rgba(0, 255, 136, 0.1);
+}
+
 .cyberpunk-btn-close {
     border-color: #ff0066;
     color: #ff0066;
@@ -1814,7 +1837,13 @@
 
 .cyberpunk-icon {
     display: inline-block;
-    font-size: 16px;
+    font-size: 18px;
+    line-height: 1;
+    color: inherit; /* Inherit color from parent button */
+    font-weight: normal;
+    vertical-align: middle;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
 }
 
 .cyberpunk-viewer-body {

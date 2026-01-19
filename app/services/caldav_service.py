@@ -113,8 +113,17 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
             # Built-in server may have multiple calendars (main, wwwcanoncityschoolsorg, etc.)
             # This happens when calendar_name is None, "Built-in Calendar", or "Calendar"
             logger.info(f"[CalDAV] Getting events from all calendars (calendar_name={calendar_name})")
-            root_items = proxy.list_files("")
-            logger.info(f"[CalDAV] Root items from storage proxy: {len(root_items)} items")
+            try:
+                root_items = proxy.list_files("")
+                logger.info(f"[CalDAV] Root items from storage proxy: {len(root_items)} items")
+            except Exception as e:
+                error_msg = str(e)
+                if "Connection refused" in error_msg or "111" in error_msg:
+                    logger.error(f"[CalDAV] Cannot connect to storage server: {e}")
+                    logger.error(f"[CalDAV] Storage server may be down or unreachable. Check if it's running at {proxy.storage_url if hasattr(proxy, 'storage_url') else 'unknown'}")
+                else:
+                    logger.error(f"[CalDAV] Error listing root files: {e}", exc_info=True)
+                return []
             
             # Debug: log all items found
             for item in root_items:
@@ -179,7 +188,13 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
             logger.warning(f"[CalDAV] No items found in directory '{cal_dir}' - directory may be empty or not exist")
             return []
     except Exception as e:
-        logger.error(f"[CalDAV] Error listing files in '{cal_dir}': {e}", exc_info=True)
+        error_msg = str(e)
+        # Check if it's a connection error
+        if "Connection refused" in error_msg or "111" in error_msg:
+            logger.error(f"[CalDAV] Cannot connect to storage server to list files in '{cal_dir}': {e}")
+            logger.error(f"[CalDAV] Check if storage server is running and accessible at {proxy.storage_url if hasattr(proxy, 'storage_url') else 'unknown'}")
+        else:
+            logger.error(f"[CalDAV] Error listing files in '{cal_dir}': {e}", exc_info=True)
         return []
     
     events = []
@@ -198,7 +213,8 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
         # Convert to UTC if timezone-aware
         end_date = end_date.astimezone(timezone.utc)
     
-    logger.debug(f"[CalDAV] Date range (UTC): {start_date} to {end_date}")
+    logger.info(f"[CalDAV] Date range (UTC): {start_date} to {end_date}")
+    logger.info(f"[CalDAV] Date range (local dates): {start_date.date()} to {end_date.date()}")
     
     for item in file_items:
         name = item.get('name', '')
@@ -206,7 +222,7 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
             continue
         ics_count += 1
         # Only log every 50th file to reduce logging overhead with large calendars
-        if ics_count % 50 == 0 or ics_count <= 5:
+        if ics_count % 50 == 0 or ics_count <= 10:
             logger.info(f"[CalDAV] Processing .ics file #{ics_count}: {name}")
         else:
             logger.debug(f"[CalDAV] Processing .ics file #{ics_count}: {name}")
@@ -222,12 +238,15 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
             cal = ICalendar.from_ical(ical_data.encode('utf-8'))
             
             # Process all VEVENT components
-            vevent_count = 0
-            for component in cal.walk():
-                if component.name == "VEVENT":
-                    vevent_count += 1
-                    summary = component.get('summary', 'No Title')
-                    logger.debug(f"[CalDAV] Processing VEVENT #{vevent_count} from {name}: {summary}")
+                    vevent_count = 0
+                    for component in cal.walk():
+                        if component.name == "VEVENT":
+                            vevent_count += 1
+                            summary = component.get('summary', 'No Title')
+                            if vevent_count <= 5:  # Log first 5 events per file for debugging
+                                logger.info(f"[CalDAV] Processing VEVENT #{vevent_count} from {name}: {summary}")
+                            else:
+                                logger.debug(f"[CalDAV] Processing VEVENT #{vevent_count} from {name}: {summary}")
                     # Get start time
                     dtstart = component.get('dtstart')
                     if not dtstart:
@@ -285,24 +304,26 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                     continue
                                 # Event overlaps - include it
                                 summary = component.get('summary', 'No Title')
-                                logger.debug(f"[CalDAV] Including event '{summary}': start={event_start.date()}, end={event_end.date()}, range={start_date.date()} to {end_date.date()}")
+                                logger.info(f"[CalDAV] Including event '{summary}': start={event_start.date()}, end={event_end.date()}, range={start_date.date()} to {end_date.date()}")
                             else:
-                                # Event has no end date - only include if it started recently (within 7 days before range start)
-                                # OR if it started during or after the range start
-                                # This prevents old events with no end date from appearing
-                                days_before_range = (start_date - event_start).days
+                                # Event has no end date - check if it's relevant to the range
+                                # Include if:
+                                # 1. Event started during or after the range start (definitely relevant)
+                                # 2. Event started before range but within 30 days (ongoing event, likely still relevant)
+                                # This prevents very old events (like years ago) from appearing
+                                days_before_range = (start_date - event_start).total_seconds() / 86400
                                 if event_start >= start_date:
                                     # Event started during or after the range start - include it
                                     summary = component.get('summary', 'No Title')
-                                    logger.debug(f"[CalDAV] Including event '{summary}': start={event_start.date()}, no end date, started during range")
-                                elif days_before_range <= 7 and days_before_range >= 0:
-                                    # Event started within 7 days before the range - include it (it's ongoing)
+                                    logger.info(f"[CalDAV] Including event '{summary}': start={event_start.date()}, no end date, started during range")
+                                elif 0 <= days_before_range <= 30:
+                                    # Event started within 30 days before the range - include it (it's ongoing and recent)
                                     summary = component.get('summary', 'No Title')
-                                    logger.debug(f"[CalDAV] Including ongoing event '{summary}': start={event_start.date()}, {days_before_range} days before range start")
+                                    logger.info(f"[CalDAV] Including ongoing event '{summary}': start={event_start.date()}, {days_before_range:.1f} days before range start")
                                 else:
                                     # Event started too long ago - skip it
                                     summary = component.get('summary', 'No Title')
-                                    logger.debug(f"[CalDAV] Skipping old event with no end date '{summary}': start={event_start.date()}, {days_before_range} days before range start")
+                                    logger.debug(f"[CalDAV] Skipping old event with no end date '{summary}': start={event_start.date()}, {days_before_range:.1f} days before range start")
                                     continue
                         else:
                             # Recurring event: only skip if it DEFINITELY can't have occurrences
@@ -1079,15 +1100,15 @@ def get_events_for_date_range(
                             # Event ends before the range - skip
                             continue
                         if end_aware is None:
-                            # Event has no end date - only include if it started recently (within 7 days before range start)
-                            # OR if it started during or after the range start
+                            # Event has no end date - check if it's relevant to the range
+                            # Include if started during/after range OR within 30 days before (ongoing and recent)
                             from datetime import timedelta
-                            days_before_range = (start_date_aware - start_aware).days
+                            days_before_range = (start_date_aware - start_aware).total_seconds() / 86400
                             if start_aware >= start_date_aware:
                                 # Event started during or after the range start - include it
                                 pass  # Continue to add event
-                            elif days_before_range <= 7 and days_before_range >= 0:
-                                # Event started within 7 days before the range - include it (it's ongoing)
+                            elif 0 <= days_before_range <= 30:
+                                # Event started within 30 days before the range - include it (it's ongoing and recent)
                                 pass  # Continue to add event
                             else:
                                 # Event started too long ago - skip it
