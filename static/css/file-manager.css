@@ -233,6 +233,45 @@
     box-sizing: border-box;
 }
 
+.file-manager-tabs {
+    grid-column: 1;
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.file-selection-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 4px 8px;
+    background: var(--bg-primary);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    grid-column: 2;
+    justify-self: start;
+    flex-shrink: 0;
+    overflow: visible;
+    box-sizing: border-box;
+    max-width: 100%;
+}
+
+.file-manager-search {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    min-width: 120px;
+    max-width: 400px;
+    margin: 0;
+    flex-shrink: 1;
+    grid-column: 3;
+    justify-self: stretch;
+    overflow: visible;
+    box-sizing: border-box;
+}
+
 .file-toolbar-actions {
     display: flex;
     align-items: center;
@@ -242,6 +281,7 @@
     justify-self: end;
     overflow: visible;
     flex-wrap: nowrap;
+    white-space: nowrap;
 }
 
 .btn-icon {
