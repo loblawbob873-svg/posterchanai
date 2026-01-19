@@ -121,12 +121,23 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
-    except (IndexError, AttributeError) as e:
-        logger.error(f"Database query error: {e}", exc_info=True)
-        db.rollback()
+    except Exception as e:
+        # Attempt rollback for any exception, but don't fail if database is already closed
+        try:
+            # Check if connection is still valid before rollback
+            if db.is_active:
+                db.rollback()
+        except Exception as rollback_error:
+            # Database may already be closed or in invalid state - log but don't fail
+            logger.debug(f"Could not rollback database (may be closed): {rollback_error}")
         raise
     finally:
-        db.close()
+        try:
+            if db.is_active:
+                db.close()
+        except Exception as close_error:
+            # Session may already be closed - log but don't fail
+            logger.debug(f"Error closing database session (may already be closed): {close_error}")
 
 
 def _run_migrations():

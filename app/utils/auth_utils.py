@@ -76,7 +76,13 @@ def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> t
         logger.warning(f"Error querying API key: {e}")
         if max_retries > 0:
             try:
-                db.rollback()
+                # Check if session is active before rollback
+                if db.is_active:
+                    try:
+                        db.rollback()
+                    except Exception as rollback_error:
+                        logger.debug(f"Could not rollback during API key retry (database may be closed): {rollback_error}")
+                
                 # Retry once with raw connection
                 raw_conn = db.connection()
                 if hasattr(raw_conn, 'connection'):
@@ -95,7 +101,7 @@ def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> t
                 
                 result = cursor.fetchone()
                 cursor.close()
-                if result:
+                if result and len(result) >= 7:  # Ensure we have all expected fields
                     api_key = APIKey(
                         id=result[0],
                         user_id=result[1],
@@ -140,8 +146,14 @@ def get_user_from_api_key(db: Session, user_id: int) -> Optional[User]:
         # Handle tuple index out of range and other SQLite errors
         logger.warning(f"Error accessing user for API key (attempt 1): {e}")
         try:
-            # Rollback and retry
-            db.rollback()
+            # Check if session is active before rollback
+            if db.is_active:
+                try:
+                    db.rollback()
+                except Exception as rollback_error:
+                    logger.debug(f"Could not rollback during user query retry (database may be closed): {rollback_error}")
+            
+            # Retry query
             user = db.query(User).filter(User.id == user_id).first()
             return user
         except Exception as retry_e:
