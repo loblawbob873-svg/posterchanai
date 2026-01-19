@@ -519,7 +519,9 @@ def get_user_calendars(user_id: int, db: Session = None) -> List[Dict[str, str]]
                             "builtin": True
                         })
                     
-                    logger.debug(f"[CalDAV] Using built-in (native) CalDAV server for user {user.username}, found {len(calendars)} calendars: {[c['name'] for c in calendars]}")
+                    logger.info(f"[CalDAV] Using built-in (native) CalDAV server for user {user.username}, found {len(calendars)} calendars: {[c['name'] for c in calendars]}")
+                    if len(calendars) == 0:
+                        logger.warning(f"[CalDAV] No calendars discovered for user {user.username} - returning default calendar")
                     return calendars
                 except Exception as e:
                     logger.error(f"[CalDAV] Error discovering calendars for built-in server: {e}", exc_info=True)

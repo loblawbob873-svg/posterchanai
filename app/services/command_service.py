@@ -789,37 +789,38 @@ class CommandService:
         messages = [
             {
                 "role": "system",
-                "content": """Extract bill/invoice/receipt information from this text and return JSON with:
-- name: company name or merchant name (e.g., "McDonald's", "McDonald's - Canon City", "Amazon", "Walmart")
-- amount: total amount paid as a number (e.g., 82.18). Look for "Total", "Amount", or final price.
-- due_date: transaction date if mentioned (YYYY-MM-DD format), null if not mentioned
+                "content": """You are a bill/receipt extraction expert. Extract bill/invoice/receipt information from the provided text and return ONLY valid JSON.
 
-**Receipt format examples:**
-- McDonald's receipts: Look for "Total" at bottom, location name, date/time
-- Restaurant receipts: Look for "Total", "Amount Due", "Grand Total"
-- Store receipts: Look for "Total", "Amount", final price line
-- Online orders: Look for "Order Total", "Total Amount", "Charged"
+**Required JSON format:**
+{
+  "name": "company or merchant name",
+  "amount": 82.18,
+  "due_date": "2026-01-18" or null
+}
 
-**Price format examples to handle:**
+**Extraction rules:**
+1. **name**: Company/merchant name. For McDonald's, include location if available (e.g., "McDonald's - Canon City")
+2. **amount**: FINAL TOTAL amount as a number (float). Look for:
+   - "Total" (not "Subtotal", not "Tax Amount")
+   - "Amount Due", "Grand Total", "Order Total", "Total Amount", "Charged"
+   - Always use the amount AFTER tax if tax is shown separately
+3. **due_date**: Transaction date in YYYY-MM-DD format, or null if not found
+
+**McDonald's receipt example:**
+- Look for "Total $82.18" near the bottom
+- Location: "CANON C-FREMONT" or address line → "McDonald's - Canon City"
+- Date: "01/18/2026 11:17:45 AM" → "2026-01-18"
+- Amount: "Total $82.18" → 82.18
+
+**Price normalization (already done, but be aware):**
 - "$ 15 99" → 15.99
-- "$1599" → 15.99  
+- "$1599" → 15.99
 - "$15.99" → 15.99
-- "Total: $82.18" → 82.18
-- "Tax Amount: $6.58" → ignore (not total)
-- "Subtotal: $75.60" → ignore (not total)
 
-**For McDonald's receipts specifically:**
-- Name should be "McDonald's" or "McDonald's - [Location]" (e.g., "McDonald's - Canon City")
-- Look for "Total" line (not Subtotal, not Tax Amount)
-- Date format: MM/DD/YYYY (e.g., "01/18/2026" → "2026-01-18")
-- Location is usually after store name or in address line
-
-**Important:**
-- Always use the FINAL TOTAL amount, not subtotal or tax
-- For receipts with tax, use the amount after tax
-- Extract the actual transaction date, not due date
-
-Return ONLY valid JSON, no other text. If this is not a bill, invoice, or receipt, return {"error": "not_a_bill"}.""",
+**Critical:**
+- Return ONLY the JSON object, no markdown, no code blocks, no explanations
+- If not a bill/receipt, return: {"error": "not_a_bill"}
+- Always extract the FINAL TOTAL, never subtotal or tax amount alone""",
             },
             {"role": "user", "content": f"Extract bill/receipt from this text:\n\n{receipt_text}"},
         ]
