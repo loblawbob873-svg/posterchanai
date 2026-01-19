@@ -221,55 +221,78 @@
 }
 
 /* =====================================================
-   FILE MANAGER TOOLBAR - SIMPLE ROW LAYOUT
+   FILE MANAGER TOOLBAR - FIXED LAYOUT
    ===================================================== */
+
+/* Main toolbar container - horizontal row */
 .file-manager-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border-color);
-    background: var(--bg-secondary);
-    min-height: 48px;
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 12px !important;
+    padding: 10px 16px !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    background: var(--bg-secondary) !important;
+    min-height: 52px !important;
+    overflow: visible !important;
 }
 
-/* Tabs */
-.file-manager-tabs {
-    display: flex;
-    gap: 4px;
+/* Tabs - left side */
+.file-manager-toolbar .file-manager-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 4px !important;
+    flex-shrink: 0 !important;
 }
 
-/* Selection controls */
-.file-selection-controls {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 6px;
-    background: var(--bg-primary);
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
+/* Selection controls - after tabs */
+.file-manager-toolbar .file-selection-controls {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 4px !important;
+    padding: 4px 8px !important;
+    background: var(--bg-primary) !important;
+    border-radius: 6px !important;
+    border: 1px solid var(--border-color) !important;
+    flex-shrink: 0 !important;
 }
 
-/* Search and actions wrapper - push to right */
-.file-toolbar-search-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-left: auto;
+/* Search and actions - right side, pushed with margin-left auto */
+.file-manager-toolbar .file-toolbar-search-actions {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 8px !important;
+    margin-left: auto !important;
+    flex-shrink: 0 !important;
 }
 
-/* Search input container */
-.file-manager-search {
-    display: flex;
-    align-items: center;
-    gap: 4px;
+/* Search input */
+.file-manager-toolbar .file-manager-search {
+    display: flex !important;
+    align-items: center !important;
+    gap: 4px !important;
 }
 
-/* Actions (refresh, view toggle) */
-.file-toolbar-actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
+.file-manager-toolbar .file-search-input {
+    width: 180px !important;
+    padding: 8px 12px !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 4px !important;
+    background: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+    font-size: 14px !important;
+}
+
+/* Actions buttons */
+.file-manager-toolbar .file-toolbar-actions {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 4px !important;
+    flex-shrink: 0 !important;
 }
 
 .btn-icon {
@@ -581,36 +604,44 @@
         flex: 1;
     }
     
-    /* Toolbar on mobile: allow scrolling */
+    /* Toolbar on mobile */
     .file-manager-toolbar {
-        overflow-x: auto;
-        gap: 6px;
-        padding: 8px;
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+        padding: 8px !important;
+    }
+    
+    .file-manager-toolbar .file-manager-tabs {
+        flex: 0 0 auto !important;
+    }
+    
+    .file-manager-toolbar .file-selection-controls {
+        flex: 0 0 auto !important;
+    }
+    
+    .file-manager-toolbar .file-toolbar-search-actions {
+        flex: 1 1 100% !important;
+        margin-left: 0 !important;
+    }
+    
+    .file-manager-toolbar .file-search-input {
+        width: 100% !important;
+        flex: 1 !important;
     }
     
     .tab-btn {
-        padding: 6px 8px;
-        font-size: 11px;
+        padding: 6px 10px !important;
+        font-size: 12px !important;
     }
     
     .file-selection-controls .btn-icon-only {
-        min-width: 32px;
-        height: 32px;
-        padding: 5px;
-        font-size: 13px;
-    }
-    
-    .file-search-input {
-        font-size: 13px;
-        padding: 6px 8px;
-        min-width: 100px;
-        max-width: 150px;
+        min-width: 34px !important;
+        height: 34px !important;
     }
     
     .btn-icon {
-        min-width: 32px;
-        height: 32px;
-        padding: 6px;
+        min-width: 34px !important;
+        height: 34px !important;
     }
     
     /* Ensure file grid is visible and properly sized */

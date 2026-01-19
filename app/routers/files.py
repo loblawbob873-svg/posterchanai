@@ -449,17 +449,18 @@ async def get_all_images(
                     relative_path = str(item.relative_to(user_path))
                     
                     # Get modification time for sorting
-                    # CRITICAL: Use the MAXIMUM of mtime and ctime to get the most recent timestamp
-                    # This handles cases where:
-                    # - Files uploaded via file manager get current mtime
-                    # - Files copied/moved might have old mtime but new ctime
-                    # - We want to show files by when they were added to the system, not when originally created
-                    modified_time = max(stat.st_mtime, stat.st_ctime) if stat.st_mtime > 0 and stat.st_ctime > 0 else (stat.st_mtime if stat.st_mtime > 0 else stat.st_ctime)
-                    
-                    # Fallback to current time if both are invalid
-                    if modified_time <= 0:
+                    # Use mtime (modification time) which:
+                    # - Is preserved by rsync when using -t or -a flags
+                    # - Should match EXIF date after running the storage scan
+                    # - Represents when the photo was taken, not when it was copied
+                    # Only fall back to ctime if mtime is invalid
+                    if stat.st_mtime > 0:
+                        modified_time = stat.st_mtime
+                    elif stat.st_ctime > 0:
+                        modified_time = stat.st_ctime
+                    else:
                         logger.warning(f"Invalid timestamp for {item}: mtime={stat.st_mtime}, ctime={stat.st_ctime}, using current time")
-                        modified_time = time.time()  # Use current time as fallback
+                        modified_time = time.time()
                     
                     from app.services.thumbnail_service import is_image_file, is_video_file
                     
