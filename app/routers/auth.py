@@ -1141,38 +1141,189 @@ async def get_calendar_event(
     db: Session = Depends(get_db)
 ):
     """Get calendar event by UID for editing"""
-    from app.services.caldav_service import get_event_by_uid
+    from app.services.caldav_service import get_event_by_uid, to_local_aware, get_user_calendars
+    from datetime import datetime, timedelta, timezone
+    from dateutil import parser as date_parser
     import json
 
-    # Get user's calendar settings
-    from app.models import UserSetting
-    calendars_setting = db.query(UserSetting).filter(
-        UserSetting.user_id == current_user.id,
-        UserSetting.key == "caldav_calendars"
-    ).first()
-
-    if not calendars_setting or not calendars_setting.value:
+    # Get user's calendars (handles both built-in and external)
+    calendars = get_user_calendars(current_user.id, db)
+    if not calendars:
         raise HTTPException(status_code=404, detail="No calendars configured")
-
-    try:
-        calendars = json.loads(calendars_setting.value)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Invalid calendar configuration")
 
     # Search all calendars for the event
     for cal in calendars:
-        event = get_event_by_uid(cal['url'], cal['username'], cal['password'], uid)
-        if event:
-            return {
-                "uid": event.uid,
-                "title": event.summary,
-                "date": event.start.strftime('%Y-%m-%d'),
-                "time": event.start.strftime('%H:%M'),
-                "endTime": event.end.strftime('%H:%M') if event.end else "",
-                "location": event.location or "",
-                "description": event.description or "",
-                "recurrence": rrule_to_human(event.rrule) if event.rrule else ""
-            }
+        # Check if this is a built-in calendar
+        if cal.get('builtin', False) and cal.get('password') == "__USE_SESSION_AUTH__":
+            # Use built-in calendar search
+            from app.services.dav_storage_proxy import DAVStorageProxy
+            from icalendar import Calendar as ICalendar
+            from datetime import datetime, timedelta
+            
+            proxy = DAVStorageProxy(db, current_user.username, 'caldav')
+            if not proxy.use_proxy:
+                continue
+            
+            # Search all calendar directories for the event
+            try:
+                root_items = proxy.list_files("")
+                calendar_dirs = [item.get('name') for item in root_items if item.get('is_directory', False) and not item.get('name', '').startswith('.')]
+                
+                # Search in all calendar directories
+                for cal_dir in calendar_dirs:
+                    try:
+                        items = proxy.list_files(cal_dir)
+                        for item in items:
+                            if item.get('name', '').endswith('.ics'):
+                                filepath = f"{cal_dir}/{item.get('name')}" if cal_dir else item.get('name')
+                                ical_data = proxy.read_file(filepath)
+                                if not ical_data:
+                                    continue
+                                
+                                cal_obj = ICalendar.from_ical(ical_data.encode('utf-8'))
+                                for component in cal_obj.walk():
+                                    if component.name == "VEVENT":
+                                        event_uid = str(component.get('uid', ''))
+                                        if event_uid == uid:
+                                            # Found the event - parse it using the same logic as _get_events_from_calendar_dir
+                                            from datetime import datetime, timedelta, timezone
+                                            from dateutil import parser as date_parser
+                                            
+                                            # Parse event start time
+                                            event_start = component.get('dtstart')
+                                            if event_start:
+                                                event_start = event_start.dt
+                                                if not isinstance(event_start, datetime):
+                                                    event_start = datetime.combine(event_start, datetime.min.time())
+                                                if event_start.tzinfo is None:
+                                                    event_start = event_start.replace(tzinfo=timezone.utc)
+                                                event_start = to_local_aware(event_start)
+                                            
+                                            # Parse event end time
+                                            event_end = None
+                                            end_prop = component.get('dtend')
+                                            if end_prop:
+                                                event_end = end_prop.dt
+                                                if not isinstance(event_end, datetime):
+                                                    event_end = datetime.combine(event_end, datetime.min.time())
+                                                if event_end.tzinfo is None:
+                                                    event_end = event_end.replace(tzinfo=timezone.utc)
+                                                event_end = to_local_aware(event_end)
+                                            
+                                            # Get other fields
+                                            summary = str(component.get('summary', '')) if component.get('summary') else ""
+                                            description = str(component.get('description', '')) if component.get('description') else None
+                                            location = str(component.get('location', '')) if component.get('location') else None
+                                            
+                                            # Get RRULE
+                                            rrule_str = None
+                                            rrule_prop = component.get('rrule')
+                                            if rrule_prop:
+                                                rrule_str = str(rrule_prop)
+                                            
+                                            if event_start:
+                                                return {
+                                                    "uid": event_uid,
+                                                    "title": summary,
+                                                    "date": event_start.strftime('%Y-%m-%d'),
+                                                    "time": event_start.strftime('%H:%M'),
+                                                    "endTime": event_end.strftime('%H:%M') if event_end else "",
+                                                    "location": location or "",
+                                                    "description": description or "",
+                                                    "recurrence": rrule_to_human(rrule_str) if rrule_str else ""
+                                                }
+                                    elif component.name == "VTODO":
+                                        # Also check todos
+                                        event_uid = str(component.get('uid', ''))
+                                        if event_uid == uid:
+                                            # Similar parsing for todos if needed
+                                            pass
+                    except Exception as e:
+                        logger.debug(f"Error searching calendar directory {cal_dir}: {e}")
+                        continue
+                
+                # Also check root for legacy .ics files
+                try:
+                    items = proxy.list_files("")
+                    for item in items:
+                        if item.get('name', '').endswith('.ics') and not item.get('is_directory', False):
+                            filepath = item.get('name')
+                            ical_data = proxy.read_file(filepath)
+                            if not ical_data:
+                                continue
+                            
+                            cal_obj = ICalendar.from_ical(ical_data.encode('utf-8'))
+                            for component in cal_obj.walk():
+                                if component.name == "VEVENT":
+                                    event_uid = str(component.get('uid', ''))
+                                    if event_uid == uid:
+                                        # Found the event - parse it
+                                        from datetime import datetime, timedelta, timezone
+                                        from dateutil import parser as date_parser
+                                        
+                                        # Parse event start time
+                                        event_start = component.get('dtstart')
+                                        if event_start:
+                                            event_start = event_start.dt
+                                            if not isinstance(event_start, datetime):
+                                                event_start = datetime.combine(event_start, datetime.min.time())
+                                            if event_start.tzinfo is None:
+                                                event_start = event_start.replace(tzinfo=timezone.utc)
+                                            event_start = to_local_aware(event_start)
+                                        
+                                        # Parse event end time
+                                        event_end = None
+                                        end_prop = component.get('dtend')
+                                        if end_prop:
+                                            event_end = end_prop.dt
+                                            if not isinstance(event_end, datetime):
+                                                event_end = datetime.combine(event_end, datetime.min.time())
+                                            if event_end.tzinfo is None:
+                                                event_end = event_end.replace(tzinfo=timezone.utc)
+                                            event_end = to_local_aware(event_end)
+                                        
+                                        # Get other fields
+                                        summary = str(component.get('summary', '')) if component.get('summary') else ""
+                                        description = str(component.get('description', '')) if component.get('description') else None
+                                        location = str(component.get('location', '')) if component.get('location') else None
+                                        
+                                        # Get RRULE
+                                        rrule_str = None
+                                        rrule_prop = component.get('rrule')
+                                        if rrule_prop:
+                                            rrule_str = str(rrule_prop)
+                                        
+                                        if event_start:
+                                            return {
+                                                "uid": event_uid,
+                                                "title": summary,
+                                                "date": event_start.strftime('%Y-%m-%d'),
+                                                "time": event_start.strftime('%H:%M'),
+                                                "endTime": event_end.strftime('%H:%M') if event_end else "",
+                                                "location": location or "",
+                                                "description": description or "",
+                                                "recurrence": rrule_to_human(rrule_str) if rrule_str else ""
+                                            }
+                except Exception as e:
+                    logger.debug(f"Error searching root for event: {e}")
+                    continue
+            except Exception as e:
+                logger.error(f"Error searching built-in calendar for event {uid}: {e}")
+                continue
+        else:
+            # External CalDAV server
+            event = get_event_by_uid(cal['url'], cal['username'], cal['password'], uid)
+            if event:
+                return {
+                    "uid": event.uid,
+                    "title": event.summary,
+                    "date": event.start.strftime('%Y-%m-%d'),
+                    "time": event.start.strftime('%H:%M'),
+                    "endTime": event.end.strftime('%H:%M') if event.end else "",
+                    "location": event.location or "",
+                    "description": event.description or "",
+                    "recurrence": rrule_to_human(event.rrule) if event.rrule else ""
+                }
 
     raise HTTPException(status_code=404, detail="Event not found")
 

@@ -471,12 +471,48 @@ def _save_event_to_builtin(user_id: int, db: Session, ical_data: str) -> bool:
         if not event_uid:
             event_uid = str(uuid.uuid4())
         
+        # Determine which calendar directory to save to
+        # ALWAYS prefer "main" calendar directory for iPhone sync compatibility
+        calendar_subpath = None
+        try:
+            root_items = proxy.list_files("")
+            logger.debug(f"[CalDAV] Root items for calendar detection: {len(root_items)} items")
+            calendar_dirs = [item.get('name') for item in root_items if item.get('is_directory', False) and not item.get('name', '').startswith('.')]
+            logger.info(f"[CalDAV] Found calendar directories: {calendar_dirs}")
+            
+            # ALWAYS prefer "main" calendar if it exists (required for iPhone sync)
+            if "main" in calendar_dirs:
+                calendar_subpath = "main"
+                logger.info(f"[CalDAV] ✓ Saving event to 'main' calendar directory (iPhone sync compatible)")
+            elif calendar_dirs:
+                calendar_subpath = calendar_dirs[0]
+                logger.warning(f"[CalDAV] ⚠ 'main' calendar not found, saving to '{calendar_subpath}' (iPhone may not sync!)")
+            else:
+                logger.error(f"[CalDAV] ❌ No calendar directories found! Creating 'main' directory and saving there.")
+                # Try to create main directory by saving a dummy file first
+                # The storage proxy should handle directory creation
+                calendar_subpath = "main"
+        except Exception as e:
+            logger.error(f"[CalDAV] ❌ Error checking calendar directories: {e}", exc_info=True)
+            # Default to "main" even on error - better than root
+            calendar_subpath = "main"
+            logger.warning(f"[CalDAV] Defaulting to 'main' directory despite error")
+        
         # Save to file using proxy
-        filepath = f"{event_uid}.ics"
+        # ALWAYS save to calendar subdirectory (prefer "main")
+        if calendar_subpath:
+            filepath = f"{calendar_subpath}/{event_uid}.ics"
+        else:
+            # Fallback to "main" even if calendar_subpath is None
+            filepath = f"main/{event_uid}.ics"
+            logger.warning(f"[CalDAV] calendar_subpath was None, defaulting to 'main' directory")
+        
         success = proxy.write_file(filepath, ical_data)
         
         if success:
-            logger.info(f"Saved event to built-in storage: {filepath}")
+            logger.info(f"[CalDAV] ✓ Saved event to built-in storage: {filepath} (UID: {event_uid})")
+        else:
+            logger.error(f"[CalDAV] ❌ Failed to save event to built-in storage: {filepath} (UID: {event_uid})")
         return success
     except Exception as e:
         logger.error(f"Error saving event to built-in storage: {e}")
@@ -1321,6 +1357,10 @@ def add_event_to_calendar(
     try:
         logger.info(f"Adding event '{summary}' to calendar at {url}")
         logger.debug(f"Event times: start={start_time}, end={end_time}, rrule={rrule}")
+        if location:
+            logger.info(f"Event location: {location}")
+        else:
+            logger.debug("No location provided for event")
         
         # Check if using built-in server (direct file save)
         if password == "__USE_SESSION_AUTH__" and user_id and db:
@@ -1567,10 +1607,42 @@ def update_event_in_calendar(
             # Use storage proxy (no local fallback)
             proxy = DAVStorageProxy(db, user.username, 'caldav')
             
-            # Read existing event using proxy
-            ical_data = proxy.read_file(f"{event_uid}.ics")
-            if not ical_data:
-                logger.warning(f"Event file not found: {event_uid}.ics")
+            # Search for event in all calendar subdirectories (especially "main")
+            # iPhone syncs from subdirectories, not root
+            event_filepath = None
+            try:
+                # Check "main" first (most common for iPhone)
+                main_data = proxy.read_file(f"main/{event_uid}.ics")
+                if main_data:
+                    event_filepath = f"main/{event_uid}.ics"
+                    ical_data = main_data
+                    logger.info(f"[CalDAV] Found event in 'main' directory: {event_filepath}")
+                else:
+                    # Check root as fallback
+                    root_data = proxy.read_file(f"{event_uid}.ics")
+                    if root_data:
+                        event_filepath = f"{event_uid}.ics"
+                        ical_data = root_data
+                        logger.warning(f"[CalDAV] Found event in root (should be in subdirectory): {event_filepath}")
+                    else:
+                        # Search all subdirectories
+                        root_items = proxy.list_files("")
+                        calendar_dirs = [item.get('name') for item in root_items if item.get('is_directory', False) and not item.get('name', '').startswith('.')]
+                        for cal_dir in calendar_dirs:
+                            if cal_dir == "main":
+                                continue  # Already checked
+                            test_path = f"{cal_dir}/{event_uid}.ics"
+                            test_data = proxy.read_file(test_path)
+                            if test_data:
+                                event_filepath = test_path
+                                ical_data = test_data
+                                logger.info(f"[CalDAV] Found event in '{cal_dir}' directory: {event_filepath}")
+                                break
+            except Exception as e:
+                logger.error(f"[CalDAV] Error searching for event {event_uid}: {e}")
+            
+            if not event_filepath or not ical_data:
+                logger.warning(f"[CalDAV] Event file not found: {event_uid}.ics (searched main, root, and all subdirectories)")
                 return False
             
             cal = ICalendar.from_ical(ical_data.encode('utf-8'))
@@ -1592,7 +1664,15 @@ def update_event_in_calendar(
                         end_utc = end_aware.astimezone(timezone.utc)
                         component['dtend'] = end_utc
                     if location is not None:
-                        component['location'] = location
+                        # Update or add location field
+                        if location.strip():  # Only set if non-empty
+                            component['location'] = location
+                            logger.info(f"[CalDAV] ✓ Updated location to: {location}")
+                        else:
+                            # Remove location if empty string
+                            if 'location' in component:
+                                del component['location']
+                                logger.info(f"[CalDAV] Removed location field")
                     if rrule is not None:
                         if rrule == "":
                             # Remove RRULE
@@ -1615,13 +1695,13 @@ def update_event_in_calendar(
                             except Exception as e:
                                 logger.warning(f"Failed to parse RRULE '{rrule}': {e}")
                     
-                    # Save updated event using proxy
+                    # Save updated event using proxy to the SAME location it was found
                     updated_ical = cal.to_ical().decode('utf-8')
-                    if not proxy.write_file(f"{event_uid}.ics", updated_ical):
-                        logger.error(f"Failed to save updated event {event_uid}")
+                    if not proxy.write_file(event_filepath, updated_ical):
+                        logger.error(f"[CalDAV] Failed to save updated event {event_uid} to {event_filepath}")
                         return False
                     
-                    logger.info(f"Successfully updated event {event_uid} in built-in storage")
+                    logger.info(f"[CalDAV] ✓ Successfully updated event {event_uid} in built-in storage at {event_filepath}")
                     return True
             
             logger.warning(f"Event component not found in file for UID {event_uid}")
@@ -1833,26 +1913,62 @@ def search_contacts(
                     else:
                         adr_objects = [vcard.adr]
                     
+                    logger.debug(f"[CardDAV] Found {len(adr_objects)} ADR object(s) in vCard")
+                    
                     # Use the first ADR object
                     if adr_objects:
                         adr = adr_objects[0].value
+                        logger.info(f"[CardDAV] Reading address from vCard - adr type: {type(adr)}")
+                        # Log available attributes for debugging
+                        if adr:
+                            attrs = [x for x in dir(adr) if not x.startswith('_') and not callable(getattr(adr, x, None))]
+                            logger.debug(f"[CardDAV] Address object attributes: {attrs[:15]}")
                         
                         # Handle vobject.vcard.Address object (what we create when saving)
-                        if hasattr(adr, 'street') or hasattr(adr, 'city'):
+                        # Check if it's an Address object by trying to access common attributes
+                        is_address_object = False
+                        try:
+                            # Try to access address attributes to see if it's an Address object
+                            if hasattr(adr, 'street') or hasattr(adr, 'city') or hasattr(adr, 'region') or hasattr(adr, 'code') or hasattr(adr, 'country'):
+                                is_address_object = True
+                        except:
+                            pass
+                        
+                        if is_address_object:
                             # It's a vobject.vcard.Address object
                             address_parts = []
-                            if hasattr(adr, 'street') and adr.street:
-                                address_parts.append(str(adr.street))
-                            if hasattr(adr, 'city') and adr.city:
-                                address_parts.append(str(adr.city))
-                            if hasattr(adr, 'region') and adr.region:
-                                address_parts.append(str(adr.region))
-                            if hasattr(adr, 'code') and adr.code:
-                                address_parts.append(str(adr.code))
-                            if hasattr(adr, 'country') and adr.country:
-                                address_parts.append(str(adr.country))
+                            # Check all possible address fields - use getattr with default None to avoid AttributeError
+                            street_val = getattr(adr, 'street', None)
+                            city_val = getattr(adr, 'city', None)
+                            region_val = getattr(adr, 'region', None)
+                            code_val = getattr(adr, 'code', None)
+                            country_val = getattr(adr, 'country', None)
+                            
+                            # Filter out None and empty strings
+                            if street_val:
+                                address_parts.append(str(street_val).strip())
+                            if city_val:
+                                address_parts.append(str(city_val).strip())
+                            if region_val:
+                                address_parts.append(str(region_val).strip())
+                            if code_val:
+                                address_parts.append(str(code_val).strip())
+                            if country_val:
+                                address_parts.append(str(country_val).strip())
+                            
                             if address_parts:
                                 address = ', '.join(address_parts)
+                                logger.info(f"[CardDAV] ✓ Parsed address from Address object: {address}")
+                            else:
+                                logger.warning(f"[CardDAV] ⚠ Address object found but all fields are empty or None")
+                                # Try to get string representation as fallback
+                                try:
+                                    address_str = str(adr).strip()
+                                    if address_str and address_str != 'None':
+                                        address = address_str
+                                        logger.info(f"[CardDAV] Using string representation of Address object: {address}")
+                                except Exception as e:
+                                    logger.debug(f"[CardDAV] Could not get string representation: {e}")
                         elif isinstance(adr, list) and len(adr) >= 4:
                             # ADR format: [post_office_box, extended, street, city, state, postal_code, country]
                             address_parts = []
@@ -1868,6 +1984,19 @@ def search_contacts(
                                 address_parts.append(str(adr[6]))
                             if address_parts:
                                 address = ', '.join(address_parts)
+                                logger.info(f"[CardDAV] ✓ Parsed address from list format: {address}")
+                        else:
+                            logger.warning(f"[CardDAV] ⚠ ADR value is neither Address object nor list: {type(adr)}")
+                            # Try string representation as last resort
+                            try:
+                                address_str = str(adr).strip()
+                                if address_str and address_str != 'None':
+                                    address = address_str
+                                    logger.info(f"[CardDAV] Using string representation of ADR value: {address}")
+                            except:
+                                pass
+                else:
+                    logger.debug(f"[CardDAV] No ADR field found in vCard")
 
                 note = None
                 if hasattr(vcard, 'note'):

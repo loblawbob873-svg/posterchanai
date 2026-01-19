@@ -33,33 +33,60 @@ def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> t
         ...     user = db.query(User).filter(User.id == user_id).first()
     """
     try:
-        # Query API key - use explicit filter conditions to avoid SQLite parameter binding issues
-        # SQLite can have issues with parameterized LIMIT/OFFSET, so we use a simple query
-        result = db.query(APIKey).filter(
-            APIKey.key == token,
-            APIKey.is_active == True
-        ).all()
+        # Query API key using direct SQL to avoid SQLite parameter binding issues
+        # SQLite can have issues with ORM parameter binding, so use direct SQL
+        from sqlalchemy import text
+        
+        # Use direct SQL query with named parameters
+        query = text("""
+            SELECT id, user_id, key, name, created_at, last_used_at, is_active
+            FROM api_keys
+            WHERE key = :token AND is_active = 1
+            LIMIT 1
+        """)
+        
+        result = db.execute(query, {"token": token}).fetchone()
         
         if result:
-            api_key = result[0]  # Get first result manually to avoid .first() parameter issues
-            # CRITICAL: Eagerly fetch user_id while session is valid
-            user_id = api_key.user_id
+            # Create APIKey object from result row
+            api_key = APIKey(
+                id=result[0],
+                user_id=result[1],
+                key=result[2],
+                name=result[3],
+                created_at=result[4],
+                last_used_at=result[5],
+                is_active=result[6]
+            )
+            user_id = result[1]  # Eagerly fetch user_id
             return api_key, user_id
         return None, None
-    except (IndexError, Exception) as e:
-        # Handle SQLite session errors including tuple index out of range and parameter binding issues
+    except Exception as e:
+        # Handle SQLite session errors including parameter binding issues
         logger.warning(f"Error querying API key: {e}")
         if max_retries > 0:
             try:
                 db.rollback()
-                # Retry once with a fresh query - use .all() and manual indexing to avoid parameter issues
-                result = db.query(APIKey).filter(
-                    APIKey.key == token,
-                    APIKey.is_active == True
-                ).all()
+                # Retry once with direct SQL
+                from sqlalchemy import text
+                query = text("""
+                    SELECT id, user_id, key, name, created_at, last_used_at, is_active
+                    FROM api_keys
+                    WHERE key = :token AND is_active = 1
+                    LIMIT 1
+                """)
+                result = db.execute(query, {"token": token}).fetchone()
                 if result:
-                    api_key = result[0]
-                    user_id = api_key.user_id
+                    api_key = APIKey(
+                        id=result[0],
+                        user_id=result[1],
+                        key=result[2],
+                        name=result[3],
+                        created_at=result[4],
+                        last_used_at=result[5],
+                        is_active=result[6]
+                    )
+                    user_id = result[1]
                     return api_key, user_id
                 return None, None
             except Exception as retry_error:

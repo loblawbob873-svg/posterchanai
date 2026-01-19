@@ -333,7 +333,7 @@ async def get_all_images(
                                         except (ValueError, TypeError):
                                             img['modified'] = 0.0
                                         
-                                        # If modification time is very recent (within last 7 days) but filename suggests older date,
+                                        # If filename suggests a much older date than modification time,
                                         # try to extract date from filename and use that instead
                                         mtime = img['modified']
                                         if mtime > 0:
@@ -342,7 +342,7 @@ async def get_all_images(
                                             # Try to extract date from filename
                                             filename = img.get('name', '') or img.get('path', '')
                                             match = re.search(r'(\d{4})(\d{2})(\d{2})(?:[_-](\d{2})(\d{2})(\d{2}))?', filename)
-                                            if match and mtime_age_days < 7:
+                                            if match:
                                                 year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
                                                 hour, minute, second = 0, 0, 0
                                                 if match.group(4):  # Has time component
@@ -353,10 +353,14 @@ async def get_all_images(
                                                     filename_age_days = (current_time - filename_timestamp) / 86400
                                                     
                                                     # If filename date is significantly older (more than 30 days older than mtime),
-                                                    # use filename date instead
-                                                    if filename_age_days > (mtime_age_days + 30):
+                                                    # OR if mtime is very recent but filename suggests old date,
+                                                    # use filename date instead. This catches files copied at any time.
+                                                    mtime_is_recent = mtime_age_days < 7  # Modified within last week
+                                                    filename_is_old = filename_age_days > 30  # Filename suggests date older than 30 days
+                                                    
+                                                    if filename_age_days > (mtime_age_days + 30) or (mtime_is_recent and filename_is_old):
                                                         img['modified'] = filename_timestamp
-                                                        logger.debug(f"[FILES] Proxy: Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(mtime)})")
+                                                        logger.info(f"[FILES] Proxy: Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(mtime)}, mtime_age={mtime_age_days:.1f}d, filename_age={filename_age_days:.1f}d)")
                                                 except (ValueError, OverflowError):
                                                     pass  # Invalid date, use mtime
                                 
@@ -582,18 +586,23 @@ async def get_all_images(
                             filename_date = datetime(year, month, day, hour, minute, second)
                             filename_timestamp = filename_date.timestamp()
                             
-                            # If filename date is significantly older than modification time (more than 30 days),
-                            # and modification time is very recent (within last 7 days), use filename date instead
-                            # This handles cases where files were recently copied but have old photo dates
+                            # If filename date is significantly older than modification time (more than 30 days difference),
+                            # use filename date instead. This handles cases where files were copied but have old photo dates.
                             current_time = time.time()
                             mtime_age_days = (current_time - modified_time) / 86400
                             filename_age_days = (current_time - filename_timestamp) / 86400
                             
-                            if mtime_age_days < 7 and filename_age_days > 30:
-                                # File was recently modified but filename suggests much older date
+                            # Use filename date if it's significantly older than modification time (30+ days difference)
+                            # OR if modification time is very recent (within last 7 days) but filename suggests older date
+                            # This catches files that were copied at any time but have old photo dates
+                            mtime_is_recent = mtime_age_days < 7  # Modified within last week
+                            filename_is_old = filename_age_days > 30  # Filename suggests date older than 30 days
+                            
+                            if filename_age_days > (mtime_age_days + 30) or (mtime_is_recent and filename_is_old):
+                                # Filename suggests much older date than modification time
                                 # Use filename date for sorting
                                 modified_time = filename_timestamp
-                                logger.debug(f"[FILES] Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(stat.st_mtime)})")
+                                logger.info(f"[FILES] Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(stat.st_mtime)}, mtime_age={mtime_age_days:.1f}d, filename_age={filename_age_days:.1f}d)")
                         except (ValueError, OverflowError):
                             pass  # Invalid date, use mtime
                     

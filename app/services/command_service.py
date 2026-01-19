@@ -2000,11 +2000,12 @@ Example: `yt https://youtube.com/watch?v=...`""",
 - description: any details mentioned
 - start_time: ISO format datetime WITHOUT timezone suffix
 - end_time: ISO format datetime WITHOUT timezone suffix
-- location: place if mentioned
+- location: place/address if mentioned (look for "at <location>", "in <location>", or location after time)
 - rrule: iCalendar RRULE string if event repeats, null if not repeating
 
 IMPORTANT: Today is {today.strftime("%A, %B %d, %Y")}. Use the current year {today.year} for dates.
 Times are in local timezone ({local_tz}). Do NOT add Z suffix to times.
+If location is mentioned (e.g., "at 123 Main St" or "in New York"), extract it to the location field.
 Return ONLY valid JSON, no other text.""",
                     },
                     {"role": "user", "content": f"Parse this event: {param}"},
@@ -2031,6 +2032,11 @@ Return ONLY valid JSON, no other text.""",
                     end_str = event_data.get("end_time", "").replace("Z", "")
                     location = event_data.get("location")
                     rrule = event_data.get("rrule")
+                    
+                    # Log parsed data for debugging
+                    logger.info(f"[Cal] Parsed event: summary={summary}, location={location}, description={description[:50] if description else 'None'}")
+                    if not location:
+                        logger.warning(f"[Cal] No location extracted from: {param}")
 
                     start_time = date_parser.parse(start_str) if start_str else datetime.now() + timedelta(hours=1)
                     end_time = date_parser.parse(end_str) if end_str else start_time + timedelta(hours=1)
@@ -2116,6 +2122,28 @@ Return ONLY valid JSON, no other text.""",
                             db=self.db
                         ):
                             return {"type": "text", "content": f"✅ Updated title to: **{new_title}**"}
+
+                elif change_lower.startswith("location "):
+                    new_location = change_request[9:].strip()
+                    for cal in calendars:
+                        if update_event_in_calendar(
+                            cal["url"], cal["username"], cal["password"], event_uid, 
+                            location=new_location,
+                            user_id=self.user.id,
+                            db=self.db
+                        ):
+                            return {"type": "text", "content": f"✅ Updated location to: **{new_location}**"}
+
+                elif change_lower.startswith("description "):
+                    new_description = change_request[12:].strip()
+                    for cal in calendars:
+                        if update_event_in_calendar(
+                            cal["url"], cal["username"], cal["password"], event_uid, 
+                            description=new_description,
+                            user_id=self.user.id,
+                            db=self.db
+                        ):
+                            return {"type": "text", "content": f"✅ Updated description to: **{new_description}**"}
 
                 elif change_lower.startswith("time ") or change_lower.startswith("move "):
                     # AI-based time parsing for edit (abbreviated for size)
