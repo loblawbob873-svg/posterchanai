@@ -191,15 +191,41 @@ class FileManager {
         const clearSearchBtn = document.getElementById('fileManagerClearSearchBtn');
         
         if (searchInput) {
+            let searchTimeout = null;
             searchInput.addEventListener('input', (e) => {
-                this.searchQuery = e.target.value.trim().toLowerCase();
-                this.filterFiles();
+                const query = e.target.value.trim();
+                this.searchQuery = query.toLowerCase();
                 clearSearchBtn.style.display = this.searchQuery ? 'block' : 'none';
+                
+                // Clear previous timeout
+                if (searchTimeout) {
+                    clearTimeout(searchTimeout);
+                }
+                
+                // If query is empty, clear search and show current directory
+                if (!query) {
+                    this.clearSearch();
+                    return;
+                }
+                
+                // Debounce search API call (wait 300ms after user stops typing)
+                searchTimeout = setTimeout(() => {
+                    this.performSearch(query);
+                }, 300);
             });
             
             searchInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
                     this.clearSearch();
+                } else if (e.key === 'Enter') {
+                    // Perform search immediately on Enter
+                    if (searchTimeout) {
+                        clearTimeout(searchTimeout);
+                    }
+                    const query = e.target.value.trim();
+                    if (query) {
+                        this.performSearch(query);
+                    }
                 }
             });
         }
@@ -603,6 +629,38 @@ class FileManager {
         `;
     }
     
+    async performSearch(query) {
+        if (!query || !query.trim()) {
+            this.clearSearch();
+            return;
+        }
+        
+        const grid = document.getElementById('fileManagerGrid');
+        if (grid) {
+            grid.innerHTML = '<div class="file-manager-loading">Searching...</div>';
+        }
+        
+        try {
+            const response = await fetch(`/api/files/search?query=${encodeURIComponent(query)}`);
+            if (response.ok) {
+                const data = await response.json();
+                // Backend returns {query, results, count} or just results array
+                this.filteredFiles = Array.isArray(data) ? data : (data.results || []);
+                this.renderFiles();
+            } else {
+                const error = await response.json();
+                if (grid) {
+                    grid.innerHTML = `<div class="file-manager-error">Error: ${this.escapeHtml(error.detail || 'Search failed')}</div>`;
+                }
+            }
+        } catch (error) {
+            console.error('Error performing search:', error);
+            if (grid) {
+                grid.innerHTML = `<div class="file-manager-error">Error performing search</div>`;
+            }
+        }
+    }
+    
     filterFiles() {
         if (!this.searchQuery) {
             this.filteredFiles = [...this.currentFiles]; // Copy array
@@ -623,7 +681,12 @@ class FileManager {
         if (searchInput) {
             searchInput.value = '';
             this.searchQuery = '';
-            this.filterFiles();
+            // Reload current directory when clearing search
+            if (this.currentTab === 'files') {
+                this.loadFiles(this.currentPath);
+            } else {
+                this.filterFiles();
+            }
         }
         if (clearSearchBtn) {
             clearSearchBtn.style.display = 'none';
@@ -634,6 +697,16 @@ class FileManager {
         const filesToRender = this.searchQuery ? this.filteredFiles : this.currentFiles;
         const grid = document.getElementById('fileManagerGrid');
         if (!grid) return;
+        
+        // Update breadcrumb to show search mode
+        if (this.searchQuery) {
+            const breadcrumb = document.getElementById('fileManagerBreadcrumb');
+            if (breadcrumb) {
+                breadcrumb.innerHTML = `<button class="breadcrumb-item" data-path="" onclick="fileManager.clearSearch(); fileManager.loadFiles('');">Home</button> <span class="breadcrumb-separator">/</span> <span class="breadcrumb-item">Search: "${this.escapeHtml(this.searchQuery)}"</span>`;
+            }
+        } else {
+            this.updateBreadcrumb(this.currentPath);
+        }
         
         if (filesToRender.length === 0) {
             const message = this.searchQuery 
