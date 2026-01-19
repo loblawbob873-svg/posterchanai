@@ -936,6 +936,7 @@ function initContactsModal() {
         const phone = document.getElementById('contactPhone').value.trim();
         const email = document.getElementById('contactEmail').value.trim();
         const organization = document.getElementById('contactOrganization').value.trim();
+        const address = document.getElementById('contactAddress').value.trim();
         const note = document.getElementById('contactNote').value.trim();
         const uid = document.getElementById('contactUid').value;
 
@@ -967,6 +968,7 @@ function initContactsModal() {
             const origPhone = contactsModal.dataset.origPhone || '';
             const origEmail = contactsModal.dataset.origEmail || '';
             const origOrganization = contactsModal.dataset.origOrganization || '';
+            const origAddress = contactsModal.dataset.origAddress || '';
             const origNote = contactsModal.dataset.origNote || '';
 
             // Only include fields that changed
@@ -974,6 +976,7 @@ function initContactsModal() {
             if (phone !== origPhone) updates.phone = phone;
             if (email !== origEmail) updates.email = email;
             if (organization !== origOrganization) updates.organization = organization;
+            if (address !== origAddress) updates.address = address;
             if (note !== origNote) updates.note = note;
 
             if (Object.keys(updates).length === 0) {
@@ -1031,6 +1034,7 @@ function initContactsModal() {
         document.getElementById('contactPhone').value = '';
         document.getElementById('contactEmail').value = '';
         document.getElementById('contactOrganization').value = '';
+        document.getElementById('contactAddress').value = '';
         document.getElementById('contactNote').value = '';
         document.getElementById('contactUid').value = '';
         document.getElementById('contactsModalTitle').textContent = 'Add Contact';
@@ -1039,6 +1043,7 @@ function initContactsModal() {
         contactsModal.dataset.origPhone = '';
         contactsModal.dataset.origEmail = '';
         contactsModal.dataset.origOrganization = '';
+        contactsModal.dataset.origAddress = '';
         contactsModal.dataset.origNote = '';
     }
 
@@ -1055,6 +1060,7 @@ function initContactsModal() {
                     document.getElementById('contactPhone').value = contact.phone || '';
                     document.getElementById('contactEmail').value = contact.email || '';
                     document.getElementById('contactOrganization').value = contact.organization || '';
+                    document.getElementById('contactAddress').value = contact.address || '';
                     document.getElementById('contactNote').value = contact.note || '';
                     document.getElementById('contactUid').value = contact.uid;
                     // Store original values for change detection
@@ -1062,6 +1068,7 @@ function initContactsModal() {
                     contactsModal.dataset.origPhone = contact.phone || '';
                     contactsModal.dataset.origEmail = contact.email || '';
                     contactsModal.dataset.origOrganization = contact.organization || '';
+                    contactsModal.dataset.origAddress = contact.address || '';
                     contactsModal.dataset.origNote = contact.note || '';
                 } else {
                     alert('Failed to load contact');

@@ -73,6 +73,7 @@ async def get_contact(
         "email": contact.emails[0] if contact.emails else "",
         "emails": contact.emails,
         "organization": contact.organization,
+        "address": contact.address,
         "note": contact.note,
     }
 
@@ -89,7 +90,7 @@ async def update_contact(
         body = await request.json()
         logger.info(f"Update contact request: uid={uid}, body={body}")
         
-        allowed_fields = {"name", "phone", "email", "organization", "note"}
+        allowed_fields = {"name", "phone", "email", "organization", "address", "note"}
         updates_dict = {k: v for k, v in body.items() if k in allowed_fields and v is not None}
         
         if not updates_dict:

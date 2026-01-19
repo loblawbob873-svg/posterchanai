@@ -57,6 +57,7 @@ class Contact:
     emails: List[str]  # Multiple email addresses
     phone: Optional[str]
     organization: Optional[str]
+    address: Optional[str]  # Street address
     note: Optional[str]
 
     @property
@@ -369,6 +370,40 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
             else:
                 vcard.add('org')
                 vcard.org.value = [updates['organization']]
+        
+        if 'address' in updates:
+            # ADR format: [post_office_box, extended, street, city, state, postal_code, country]
+            # For simplicity, we'll store the address as a single string and parse it
+            address_str = updates['address'].strip()
+            if address_str:
+                # Try to parse address components (simple: assume "street, city, state zip, country")
+                address_parts = address_str.split(',')
+                if len(address_parts) >= 2:
+                    street = address_parts[0].strip()
+                    city = address_parts[1].strip() if len(address_parts) > 1 else ''
+                    state = address_parts[2].strip() if len(address_parts) > 2 else ''
+                    postal = address_parts[3].strip() if len(address_parts) > 3 else ''
+                    country = address_parts[4].strip() if len(address_parts) > 4 else ''
+                    # If state contains zip, split it
+                    if state and ' ' in state:
+                        state_parts = state.rsplit(' ', 1)
+                        state = state_parts[0]
+                        postal = state_parts[1] if len(state_parts) > 1 else postal
+                else:
+                    # Single line address - put it in street field
+                    street = address_str
+                    city = state = postal = country = ''
+                
+                adr_value = ['', '', street, city, state, postal, country]
+                if hasattr(vcard, 'adr'):
+                    vcard.adr.value = adr_value
+                else:
+                    vcard.add('adr')
+                    vcard.adr.value = adr_value
+                    vcard.adr.type_param = 'HOME'
+            elif hasattr(vcard, 'adr'):
+                # Remove address if empty
+                del vcard.adr
         
         if 'note' in updates:
             if hasattr(vcard, 'note'):
@@ -1446,6 +1481,26 @@ def search_contacts(
                 if hasattr(vcard, 'org'):
                     org = str(vcard.org.value[0]) if vcard.org.value else None
 
+                # Extract address from ADR field (vCard format: ;;;street;city;state;postal;country)
+                address = None
+                if hasattr(vcard, 'adr'):
+                    adr = vcard.adr.value
+                    if isinstance(adr, list) and len(adr) >= 4:
+                        # ADR format: [post_office_box, extended, street, city, state, postal_code, country]
+                        address_parts = []
+                        if len(adr) > 2 and adr[2]:  # street
+                            address_parts.append(str(adr[2]))
+                        if len(adr) > 3 and adr[3]:  # city
+                            address_parts.append(str(adr[3]))
+                        if len(adr) > 4 and adr[4]:  # state
+                            address_parts.append(str(adr[4]))
+                        if len(adr) > 5 and adr[5]:  # postal_code
+                            address_parts.append(str(adr[5]))
+                        if len(adr) > 6 and adr[6]:  # country
+                            address_parts.append(str(adr[6]))
+                        if address_parts:
+                            address = ', '.join(address_parts)
+
                 note = None
                 if hasattr(vcard, 'note'):
                     note = str(vcard.note.value)
@@ -1467,7 +1522,7 @@ def search_contacts(
 
                 # Check if query matches (empty query matches all)
                 emails_str = ' '.join(emails)
-                searchable = f"{name} {emails_str} {phone or ''} {org or ''} {note or ''}".lower()
+                searchable = f"{name} {emails_str} {phone or ''} {org or ''} {address or ''} {note or ''}".lower()
                 if not query_lower or query_lower in searchable:
                     contacts.append(Contact(
                         uid=str(vcard.uid.value) if hasattr(vcard, 'uid') else "",
@@ -1475,6 +1530,7 @@ def search_contacts(
                         emails=emails,
                         phone=phone,
                         organization=org,
+                        address=address,
                         note=note
                     ))
 
@@ -1577,13 +1633,32 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
                         if hasattr(vcard, 'org'):
                             org = str(vcard.org.value[0]) if vcard.org.value else None
                         
+                        # Extract address from ADR field
+                        address = None
+                        if hasattr(vcard, 'adr'):
+                            adr = vcard.adr.value
+                            if isinstance(adr, list) and len(adr) >= 4:
+                                address_parts = []
+                                if len(adr) > 2 and adr[2]:  # street
+                                    address_parts.append(str(adr[2]))
+                                if len(adr) > 3 and adr[3]:  # city
+                                    address_parts.append(str(adr[3]))
+                                if len(adr) > 4 and adr[4]:  # state
+                                    address_parts.append(str(adr[4]))
+                                if len(adr) > 5 and adr[5]:  # postal_code
+                                    address_parts.append(str(adr[5]))
+                                if len(adr) > 6 and adr[6]:  # country
+                                    address_parts.append(str(adr[6]))
+                                if address_parts:
+                                    address = ', '.join(address_parts)
+                        
                         note = None
                         if hasattr(vcard, 'note'):
                             note = str(vcard.note.value)
                         
                         # Check if query matches (empty query matches all)
                         emails_str = ' '.join(emails)
-                        searchable = f"{contact_name} {emails_str} {phone or ''} {org or ''} {note or ''}".lower()
+                        searchable = f"{contact_name} {emails_str} {phone or ''} {org or ''} {address or ''} {note or ''}".lower()
                         if not query_lower or query_lower in searchable:
                             contacts.append(Contact(
                                 uid=str(vcard.uid.value) if hasattr(vcard, 'uid') else name.replace('.vcf', ''),
@@ -1591,6 +1666,7 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
                                 emails=emails,
                                 phone=phone,
                                 organization=org,
+                                address=address,
                                 note=note
                             ))
                     except Exception as e:
@@ -1634,26 +1710,46 @@ def get_user_contacts(user_id: int, query: str, db: Session = None) -> List[Cont
                     if hasattr(vcard, 'tel'):
                         phone = str(vcard.tel.value)
                     
-                    org = None
-                    if hasattr(vcard, 'org'):
-                        org = str(vcard.org.value[0]) if vcard.org.value else None
-                    
-                    note = None
-                    if hasattr(vcard, 'note'):
-                        note = str(vcard.note.value)
-                    
-                    # Check if query matches (empty query matches all)
-                    emails_str = ' '.join(emails)
-                    searchable = f"{contact_name} {emails_str} {phone or ''} {org or ''} {note or ''}".lower()
-                    if not query_lower or query_lower in searchable:
-                        contacts.append(Contact(
-                            uid=str(vcard.uid.value) if hasattr(vcard, 'uid') else name.replace('.vcf', ''),
-                            name=contact_name,
-                            emails=emails,
-                            phone=phone,
-                            organization=org,
-                            note=note
-                        ))
+                        org = None
+                        if hasattr(vcard, 'org'):
+                            org = str(vcard.org.value[0]) if vcard.org.value else None
+                        
+                        # Extract address from ADR field
+                        address = None
+                        if hasattr(vcard, 'adr'):
+                            adr = vcard.adr.value
+                            if isinstance(adr, list) and len(adr) >= 4:
+                                address_parts = []
+                                if len(adr) > 2 and adr[2]:  # street
+                                    address_parts.append(str(adr[2]))
+                                if len(adr) > 3 and adr[3]:  # city
+                                    address_parts.append(str(adr[3]))
+                                if len(adr) > 4 and adr[4]:  # state
+                                    address_parts.append(str(adr[4]))
+                                if len(adr) > 5 and adr[5]:  # postal_code
+                                    address_parts.append(str(adr[5]))
+                                if len(adr) > 6 and adr[6]:  # country
+                                    address_parts.append(str(adr[6]))
+                                if address_parts:
+                                    address = ', '.join(address_parts)
+                        
+                        note = None
+                        if hasattr(vcard, 'note'):
+                            note = str(vcard.note.value)
+                        
+                        # Check if query matches (empty query matches all)
+                        emails_str = ' '.join(emails)
+                        searchable = f"{contact_name} {emails_str} {phone or ''} {org or ''} {address or ''} {note or ''}".lower()
+                        if not query_lower or query_lower in searchable:
+                            contacts.append(Contact(
+                                uid=str(vcard.uid.value) if hasattr(vcard, 'uid') else name.replace('.vcf', ''),
+                                name=contact_name,
+                                emails=emails,
+                                phone=phone,
+                                organization=org,
+                                address=address,
+                                note=note
+                            ))
                 except Exception as e:
                     logger.debug(f"Error parsing vCard {name}: {e}")
                     continue
@@ -1983,15 +2079,45 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                             vcard.email.type_param = 'INTERNET'
 
                     if 'organization' in updates:
-                        if updates['organization']:
+                        if updates.get('organization'):
                             if not hasattr(vcard, 'org'):
                                 vcard.add('org')
                             vcard.org.value = [updates['organization']]
                         elif hasattr(vcard, 'org'):
                             del vcard.org
 
+                    if 'address' in updates:
+                        address_str = updates.get('address', '').strip()
+                        if address_str:
+                            # Parse address into ADR format: [post_office_box, extended, street, city, state, postal_code, country]
+                            address_parts = address_str.split(',')
+                            if len(address_parts) >= 2:
+                                street = address_parts[0].strip()
+                                city = address_parts[1].strip() if len(address_parts) > 1 else ''
+                                state = address_parts[2].strip() if len(address_parts) > 2 else ''
+                                postal = address_parts[3].strip() if len(address_parts) > 3 else ''
+                                country = address_parts[4].strip() if len(address_parts) > 4 else ''
+                                # If state contains zip, split it
+                                if state and ' ' in state:
+                                    state_parts = state.rsplit(' ', 1)
+                                    state = state_parts[0]
+                                    postal = state_parts[1] if len(state_parts) > 1 else postal
+                            else:
+                                street = address_str
+                                city = state = postal = country = ''
+                            
+                            adr_value = ['', '', street, city, state, postal, country]
+                            if hasattr(vcard, 'adr'):
+                                vcard.adr.value = adr_value
+                            else:
+                                vcard.add('adr')
+                                vcard.adr.value = adr_value
+                                vcard.adr.type_param = 'HOME'
+                        elif hasattr(vcard, 'adr'):
+                            del vcard.adr
+
                     if 'note' in updates:
-                        if updates['note']:
+                        if updates.get('note'):
                             if not hasattr(vcard, 'note'):
                                 vcard.add('note')
                             vcard.note.value = updates['note']
@@ -2151,6 +2277,25 @@ def get_contact_by_uid(url: str, username: str, password: str, contact_uid: str)
                     if hasattr(vcard, 'org'):
                         org = str(vcard.org.value[0]) if vcard.org.value else None
 
+                    # Extract address from ADR field
+                    address = None
+                    if hasattr(vcard, 'adr'):
+                        adr = vcard.adr.value
+                        if isinstance(adr, list) and len(adr) >= 4:
+                            address_parts = []
+                            if len(adr) > 2 and adr[2]:  # street
+                                address_parts.append(str(adr[2]))
+                            if len(adr) > 3 and adr[3]:  # city
+                                address_parts.append(str(adr[3]))
+                            if len(adr) > 4 and adr[4]:  # state
+                                address_parts.append(str(adr[4]))
+                            if len(adr) > 5 and adr[5]:  # postal_code
+                                address_parts.append(str(adr[5]))
+                            if len(adr) > 6 and adr[6]:  # country
+                                address_parts.append(str(adr[6]))
+                            if address_parts:
+                                address = ', '.join(address_parts)
+
                     note = None
                     if hasattr(vcard, 'note'):
                         note = str(vcard.note.value)
@@ -2161,6 +2306,7 @@ def get_contact_by_uid(url: str, username: str, password: str, contact_uid: str)
                         emails=emails,
                         phone=phone,
                         organization=org,
+                        address=address,
                         note=note
                     )
 
@@ -2247,6 +2393,25 @@ def get_user_contact_by_uid(user_id: int, db: Session, contact_uid: str) -> Opti
                         if hasattr(vcard, 'org'):
                             org = str(vcard.org.value[0]) if vcard.org.value else None
                         
+                        # Extract address from ADR field
+                        address = None
+                        if hasattr(vcard, 'adr'):
+                            adr = vcard.adr.value
+                            if isinstance(adr, list) and len(adr) >= 4:
+                                address_parts = []
+                                if len(adr) > 2 and adr[2]:  # street
+                                    address_parts.append(str(adr[2]))
+                                if len(adr) > 3 and adr[3]:  # city
+                                    address_parts.append(str(adr[3]))
+                                if len(adr) > 4 and adr[4]:  # state
+                                    address_parts.append(str(adr[4]))
+                                if len(adr) > 5 and adr[5]:  # postal_code
+                                    address_parts.append(str(adr[5]))
+                                if len(adr) > 6 and adr[6]:  # country
+                                    address_parts.append(str(adr[6]))
+                                if address_parts:
+                                    address = ', '.join(address_parts)
+                        
                         note = None
                         if hasattr(vcard, 'note'):
                             note = str(vcard.note.value)
@@ -2257,6 +2422,7 @@ def get_user_contact_by_uid(user_id: int, db: Session, contact_uid: str) -> Opti
                             emails=emails,
                             phone=phone,
                             organization=org,
+                            address=address,
                             note=note
                         )
                 except Exception as e:
