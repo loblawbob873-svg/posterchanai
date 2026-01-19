@@ -23,30 +23,21 @@
                     </div>
                 </div>
                 <div class="file-manager-content">
-                <div class="file-manager-toolbar">
-                    <div class="file-manager-tabs">
+                <div class="file-manager-toolbar" style="display: flex; flex-direction: row; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); background: var(--bg-secondary);">
+                    <div class="file-manager-tabs" style="display: flex; gap: 4px; flex-shrink: 0;">
                         <button class="tab-btn active" id="fileManagerFilesTab" data-tab="files">📁 Files</button>
-                        <button class="tab-btn" id="fileManagerSharesTab" data-tab="shares">🔗 Shared Files</button>
+                        <button class="tab-btn" id="fileManagerSharesTab" data-tab="shares">🔗 Shares</button>
                     </div>
-                    <div class="file-selection-controls" id="fileSelectionControls">
+                    <div class="file-selection-controls" id="fileSelectionControls" style="display: flex; align-items: center; gap: 4px; padding: 4px 8px; background: var(--bg-primary); border-radius: 4px; border: 1px solid var(--border-color); flex-shrink: 0;">
                         <button class="btn-icon-only" id="fileManagerSelectAllBtn" title="Select All">✓</button>
                         <button class="btn-icon-only" id="fileManagerSelectNoneBtn" title="Select None">✗</button>
                         <button class="btn-icon-only btn-danger-icon" id="fileManagerDeleteBtn" title="Delete selected">🗑️</button>
                         <button class="btn-icon-only" id="fileManagerMoveBtn" title="Move selected">📦</button>
                         <span class="selection-count" id="fileSelectionCount">0</span>
                     </div>
-                    <div class="file-toolbar-search-actions">
-                        <div class="file-manager-search">
-                            <input type="text" id="fileManagerSearchInput" class="file-search-input" placeholder="🔍 Search files..." autocomplete="off">
-                            <button class="btn-icon" id="fileManagerClearSearchBtn" title="Clear search" style="display: none;">✕</button>
-                        </div>
-                        <div class="file-toolbar-actions">
-                            <button class="btn-icon" id="fileManagerRefreshBtn" title="Refresh">🔄</button>
-                            <div class="file-view-toggle" id="fileViewToggle" style="display: none;">
-                                <button class="view-btn active" data-view="grid" title="Grid View">⊞</button>
-                                <button class="view-btn" data-view="list" title="List View">☰</button>
-                            </div>
-                        </div>
+                    <div class="file-toolbar-search-actions" style="display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0;">
+                        <input type="text" id="fileManagerSearchInput" class="file-search-input" placeholder="🔍 Search..." autocomplete="off" style="width: 150px; padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
+                        <button class="btn-icon" id="fileManagerRefreshBtn" title="Refresh" style="padding: 6px 10px; min-width: 36px;">🔄</button>
                     </div>
                 </div>
                 <!-- Mobile Upload Area -->

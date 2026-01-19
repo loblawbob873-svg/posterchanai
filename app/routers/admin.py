@@ -541,6 +541,50 @@ async def rescan_storage(
     from app.services.storage_service import get_storage_service
     from app.routers.files import get_file_cache
     from app.services.thumbnail_service import generate_thumbnails_for_user
+    from app.models import Setting
+    
+    # Check if storage server is configured - proxy the scan request if so
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            logger.info(f"[ADMIN] Proxying storage rescan to storage server: {url}")
+            try:
+                import httpx
+                storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+                
+                headers = {}
+                if storage_server_token and storage_server_token.value:
+                    headers["Authorization"] = f"Bearer {storage_server_token.value}"
+                
+                # Proxy to storage server with long timeout for large scans
+                async with httpx.AsyncClient(timeout=600.0) as client:  # 10 minutes
+                    params = {}
+                    if user_id:
+                        params["user_id"] = user_id
+                    
+                    response = await client.post(
+                        f"{url}/api/admin/storage/rescan",
+                        params=params,
+                        headers=headers
+                    )
+                    
+                    if response.status_code == 200:
+                        return response.json()
+                    else:
+                        logger.error(f"[ADMIN] Storage server rescan failed: {response.status_code} - {response.text[:500]}")
+                        raise HTTPException(status_code=response.status_code, detail=f"Storage server error: {response.text[:200]}")
+            except httpx.TimeoutException:
+                logger.error(f"[ADMIN] Timeout proxying rescan to storage server")
+                raise HTTPException(status_code=504, detail="Storage server scan timeout (this is normal for large collections)")
+            except httpx.ConnectError as e:
+                logger.error(f"[ADMIN] Cannot connect to storage server: {e}")
+                raise HTTPException(status_code=503, detail=f"Cannot reach storage server: {e}")
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"[ADMIN] Failed to proxy rescan: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Failed to proxy scan: {str(e)}")
     
     def _scan_user_files(user_id: int, username: str):
         """Scan files for a single user - includes EXIF, thumbnails, and indexing."""
