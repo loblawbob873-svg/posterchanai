@@ -87,21 +87,26 @@ class LlamaService:
     def _load_settings(self):
         """Load settings from database"""
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        
+        # Helper to get setting with fallback for empty strings
+        def get_setting(key: str, default: str) -> str:
+            val = settings.get(key, default)
+            return val if val else default
 
         # Model settings
-        self.model_path = settings.get("llm_model_path", "/home/verita84/models/model.gguf")
-        self.default_model = settings.get("ollama_model", "native")
+        self.model_path = get_setting("llm_model_path", "/home/verita84/models/model.gguf")
+        self.default_model = get_setting("ollama_model", "native")
 
         # Context and generation settings
-        self.num_ctx = int(settings.get("ollama_num_ctx", "4096"))
-        self.num_predict = int(settings.get("ollama_num_predict", "2048"))
+        self.num_ctx = int(get_setting("ollama_num_ctx", "4096"))
+        self.num_predict = int(get_setting("ollama_num_predict", "2048"))
 
         # GPU settings
-        self.n_gpu_layers = int(settings.get("llm_gpu_layers", "-1"))  # -1 = all layers on GPU
-        self.max_concurrent = int(settings.get("llm_max_concurrent", "1"))  # Max concurrent inferences
+        self.n_gpu_layers = int(get_setting("llm_gpu_layers", "-1"))  # -1 = all layers on GPU
+        self.max_concurrent = int(get_setting("llm_max_concurrent", "1"))  # Max concurrent inferences
 
         # CPU settings - auto-detect threads if set to 0
-        n_threads_setting = int(settings.get("llm_n_threads", "0"))
+        n_threads_setting = int(get_setting("llm_n_threads", "0"))
         if n_threads_setting <= 0:
             import os
             cpu_count = os.cpu_count() or 4
@@ -113,35 +118,35 @@ class LlamaService:
             self.n_threads = n_threads_setting
 
         # CPU optimization settings
-        self.cpu_mode = settings.get("llm_cpu_mode", "false").lower() == "true"
-        self.n_batch = int(settings.get("llm_n_batch", "2048"))
-        self.use_mmap = settings.get("llm_use_mmap", "true").lower() == "true"
-        self.use_mlock = settings.get("llm_use_mlock", "true").lower() == "true"
+        self.cpu_mode = get_setting("llm_cpu_mode", "false").lower() == "true"
+        self.n_batch = int(get_setting("llm_n_batch", "2048"))
+        self.use_mmap = get_setting("llm_use_mmap", "true").lower() == "true"
+        self.use_mlock = get_setting("llm_use_mlock", "true").lower() == "true"
 
         # Sampling settings
-        self.temperature = float(settings.get("ollama_temperature", "0.7"))
-        self.top_p = float(settings.get("ollama_top_p", "0.9"))
-        self.top_k = int(settings.get("ollama_top_k", "40"))
-        self.repeat_penalty = float(settings.get("ollama_repeat_penalty", "1.1"))
+        self.temperature = float(get_setting("ollama_temperature", "0.7"))
+        self.top_p = float(get_setting("ollama_top_p", "0.9"))
+        self.top_k = int(get_setting("ollama_top_k", "40"))
+        self.repeat_penalty = float(get_setting("ollama_repeat_penalty", "1.1"))
 
         # Advanced settings
-        self.mirostat = int(settings.get("ollama_mirostat", "0"))
-        self.mirostat_eta = float(settings.get("ollama_mirostat_eta", "0.1"))
-        self.mirostat_tau = float(settings.get("ollama_mirostat_tau", "5.0"))
-        seed_str = settings.get("ollama_seed", "")
+        self.mirostat = int(get_setting("ollama_mirostat", "0"))
+        self.mirostat_eta = float(get_setting("ollama_mirostat_eta", "0.1"))
+        self.mirostat_tau = float(get_setting("ollama_mirostat_tau", "5.0"))
+        seed_str = get_setting("ollama_seed", "")
         self.seed = int(seed_str) if seed_str.strip() else -1
 
         # Stop sequences
-        self.stop_sequences = [s.strip() for s in settings.get("ollama_stop", "").split(",") if s.strip()]
+        self.stop_sequences = [s.strip() for s in get_setting("ollama_stop", "").split(",") if s.strip()]
 
         # Idle timeout for automatic unloading (0 = disabled)
-        self._idle_timeout = int(settings.get("llm_idle_timeout", "0"))
+        self._idle_timeout = int(get_setting("llm_idle_timeout", "0"))
 
         # Token timeout for streaming (max seconds between tokens)
-        self.token_timeout = int(settings.get("llm_token_timeout", "600"))
+        self.token_timeout = int(get_setting("llm_token_timeout", "600"))
 
         # System prompt
-        self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
+        self.system_prompt = get_setting("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
 
     def _ensure_model_loaded(self):
         """Load model if not already loaded or if path changed"""

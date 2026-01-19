@@ -83,12 +83,16 @@ SYSTEM: firewall, logs, help
 
 Provide clear, concise responses. Keep confirmations brief and professional."""
         self.system_prompt = self._settings.get("ollama_system_prompt") or default_prompt
+        # Helper to get setting with fallback for empty strings
+        def get_setting(key: str, default: str) -> str:
+            val = self._settings.get(key, default)
+            return val if val else default
         # These are used for chat_stream kwargs
-        self.temperature = float(self._settings.get("ollama_temperature", "0.7"))
-        self.top_p = float(self._settings.get("ollama_top_p", "0.9"))
-        self.num_predict = int(self._settings.get("ollama_num_predict", "2048"))
+        self.temperature = float(get_setting("ollama_temperature", "0.7"))
+        self.top_p = float(get_setting("ollama_top_p", "0.9"))
+        self.num_predict = int(get_setting("ollama_num_predict", "2048"))
         # Stop token(s) - can be comma-separated for multiple
-        stop_setting = self._settings.get("ollama_stop", "").strip()
+        stop_setting = get_setting("ollama_stop", "").strip()
         self.stop = [s.strip() for s in stop_setting.split(",") if s.strip()] if stop_setting else None
 
     def _get_custom_ai_service(self) -> Optional[CustomAIService]:
@@ -110,8 +114,9 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
         chat_server_urls = self._settings.get("chat_server_urls", "")
         servers = parse_server_urls(chat_server_urls)
         if servers:
-            timeout = int(self._settings.get("ollama_timeout", "120000")) / 1000
-            model = self._settings.get("ollama_model", "default")
+            timeout_str = self._settings.get("ollama_timeout", "120000")
+            timeout = int(timeout_str if timeout_str else "120000") / 1000
+            model = self._settings.get("ollama_model", "default") or "default"
             api_key = self._settings.get("chat_server_api_key", "")
             logger.debug(f"Creating LoadBalancer with {len(servers)} servers, model={model}")
             return LoadBalancer(servers, timeout=timeout, model=model, api_key=api_key if api_key else None)

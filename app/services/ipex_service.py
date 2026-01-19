@@ -215,20 +215,25 @@ class IPEXService:
     def _load_settings(self):
         """Load settings from database"""
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        
+        # Helper to get setting with fallback for empty strings
+        def get_setting(key: str, default: str) -> str:
+            val = settings.get(key, default)
+            return val if val else default
 
         # Model settings - normalize path to prevent spurious reloads
-        self.model_path = os.path.normpath(settings.get("llm_model_path", "/home/verita84/models/model.gguf").strip())
-        self.default_model = settings.get("ollama_model", "ipex")
+        self.model_path = os.path.normpath(get_setting("llm_model_path", "/home/verita84/models/model.gguf").strip())
+        self.default_model = get_setting("ollama_model", "ipex")
 
         # Context and generation settings
-        self.num_ctx = int(settings.get("ollama_num_ctx", "4096"))
-        self.num_predict = int(settings.get("ollama_num_predict", "2048"))
-        self.n_batch = int(settings.get("llm_n_batch", "2048"))  # Batch size for prompt processing
-        self.n_gpu_layers = int(settings.get("llm_gpu_layers", "-1"))  # -1 = all layers on GPU
-        self.max_concurrent = int(settings.get("llm_max_concurrent", "1"))  # Max concurrent inferences
+        self.num_ctx = int(get_setting("ollama_num_ctx", "4096"))
+        self.num_predict = int(get_setting("ollama_num_predict", "2048"))
+        self.n_batch = int(get_setting("llm_n_batch", "2048"))  # Batch size for prompt processing
+        self.n_gpu_layers = int(get_setting("llm_gpu_layers", "-1"))  # -1 = all layers on GPU
+        self.max_concurrent = int(get_setting("llm_max_concurrent", "1"))  # Max concurrent inferences
 
         # CPU settings - auto-detect threads if set to 0
-        n_threads_setting = int(settings.get("llm_n_threads", "0"))
+        n_threads_setting = int(get_setting("llm_n_threads", "0"))
         if n_threads_setting <= 0:
             cpu_count = os.cpu_count() or 4
             # Use physical cores (cpu_count // 2) for better performance
@@ -239,30 +244,30 @@ class IPEXService:
             self.n_threads = n_threads_setting
 
         # CPU optimization settings
-        self.cpu_mode = settings.get("llm_cpu_mode", "false").lower() == "true"
-        self.use_mmap = settings.get("llm_use_mmap", "true").lower() == "true"
-        self.use_mlock = settings.get("llm_use_mlock", "true").lower() == "true"
+        self.cpu_mode = get_setting("llm_cpu_mode", "false").lower() == "true"
+        self.use_mmap = get_setting("llm_use_mmap", "true").lower() == "true"
+        self.use_mlock = get_setting("llm_use_mlock", "true").lower() == "true"
 
         # Sampling settings
-        self.temperature = float(settings.get("ollama_temperature", "0.7"))
-        self.top_p = float(settings.get("ollama_top_p", "0.9"))
-        self.top_k = int(settings.get("ollama_top_k", "40"))
-        self.repeat_penalty = float(settings.get("ollama_repeat_penalty", "1.1"))
+        self.temperature = float(get_setting("ollama_temperature", "0.7"))
+        self.top_p = float(get_setting("ollama_top_p", "0.9"))
+        self.top_k = int(get_setting("ollama_top_k", "40"))
+        self.repeat_penalty = float(get_setting("ollama_repeat_penalty", "1.1"))
 
         # System prompt
-        self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
+        self.system_prompt = get_setting("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
 
         # Idle timeout for automatic unloading (0 = disabled)
-        self._idle_timeout = int(settings.get("llm_idle_timeout", "0"))
+        self._idle_timeout = int(get_setting("llm_idle_timeout", "0"))
 
         # Token timeout for streaming (max seconds between tokens)
-        self.token_timeout = int(settings.get("llm_token_timeout", "600"))
+        self.token_timeout = int(get_setting("llm_token_timeout", "600"))
 
         # Inference timeout (seconds) - prevents hung requests
-        self.inference_timeout = int(settings.get("ollama_timeout", "120000")) // 1000  # Convert ms to seconds
+        self.inference_timeout = int(get_setting("ollama_timeout", "120000")) // 1000  # Convert ms to seconds
 
         # Thinking mode control
-        self.disable_thinking = settings.get("llm_disable_thinking", "false").lower() == "true"
+        self.disable_thinking = get_setting("llm_disable_thinking", "false").lower() == "true"
 
     def _ensure_model_loaded(self):
         """Load model if not already loaded or if path changed"""

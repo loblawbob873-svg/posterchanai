@@ -51,36 +51,41 @@ class OllamaService:
 
     def _load_settings(self):
         settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        
+        # Helper to get setting with fallback for empty strings
+        def get_setting(key: str, default: str) -> str:
+            val = settings.get(key, default)
+            return val if val else default
 
         # Ollama connection settings
-        self.ollama_url = settings.get("ollama_url", "http://localhost:11434").rstrip('/')
+        self.ollama_url = get_setting("ollama_url", "http://localhost:11434").rstrip('/')
 
-        self.default_model = settings.get("ollama_model", "llama3")
-        self.timeout = int(settings.get("ollama_timeout", "120000")) / 1000
-        self.max_concurrent = int(settings.get("ollama_max_concurrent", "1"))
-        self.system_prompt = settings.get("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
+        self.default_model = get_setting("ollama_model", "llama3")
+        self.timeout = int(get_setting("ollama_timeout", "120000")) / 1000
+        self.max_concurrent = int(get_setting("ollama_max_concurrent", "1"))
+        self.system_prompt = get_setting("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
         # API format: "ollama" for /api/chat, "openai" for /v1/chat/completions
-        self.api_format = settings.get("ollama_api_format", "ollama")
+        self.api_format = get_setting("ollama_api_format", "ollama")
 
         # Advanced model settings
-        self.temperature = float(settings.get("ollama_temperature", "0.7"))
-        self.top_p = float(settings.get("ollama_top_p", "0.9"))
-        self.top_k = int(settings.get("ollama_top_k", "40"))
-        self.repeat_penalty = float(settings.get("ollama_repeat_penalty", "1.1"))
-        self.num_ctx = int(settings.get("ollama_num_ctx", "4096"))
-        self.num_predict = int(settings.get("ollama_num_predict", "2048"))
+        self.temperature = float(get_setting("ollama_temperature", "0.7"))
+        self.top_p = float(get_setting("ollama_top_p", "0.9"))
+        self.top_k = int(get_setting("ollama_top_k", "40"))
+        self.repeat_penalty = float(get_setting("ollama_repeat_penalty", "1.1"))
+        self.num_ctx = int(get_setting("ollama_num_ctx", "4096"))
+        self.num_predict = int(get_setting("ollama_num_predict", "2048"))
         # keep_alive: -1 = forever, 0 = unload immediately, positive = seconds
-        keep_alive_str = settings.get("ollama_keep_alive", "-1")
+        keep_alive_str = get_setting("ollama_keep_alive", "-1")
         self.keep_alive = int(keep_alive_str) if keep_alive_str.lstrip('-').isdigit() else -1
-        self.stop_sequences = [s.strip() for s in settings.get("ollama_stop", "").split(",") if s.strip()]
+        self.stop_sequences = [s.strip() for s in get_setting("ollama_stop", "").split(",") if s.strip()]
 
         # Additional advanced settings
-        seed_str = settings.get("ollama_seed", "")
+        seed_str = get_setting("ollama_seed", "")
         self.seed = int(seed_str) if seed_str.strip() else None
-        self.mirostat = int(settings.get("ollama_mirostat", "0"))
-        self.mirostat_eta = float(settings.get("ollama_mirostat_eta", "0.1"))
-        self.mirostat_tau = float(settings.get("ollama_mirostat_tau", "5.0"))
-        self.tfs_z = float(settings.get("ollama_tfs_z", "1.0"))
+        self.mirostat = int(get_setting("ollama_mirostat", "0"))
+        self.mirostat_eta = float(get_setting("ollama_mirostat_eta", "0.1"))
+        self.mirostat_tau = float(get_setting("ollama_mirostat_tau", "5.0"))
+        self.tfs_z = float(get_setting("ollama_tfs_z", "1.0"))
 
         # API key for external access
         self.api_key = settings.get("openai_api_key", "")
