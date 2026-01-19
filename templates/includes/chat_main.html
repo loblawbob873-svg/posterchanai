@@ -40,17 +40,26 @@
 <script>
 function openPhotoGalleryNow() {
     var v = document.getElementById('cyberpunkPictureViewer');
-    if (!v) { alert('Viewer not found'); return; }
+    if (!v) { alert('Photo viewer not found'); return; }
     
-    // Move to body if not already there
+    // Move to body if not already there (fixes display issue)
     if (v.parentElement !== document.body) {
         document.body.appendChild(v);
     }
     
-    // Force show with inline styles
-    v.style.cssText = 'display:block !important;position:fixed !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100vw !important;height:100vh !important;z-index:999999 !important;';
+    // Show viewer
+    v.style.display = 'block';
     
-    // Mark as open for fileManager
+    // Setup close button
+    var closeBtn = document.getElementById('pictureViewerCloseBtn');
+    if (closeBtn) {
+        closeBtn.onclick = function() {
+            v.style.display = 'none';
+            if (window.fileManager) window.fileManager.pictureViewerOpen = false;
+        };
+    }
+    
+    // Load images via fileManager
     if (window.fileManager) {
         window.fileManager.pictureViewerOpen = true;
         if (window.fileManager.loadAllImages) window.fileManager.loadAllImages();
