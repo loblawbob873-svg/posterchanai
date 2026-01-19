@@ -2188,14 +2188,21 @@ class FileManager {
             
             // ALWAYS re-sort after loading to ensure correct order (newest first)
             // This is critical because backend might have issues or pagination might mix things up
+            // Convert all timestamps to numbers first for consistent comparison
+            this.allImages.forEach(img => {
+                if (img.modified !== undefined && img.modified !== null) {
+                    const parsed = typeof img.modified === 'number' ? img.modified : parseFloat(img.modified);
+                    img.modified = isNaN(parsed) ? 0 : parsed;
+                } else {
+                    img.modified = 0;
+                }
+            });
+            
+            // Sort by timestamp descending (newest first)
+            // reverse=True means higher timestamps (newer files) come first
             this.allImages.sort((a, b) => {
-                // Convert to number, handling strings, null, undefined, etc.
-                let timeA = typeof a.modified === 'number' ? a.modified : (typeof a.modified === 'string' ? parseFloat(a.modified) : 0) || 0;
-                let timeB = typeof b.modified === 'number' ? b.modified : (typeof b.modified === 'string' ? parseFloat(b.modified) : 0) || 0;
-                
-                // Ensure we have valid numbers
-                if (isNaN(timeA)) timeA = 0;
-                if (isNaN(timeB)) timeB = 0;
+                const timeA = a.modified || 0;
+                const timeB = b.modified || 0;
                 
                 // Sort by timestamp descending (newest first)
                 // timeB - timeA: if timeB > timeA (B is newer), returns positive, B comes before A ✓
@@ -2218,18 +2225,27 @@ class FileManager {
                 }));
                 console.log('Photo Gallery - First 5 images after sort:', firstFew);
                 
-                // Verify sort is correct - first should have highest timestamp
+                // Verify sort is correct - first should have highest timestamp (newest first)
                 if (this.allImages.length > 1) {
                     const firstTs = Number(this.allImages[0].modified) || 0;
                     const lastTs = Number(this.allImages[this.allImages.length - 1].modified) || 0;
                     if (firstTs < lastTs) {
-                        console.error('Photo Gallery - SORT ERROR: First image timestamp is LOWER than last - sort is backwards!');
-                        console.error(`First: ${firstTs} (${new Date(firstTs * 1000).toISOString()}), Last: ${lastTs} (${new Date(lastTs * 1000).toISOString()})`);
+                        console.error('❌ Photo Gallery - SORT ERROR: First image timestamp is LOWER than last - sort is backwards!');
+                        console.error(`First: ${firstTs} (${new Date(firstTs * 1000).toISOString()}), path: ${this.allImages[0].path || this.allImages[0].name}`);
+                        console.error(`Last: ${lastTs} (${new Date(lastTs * 1000).toISOString()}), path: ${this.allImages[this.allImages.length - 1].path || this.allImages[this.allImages.length - 1].name}`);
                         // Fix by reversing
                         this.allImages.reverse();
                         console.warn('Photo Gallery - Fixed by reversing the list');
+                        // Verify fix worked
+                        const newFirstTs = Number(this.allImages[0].modified) || 0;
+                        const newLastTs = Number(this.allImages[this.allImages.length - 1].modified) || 0;
+                        if (newFirstTs < newLastTs) {
+                            console.error('❌ Photo Gallery - REVERSE FIX FAILED! Still backwards after reverse!');
+                        } else {
+                            console.log(`✓ Photo Gallery - Sort fixed: New first=${newFirstTs} (${new Date(newFirstTs * 1000).toISOString()}), New last=${newLastTs} (${new Date(newLastTs * 1000).toISOString()})`);
+                        }
                     } else {
-                        console.log(`Photo Gallery - Sort verified: First=${firstTs} (${new Date(firstTs * 1000).toISOString()}), Last=${lastTs} (${new Date(lastTs * 1000).toISOString()})`);
+                        console.log(`✓ Photo Gallery - Sort verified: First=${firstTs} (${new Date(firstTs * 1000).toISOString()}), Last=${lastTs} (${new Date(lastTs * 1000).toISOString()})`);
                     }
                 }
             }
@@ -2330,15 +2346,21 @@ class FileManager {
         }
         
         // CRITICAL: Sort by modified time (newest first) before rendering
-        // Convert to numbers explicitly to ensure numeric comparison (not string)
-        // This MUST happen every time before rendering to ensure correct order
+        // Convert all timestamps to numbers first for consistent comparison
+        this.allImages.forEach(img => {
+            if (img.modified !== undefined && img.modified !== null) {
+                const parsed = typeof img.modified === 'number' ? img.modified : parseFloat(img.modified);
+                img.modified = isNaN(parsed) ? 0 : parsed;
+            } else {
+                img.modified = 0;
+            }
+        });
+        
+        // Sort by timestamp descending (newest first)
+        // reverse=True means higher timestamps (newer files) come first
         this.allImages.sort((a, b) => {
-            let timeA = typeof a.modified === 'number' ? a.modified : (typeof a.modified === 'string' ? parseFloat(a.modified) : 0) || 0;
-            let timeB = typeof b.modified === 'number' ? b.modified : (typeof b.modified === 'string' ? parseFloat(b.modified) : 0) || 0;
-            
-            // Ensure valid numbers
-            if (isNaN(timeA)) timeA = 0;
-            if (isNaN(timeB)) timeB = 0;
+            const timeA = a.modified || 0;
+            const timeB = b.modified || 0;
             
             // Descending order (newest first) - higher timestamp comes first
             // timeB - timeA: if B is newer (timeB > timeA), returns positive, B comes before A
@@ -2351,13 +2373,25 @@ class FileManager {
             return pathB.localeCompare(pathA); // Reverse path order too
         });
         
-        // Verify sort after rendering sort
+        // Verify sort after rendering sort - first should be newest (highest timestamp)
         if (this.allImages.length > 1) {
             const firstTs = Number(this.allImages[0].modified) || 0;
             const lastTs = Number(this.allImages[this.allImages.length - 1].modified) || 0;
             if (firstTs < lastTs) {
-                console.error('Photo Gallery - RENDER SORT ERROR: First < Last, reversing...');
+                console.error('❌ Photo Gallery - RENDER SORT ERROR: First timestamp is LOWER than last - sort is backwards!');
+                console.error(`First: ${firstTs} (${new Date(firstTs * 1000).toISOString()}), path: ${this.allImages[0].path || this.allImages[0].name}`);
+                console.error(`Last: ${lastTs} (${new Date(lastTs * 1000).toISOString()}), path: ${this.allImages[this.allImages.length - 1].path || this.allImages[this.allImages.length - 1].name}`);
+                // Fix by reversing
                 this.allImages.reverse();
+                console.warn('Photo Gallery - Fixed by reversing the list');
+                // Verify fix worked
+                const newFirstTs = Number(this.allImages[0].modified) || 0;
+                const newLastTs = Number(this.allImages[this.allImages.length - 1].modified) || 0;
+                if (newFirstTs < newLastTs) {
+                    console.error('❌ Photo Gallery - REVERSE FIX FAILED! Still backwards after reverse!');
+                } else {
+                    console.log(`✓ Photo Gallery - Render sort fixed: New first=${newFirstTs} (${new Date(newFirstTs * 1000).toISOString()}), New last=${newLastTs} (${new Date(newLastTs * 1000).toISOString()})`);
+                }
             }
         }
         

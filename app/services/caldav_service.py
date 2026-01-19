@@ -638,12 +638,16 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
                 adr_prop.value = new_adr
                 adr_prop.type_param = 'HOME'
                 
-                # Verify it was added correctly
-                if not hasattr(vcard, 'adr') or (isinstance(vcard.adr, list) and len(vcard.adr) == 0):
-                    logger.error(f"Failed to add ADR property to contact {contact_uid}")
+                # Verify it was added correctly by checking serialized output
+                # Don't rely on hasattr - check the actual serialized vCard
+                test_serialized = vcard.serialize()
+                if 'ADR' not in test_serialized and 'adr' not in test_serialized.lower():
+                    logger.error(f"Failed to add ADR property to contact {contact_uid} - not in serialized output")
+                    logger.error(f"Test serialized preview: {test_serialized[:500]}")
                     return False
                 
-                logger.debug(f"Added address to contact {contact_uid}: {address_str}")
+                logger.info(f"Successfully added address to contact {contact_uid}: {address_str}")
+                logger.debug(f"Address components: street={street}, city={city}, state={state}, postal={postal}, country={country}")
             else:
                 # Remove address if empty
                 if hasattr(vcard, 'adr'):
@@ -660,29 +664,35 @@ def _edit_contact_builtin(user_id: int, db: Session, contact_uid: str, updates: 
                 vcard.add('note')
                 vcard.note.value = updates['note']
         
-        # Verify address was added before saving
-        if 'address' in updates and updates.get('address', '').strip():
-            if not hasattr(vcard, 'adr'):
-                logger.error(f"Address was not added to contact {contact_uid} before save")
-                return False
-            # Log the address that will be saved for debugging
-            if isinstance(vcard.adr, list):
-                saved_addr = vcard.adr[0].value if vcard.adr else None
-            else:
-                saved_addr = vcard.adr.value if hasattr(vcard.adr, 'value') else None
-            logger.debug(f"Contact {contact_uid} address before save: {saved_addr}")
-        
         # Save updated contact using proxy
         serialized = vcard.serialize()
+        
+        # Verify address is in serialized data before saving
+        if 'address' in updates and updates.get('address', '').strip():
+            if 'ADR' not in serialized and 'adr' not in serialized.lower():
+                logger.error(f"❌ Address not found in serialized vCard for contact {contact_uid} before save!")
+                logger.error(f"Address update was: {updates.get('address')}")
+                logger.error(f"Serialized vCard preview: {serialized[:500]}")
+                # Don't return False - try to save anyway, but log the error
+            else:
+                logger.info(f"✓ Address verified in serialized vCard for contact {contact_uid}")
+                # Log the actual ADR line from serialized output
+                for line in serialized.split('\n'):
+                    if 'ADR' in line.upper():
+                        logger.debug(f"ADR line in serialized: {line.strip()}")
+        
         success = proxy.write_file(filepath, serialized)
         
         if success:
             logger.info(f"Updated contact {contact_uid} in built-in storage")
-            # Verify address is in serialized data
+            # Double-check after save by reading back
             if 'address' in updates and updates.get('address', '').strip():
-                if 'ADR' not in serialized and 'adr' not in serialized.lower():
-                    logger.error(f"Address not found in serialized vCard for contact {contact_uid}")
-                    logger.error(f"Serialized vCard preview: {serialized[:500]}")
+                saved_data = proxy.read_file(filepath)
+                if saved_data and ('ADR' in saved_data or 'adr' in saved_data.lower()):
+                    logger.info(f"✓ Address confirmed in saved file for contact {contact_uid}")
+                else:
+                    logger.error(f"❌ Address NOT found in saved file for contact {contact_uid} after write!")
+                    logger.error(f"Saved file preview: {saved_data[:500] if saved_data else 'None'}")
         return success
     except Exception as e:
         logger.error(f"Error editing contact in built-in storage: {e}")
@@ -2493,12 +2503,16 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                             adr_prop.value = new_adr
                             adr_prop.type_param = 'HOME'
                             
-                            # Verify it was added correctly
-                            if not hasattr(vcard, 'adr'):
-                                logger.error(f"Failed to add ADR property to contact {contact_uid}")
+                            # Verify it was added correctly by checking serialized output
+                            # Don't rely on hasattr - check the actual serialized vCard
+                            test_serialized = vcard.serialize()
+                            if 'ADR' not in test_serialized and 'adr' not in test_serialized.lower():
+                                logger.error(f"Failed to add ADR property to contact {contact_uid} - not in serialized output")
+                                logger.error(f"Test serialized preview: {test_serialized[:500]}")
                                 return False
                             
-                            logger.debug(f"Added address to contact {contact_uid}: {address_str}")
+                            logger.info(f"Successfully added address to contact {contact_uid}: {address_str}")
+                            logger.debug(f"Address components: street={street}, city={city}, state={state}, postal={postal}, country={country}")
                         elif hasattr(vcard, 'adr'):
                             # Remove address if empty - handle list case
                             if isinstance(vcard.adr, list):
@@ -2523,8 +2537,23 @@ def edit_contact(url: str, username: str, password: str, contact_uid: str, updat
                         vcard.add('rev')
                         vcard.rev.value = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
 
-                    # Serialize and PUT back
+                    # Serialize and verify address is included before PUT
                     updated_vcard_data = vcard.serialize()
+                    
+                    # Verify address is in serialized data before saving
+                    if 'address' in updates and updates.get('address', '').strip():
+                        if 'ADR' not in updated_vcard_data and 'adr' not in updated_vcard_data.lower():
+                            logger.error(f"❌ Address not found in serialized vCard for contact {contact_uid} before PUT!")
+                            logger.error(f"Address update was: {updates.get('address')}")
+                            logger.error(f"Serialized vCard preview: {updated_vcard_data[:500]}")
+                            # Don't return False - try to PUT anyway, but log the error
+                        else:
+                            logger.info(f"✓ Address verified in serialized vCard for contact {contact_uid}")
+                            # Log the actual ADR line from serialized output
+                            for line in updated_vcard_data.split('\n'):
+                                if 'ADR' in line.upper():
+                                    logger.debug(f"ADR line in serialized: {line.strip()}")
+                    
                     put_headers = {
                         'Content-Type': 'text/vcard; charset=utf-8'
                     }

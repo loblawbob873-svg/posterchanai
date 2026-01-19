@@ -322,31 +322,85 @@ async def get_all_images(
                                 
                                 # Ensure images are sorted by modified time (newest first)
                                 # Storage server should already sort, but verify and fix if needed
+                                # Also try to extract date from filename if modification time seems wrong
+                                import re
+                                current_time = time.time()
+                                
                                 for img in valid_images:
                                     if 'modified' in img:
                                         try:
                                             img['modified'] = float(img['modified'])
                                         except (ValueError, TypeError):
                                             img['modified'] = 0.0
+                                        
+                                        # If modification time is very recent (within last 7 days) but filename suggests older date,
+                                        # try to extract date from filename and use that instead
+                                        mtime = img['modified']
+                                        if mtime > 0:
+                                            mtime_age_days = (current_time - mtime) / 86400
+                                            
+                                            # Try to extract date from filename
+                                            filename = img.get('name', '') or img.get('path', '')
+                                            match = re.search(r'(\d{4})(\d{2})(\d{2})(?:[_-](\d{2})(\d{2})(\d{2}))?', filename)
+                                            if match and mtime_age_days < 7:
+                                                year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+                                                hour, minute, second = 0, 0, 0
+                                                if match.group(4):  # Has time component
+                                                    hour, minute, second = int(match.group(4)), int(match.group(5)), int(match.group(6))
+                                                try:
+                                                    filename_date = datetime(year, month, day, hour, minute, second)
+                                                    filename_timestamp = filename_date.timestamp()
+                                                    filename_age_days = (current_time - filename_timestamp) / 86400
+                                                    
+                                                    # If filename date is significantly older (more than 30 days older than mtime),
+                                                    # use filename date instead
+                                                    if filename_age_days > (mtime_age_days + 30):
+                                                        img['modified'] = filename_timestamp
+                                                        logger.debug(f"[FILES] Proxy: Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(mtime)})")
+                                                except (ValueError, OverflowError):
+                                                    pass  # Invalid date, use mtime
                                 
                                 # Sort by modified time descending (newest first)
-                                # CRITICAL: Sort before pagination to ensure correct order
+                                # reverse=True means higher timestamps (newer files) come first
                                 valid_images.sort(key=lambda x: float(x.get('modified', 0) or 0), reverse=True)
                                 
-                                # Verify sort is correct
+                                # Verify sort is correct - first should be newest (highest timestamp)
                                 if len(valid_images) > 1:
                                     first_ts = float(valid_images[0].get('modified', 0) or 0)
                                     last_ts = float(valid_images[-1].get('modified', 0) or 0)
                                     if first_ts < last_ts:
-                                        logger.warning(f"[FILES] Proxy sort error: First ({first_ts}) < Last ({last_ts}), reversing...")
+                                        logger.error(f"[FILES] ❌ PROXY SORT ERROR: First timestamp ({first_ts}) is LOWER than last ({last_ts}) - sort is backwards!")
+                                        logger.error(f"[FILES] First image: {valid_images[0].get('name', 'unknown')} (ts={first_ts}, date={datetime.fromtimestamp(first_ts).isoformat() if first_ts > 0 else 'N/A'})")
+                                        logger.error(f"[FILES] Last image: {valid_images[-1].get('name', 'unknown')} (ts={last_ts}, date={datetime.fromtimestamp(last_ts).isoformat() if last_ts > 0 else 'N/A'})")
+                                        # Fix by reversing
                                         valid_images.reverse()
+                                        logger.warning(f"[FILES] Fixed by reversing the list")
+                                        # Verify fix
+                                        new_first_ts = float(valid_images[0].get('modified', 0) or 0)
+                                        new_last_ts = float(valid_images[-1].get('modified', 0) or 0)
+                                        if new_first_ts < new_last_ts:
+                                            logger.error(f"[FILES] ❌ REVERSE FIX FAILED! Still backwards after reverse!")
+                                        else:
+                                            logger.info(f"[FILES] ✓ Sort fixed: New first={new_first_ts}, New last={new_last_ts}")
+                                    else:
+                                        # Log sample of timestamps for debugging
+                                        logger.debug(f"[FILES] Proxy sort verified: First={first_ts} (date={datetime.fromtimestamp(first_ts).isoformat() if first_ts > 0 else 'N/A'}), Last={last_ts} (date={datetime.fromtimestamp(last_ts).isoformat() if last_ts > 0 else 'N/A'})")
                                 
                                 # Update with filtered and sorted valid images
                                 cleaned_data['images'] = valid_images
                                 # Note: total should come from the storage server, not len(valid_images) which is just this page
                                 # Don't override total - use what storage server says
                                 
-                                logger.info(f"[FILES] Proxy: Received {len(valid_images)} images, sorted by modified time (newest first)")
+                                # Log sample of first few images to verify sorting
+                                if len(valid_images) > 0:
+                                    logger.info(f"[FILES] Proxy: Received {len(valid_images)} images, sorted by modified time (newest first)")
+                                    # Log first 5 images with their timestamps
+                                    for i, img in enumerate(valid_images[:5]):
+                                        ts = float(img.get('modified', 0) or 0)
+                                        date_str = datetime.fromtimestamp(ts).isoformat() if ts > 0 else 'N/A'
+                                        logger.debug(f"[FILES] Image #{i+1}: {img.get('name', 'unknown')} - ts={ts}, date={date_str}")
+                                else:
+                                    logger.warning(f"[FILES] Proxy: Received 0 valid images after filtering")
                             
                             # Test serialization before returning
                             try:
@@ -510,6 +564,38 @@ async def get_all_images(
                     # - Represents when the photo was taken, not when it was copied
                     # Only fall back to ctime if mtime is invalid
                     modified_time = stat.st_mtime if stat.st_mtime > 0 else (stat.st_ctime if stat.st_ctime > 0 else time.time())
+                    
+                    # Try to extract date from filename if modification time seems wrong
+                    # Common patterns: YYYYMMDD, YYYYMMDD_HHMMSS, YYYY-MM-DD, etc.
+                    filename_date = None
+                    filename = item.name
+                    
+                    # Pattern 1: YYYYMMDD or YYYYMMDD_HHMMSS (e.g., 20220923_113035.jpg)
+                    import re
+                    match = re.search(r'(\d{4})(\d{2})(\d{2})(?:[_-](\d{2})(\d{2})(\d{2}))?', filename)
+                    if match:
+                        year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+                        hour, minute, second = 0, 0, 0
+                        if match.group(4):  # Has time component
+                            hour, minute, second = int(match.group(4)), int(match.group(5)), int(match.group(6))
+                        try:
+                            filename_date = datetime(year, month, day, hour, minute, second)
+                            filename_timestamp = filename_date.timestamp()
+                            
+                            # If filename date is significantly older than modification time (more than 30 days),
+                            # and modification time is very recent (within last 7 days), use filename date instead
+                            # This handles cases where files were recently copied but have old photo dates
+                            current_time = time.time()
+                            mtime_age_days = (current_time - modified_time) / 86400
+                            filename_age_days = (current_time - filename_timestamp) / 86400
+                            
+                            if mtime_age_days < 7 and filename_age_days > 30:
+                                # File was recently modified but filename suggests much older date
+                                # Use filename date for sorting
+                                modified_time = filename_timestamp
+                                logger.debug(f"[FILES] Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(stat.st_mtime)})")
+                        except (ValueError, OverflowError):
+                            pass  # Invalid date, use mtime
                     
                     # Debug: Log if file timestamp seems suspiciously old (more than 1 year old)
                     # This helps identify files that might not have had EXIF restoration applied
