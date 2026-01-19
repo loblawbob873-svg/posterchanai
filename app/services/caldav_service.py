@@ -81,10 +81,19 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
         
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
+            logger.error(f"[CalDAV] User {user_id} not found in database")
             return []
         
         # Use storage proxy (must be configured)
         proxy = DAVStorageProxy(db, user.username, 'caldav')
+        
+        # Check if proxy is configured
+        if not proxy.use_proxy:
+            logger.error(f"[CalDAV] Storage proxy NOT configured! Set storage_server_url in Admin settings.")
+            logger.error(f"[CalDAV] Cannot fetch calendar events without storage server configured.")
+            return []
+        
+        logger.info(f"[CalDAV] Storage proxy configured: {proxy.storage_url}")
         
         all_events = []
         
@@ -99,16 +108,27 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
         else:
             # Search all calendar subdirectories and root
             # Built-in server may have multiple calendars (main, wwwcanoncityschoolsorg, etc.)
-            logger.debug(f"[CalDAV] Getting events from all calendars (calendar_name={calendar_name})")
+            logger.info(f"[CalDAV] Getting events from all calendars (calendar_name={calendar_name})")
             root_items = proxy.list_files("")
+            logger.info(f"[CalDAV] Root items from storage proxy: {len(root_items)} items")
+            
+            # Debug: log all items found
+            for item in root_items:
+                logger.debug(f"[CalDAV] Root item: {item.get('name', 'UNKNOWN')} (is_dir={item.get('is_directory', False)})")
+            
             calendar_dirs = []
             for item in root_items:
                 if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
                     calendar_dirs.append(item.get('name'))
             
+            if not calendar_dirs and not root_items:
+                logger.warning(f"[CalDAV] No files/folders found in caldav storage for user {user.username}!")
+                logger.warning(f"[CalDAV] Check if caldav data exists on storage server at path: caldav/")
+            
             # Search all calendar subdirectories
             logger.info(f"[CalDAV] Searching {len(calendar_dirs)} calendar directories: {calendar_dirs}")
             for cal_dir in calendar_dirs:
+                logger.info(f"[CalDAV] Processing calendar directory: {cal_dir}")
                 cal_events = _get_events_from_calendar_dir(proxy, cal_dir, start_date, end_date, cal_dir)
                 logger.info(f"[CalDAV] Found {len(cal_events)} events in calendar directory '{cal_dir}'")
                 all_events.extend(cal_events)
@@ -116,7 +136,7 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
             # Also check root for legacy .ics files
             root_events = _get_events_from_calendar_dir(proxy, "", start_date, end_date, "Calendar")
             all_events.extend(root_events)
-            logger.debug(f"[CalDAV] Found {len(root_events)} events in root (legacy)")
+            logger.info(f"[CalDAV] Found {len(root_events)} events in root (legacy)")
         
         logger.debug(f"[CalDAV] Total events found: {len(all_events)}")
         return all_events
@@ -133,8 +153,13 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
     from icalendar import Calendar as ICalendar
     from dateutil.rrule import rrulestr
     
+    logger.info(f"[CalDAV] _get_events_from_calendar_dir: dir='{cal_dir}', date_range={start_date.date()} to {end_date.date()}")
+    
     file_items = proxy.list_files(cal_dir)
+    logger.info(f"[CalDAV] Found {len(file_items)} items in directory '{cal_dir}'")
+    
     events = []
+    ics_count = 0
     
     # Ensure dates are timezone-aware for comparison
     if start_date.tzinfo is None:
@@ -146,6 +171,7 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
         name = item.get('name', '')
         if not name.endswith('.ics'):
             continue
+        ics_count += 1
         
         try:
             # Read .ics file using proxy
@@ -307,9 +333,10 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                 calendar_name=calendar_name
                             ))
         except Exception as e:
-            logger.debug(f"Error parsing event file {name}: {e}")
+            logger.warning(f"[CalDAV] Error parsing event file {name}: {e}")
             continue
     
+    logger.info(f"[CalDAV] Directory '{cal_dir}': {ics_count} .ics files processed, {len(events)} events found in date range")
     return events
 
 
@@ -2638,7 +2665,7 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
 
     if not events:
         if cyberpunk:
-            return "📅 No events scheduled.\n\n[➕ Add Event](cmd:cal add )"
+            return "📅 No events scheduled.\n\n*Tip: Check `journalctl -u posterchanai -f` for calendar sync logs.*\n\n[➕ Add Event](cmd:cal add )"
         return "No events found. [Add Event](cmd:cal add )"
 
     lines = []

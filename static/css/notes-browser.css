@@ -1,25 +1,42 @@
-/* Notes Browser UI Styles */
+/* Notes Browser UI Styles - Windowed Modal */
 .notes-browser {
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 2000;
+    /* display controlled by JS */
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+.notes-browser-container {
+    width: 1200px;
+    max-width: 95vw;
+    height: 80vh;
+    max-height: 90vh;
     background: var(--bg-primary);
-    z-index: 1000;
+    border-radius: 12px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
 
 .notes-browser-header {
     background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
     border-bottom: 2px solid var(--border-color);
-    padding: 20px 24px;
+    padding: 16px 20px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    flex-shrink: 0;
+    border-radius: 12px 12px 0 0;
 }
 
 .notes-browser-title {
@@ -38,6 +55,7 @@
 .notes-browser-toolbar {
     display: flex;
     gap: 12px;
+    align-items: center;
 }
 
 .notes-browser-toolbar button {
@@ -45,6 +63,21 @@
     font-weight: 600;
     border-radius: 8px;
     transition: all 0.2s ease;
+}
+
+.notes-browser-toolbar .modal-close-cyberpunk {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 2px solid #ff0066;
+    background: #ff0066;
+    color: #ffffff;
+    font-size: 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 8px;
 }
 
 .notes-browser-toolbar .btn-primary {

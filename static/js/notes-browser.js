@@ -28,11 +28,9 @@ class NotesBrowser {
     
     open() {
         const browser = document.getElementById('notesBrowser');
-        const chatMain = document.querySelector('.chat-main');
         
-        if (browser && chatMain) {
+        if (browser) {
             browser.style.display = 'flex';
-            chatMain.style.display = 'none';
             this.isOpen = true;
             
             // Refresh data when opening
@@ -43,11 +41,9 @@ class NotesBrowser {
     
     close() {
         const browser = document.getElementById('notesBrowser');
-        const chatMain = document.querySelector('.chat-main');
         
-        if (browser && chatMain) {
+        if (browser) {
             browser.style.display = 'none';
-            chatMain.style.display = 'flex';
             this.isOpen = false;
         }
     }

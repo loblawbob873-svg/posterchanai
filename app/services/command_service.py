@@ -1892,7 +1892,15 @@ Example: `yt https://youtube.com/watch?v=...`""",
                 # week_end should be end of day 7 (23:59:59), not start of day 8 (00:00:00)
                 # This gives us: today, tomorrow, day+2, day+3, day+4, day+5, day+6, day+7 (8 days total)
                 week_end = today + timedelta(days=7, hours=23, minutes=59, seconds=59)
+                
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"[cal week] Fetching events for user {self.user.id} from {today.date()} to {week_end.date()}")
+                logger.info(f"[cal week] User has {len(calendars)} calendars configured")
+                
                 events = get_all_user_events(self.user.id, today, week_end, self.db)
+                logger.info(f"[cal week] Found {len(events)} events")
+                
                 events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
 
                 return {"type": "text", "content": f"## ◈ SCHEDULE FOR THE WEEK ◈\n\n{events_text}"}

@@ -23,7 +23,8 @@
                     </div>
                 </div>
                 <div class="file-manager-content">
-                <div class="file-manager-toolbar" style="display: flex; flex-direction: row; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); background: var(--bg-secondary);">
+                <!-- Row 1: Tabs and Selection Controls -->
+                <div class="file-manager-toolbar" style="display: flex; flex-direction: row; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--border-color); background: var(--bg-secondary);">
                     <div class="file-manager-tabs" style="display: flex; gap: 4px; flex-shrink: 0;">
                         <button class="tab-btn active" id="fileManagerFilesTab" data-tab="files">📁 Files</button>
                         <button class="tab-btn" id="fileManagerSharesTab" data-tab="shares">🔗 Shares</button>
@@ -35,10 +36,12 @@
                         <button class="btn-icon-only" id="fileManagerMoveBtn" title="Move selected">📦</button>
                         <span class="selection-count" id="fileSelectionCount">0</span>
                     </div>
-                    <div class="file-toolbar-search-actions" style="display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0;">
-                        <input type="text" id="fileManagerSearchInput" class="file-search-input" placeholder="🔍 Search..." autocomplete="off" style="width: 150px; padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
-                        <button class="btn-icon" id="fileManagerRefreshBtn" title="Refresh" style="padding: 6px 10px; min-width: 36px;">🔄</button>
-                    </div>
+                    <button class="btn-icon" id="fileManagerRefreshBtn" title="Refresh" style="margin-left: auto; padding: 6px 10px; min-width: 36px;">🔄</button>
+                </div>
+                <!-- Row 2: Search -->
+                <div class="file-manager-search-row" style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border-color); background: var(--bg-primary);">
+                    <input type="text" id="fileManagerSearchInput" class="file-search-input" placeholder="🔍 Search files..." autocomplete="off" style="flex: 1; max-width: 400px; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); font-size: 14px;">
+                    <button class="btn-icon" id="fileManagerClearSearchBtn" title="Clear search" style="display: none; padding: 6px 10px;">✕</button>
                 </div>
                 <!-- Mobile Upload Area -->
                 <div class="mobile-upload-area" id="mobileUploadArea" style="display: none;">

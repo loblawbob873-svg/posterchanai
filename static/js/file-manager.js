@@ -2003,12 +2003,17 @@ class FileManager {
     // ============================================
     
     openPictureViewer() {
+        console.log('FileManager: openPictureViewer called');
         this.pictureViewerOpen = true;
         const viewer = document.getElementById('cyberpunkPictureViewer');
         if (viewer) {
+            console.log('FileManager: Found picture viewer element, showing...');
             viewer.style.display = 'block';
             this.loadAllImages();
             this.setupInfiniteScroll();
+        } else {
+            console.error('FileManager: cyberpunkPictureViewer element NOT found in DOM!');
+            alert('Photo Gallery viewer not found. Please refresh the page.');
         }
     }
     
@@ -2727,6 +2732,11 @@ function initializeFileManager() {
         } else {
             console.error('FileManager: createNewFolder method NOT available');
         }
+        if (typeof window.fileManager.openPictureViewer === 'function') {
+            console.log('FileManager: openPictureViewer method available');
+        } else {
+            console.error('FileManager: openPictureViewer method NOT available');
+        }
     }
     ensureFileManagerButtonHandler();
 }
@@ -2778,3 +2788,34 @@ function copyAddress(inputId) {
         });
     }
 }
+
+// Global function to open photo gallery - can be called directly from onclick
+window.openPhotoGallery = function() {
+    console.log('openPhotoGallery global function called');
+    
+    // Ensure fileManager exists
+    if (!window.fileManager) {
+        console.log('FileManager not initialized, creating now...');
+        initializeFileManager();
+    }
+    
+    // Try to open picture viewer
+    if (window.fileManager && typeof window.fileManager.openPictureViewer === 'function') {
+        console.log('Calling fileManager.openPictureViewer()');
+        window.fileManager.openPictureViewer();
+    } else {
+        console.error('FileManager.openPictureViewer not available');
+        // Direct fallback - show the viewer element
+        const viewer = document.getElementById('cyberpunkPictureViewer');
+        if (viewer) {
+            console.log('Direct fallback: showing viewer element');
+            viewer.style.display = 'block';
+            // Try to load images if fileManager exists
+            if (window.fileManager && window.fileManager.loadAllImages) {
+                window.fileManager.loadAllImages();
+            }
+        } else {
+            alert('Photo Gallery not found. Please refresh the page.');
+        }
+    }
+};

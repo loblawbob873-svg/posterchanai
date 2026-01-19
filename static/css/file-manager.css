@@ -49,28 +49,28 @@
     min-width: 0;
 }
 
-.btn-icon-only {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    color: var(--text-primary);
-    padding: 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-size: 18px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 36px;
-    height: 36px;
-    flex-shrink: 0;
-    white-space: nowrap;
+#fileManagerOverlay .btn-icon-only {
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
+    padding: 8px !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+    transition: all 0.2s !important;
+    font-size: 18px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-width: 36px !important;
+    height: 36px !important;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
 }
 
-.btn-icon-only:hover {
-    background: var(--bg-tertiary);
-    border-color: var(--accent-color);
-    transform: translateY(-1px);
+#fileManagerOverlay .btn-icon-only:hover {
+    background: var(--bg-tertiary) !important;
+    border-color: var(--accent-color) !important;
+    transform: translateY(-1px) !important;
 }
 
 .btn-icon-only.btn-danger-icon {
@@ -175,42 +175,6 @@
     overflow: hidden;
 }
 
-.file-toolbar-search-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: 1;
-    min-width: 0;
-    justify-content: flex-end;
-    grid-column: 3;
-}
-
-.file-manager-search {
-    grid-column: 3;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex: 1;
-    min-width: 120px;
-    max-width: 400px;
-    margin: 0;
-    flex-shrink: 1;
-    justify-self: stretch;
-    overflow: visible;
-    box-sizing: border-box;
-}
-
-.file-search-input {
-    flex: 1;
-    padding: 8px 12px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    color: var(--text-primary);
-    font-size: 14px;
-    transition: border-color 0.2s;
-}
-
 .file-search-input:focus {
     outline: none;
     border-color: var(--accent-color);
@@ -221,49 +185,49 @@
 }
 
 /* =====================================================
-   FILE MANAGER TOOLBAR
+   FILE MANAGER TOOLBAR - Base styles (inline styles in HTML take priority)
    ===================================================== */
 
-.file-manager-toolbar {
-    display: flex;
-    flex-wrap: nowrap;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border-color);
-    background: var(--bg-secondary);
-    min-height: 48px;
+/* File Manager Toolbar - use ID for specificity */
+#fileManagerOverlay .file-manager-toolbar {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 12px !important;
+    padding: 10px 16px !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    background: var(--bg-secondary) !important;
+    min-height: 48px !important;
 }
 
-.file-manager-tabs {
-    display: flex;
-    gap: 4px;
+#fileManagerOverlay .file-manager-tabs {
+    display: flex !important;
+    gap: 4px !important;
+    flex-shrink: 0 !important;
 }
 
-.file-selection-controls {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 6px;
-    background: var(--bg-primary);
-    border-radius: 4px;
-    border: 1px solid var(--border-color);
+#fileManagerOverlay .file-selection-controls {
+    display: flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    padding: 4px 8px !important;
+    background: var(--bg-primary) !important;
+    border-radius: 4px !important;
+    border: 1px solid var(--border-color) !important;
+    flex-shrink: 0 !important;
 }
 
-.file-toolbar-search-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-left: auto;
-}
-
-.file-manager-search {
-    display: flex;
-    align-items: center;
+#fileManagerOverlay .file-toolbar-search-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    margin-left: auto !important;
+    flex-shrink: 0 !important;
 }
 
 .file-search-input {
-    width: 160px;
+    width: 150px;
     padding: 6px 10px;
     border: 1px solid var(--border-color);
     border-radius: 4px;
@@ -278,29 +242,30 @@
     gap: 4px;
 }
 
-.btn-icon {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    color: var(--text-primary);
-    padding: 8px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-size: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 36px;
-    height: 36px;
-    flex-shrink: 0;
-    box-sizing: border-box;
+/* File Manager specific button styles - use ID for higher specificity */
+#fileManagerOverlay .btn-icon {
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
+    padding: 6px 10px !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+    transition: all 0.2s !important;
+    font-size: 16px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-width: 36px !important;
+    height: 36px !important;
+    flex-shrink: 0 !important;
+    box-sizing: border-box !important;
     overflow: visible;
     white-space: nowrap;
 }
 
-.btn-icon:hover {
-    background: var(--bg-tertiary);
-    border-color: var(--accent-color);
+#fileManagerOverlay .btn-icon:hover {
+    background: var(--bg-tertiary) !important;
+    border-color: var(--accent-color) !important;
 }
 
 .file-view-toggle {
@@ -312,22 +277,7 @@
     border: 1px solid var(--border-color);
 }
 
-.file-selection-controls {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    padding: 4px 8px;
-    background: var(--bg-primary);
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
-    grid-column: 2;
-    justify-self: start;
-    flex-shrink: 0;
-    overflow: visible;
-    box-sizing: border-box;
-    max-width: 100%;
-}
+/* Duplicate removed - using simpler flexbox rules above */
 
 .file-selection-controls .btn-icon-only {
     min-width: 32px;
@@ -1351,38 +1301,29 @@
     font-size: 13px;
 }
 
-/* File Manager Tabs */
-.file-manager-tabs {
-    grid-column: 1;
-    display: flex;
-    gap: 8px;
-    flex-shrink: 0;
-    white-space: nowrap;
-    overflow: visible;
-    box-sizing: border-box;
+/* File Manager Tabs - base styles defined above */
+
+#fileManagerOverlay .tab-btn {
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
+    padding: 8px 14px !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+    transition: all 0.2s !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    white-space: nowrap !important;
 }
 
-.tab-btn {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    color: var(--text-primary);
-    padding: 10px 18px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-size: 14px;
-    font-weight: 500;
-    white-space: nowrap;
+#fileManagerOverlay .tab-btn:hover {
+    background: var(--bg-tertiary) !important;
 }
 
-.tab-btn:hover {
-    background: var(--bg-tertiary);
-}
-
-.tab-btn.active {
-    background: var(--accent-color);
-    color: var(--accent-text, white);
-    border-color: var(--accent-color);
+#fileManagerOverlay .tab-btn.active {
+    background: var(--accent-color) !important;
+    color: var(--accent-text, white) !important;
+    border-color: var(--accent-color) !important;
 }
 
 /* Shared Files */
