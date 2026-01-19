@@ -162,6 +162,8 @@ def _process_single_exif_file(
         stats: Dictionary with 'processed', 'restored', 'skipped', 'errors' counters
     """
     try:
+        with lock:
+            stats['processed'] += 1
         if restore_exif_timestamp(file_path):
             with lock:
                 stats['restored'] += 1

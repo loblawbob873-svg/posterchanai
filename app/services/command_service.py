@@ -1913,14 +1913,17 @@ Example: `yt https://youtube.com/watch?v=...`""",
                     start_date = now.replace(
                         year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0
                     )
-                    end_date = start_date.replace(month=2)
+                    # January has 31 days
+                    end_date = start_date.replace(day=31, hour=23, minute=59, second=59)
                 else:
                     start_date = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+                    # Calculate last day of next month
                     if start_date.month == 12:
-                        end_date = start_date.replace(year=start_date.year + 1, month=1)
+                        last_day = 31
                     else:
-                        end_date = start_date.replace(month=start_date.month + 1)
-
+                        next_next_month = start_date.replace(month=start_date.month + 1, day=1)
+                        last_day = (next_next_month - timedelta(days=1)).day
+                    end_date = start_date.replace(day=last_day, hour=23, minute=59, second=59)
                 events = get_all_user_events(self.user.id, start_date, end_date, self.db)
                 events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
                 return {
