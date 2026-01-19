@@ -164,7 +164,11 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
             except Exception as e:
                 logger.error(f"[CalDAV] Error checking root for legacy events: {e}", exc_info=True)
         
-        logger.debug(f"[CalDAV] Total events found: {len(all_events)}")
+        logger.info(f"[CalDAV] Total events found in _get_events_from_builtin: {len(all_events)}")
+        if all_events:
+            logger.info(f"[CalDAV] Sample events being returned:")
+            for i, event in enumerate(all_events[:5]):
+                logger.info(f"[CalDAV]   Event {i+1}: {event.summary} on {event.start.date()} from '{event.calendar_name}'")
         return all_events
     except Exception as e:
         logger.error(f"Error getting events from built-in storage: {e}", exc_info=True)
@@ -420,7 +424,7 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                                 calendar_name=calendar_name
                             )
                             events.append(event)
-                            logger.info(f"[CalDAV] Added non-recurring event: '{summary}' on {event_start_naive.date()}")
+                            logger.info(f"[CalDAV] Added non-recurring event: '{summary}' on {event_start_naive.date()}, total events now: {len(events)}")
         except Exception as e:
             logger.warning(f"[CalDAV] Error parsing event file {name}: {e}")
             continue
@@ -1170,14 +1174,19 @@ def get_all_user_events(
                         # Search all calendar directories to get all events
                         # Use timeout protection to prevent hangs with large calendars
                         def fetch_builtin():
-                            return _get_events_from_builtin(user_id, start_date, end_date, None, db)
+                            result = _get_events_from_builtin(user_id, start_date, end_date, None, db)
+                            logger.info(f"[Calendar] fetch_builtin returned {len(result) if result else 0} events")
+                            return result
                         
                         events = run_with_timeout(fetch_builtin, timeout=CALDAV_OPERATION_TIMEOUT * 2)  # Give built-in more time (20s) since it processes many files
                         if events is None:
-                            logger.warning(f"[Calendar] Built-in calendar fetch timed out after {CALDAV_OPERATION_TIMEOUT * 2}s")
+                            logger.warning(f"[Calendar] Built-in calendar fetch timed out or returned None after {CALDAV_OPERATION_TIMEOUT * 2}s")
                             events = []
-                        logger.info(f"[Calendar] Found {len(events)} events from built-in server (all calendars) in range {start_date.date()} to {end_date.date()}")
-                        if events:
+                        elif not isinstance(events, list):
+                            logger.error(f"[Calendar] Built-in calendar fetch returned non-list type: {type(events)}, value: {events}")
+                            events = []
+                        logger.info(f"[Calendar] Found {len(events) if events else 0} events from built-in server (all calendars) in range {start_date.date()} to {end_date.date()}")
+                        if events and len(events) > 0:
                             all_events.extend(events)
                             logger.info(f"[Calendar] Added {len(events)} events from all built-in calendars, total now: {len(all_events)}")
                             # Log first few event summaries for debugging
@@ -1185,6 +1194,8 @@ def get_all_user_events(
                                 logger.info(f"[Calendar]   Event {i+1}: {event.summary} on {event.start.date()} from calendar '{event.calendar_name}'")
                         else:
                             logger.warning(f"[Calendar] No events found in any built-in calendar for date range {start_date.date()} to {end_date.date()}")
+                            if events is not None and len(events) == 0:
+                                logger.warning(f"[Calendar] Events list is empty - this might indicate a date filtering issue or timeout")
                         builtin_fetched = True
                     else:
                         logger.debug(f"[Calendar] Skipping duplicate built-in calendar config '{name}' (already fetched)")
