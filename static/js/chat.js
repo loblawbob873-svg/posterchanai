@@ -1463,12 +1463,13 @@ class ChatHandler {
                 const carddavInput = document.getElementById('carddavAddress');
                 const carddavUsername = document.getElementById('carddavUsername');
                 // Check both carddav_url and cardav_url for backwards compatibility
-                const carddavUrl = data.carddav_url || data.cardav_url;
-                console.log('CardDAV elements:', { input: !!carddavInput, username: !!carddavUsername, url: carddavUrl });
+                // Also check for empty strings (API might return "" instead of null/undefined)
+                const carddavUrl = (data.carddav_url && data.carddav_url.trim()) || (data.cardav_url && data.cardav_url.trim());
+                console.log('CardDAV elements:', { input: !!carddavInput, username: !!carddavUsername, url: carddavUrl, raw_data: { carddav_url: data.carddav_url, cardav_url: data.cardav_url } });
                 
                 if (carddavInput) {
-                    if (carddavUrl) {
-                        let url = carddavUrl;
+                    if (carddavUrl && carddavUrl.trim()) {
+                        let url = carddavUrl.trim();
                         // Only replace localhost if it's actually localhost
                         if (url.includes('localhost')) {
                             url = url.replace('localhost', hostname);
@@ -1482,7 +1483,7 @@ class ChatHandler {
                     } else {
                         carddavInput.value = '';
                         carddavInput.placeholder = 'CardDAV server not enabled (enable in Admin → Site Settings)';
-                        console.log('CardDAV URL is empty (server not enabled?)');
+                        console.log('CardDAV URL is empty (server not enabled?)', { carddav_url: data.carddav_url, cardav_url: data.cardav_url });
                     }
                 }
                 if (carddavUsername && data.username) {
