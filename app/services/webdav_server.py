@@ -10,6 +10,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from wsgidav.wsgidav_app import WsgiDAVApp
 from wsgidav.fs_dav_provider import FilesystemProvider
+from wsgidav.dav_provider import DAVProvider, DAVCollection, DAVNonCollection
 from cheroot.wsgi import Server as WSGIServer
 
 from app.models import User, Setting
@@ -376,6 +377,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
             logger.info(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path}")
             if len(items) == 0:
                 logger.warning(f"[WebDAV] Storage server returned 0 items - check if files exist on storage server")
+            
+            # wsgidav expects a list of ResourceInfo objects, not dictionaries
+            # We need to create virtual filesystem entries and use the parent class to create proper resources
+            # OR we can create DAVCollection/DAVNonCollection objects directly
+            from datetime import datetime
+            import time
+            
             webdav_resources = []
             
             for item in items:
@@ -389,14 +397,29 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # Normalize path (remove double slashes)
                 full_path = full_path.replace('//', '/')
                 
-                # Create WebDAV resource info
-                resource = {
-                    'path': full_path,
-                    'name': item.get('name', item_path),
-                    'iscollection': item.get('is_directory', False),
-                    'size': item.get('size', 0) if not item.get('is_directory', False) else 0,
-                    'modified': item.get('modified', 0),
-                }
+                is_directory = item.get('is_directory', False)
+                size = item.get('size', 0) if not is_directory else 0
+                modified = item.get('modified', 0)
+                
+                # Convert modified timestamp to datetime if it's a number
+                if isinstance(modified, (int, float)):
+                    modified_dt = datetime.fromtimestamp(modified)
+                else:
+                    modified_dt = datetime.now()
+                
+                # Create a virtual resource object that wsgidav can use
+                # We'll use the parent class's method to create proper resource objects
+                # But since we're proxying, we need to create them manually
+                if is_directory:
+                    resource = DAVCollection(full_path, environ=None)
+                else:
+                    resource = DAVNonCollection(full_path, environ=None)
+                
+                # Set properties
+                resource.set_last_modified(modified_dt)
+                if not is_directory:
+                    resource.set_content_length(size)
+                
                 webdav_resources.append(resource)
             
             logger.info(f"[WebDAV] Proxied list from storage server: {len(webdav_resources)} items for {username}/{path}")
