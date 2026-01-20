@@ -605,8 +605,7 @@ class WebDAVSync:
                         logger.warning(f"Skipping path outside mount point: {file_remote_path} -> {file_local_path}")
                         continue
                     
-                    # Get file info - ensure path is in correct format
-                    # Use directory info from listing if available to avoid extra PROPFIND call
+                    # Get file info - use directory info from listing if available to avoid extra PROPFIND call
                     if is_dir_from_listing:
                         # We already know it's a directory from the listing
                         info = {'isdir': True, 'size': 0, 'modified': time.time()}
@@ -624,42 +623,7 @@ class WebDAVSync:
                         if not info:
                             continue
                     
-                    # If server reports it as a directory but it has a file extension,
-                    # try downloading it first to verify it's actually a file
-                    # (Some WebDAV servers incorrectly report files as directories)
-                    has_extension = '.' in Path(file_remote_path).name and Path(file_remote_path).suffix
-                    if info['isdir'] and has_extension:
-                        # Try to download it as a file first
-                        try:
-                            # Normalize path for download
-                            download_path = file_remote_path
-                            if not download_path.startswith('/'):
-                                download_path = '/' + download_path
-                            content = self.webdav.download(download_path)
-                            # Check if the content is HTML (directory listing) - if so, it's a directory with files inside
-                            if content.startswith(b'<!DOCTYPE') or content.startswith(b'<html') or b'<html>' in content[:200]:
-                                # It's a directory that returns HTML - but it might contain files!
-                                # Don't skip it - treat it as a directory and recurse into it
-                                logger.debug(f"{file_remote_path} returns HTML (directory listing) - treating as directory and recursing")
-                                # Fall through to directory handling below
-                            else:
-                                # Download succeeded and it's real file content!
-                                file_local_path.parent.mkdir(parents=True, exist_ok=True)
-                                file_local_path.write_bytes(content)
-                                os.utime(file_local_path, (info['modified'], info['modified']))
-                                if self.cache:
-                                    self.cache.cache_file(file_remote_path, content, info['modified'])
-                                logger.debug(f"Downloaded file (server incorrectly reported as dir): {file_remote_path}")
-                                continue
-                        except Exception as e:
-                            # Download failed - might be a directory, doesn't exist, or is actually a directory
-                            # If it's a 404 or similar, skip it (file doesn't exist)
-                            error_str = str(e).lower()
-                            if '404' in error_str or 'not found' in error_str:
-                                logger.debug(f"File {file_remote_path} does not exist, skipping")
-                                continue
-                            # Otherwise, treat as directory and recurse
-                            logger.debug(f"Could not download {file_remote_path} as file: {e}, treating as directory")
+                    # Trust the server's directory detection - no workarounds needed
                     
                     if info['isdir']:
                         # It's really a directory - create locally and recurse
