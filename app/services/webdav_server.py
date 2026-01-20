@@ -30,6 +30,15 @@ class QuotaFilesystemProvider(FilesystemProvider):
         super().__init__(root_path)
         self.db = db
         self.storage = get_storage_service(db)
+        # Check if we need to proxy to remote storage
+        self.storage_server_url = None
+        storage_setting = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        if storage_setting and storage_setting.value:
+            url = storage_setting.value.strip()
+            if url.startswith(('http://', 'https://')):
+                self.storage_server_url = url
+                logger.info(f"[WebDAV] Remote storage server configured: {url}")
+                logger.warning(f"[WebDAV] WebDAV will only show local files. Remote files must be accessed via File Manager API.")
     
     def create_collection(self, path: str):
         """Override to prevent creating directories with file names."""
@@ -147,6 +156,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
             return fs_path
         except Exception:
             return None
+    
+    def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
+        """Override to potentially proxy to remote storage or list local files."""
+        # If remote storage is configured, we can't list remote files via WebDAV
+        # WebDAV only works with local filesystem
+        # Remote files must be accessed via the File Manager API
+        return super().get_resource_list(path, depth, environ)
     
     def get_resource_info(self, path: str, environ: dict = None):
         """Override to ensure correct resource type detection."""
