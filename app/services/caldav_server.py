@@ -1052,10 +1052,11 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
         # Delete file using proxy
         success = proxy.delete_file(filepath)
         if success:
-            logger.info(f"Deleted event {event_uid} from calendar {cal_name} for user {user.username}")
+            logger.info(f"[CalDAV] ✓ Deleted event {event_uid} from calendar {cal_name} for user {user.username}")
+            logger.info(f"[CalDAV] Sync-token will change on next PROPFIND (file count decreased)")
             return Response(content="", status_code=204)
         else:
-            logger.warning(f"Event file not found or failed to delete: {filepath}")
+            logger.warning(f"[CalDAV] Event file not found or failed to delete: {filepath}")
             return Response(content="Not found", status_code=404)
     
     return Response(content="Not found", status_code=404)
