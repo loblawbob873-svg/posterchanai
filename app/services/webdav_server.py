@@ -256,10 +256,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
     def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
         """Override to list files, with support for remote storage proxying."""
         # CRITICAL: This method MUST be called by wsgidav for PROPFIND requests
-        # If you don't see "[WebDAV] get_resource_list CALLED" in logs, this method isn't being called!
-        import traceback
-        logger.error(f"[WebDAV] ⚠️ get_resource_list CALLED: path={path}, depth={depth}, environ_keys={list(environ.keys()) if environ else None}")
-        logger.error(f"[WebDAV] ⚠️ get_resource_list stack: {''.join(traceback.format_stack()[-5:-1])}")
+        # Log at debug level to reduce noise (change to INFO if debugging is needed)
+        logger.debug(f"[WebDAV] get_resource_list CALLED: path={path}, depth={depth}")
         
         # Strip /webdav prefix if present (may be added multiple times)
         original_path = path
