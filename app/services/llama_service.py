@@ -256,6 +256,12 @@ class LlamaService:
                 context_sizes_to_try.append(2048)
             
             last_error = None
+            # If GPU layers is -1 (all layers) and we have a large model, this might fail
+            # 14B Q4_K_M is ~8-9GB, which with system overhead might not fit in 12GB GPU
+            if gpu_layers == -1 and file_size > 8_000_000_000:  # > 8GB model file
+                logger.warning(f"  WARNING: Large model ({file_size / 1e9:.1f}GB) with all GPU layers (-1) may not fit in VRAM")
+                logger.warning(f"  Consider setting llm_gpu_layers to 20-30 for 12GB GPUs")
+            
             for attempt_ctx in context_sizes_to_try:
                 try:
                     # Use resolved path for loading
