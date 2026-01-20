@@ -781,8 +781,12 @@ class WebDAVSync:
                     # If listing didn't detect it as directory but info() says it is, trust info()
                     # info() does a PROPFIND Depth=0 which should be more accurate
                     
-                    if info['isdir']:
+                    isdir = info.get('isdir', False)
+                    logger.info(f"[WebDAV Sync] {file_remote_path}: isdir={isdir}")
+                    
+                    if isdir:
                         # It's really a directory - create locally and recurse
+                        logger.info(f"[WebDAV Sync] Creating directory: {file_local_path}")
                         try:
                             # Double-check path is valid before creating
                             path_str = str(file_local_path)
