@@ -420,18 +420,22 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     return []
                             
                             def get_properties(self, propname="allprop"):
-                                # Return properties dict - wsgidav calls this to get resource properties
+                                # Return properties as list of (name, value) tuples - wsgidav expects this format
                                 from datetime import datetime
-                                props = {}
+                                props = []
                                 if propname == "allprop" or "getlastmodified" in str(propname):
-                                    props['getlastmodified'] = datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                                    props.append(('getlastmodified', datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')))
                                 if propname == "allprop" or "getcontentlength" in str(propname):
-                                    props['getcontentlength'] = str(self._size) if not self._is_dir else "0"
+                                    props.append(('getcontentlength', str(self._size) if not self._is_dir else "0"))
                                 if propname == "allprop" or "resourcetype" in str(propname):
-                                    props['resourcetype'] = '<D:collection/>' if self._is_dir else ''
+                                    props.append(('resourcetype', '<D:collection/>' if self._is_dir else ''))
                                 if propname == "allprop" or "displayname" in str(propname):
-                                    props['displayname'] = self._path.split('/')[-1] or self._path
+                                    props.append(('displayname', self._path.split('/')[-1] or self._path))
                                 return props
+                            
+                            def get_href(self):
+                                # Return the href (path) for this resource
+                                return self._path
                             
                             def __getattr__(self, name):
                                 # Gracefully handle any other method calls
@@ -494,17 +498,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         return []
                     
                     def get_properties(self, propname="allprop"):
-                        # Return properties dict - wsgidav calls this to get resource properties
+                        # Return properties as list of (name, value) tuples - wsgidav expects this format
                         from datetime import datetime
-                        props = {}
+                        props = []
                         if propname == "allprop" or "getlastmodified" in str(propname):
-                            props['getlastmodified'] = datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                            props.append(('getlastmodified', datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')))
                         if propname == "allprop" or "getcontentlength" in str(propname):
-                            props['getcontentlength'] = "0"  # Directory has no content length
+                            props.append(('getcontentlength', "0"))  # Directory has no content length
                         if propname == "allprop" or "resourcetype" in str(propname):
-                            props['resourcetype'] = '<D:collection/>' if self._is_dir else ''
+                            props.append(('resourcetype', '<D:collection/>' if self._is_dir else ''))
                         if propname == "allprop" or "displayname" in str(propname):
-                            props['displayname'] = self._path.split('/')[-1] or self._path
+                            props.append(('displayname', self._path.split('/')[-1] or self._path))
                         return props
                     
                     # Add any other methods wsgidav might call
@@ -660,19 +664,22 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         return []
                     
                     def get_properties(self, propname="allprop"):
-                        # Return properties dict - wsgidav calls this to get resource properties
-                        # Return a dict with standard WebDAV properties
+                        # Return properties as list of (name, value) tuples - wsgidav expects this format
                         from datetime import datetime
-                        props = {}
+                        props = []
                         if propname == "allprop" or "getlastmodified" in str(propname):
-                            props['getlastmodified'] = datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                            props.append(('getlastmodified', datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')))
                         if propname == "allprop" or "getcontentlength" in str(propname):
-                            props['getcontentlength'] = str(self._size) if not self._is_dir else "0"
+                            props.append(('getcontentlength', str(self._size) if not self._is_dir else "0"))
                         if propname == "allprop" or "resourcetype" in str(propname):
-                            props['resourcetype'] = '<D:collection/>' if self._is_dir else ''
+                            props.append(('resourcetype', '<D:collection/>' if self._is_dir else ''))
                         if propname == "allprop" or "displayname" in str(propname):
-                            props['displayname'] = self._path.split('/')[-1] or self._path
+                            props.append(('displayname', self._path.split('/')[-1] or self._path))
                         return props
+                    
+                    def get_href(self):
+                        # Return the href (path) for this resource
+                        return self._path
                 
                 resource = SimpleResource(full_path, is_directory, size, modified_ts)
                 webdav_resources.append(resource)
