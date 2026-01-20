@@ -69,7 +69,16 @@ class WebDAVClient:
     def _url(self, path: str) -> str:
         """Build full URL from path"""
         path = path.lstrip('/')
-        return f"{self.base_url}/{path}" if path else self.base_url
+        url = f"{self.base_url}/{path}" if path else self.base_url
+        # For directories, ensure URL ends with / for proper PROPFIND handling
+        # But don't add / if it's clearly a file (has extension and no trailing slash)
+        if not url.endswith('/'):
+            # Check if it looks like a file (has extension)
+            path_parts = path.split('/')
+            if path_parts and '.' in path_parts[-1] and path_parts[-1].split('.')[-1] in ['log', 'db', 'ics', 'csv', 'jpeg', 'xbel', 'shm', 'wal']:
+                pass  # It's a file, don't add /
+            # For directories, we'll let the server handle it
+        return url
     
     def info(self, path: str) -> dict:
         """Get file/directory info via PROPFIND"""
@@ -105,22 +114,35 @@ class WebDAVClient:
             resourcetype = prop.find('D:resourcetype', ns)
             isdir = False
             if resourcetype is not None:
-                # Check for collection child element
+                # Check for collection child element (proper XML structure)
                 collection = resourcetype.find('D:collection', ns)
                 if collection is not None:
                     isdir = True
                 else:
-                    # Check if resourcetype text contains collection (may be HTML-encoded XML)
+                    # Check if resourcetype text contains collection (may be HTML-encoded XML like &lt;D:collection/&gt;)
                     resourcetype_text = resourcetype.text or ''
                     if resourcetype_text:
                         # Decode HTML entities (e.g., &lt; becomes <)
                         import html
-                        decoded_text = html.unescape(resourcetype_text)
+                        decoded_text = html.unescape(resourcetype_text.strip())
+                        # Check if decoded text contains collection tag
                         if 'collection' in decoded_text.lower():
                             isdir = True
                     # Also check if there are any child elements (collection tag)
                     if len(list(resourcetype)) > 0:
                         isdir = True
+                    
+                    # Additional check: if contentlength is 0 and no extension, might be a directory
+                    # But this is less reliable, so only use as fallback
+                    if not isdir:
+                        contentlength = prop.find('D:getcontentlength', ns)
+                        size = int(contentlength.text) if contentlength is not None and contentlength.text else -1
+                        if size == 0:
+                            # Check if path has no extension (heuristic for directory)
+                            path_name = href.text.split('/')[-1] if href is not None else ''
+                            if '.' not in path_name or path_name.startswith('.'):
+                                # Might be a directory, but we can't be sure without trying to list it
+                                pass
             
             contentlength = prop.find('D:getcontentlength', ns)
             size = int(contentlength.text) if contentlength is not None and contentlength.text else 0
