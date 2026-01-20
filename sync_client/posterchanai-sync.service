@@ -1,16 +1,12 @@
 [Unit]
-Description=PosterchanAI Sync Client
+Description=PosterchanAI WebDAV Mount Daemon
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/posterchanai-sync
+ExecStart=%h/.local/bin/posterchanai-webdav-mount
 Restart=on-failure
 RestartSec=5
-Environment="DISPLAY=:0"
-Environment="WAYLAND_DISPLAY=wayland-1"
-Environment="XDG_SESSION_TYPE=wayland"
-Environment="XAUTHORITY=%h/.Xauthority"
 
 [Install]
 WantedBy=default.target

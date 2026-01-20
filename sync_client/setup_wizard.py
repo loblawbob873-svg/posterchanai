@@ -41,7 +41,7 @@ def setup_cli() -> bool:
     # Load existing config if it exists
     existing_url = "http://localhost:8000"
     existing_key = ""
-    existing_dir = str(Path.home() / "PosterchanAI-Sync")
+    existing_mount = str(Path.home() / "PosterchanAI-Mount")
     
     if CONFIG_FILE.exists():
         try:
@@ -49,7 +49,7 @@ def setup_cli() -> bool:
                 existing_config = json.load(f)
                 existing_url = existing_config.get("server_url", existing_url)
                 existing_key = existing_config.get("api_key", existing_key)
-                existing_dir = existing_config.get("sync_dir", existing_dir)
+                existing_mount = existing_config.get("mount_point", existing_mount)
         except:
             pass
     
@@ -101,19 +101,62 @@ def setup_cli() -> bool:
         print(f"⚠ Warning: Could not verify connection: {e}")
         print("  Username will be fetched automatically when sync starts")
     
-    # Get sync directory
-    sync_dir = input(f"Sync Directory [{existing_dir}]: ").strip()
-    if not sync_dir:
-        sync_dir = existing_dir
+    # Get WebDAV URL
+    print("\nWebDAV Configuration:")
+    print("The sync client uses WebDAV to mount your storage as a filesystem.")
+    
+    # Try to detect WebDAV URL from server
+    webdav_url = ""
+    try:
+        import requests
+        # Try to get WebDAV URL from server
+        response = requests.get(
+            f"{url.rstrip('/')}/api/auth/settings",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=5
+        )
+        if response.status_code == 200:
+            data = response.json()
+            webdav_url = data.get("webdav_url", "")
+            if webdav_url:
+                print(f"✓ Detected WebDAV URL: {webdav_url}")
+    except Exception as e:
+        pass
+    
+    if not webdav_url:
+        # Ask user for WebDAV URL
+        webdav_url = input("WebDAV URL (e.g., http://localhost:8080/username): ").strip()
+        if not webdav_url:
+            # Try to construct from server URL
+            if username:
+                webdav_url = f"{url.rstrip('/')}:8080/{username}"
+                print(f"Using default WebDAV URL: {webdav_url}")
+            else:
+                print("ERROR: WebDAV URL is required", file=sys.stderr)
+                return False
+    
+    # Get mount point
+    mount_point = str(Path.home() / "PosterchanAI-Mount")
+    mount_input = input(f"Mount Point [{mount_point}]: ").strip()
+    if mount_input:
+        mount_point = mount_input
     
     # Expand ~ in path
-    sync_dir = os.path.expanduser(sync_dir)
+    mount_point = os.path.expanduser(mount_point)
     
     # Try to create directory
     try:
-        Path(sync_dir).mkdir(parents=True, exist_ok=True)
+        Path(mount_point).mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        print(f"ERROR: Cannot create sync directory: {e}", file=sys.stderr)
+        print(f"ERROR: Cannot create mount point: {e}", file=sys.stderr)
+        return False
+    
+    # Get password for WebDAV (user's account password)
+    print("\nWebDAV Authentication:")
+    print("WebDAV uses your PosterchanAI account password.")
+    password = getpass.getpass("Account Password: ").strip()
+    if not password:
+        print("ERROR: Password is required for WebDAV mount", file=sys.stderr)
         return False
     
     # Create config
@@ -121,19 +164,9 @@ def setup_cli() -> bool:
         "server_url": url.rstrip('/'),
         "api_key": key,
         "username": username,  # Use fetched username if available, otherwise empty (will be auto-fetched)
-        "sync_dir": sync_dir,
-        "exclude_patterns": [
-            "**/.*",
-            "**/__pycache__/**",
-            "**/*.pyc",
-            "**/node_modules/**",
-            "**/.git/**",
-            "**/.DS_Store",
-            "**/Thumbs.db"
-        ],
-        "poll_interval": 30,
-        "conflict_resolution": "ask",
-        "auto_sync": True
+        "webdav_url": webdav_url,
+        "password": password,
+        "mount_point": mount_point
     }
     
     # Merge with existing config if it exists
@@ -144,7 +177,10 @@ def setup_cli() -> bool:
                 default_config.update(existing)
                 default_config["server_url"] = url.rstrip('/')
                 default_config["api_key"] = key
-                default_config["sync_dir"] = sync_dir
+                default_config["username"] = username
+                default_config["webdav_url"] = webdav_url
+                default_config["password"] = password
+                default_config["mount_point"] = mount_point
         except:
             pass
     
@@ -160,7 +196,8 @@ def setup_cli() -> bool:
             print(f"  Username: {username}")
         else:
             print(f"  Username: (will be fetched automatically)")
-        print(f"  Sync Directory: {sync_dir}")
+        print(f"  WebDAV URL: {webdav_url}")
+        print(f"  Mount Point: {mount_point}")
         print()
         return True
     except Exception as e:
@@ -170,10 +207,19 @@ def setup_cli() -> bool:
 
 class SetupWizard:
     """First-run setup wizard (GUI mode)"""
-    def __init__(self):
+    def __init__(self, parent=None):
         if not GUI_AVAILABLE:
             raise RuntimeError("GUI not available. Use setup_cli() instead.")
-        self.root = tk.Tk()
+        
+        # Use Toplevel if parent provided (called from another GUI window)
+        # Otherwise use Tk() for standalone window
+        self.is_toplevel = parent is not None
+        if parent is not None:
+            self.root = tk.Toplevel(parent)
+            self.root.transient(parent)  # Make it a child window
+            self.root.grab_set()  # Make it modal
+        else:
+            self.root = tk.Tk()
         self.root.title("PosterchanAI Sync - Setup")
         self.root.geometry("600x500")
         self.root.resizable(False, False)
@@ -192,7 +238,7 @@ class SetupWizard:
         # Try to load existing config values
         existing_url = "http://localhost:8000"
         existing_key = ""
-        existing_dir = str(Path.home() / "PosterchanAI-Sync")
+        existing_mount = str(Path.home() / "PosterchanAI-Mount")
         
         if self.is_editing:
             try:
@@ -200,7 +246,7 @@ class SetupWizard:
                     existing_config = json.load(f)
                     existing_url = existing_config.get("server_url", existing_url)
                     existing_key = existing_config.get("api_key", existing_key)
-                    existing_dir = existing_config.get("sync_dir", existing_dir)
+                    existing_mount = existing_config.get("mount_point", existing_mount)
             except:
                 pass
         
@@ -293,22 +339,38 @@ class SetupWizard:
         help_text.config(state=tk.DISABLED)
         help_text.pack(fill=tk.X, pady=(0, 15))
         
-        # Sync Directory
-        dir_label = tk.Label(
+        # WebDAV URL
+        webdav_label = tk.Label(
             input_frame,
-            text="Sync Directory:",
+            text="WebDAV URL:",
             font=("Arial", 10, "bold"),
             bg=bg_color,
             fg=fg_color,
             anchor="w"
         )
-        dir_label.pack(fill=tk.X, pady=(0, 5))
+        webdav_label.pack(fill=tk.X, pady=(0, 5))
         
-        dir_frame = tk.Frame(input_frame, bg=bg_color)
-        dir_frame.pack(fill=tk.X, pady=(0, 15))
+        # Try to detect WebDAV URL
+        existing_webdav = ""
+        try:
+            import requests
+            response = requests.get(
+                f"{existing_url.rstrip('/')}/api/auth/settings",
+                headers={"Authorization": f"Bearer {existing_key}"},
+                timeout=5
+            )
+            if response.status_code == 200:
+                data = response.json()
+                existing_webdav = data.get("webdav_url", "")
+        except:
+            pass
         
-        self.dir_entry = tk.Entry(
-            dir_frame,
+        if not existing_webdav and existing_url:
+            # Construct default WebDAV URL
+            existing_webdav = f"{existing_url.rstrip('/')}:8080"
+        
+        self.webdav_entry = tk.Entry(
+            input_frame,
             font=("Arial", 11),
             bg=entry_bg,
             fg=fg_color,
@@ -316,11 +378,69 @@ class SetupWizard:
             relief=tk.SOLID,
             borderwidth=1
         )
-        self.dir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.dir_entry.insert(0, existing_dir)
+        self.webdav_entry.pack(fill=tk.X, pady=(0, 15))
+        self.webdav_entry.insert(0, existing_webdav)
+        
+        # Password
+        password_label = tk.Label(
+            input_frame,
+            text="Account Password (for WebDAV):",
+            font=("Arial", 10, "bold"),
+            bg=bg_color,
+            fg=fg_color,
+            anchor="w"
+        )
+        password_label.pack(fill=tk.X, pady=(0, 5))
+        
+        self.password_entry = tk.Entry(
+            input_frame,
+            font=("Arial", 11),
+            bg=entry_bg,
+            fg=fg_color,
+            insertbackground=fg_color,
+            show="*",
+            relief=tk.SOLID,
+            borderwidth=1
+        )
+        self.password_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        # Mount Point
+        mount_label = tk.Label(
+            input_frame,
+            text="Mount Point:",
+            font=("Arial", 10, "bold"),
+            bg=bg_color,
+            fg=fg_color,
+            anchor="w"
+        )
+        mount_label.pack(fill=tk.X, pady=(0, 5))
+        
+        mount_frame = tk.Frame(input_frame, bg=bg_color)
+        mount_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        existing_mount = str(Path.home() / "PosterchanAI-Mount")
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    existing_config = json.load(f)
+                    existing_mount = existing_config.get("mount_point", existing_mount)
+            except:
+                pass
+        
+        self.mount_entry = tk.Entry(
+            mount_frame,
+            font=("Arial", 11),
+            bg=entry_bg,
+            fg=fg_color,
+            insertbackground=fg_color,
+            relief=tk.SOLID,
+            borderwidth=1
+        )
+        self.mount_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.mount_entry.insert(0, existing_mount)
         
         browse_btn = tk.Button(
-            dir_frame,
+            mount_frame,
             text="Browse...",
             command=self.browse_directory,
             bg="#003300",
@@ -381,21 +501,23 @@ class SetupWizard:
         self.config_saved = False
     
     def browse_directory(self):
-        """Browse for sync directory"""
+        """Browse for mount point directory"""
         from tkinter import filedialog
         directory = filedialog.askdirectory(
-            title="Select Sync Directory",
-            initialdir=self.dir_entry.get()
+            title="Select Mount Point",
+            initialdir=self.mount_entry.get()
         )
         if directory:
-            self.dir_entry.delete(0, tk.END)
-            self.dir_entry.insert(0, directory)
+            self.mount_entry.delete(0, tk.END)
+            self.mount_entry.insert(0, directory)
     
     def validate_inputs(self) -> bool:
         """Validate user inputs"""
         url = self.url_entry.get().strip()
         api_key = self.key_entry.get().strip()
-        sync_dir = self.dir_entry.get().strip()
+        webdav_url = self.webdav_entry.get().strip()
+        password = self.password_entry.get().strip()
+        mount_point = self.mount_entry.get().strip()
         
         if not url:
             messagebox.showerror("Error", "Server URL is required")
@@ -409,15 +531,23 @@ class SetupWizard:
             messagebox.showerror("Error", "API Key is required")
             return False
         
-        if not sync_dir:
-            messagebox.showerror("Error", "Sync directory is required")
+        if not webdav_url:
+            messagebox.showerror("Error", "WebDAV URL is required")
+            return False
+        
+        if not password:
+            messagebox.showerror("Error", "Account password is required for WebDAV mount")
+            return False
+        
+        if not mount_point:
+            messagebox.showerror("Error", "Mount point is required")
             return False
         
         # Try to create directory
         try:
-            Path(sync_dir).mkdir(parents=True, exist_ok=True)
+            Path(mount_point).mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            messagebox.showerror("Error", f"Cannot create sync directory: {e}")
+            messagebox.showerror("Error", f"Cannot create mount point: {e}")
             return False
         
         return True
@@ -429,7 +559,9 @@ class SetupWizard:
         
         url = self.url_entry.get().strip().rstrip('/')
         api_key = self.key_entry.get().strip()
-        sync_dir = self.dir_entry.get().strip()
+        webdav_url = self.webdav_entry.get().strip()
+        password = self.password_entry.get().strip()
+        mount_point = self.mount_entry.get().strip()
         
         # Try to fetch username from API to verify connection
         username = ""
@@ -443,27 +575,23 @@ class SetupWizard:
             if response.status_code == 200:
                 data = response.json()
                 username = data.get("username", "")
+                # Also try to get WebDAV URL from server if not provided
+                if not webdav_url:
+                    webdav_url = data.get("webdav_url", "")
+                    if not webdav_url and username:
+                        # Construct default WebDAV URL
+                        webdav_url = f"{url}:8080/{username}"
         except:
-            pass  # Username will be fetched automatically when sync starts
+            pass  # Username will be fetched automatically when mount starts
         
         # Load existing config or create default
         default_config = {
             "server_url": url,
             "api_key": api_key,
             "username": username,  # Use fetched username if available
-            "sync_dir": sync_dir,
-            "exclude_patterns": [
-                "**/.*",
-                "**/__pycache__/**",
-                "**/*.pyc",
-                "**/node_modules/**",
-                "**/.git/**",
-                "**/.DS_Store",
-                "**/Thumbs.db"
-            ],
-            "poll_interval": 30,
-            "conflict_resolution": "ask",
-            "auto_sync": True
+            "webdav_url": webdav_url,
+            "password": password,
+            "mount_point": mount_point
         }
         
         # Merge with existing config if it exists
@@ -476,7 +604,9 @@ class SetupWizard:
                     default_config["server_url"] = url
                     default_config["api_key"] = api_key
                     default_config["username"] = username  # Update username if fetched
-                    default_config["sync_dir"] = sync_dir
+                    default_config["webdav_url"] = webdav_url
+                    default_config["password"] = password
+                    default_config["mount_point"] = mount_point
             except:
                 pass
         
@@ -498,7 +628,14 @@ class SetupWizard:
     
     def run(self) -> bool:
         """Run the wizard and return True if config was saved"""
-        self.root.mainloop()
+        # If this is a Toplevel (child window), wait for it to be destroyed
+        # Don't call mainloop() as the parent's mainloop will handle it
+        if self.is_toplevel:
+            # Wait for window to be destroyed (non-blocking for parent's mainloop)
+            self.root.wait_window()
+        else:
+            # Standalone window - need mainloop
+            self.root.mainloop()
         return self.config_saved
 
 
@@ -554,7 +691,9 @@ def check_and_run_setup(force: bool = False) -> bool:
                 with open(CONFIG_FILE, 'r') as f:
                     config = json.load(f)
                     # Check if we have the minimum required fields
-                    if config.get("server_url") and config.get("api_key"):
+                    if (config.get("server_url") and config.get("api_key") and 
+                        config.get("webdav_url") and config.get("password") and 
+                        config.get("mount_point")):
                         return True  # Setup not needed, config is valid
             except:
                 pass  # Config file exists but invalid, need setup
@@ -574,7 +713,9 @@ Example config.json:
   {{
     "server_url": "http://localhost:8000",
     "api_key": "your-api-key-here",
-    "sync_dir": "~/PosterchanAI-Sync"
+    "webdav_url": "http://localhost:8080/username",
+    "password": "your-account-password",
+    "mount_point": "~/PosterchanAI-Mount"
   }}
 """
         print(error_msg, file=sys.stderr)
@@ -584,8 +725,8 @@ Example config.json:
     if not GUI_AVAILABLE:
         return setup_cli()
     
-    # Use GUI wizard
-    wizard = SetupWizard()
+    # Use GUI wizard (no parent - standalone window)
+    wizard = SetupWizard(parent=None)
     return wizard.run()
 
 

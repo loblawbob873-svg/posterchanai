@@ -427,19 +427,52 @@ async def upload_file(
         
         full_file_path = target_path / safe_filename
         
-        # Check if file already exists
+        # Check if path already exists
         if full_file_path.exists():
-            # Add number suffix
-            base_name = full_file_path.stem
-            extension = full_file_path.suffix
-            counter = 1
-            while full_file_path.exists():
-                full_file_path = target_path / f"{base_name}_{counter}{extension}"
-                counter += 1
+            # If it exists as a directory, we need to handle it differently
+            if full_file_path.is_dir():
+                # Remove the directory if it's empty, or rename the file
+                try:
+                    # Try to remove if empty
+                    if not any(full_file_path.iterdir()):
+                        full_file_path.rmdir()
+                        logger.info(f"Removed empty directory {full_file_path} to make way for file")
+                    else:
+                        # Directory is not empty - add number suffix to filename
+                        base_name = full_file_path.stem
+                        extension = full_file_path.suffix
+                        counter = 1
+                        while full_file_path.exists():
+                            full_file_path = target_path / f"{base_name}_{counter}{extension}"
+                            counter += 1
+                except Exception as e:
+                    # If we can't remove it, rename the file
+                    logger.warning(f"Could not remove directory {full_file_path}: {e}. Renaming file.")
+                    base_name = full_file_path.stem
+                    extension = full_file_path.suffix
+                    counter = 1
+                    while full_file_path.exists():
+                        full_file_path = target_path / f"{base_name}_{counter}{extension}"
+                        counter += 1
+            else:
+                # File exists - add number suffix
+                base_name = full_file_path.stem
+                extension = full_file_path.suffix
+                counter = 1
+                while full_file_path.exists():
+                    full_file_path = target_path / f"{base_name}_{counter}{extension}"
+                    counter += 1
+        
+        # Ensure parent directory exists
+        full_file_path.parent.mkdir(parents=True, exist_ok=True)
         
         # Write file
         with open(full_file_path, 'wb') as f:
             f.write(content)
+        
+        # Verify the file was created correctly
+        if not full_file_path.is_file():
+            raise Exception(f"File was not created correctly at {full_file_path}")
         
         # Restore EXIF timestamp if it's a media file
         try:
@@ -652,15 +685,36 @@ async def list_files(
         try:
             for item in sorted(target_path.iterdir()):
                 try:
+                    # Use stat() to get file info - more reliable than separate calls
                     stat = item.stat()
+                    
+                    # Check if it's a directory - use both is_dir() and stat to be sure
                     is_dir = item.is_dir()
+                    
+                    # Double-check: if it's a symlink, resolve it
+                    if item.is_symlink():
+                        try:
+                            resolved = item.resolve()
+                            is_dir = resolved.is_dir()
+                        except Exception:
+                            # If symlink is broken, use original check
+                            pass
+                    
+                    # Additional validation: if size > 0, it's definitely a file
+                    # (directories have size 0 or are reported as 4096 on some filesystems)
+                    file_size = stat.st_size
+                    if file_size > 0 and is_dir:
+                        # This shouldn't happen, but if it does, trust the size
+                        logger.warning(f"Item {item.name} has size {file_size} but is_dir() returns True. Treating as file.")
+                        is_dir = False
+                    
                     item_path = str(item.relative_to(user_path))
                     
                     item_info = {
                         "name": item.name,
                         "path": item_path,
                         "is_directory": is_dir,
-                        "size": stat.st_size if not is_dir else 0,
+                        "size": file_size if not is_dir else 0,
                         "modified": stat.st_mtime,
                         "is_external": False,
                     }
@@ -1507,15 +1561,36 @@ async def list_files(
         items = []
         for item in sorted(target_path.iterdir()):
             try:
+                # Use stat() to get file info - more reliable than separate calls
                 stat = item.stat()
+                
+                # Check if it's a directory - use both is_dir() and stat to be sure
                 is_dir = item.is_dir()
+                
+                # Double-check: if it's a symlink, resolve it
+                if item.is_symlink():
+                    try:
+                        resolved = item.resolve()
+                        is_dir = resolved.is_dir()
+                    except Exception:
+                        # If symlink is broken, use original check
+                        pass
+                
+                # Additional validation: if size > 0, it's definitely a file
+                # (directories have size 0 or are reported as 4096 on some filesystems)
+                file_size = stat.st_size
+                if file_size > 0 and is_dir:
+                    # This shouldn't happen, but if it does, trust the size
+                    logger.warning(f"Item {item.name} has size {file_size} but is_dir() returns True. Treating as file.")
+                    is_dir = False
+                
                 item_path = str(item.relative_to(user_path))
                 
                 item_info = {
                     "name": item.name,
                     "path": item_path,
                     "is_directory": is_dir,
-                    "size": stat.st_size if not is_dir else 0,
+                    "size": file_size if not is_dir else 0,
                     "modified": stat.st_mtime,
                     "is_external": False,
                 }
