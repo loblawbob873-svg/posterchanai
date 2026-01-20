@@ -129,15 +129,30 @@ class WebDAVClient:
                                     if prop is not None:
                                         resourcetype = prop.find('D:resourcetype', ns)
                                         if resourcetype is not None:
-                                            resourcetype_text = resourcetype.text or ''
+                                            # Check for collection child element first
+                                            collection = resourcetype.find('D:collection', ns)
+                                            if collection is not None:
+                                                parent_is_dir = True
+                                                response_elem = elem
+                                                logger.debug(f"Detected parent directory: child {href_path} has collection element")
+                                                break
+                                            # Check resourcetype text (may be HTML-encoded)
+                                            resourcetype_text = resourcetype.text
                                             if resourcetype_text:
                                                 import html
                                                 decoded = html.unescape(resourcetype_text.strip())
-                                                if 'collection' in decoded.lower():
+                                                if 'collection' in decoded.lower() or decoded.strip() == '<D:collection/>':
                                                     # This child is a directory, so the parent (requested path) is also a directory
                                                     parent_is_dir = True
                                                     response_elem = elem  # Use this response for other properties
+                                                    logger.debug(f"Detected parent directory: child {href_path} has collection in resourcetype: {decoded}")
                                                     break
+                                            # Also check if resourcetype has any child elements
+                                            if len(list(resourcetype)) > 0:
+                                                parent_is_dir = True
+                                                response_elem = elem
+                                                logger.debug(f"Detected parent directory: child {href_path} has resourcetype children")
+                                                break
                 
                 # If still no match, use the first response
                 if response_elem is None:
