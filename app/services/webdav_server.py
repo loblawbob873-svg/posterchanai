@@ -458,8 +458,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 elif key == "is_collection":
                                     return self.is_collection()
                                 elif key == "last_modified":
-                                    from datetime import datetime
-                                    return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                                    # wsgidav expects numeric timestamp, not formatted string
+                                    return float(self._modified) if isinstance(self._modified, (int, float)) else 0.0
+                                elif key == "str_modified":
+                                    # This is set by wsgidav's directory browser after formatting
+                                    if hasattr(self, '_dict_storage') and key in self._dict_storage:
+                                        return self._dict_storage[key]
+                                    return ""
                                 elif key == "content_length":
                                     return self.get_content_length()
                                 raise KeyError(key)
@@ -790,11 +795,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         elif key == "size":
                             return self._size if not self._is_dir else 0
                         elif key == "modified":
-                            return self._modified
+                            # Return numeric timestamp (float/int)
+                            return float(self._modified) if isinstance(self._modified, (int, float)) else 0.0
                         elif key == "last_modified":
-                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT') if isinstance(self._modified, (int, float)) else ""
+                            # wsgidav expects numeric timestamp, not formatted string
+                            return float(self._modified) if isinstance(self._modified, (int, float)) else 0.0
                         elif key == "str_modified":
-                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT') if isinstance(self._modified, (int, float)) else ""
+                            # This is set by wsgidav's directory browser after formatting
+                            # Return empty string initially, wsgidav will set it
+                            if hasattr(self, '_dict_storage') and key in self._dict_storage:
+                                return self._dict_storage[key]
+                            return ""
                         elif key == "content_length":
                             return self._size if not self._is_dir else 0
                         else:
