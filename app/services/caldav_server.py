@@ -127,7 +127,9 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
         
         # Add status code based on item status
         if status == 404:
-            xml += '            </D:prop>\n            <D:status>HTTP/1.1 404 Not Found</D:status>\n        </D:propstat>\n    </D:response>\n'
+            # For 404, we need to return a proper response with empty props and 404 status
+            # iPhone expects this format to know the resource was deleted
+            xml += '            <D:prop>\n            </D:prop>\n            <D:status>HTTP/1.1 404 Not Found</D:status>\n        </D:response>\n'
         else:
             xml += '            </D:prop>\n            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
     xml += '</D:multistatus>'
@@ -950,11 +952,24 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             
             if old_sync_token:
                 # Look up the old sync-token in database
+                # Try exact match first
                 old_token_record = db.query(CalDAVSyncToken).filter(
                     CalDAVSyncToken.user_id == user.id,
                     CalDAVSyncToken.calendar_name == cal_name,
                     CalDAVSyncToken.sync_token == old_sync_token
                 ).first()
+                
+                # If not found, try to find the most recent sync-token for this calendar
+                # (iPhone might be using a slightly different token format)
+                if not old_token_record:
+                    logger.info(f"[CalDAV] Exact sync-token not found, looking for most recent token for calendar {cal_name}")
+                    old_token_record = db.query(CalDAVSyncToken).filter(
+                        CalDAVSyncToken.user_id == user.id,
+                        CalDAVSyncToken.calendar_name == cal_name
+                    ).order_by(CalDAVSyncToken.created_at.desc()).first()
+                    
+                    if old_token_record:
+                        logger.info(f"[CalDAVSyncToken] Using most recent sync-token: {old_token_record.sync_token[:50]}... (created: {old_token_record.created_at})")
                 
                 if old_token_record:
                     try:
@@ -970,7 +985,9 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                             old_event_uids = set(old_event_data)
                             old_event_mtimes = {}
                         
-                        # Find deleted events
+                        logger.info(f"[CalDAV] Old sync-token had {len(old_event_uids)} events, current has {len(current_event_uids)} events")
+                        
+                        # Find deleted events (in old but not in current)
                         deleted_event_uids = old_event_uids - current_event_uids
                         
                         # Find modified events (same UID but different mtime - fast check without reading files)
@@ -982,15 +999,15 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                 modified_event_uids.add(uid)
                                 logger.debug(f"[CalDAV] Event {uid} modified: mtime changed from {old_mtime} to {current_mtime}")
                         
-                        logger.info(f"[CalDAV] Found {len(deleted_event_uids)} deleted events, {len(modified_event_uids)} modified events since sync-token {old_sync_token[:50]}...")
+                        logger.info(f"[CalDAV] Found {len(deleted_event_uids)} deleted events, {len(modified_event_uids)} modified events since sync-token")
                         if deleted_event_uids:
-                            logger.info(f"[CalDAV] Deleted event UIDs: {list(deleted_event_uids)[:5]}...")
+                            logger.info(f"[CalDAV] Deleted event UIDs: {list(deleted_event_uids)[:10]}")
                         if modified_event_uids:
-                            logger.info(f"[CalDAV] Modified event UIDs: {list(modified_event_uids)[:5]}...")
+                            logger.info(f"[CalDAV] Modified event UIDs: {list(modified_event_uids)[:10]}")
                     except Exception as e:
-                        logger.warning(f"[CalDAV] Error parsing old sync-token event list: {e}")
+                        logger.warning(f"[CalDAV] Error parsing old sync-token event list: {e}", exc_info=True)
                 else:
-                    logger.info(f"[CalDAV] Old sync-token not found in database - doing full sync")
+                    logger.info(f"[CalDAV] No sync-token found in database for calendar {cal_name} - doing full sync")
                     # If token not found, do full sync (all current events)
             
             # Store current sync-token state for future comparisons (with mtimes for fast change detection)
@@ -1079,14 +1096,19 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             deleted_count = 0
             for deleted_uid in deleted_event_uids:
                 href_path = f"{cal_name}/{deleted_uid}.ics" if cal_name else f"calendar/{deleted_uid}.ics"
+                # Use full URL path for href (iPhone expects this format)
+                full_href = f"{base_url}/{href_path}"
                 items.append({
-                    "href": f"{base_url}/{href_path}",
-                    "props": {},
+                    "href": full_href,
+                    "props": {},  # Empty props for deleted items
                     "status": 404  # 404 tells iPhone to remove this event
                 })
                 deleted_count += 1
-                if deleted_count <= 5:
-                    logger.info(f"[CalDAV] Reporting deleted event with 404: {deleted_uid}")
+                logger.info(f"[CalDAV] ✓ Reporting deleted event with 404: {deleted_uid} (href: {full_href})")
+            
+            if deleted_count > 0:
+                logger.info(f"[CalDAV] ✓ Reporting {deleted_count} deleted events to iPhone (404 status)")
+                logger.info(f"[CalDAV] Deleted UIDs: {list(deleted_event_uids)[:10]}")
             
             logger.info(f"[CalDAV] sync-collection summary for calendar '{cal_name}':")
             logger.info(f"  - Total .ics files: {ics_count}")
@@ -1291,21 +1313,13 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
         cal_name = unquote(match.group(1))
         event_uid = match.group(2)
         
-        # Build filepath using proxy
-        if cal_name == 'calendar':
-            filepath = f"{event_uid}.ics"  # Legacy: root directory
-        else:
-            filepath = f"{cal_name}/{event_uid}.ics"
-        
         # Build filepath (with calendar subdirectory if not 'calendar')
         if cal_name == 'calendar':
             filepath = f"{event_uid}.ics"
         else:
             filepath = f"{cal_name}/{event_uid}.ics"
         
-        # Use storage proxy (must be configured)
-        from app.services.dav_storage_proxy import DAVStorageProxy
-        proxy = DAVStorageProxy(db, user.username, 'caldav')
+        logger.info(f"[CalDAV] DELETE request for event {event_uid} in calendar {cal_name} (filepath: {filepath})")
         
         # Delete file using proxy
         success = proxy.delete_file(filepath)
@@ -1326,21 +1340,33 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
             updated_count = 0
             for token_record in sync_tokens:
                 try:
-                    event_uids = set(json.loads(token_record.event_uids))
-                    if event_uid in event_uids:
-                        event_uids.remove(event_uid)
-                        token_record.event_uids = json.dumps(list(event_uids))
-                        updated_count += 1
-                        logger.debug(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}...")
+                    event_data = json.loads(token_record.event_uids)
+                    
+                    # Handle both old format (list) and new format (dict)
+                    if isinstance(event_data, dict):
+                        # New format: {uid: mtime}
+                        if event_uid in event_data:
+                            del event_data[event_uid]
+                            token_record.event_uids = json.dumps(event_data)
+                            updated_count += 1
+                            logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (dict format)")
+                    else:
+                        # Old format: list of UIDs
+                        event_uids = set(event_data)
+                        if event_uid in event_uids:
+                            event_uids.remove(event_uid)
+                            token_record.event_uids = json.dumps(list(event_uids))
+                            updated_count += 1
+                            logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (list format)")
                 except Exception as e:
-                    logger.warning(f"[CalDAV] Error updating sync-token {token_record.id}: {e}")
+                    logger.warning(f"[CalDAV] Error updating sync-token {token_record.id}: {e}", exc_info=True)
             
             if updated_count > 0:
                 db.commit()
-                logger.info(f"[CalDAV] Updated {updated_count} sync-token(s) for calendar {cal_name} to reflect deletion of event {event_uid}")
+                logger.info(f"[CalDAV] ✓ Updated {updated_count} sync-token(s) for calendar {cal_name} to reflect deletion of event {event_uid}")
             else:
                 # No existing sync-tokens, that's fine - next sync will create a new one
-                logger.debug(f"[CalDAV] No existing sync-tokens to update for calendar {cal_name}")
+                logger.info(f"[CalDAV] No existing sync-tokens to update for calendar {cal_name} (will be detected on next sync)")
             
             return Response(content="", status_code=204)
         else:
