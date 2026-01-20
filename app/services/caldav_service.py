@@ -311,9 +311,13 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                     
                     # Handle both datetime and date objects (all-day events)
                     if isinstance(event_start, date) and not isinstance(event_start, datetime):
-                        # All-day event - convert date to datetime at midnight
+                        # All-day event - convert date to datetime at midnight in LOCAL timezone
+                        # This ensures all-day events stay on the correct date regardless of timezone
                         is_all_day = True
-                        event_start = datetime.combine(event_start, datetime.min.time(), tzinfo=timezone.utc)
+                        # Use local midnight, not UTC midnight, to preserve the date
+                        local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+                        event_start = datetime.combine(event_start, datetime.min.time(), tzinfo=local_tz)
+                        logger.debug(f"[CalDAV] All-day event '{summary}': date={event_start.date()}, using local timezone {local_tz}")
                     
                     # After conversion, event_start should be a datetime
                     if not isinstance(event_start, datetime):
@@ -321,9 +325,17 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                         logger.warning(f"[CalDAV] Event '{summary}' has invalid start time type: {type(event_start)}, value: {event_start}")
                         continue
                     
-                    # Make timezone-aware if naive
+                    # Make timezone-aware if naive - but preserve the date for all-day events
                     if event_start.tzinfo is None:
-                        event_start = event_start.replace(tzinfo=timezone.utc)
+                        # For naive datetimes, check if this looks like an all-day event (midnight)
+                        # If it's midnight, assume it's local time to preserve the date
+                        if event_start.hour == 0 and event_start.minute == 0 and event_start.second == 0:
+                            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+                            event_start = event_start.replace(tzinfo=local_tz)
+                            logger.debug(f"[CalDAV] Naive midnight datetime for '{summary}', assuming local timezone to preserve date")
+                        else:
+                            # For timed events, assume UTC if naive
+                            event_start = event_start.replace(tzinfo=timezone.utc)
                     
                     # Get end time first (needed for date range check)
                     dtend = component.get('dtend')
@@ -331,11 +343,18 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                     if dtend:
                         event_end = dtend.dt
                         if isinstance(event_end, date) and not isinstance(event_end, datetime):
-                            # All-day event end - convert to datetime at end of day
-                            event_end = datetime.combine(event_end, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc)
+                            # All-day event end - convert to datetime at end of day in LOCAL timezone
+                            # This ensures all-day events stay on the correct date
+                            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+                            event_end = datetime.combine(event_end, datetime.max.time().replace(microsecond=0), tzinfo=local_tz)
                         elif isinstance(event_end, datetime):
                             if event_end.tzinfo is None:
-                                event_end = event_end.replace(tzinfo=timezone.utc)
+                                # For naive datetimes at end of day, assume local timezone
+                                if event_end.hour == 23 and event_end.minute == 59:
+                                    local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+                                    event_end = event_end.replace(tzinfo=local_tz)
+                                else:
+                                    event_end = event_end.replace(tzinfo=timezone.utc)
                     
                     # Check for recurring events (RRULE) - these need special handling
                     rrule_prop = component.get('rrule')
@@ -470,9 +489,21 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                             ))
                     else:
                         # Non-recurring event - add if it overlaps with range (already checked above)
-                        # Convert to naive local for CalendarEvent
-                        event_start_naive = to_naive_local(event_start)
-                        event_end_naive = to_naive_local(event_end) if event_end else None
+                        # For all-day events, use the date directly to avoid timezone conversion issues
+                        if is_all_day:
+                            # All-day events: use the date from the original date object or datetime.date()
+                            # This preserves the correct date regardless of timezone
+                            event_start_date = event_start.date() if hasattr(event_start, 'date') else event_start
+                            event_end_date = event_end.date() if event_end and hasattr(event_end, 'date') else (event_end.date() if event_end else None)
+                            # Create datetime at midnight local time for display
+                            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+                            event_start_naive = datetime.combine(event_start_date, datetime.min.time())
+                            event_end_naive = datetime.combine(event_end_date, datetime.min.time()) if event_end_date else None
+                            logger.debug(f"[CalDAV] All-day event '{summary}': using date {event_start_date} (preserved from original)")
+                        else:
+                            # Timed events: convert to naive local for CalendarEvent
+                            event_start_naive = to_naive_local(event_start)
+                            event_end_naive = to_naive_local(event_end) if event_end else None
                         
                         event = CalendarEvent(
                             uid=uid,
