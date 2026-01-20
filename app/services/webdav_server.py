@@ -438,6 +438,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 return self._path
                             
                             def get_directory_info(self):
+                                # Return directory info as list of dicts for dir_browser
+                                # Each dict should have 'display_name', 'href', 'is_collection', etc.
+                                return []
+                            
+                            def get_directory_info(self):
                                 # Return directory info for dir_browser - delegate to get_resource_instances
                                 try:
                                     children = self._provider.get_resource_instances(self._path, environ=None)
@@ -711,6 +716,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         if propname == "allprop" or "displayname" in str(propname):
                             props.append(('displayname', self._path.split('/')[-1] or self._path))
                         return props
+                    
+                    def get_directory_info(self):
+                        # Return directory info as list of dicts for dir_browser
+                        # Each dict should have 'display_name', 'href', 'is_collection', etc.
+                        return []
                     
                     def get_href(self):
                         # Return the href (path) for this resource
