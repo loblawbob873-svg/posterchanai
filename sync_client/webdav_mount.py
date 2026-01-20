@@ -746,8 +746,15 @@ class WebDAVSync:
                         logger.debug(f"Skipping base directory: {file_remote_path}")
                         continue
                     
+                    # If we're in a subdirectory (path is not empty), the file_remote_path from ls()
+                    # will be relative to the root (e.g., "verita84@poster.place/Joplin/file.md")
+                    # We need to check if it's actually within our current path context
+                    # For root sync (path=''), file_remote_path should start with remote_base
+                    # For subdirectory sync (path='Joplin'), file_remote_path should start with remote_base/Joplin
+                    # But ls() returns paths relative to root, so we need to handle this correctly
+                    
                     file_local_path = self._local_path(file_remote_path)
-                    logger.debug(f"Processing: {file_remote_path} -> {file_local_path}")
+                    logger.debug(f"Processing: {file_remote_path} -> {file_local_path} (current path context: '{path}')")
                     
                     # Ensure we're not trying to create paths outside the mount point
                     # Use string-based check to avoid permission errors on resolve()
@@ -820,17 +827,45 @@ class WebDAVSync:
                             continue
                         
                         # Calculate relative path for recursive sync
-                        # file_remote_path is like "verita84@poster.place/Documents"
-                        # We need to extract just "Documents" to recurse into it
+                        # file_remote_path from ls() is always relative to root, e.g., "verita84@poster.place/Documents"
+                        # If we're currently syncing path='', then rel_path should be "Documents"
+                        # If we're currently syncing path='Joplin', then file_remote_path might be "verita84@poster.place/Joplin/file.md"
+                        #   and we should NOT recurse (we're already in Joplin)
+                        #   OR if it's "verita84@poster.place/Joplin/subdir", rel_path should be "Joplin/subdir"
+                        
                         rel_path = file_remote_path.lstrip('/')
                         if rel_path.startswith(self.remote_base + '/'):
-                            # Remove the remote_base prefix to get just the directory name
+                            # Remove the remote_base prefix
                             rel_path = rel_path[len(self.remote_base) + 1:]
                         elif rel_path == self.remote_base:
                             continue  # Already syncing base
-                        # Recurse into directory to get files inside (even if it has a file-like name)
+                        
+                        # If we're in a subdirectory (path is not empty), check if this item is within our current path
+                        if path:
+                            # We're syncing a subdirectory, e.g., path='Joplin'
+                            # file_remote_path should be like "verita84@poster.place/Joplin/file.md" or "verita84@poster.place/Joplin/subdir"
+                            # rel_path after removing remote_base would be "Joplin/file.md" or "Joplin/subdir"
+                            # We need to check if rel_path starts with our current path
+                            if rel_path.startswith(path + '/'):
+                                # This is a subdirectory within our current path, e.g., "Joplin/subdir"
+                                # Extract just the subdirectory name relative to current path
+                                rel_path = rel_path[len(path) + 1:]
+                                # Find the first directory component
+                                if '/' in rel_path:
+                                    rel_path = path + '/' + rel_path.split('/')[0]
+                                else:
+                                    rel_path = path + '/' + rel_path
+                            elif rel_path == path:
+                                # This is the directory we're currently syncing, skip recursion
+                                continue
+                            else:
+                                # This item is not within our current path context, skip
+                                logger.debug(f"Skipping {file_remote_path} - not in current path context '{path}'")
+                                continue
+                        
+                        # Recurse into directory to get files inside
                         if rel_path:  # Only recurse if there's a subpath
-                            logger.debug(f"Recursing into directory: {rel_path} (from {file_remote_path})")
+                            logger.debug(f"Recursing into directory: {rel_path} (from {file_remote_path}, current path: '{path}')")
                             self.sync_from_remote(rel_path)
                     else:
                         # File - download if newer or missing
