@@ -438,6 +438,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 return self._path
                             
                             def get_directory_info(self):
+                                # Return directory info as dict for dir_browser - wsgidav's directory browser expects this
+                                from datetime import datetime
+                                return {
+                                    "display_name": self._path.split('/')[-1] or self._path,
+                                    "href": self._path,
+                                    "is_collection": self._is_dir,
+                                    "content_length": self._size if not self._is_dir else 0,
+                                    "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT'),
+                                }
+                            
+                            def get_directory_info(self):
                                 # Return directory info as list of dicts for dir_browser
                                 # Each dict should have 'display_name', 'href', 'is_collection', etc.
                                 return []
@@ -716,6 +727,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         if propname == "allprop" or "displayname" in str(propname):
                             props.append(('displayname', self._path.split('/')[-1] or self._path))
                         return props
+                    
+                    def get_directory_info(self):
+                        # Return directory info as dict for dir_browser - wsgidav's directory browser expects this
+                        from datetime import datetime
+                        return {
+                            "display_name": self._path.split('/')[-1] or self._path,
+                            "href": self._path,
+                            "is_collection": self._is_dir,
+                            "content_length": self._size if not self._is_dir else 0,
+                            "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT'),
+                        }
                     
                     def get_directory_info(self):
                         # Return directory info as list of dicts for dir_browser
