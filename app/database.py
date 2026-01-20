@@ -1,6 +1,6 @@
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text, inspect
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool, StaticPool
 import os
 import logging
@@ -140,9 +140,88 @@ def get_db():
             logger.debug(f"Error closing database session (may already be closed): {close_error}")
 
 
+def safe_query_settings(db: Session) -> dict:
+    """
+    Safely query settings from database with error handling for schema mismatches.
+    Falls back to raw SQL query if ORM query fails.
+    """
+    from app.models import Setting
+    try:
+        # Try ORM query first
+        settings = {s.key: s.value for s in db.query(Setting).all()}
+        return settings
+    except (IndexError, Exception) as e:
+        # Handle SQLAlchemy schema mismatch errors
+        logger.warning(f"ORM query failed, trying raw SQL: {e}")
+        try:
+            # Fallback to raw SQL query
+            result = db.execute(text("SELECT key, value FROM settings"))
+            settings = {}
+            for row in result.fetchall():
+                if len(row) >= 2:
+                    settings[row[0]] = row[1]
+                else:
+                    logger.warning(f"Invalid settings row: {row}")
+            logger.info(f"Successfully loaded {len(settings)} settings using raw query")
+            return settings
+        except Exception as raw_error:
+            logger.error(f"Raw SQL query also failed: {raw_error}")
+            # Try to diagnose the issue
+            try:
+                inspector = inspect(db.bind)
+                if inspector.has_table('settings'):
+                    columns = [col['name'] for col in inspector.get_columns('settings')]
+                    logger.error(f"Settings table columns: {columns}")
+                    logger.error(f"Expected: ['key', 'value']")
+                else:
+                    logger.error("Settings table does not exist")
+            except Exception:
+                pass
+            return {}
+
+
+def safe_query_settings(db: Session) -> dict:
+    """
+    Safely query settings from database with error handling for schema mismatches.
+    Falls back to raw SQL query if ORM query fails.
+    """
+    from app.models import Setting
+    try:
+        # Try ORM query first
+        settings = {s.key: s.value for s in db.query(Setting).all()}
+        return settings
+    except (IndexError, Exception) as e:
+        # Handle SQLAlchemy schema mismatch errors
+        logger.warning(f"ORM query failed, trying raw SQL: {e}")
+        try:
+            # Fallback to raw SQL query
+            result = db.execute(text("SELECT key, value FROM settings"))
+            settings = {}
+            for row in result.fetchall():
+                if len(row) >= 2:
+                    settings[row[0]] = row[1]
+                else:
+                    logger.warning(f"Invalid settings row: {row}")
+            logger.info(f"Successfully loaded {len(settings)} settings using raw query")
+            return settings
+        except Exception as raw_error:
+            logger.error(f"Raw SQL query also failed: {raw_error}")
+            # Try to diagnose the issue
+            try:
+                inspector = inspect(db.bind)
+                if inspector.has_table('settings'):
+                    columns = [col['name'] for col in inspector.get_columns('settings')]
+                    logger.error(f"Settings table columns: {columns}")
+                    logger.error(f"Expected: ['key', 'value']")
+                else:
+                    logger.error("Settings table does not exist")
+            except Exception:
+                pass
+            return {}
+
+
 def _run_migrations():
     """Add new columns to existing tables if they don't exist."""
-    from sqlalchemy import text, inspect
 
     inspector = inspect(engine)
 
