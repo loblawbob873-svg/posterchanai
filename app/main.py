@@ -818,7 +818,18 @@ async def startup():
                     webdav_app = create_webdav_app(db_dav)
                     # Mount WebDAV at /webdav/ path - handles all WebDAV requests
                     # Nginx will rewrite /username/ to /webdav/username/ so WebDAV sees the correct path
-                    app.mount("/webdav", wsgi_middleware(webdav_app))
+                    # Wrap in middleware to strip /webdav prefix from PATH_INFO
+                    def strip_webdav_prefix(wsgi_app):
+                        def wrapper(environ, start_response):
+                            # Strip /webdav prefix from PATH_INFO if present
+                            path_info = environ.get('PATH_INFO', '')
+                            if path_info.startswith('/webdav'):
+                                environ['PATH_INFO'] = path_info[7:]  # Remove '/webdav'
+                                if not environ['PATH_INFO']:
+                                    environ['PATH_INFO'] = '/'
+                            return wsgi_app(environ, start_response)
+                        return wrapper
+                    app.mount("/webdav", wsgi_middleware(strip_webdav_prefix(webdav_app)))
                     logging.info("✅ WebDAV mounted directly into FastAPI on port 443 (via /webdav/)")
                     logging.info("   No separate port 8080 needed - all traffic goes through 443!")
                 except ImportError as e:
