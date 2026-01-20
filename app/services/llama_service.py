@@ -234,10 +234,14 @@ class LlamaService:
                     if result.returncode == 0:
                         free_memory_mb = int(result.stdout.strip().split('\n')[0])
                         logger.info(f"  Available GPU memory: {free_memory_mb} MB")
-                        # Rough estimate: context size * 2 bytes per token for KV cache
-                        estimated_memory_mb = (self.num_ctx * 2) // (1024 * 1024)
-                        if estimated_memory_mb > free_memory_mb * 0.8:
-                            logger.warning(f"  WARNING: Context size may require ~{estimated_memory_mb} MB, but only {free_memory_mb} MB available")
+                        # Better estimate: KV cache for 14B model ≈ context_size * 2 bytes * layers * hidden_dim
+                        # Simplified: ~0.2-0.3 MB per 1000 tokens for 14B models (varies by quantization)
+                        # For Q4_K_M 14B: roughly 0.25 MB per 1000 tokens
+                        estimated_kv_cache_mb = int((self.num_ctx / 1000) * 0.25)
+                        if estimated_kv_cache_mb > free_memory_mb * 0.5:
+                            logger.warning(f"  WARNING: Context size {self.num_ctx} may require ~{estimated_kv_cache_mb} MB for KV cache")
+                            logger.warning(f"  Available: {free_memory_mb} MB (model weights need ~8-9GB for 14B Q4_K_M)")
+                            logger.warning(f"  Consider reducing context size to 4096-8192 for 12GB GPUs")
                 except Exception:
                     pass  # nvidia-smi not available or failed, skip check
 
