@@ -786,32 +786,49 @@ class WebDAVSync:
                         logger.warning(f"Skipping path outside mount point: {file_remote_path} -> {file_local_path}")
                         continue
                     
-                    # Get file info - always call info() to get accurate directory detection
-                    # The PROPFIND listing might not include proper resourcetype tags
-                    try:
-                        # Normalize path for info() call
-                        # file_remote_path might be like "verita84@poster.place/chat" or "/verita84@poster.place/chat"
-                        info_path = file_remote_path
-                        if not info_path.startswith('/'):
-                            # Add leading slash if missing
-                            info_path = '/' + info_path
-                        logger.debug(f"Calling info() for {info_path}")
-                        info = self.webdav.info(info_path)
-                        if info:
-                            logger.debug(f"info() returned: isdir={info.get('isdir')}, size={info.get('size')}")
-                    except Exception as e:
-                        logger.warning(f"Error getting info for {file_remote_path}: {e}")
-                        continue
-                    if not info:
-                        logger.warning(f"info() returned None for {file_remote_path}")
+                    # Use isdir from listing if available (faster than calling info() for each file)
+                    # Only call info() if listing didn't provide isdir or if we need more details
+                    isdir = is_dir_from_listing
+                    info = None
+                    
+                    # Only call info() if:
+                    # 1. Listing didn't provide isdir info, OR
+                    # 2. We need to check if it's really a directory (for files that might be directories)
+                    if not is_dir_from_listing or (not is_dir_from_listing and file_info.get('size', 0) == 0):
+                        # Get file info - call info() to get accurate directory detection
+                        # The PROPFIND listing might not include proper resourcetype tags
+                        try:
+                            # Normalize path for info() call
+                            # file_remote_path might be like "verita84@poster.place/chat" or "/verita84@poster.place/chat"
+                            info_path = file_remote_path
+                            if not info_path.startswith('/'):
+                                # Add leading slash if missing
+                                info_path = '/' + info_path
+                            logger.debug(f"Calling info() for {info_path}")
+                            info = self.webdav.info(info_path)
+                            if info:
+                                logger.debug(f"info() returned: isdir={info.get('isdir')}, size={info.get('size')}")
+                                # Use info() result if available
+                                isdir = info.get('isdir', isdir)
+                        except Exception as e:
+                            logger.debug(f"Error getting info for {file_remote_path}: {e}, using listing result")
+                            # Continue with listing result if info() fails
+                            pass
+                    
+                    # If we didn't get info and listing says it's a directory, trust the listing
+                    if info is None and is_dir_from_listing:
+                        # Create a minimal info dict from listing data
+                        info = {
+                            'isdir': True,
+                            'size': 0,
+                            'modified': time.time()
+                        }
+                    
+                    if info is None:
+                        logger.debug(f"No info available for {file_remote_path}, skipping")
                         continue
                     
-                    # If listing said it's a directory but info() says it's not, trust info()
-                    # If listing didn't detect it as directory but info() says it is, trust info()
-                    # info() does a PROPFIND Depth=0 which should be more accurate
-                    
-                    isdir = info.get('isdir', False)
-                    logger.info(f"[WebDAV Sync] {file_remote_path}: isdir={isdir}")
+                    logger.debug(f"[WebDAV Sync] {file_remote_path}: isdir={isdir} (from {'info()' if info and 'isdir' in info else 'listing'})")
                     
                     if isdir:
                         # It's really a directory - create locally and recurse
@@ -893,9 +910,13 @@ class WebDAVSync:
                         # File - download if newer or missing
                         should_download = True
                         if file_local_path.exists():
-                            local_mtime = file_local_path.stat().st_mtime
-                            if local_mtime >= info['modified']:
-                                should_download = False
+                            try:
+                                local_mtime = file_local_path.stat().st_mtime
+                                if local_mtime >= info.get('modified', 0):
+                                    should_download = False
+                            except OSError:
+                                # File might have been deleted, download it
+                                should_download = True
                         
                         if should_download:
                             # Check cache first
