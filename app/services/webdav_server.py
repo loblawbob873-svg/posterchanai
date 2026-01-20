@@ -310,28 +310,58 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return result
     
     def get_resource_instances(self, path: str, environ: dict = None):
-        """Override to handle resource instances - wsgidav may call this instead of get_resource_list."""
+        """Override to handle resource instances - wsgidav calls this to get children of a resource."""
         import traceback
         logger.error(f"[WebDAV] ⚠️ get_resource_instances CALLED: path={path}, environ_keys={list(environ.keys()) if environ else None}")
-        logger.error(f"[WebDAV] ⚠️ get_resource_instances stack: {''.join(traceback.format_stack()[-5:-1])}")
-        # Try get_resource_list first
+        
+        # Strip /webdav prefix if present
+        normalized_path = path.strip('/')
+        while normalized_path.startswith('webdav/'):
+            normalized_path = normalized_path[7:]
+        if normalized_path:
+            normalized_path = '/' + normalized_path
+        else:
+            normalized_path = '/'
+        
+        # get_resource_instances should return a list of child resources
+        # This is what we implemented in get_resource_list
         try:
-            return self.get_resource_list(path, depth=1, environ=environ)
+            return self.get_resource_list(normalized_path, depth=1, environ=environ)
         except Exception as e:
             logger.error(f"[WebDAV] get_resource_instances error: {e}", exc_info=True)
             raise
     
     def get_resource_inst(self, path: str, environ: dict = None):
-        """Override get_resource_inst - wsgidav might call this."""
+        """Override get_resource_inst - wsgidav calls this for PROPFIND requests."""
         import traceback
         logger.error(f"[WebDAV] ⚠️ get_resource_inst CALLED: path={path}, environ_keys={list(environ.keys()) if environ else None}")
-        logger.error(f"[WebDAV] ⚠️ get_resource_inst stack: {''.join(traceback.format_stack()[-5:-1])}")
-        # Delegate to get_resource_list
-        try:
-            return self.get_resource_list(path, depth=1, environ=environ)
-        except Exception as e:
-            logger.error(f"[WebDAV] get_resource_inst error: {e}", exc_info=True)
-            raise
+        
+        # Strip /webdav prefix if present
+        normalized_path = path.strip('/')
+        while normalized_path.startswith('webdav/'):
+            normalized_path = normalized_path[7:]
+        if normalized_path:
+            normalized_path = '/' + normalized_path
+        else:
+            normalized_path = '/'
+        
+        logger.info(f"[WebDAV] get_resource_inst: path={path}, normalized={normalized_path}")
+        
+        # If remote storage is configured, proxy to get resource info
+        if self.storage_server_url:
+            username = self._get_username_from_path(normalized_path)
+            if username:
+                # For get_resource_inst, we need to return a single resource object, not a list
+                # This is for the resource itself, not its children
+                # Use get_resource_info instead
+                try:
+                    return self.get_resource_info(normalized_path, environ)
+                except Exception as e:
+                    logger.error(f"[WebDAV] get_resource_inst error: {e}", exc_info=True)
+                    raise
+        
+        # Use parent class for local filesystem
+        return super().get_resource_inst(normalized_path, environ)
     
     def get_filestream(self, path: str, environ: dict = None):
         """Override get_filestream - log when called."""
