@@ -353,10 +353,40 @@ class WebDAVClient:
                             # we need to use info() to check (but that's expensive, so we'll do it in sync_from_remote)
                             # For now, if href doesn't end with / and no collection tag, assume it's a file
                     
+                    # Extract mtime from getlastmodified if available (for faster sync without info() calls)
+                    mtime = None
+                    if propstat is not None:
+                        prop = propstat.find('D:prop', ns)
+                        if prop is not None:
+                            getlastmodified = prop.find('D:getlastmodified', ns)
+                            if getlastmodified is not None and getlastmodified.text:
+                                from email.utils import parsedate_to_datetime
+                                try:
+                                    mtime = parsedate_to_datetime(getlastmodified.text).timestamp()
+                                except:
+                                    pass
+                    
+                    # Get size from getcontentlength if available
+                    size = -1
+                    if propstat is not None:
+                        prop = propstat.find('D:prop', ns)
+                        if prop is not None:
+                            getcontentlength = prop.find('D:getcontentlength', ns)
+                            if getcontentlength is not None and getcontentlength.text:
+                                try:
+                                    size = int(getcontentlength.text)
+                                except:
+                                    pass
+                    
                     # Get just the filename for 'name', but keep full path for 'path'
                     filename = file_path.split('/')[-1]
                     if filename:
-                        files.append({'name': filename, 'path': file_path, 'isdir': isdir})
+                        file_data = {'name': filename, 'path': file_path, 'isdir': isdir}
+                        if mtime is not None:
+                            file_data['modified'] = mtime
+                        if size >= 0:
+                            file_data['size'] = size
+                        files.append(file_data)
                 
                 return files
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
