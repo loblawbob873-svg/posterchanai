@@ -122,15 +122,32 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return total
     
     def write_file_content(self, path: str, content: bytes, *, etag: Optional[str] = None):
-        """Override to check quota before writing and ensure files are created, not directories."""
+        """Override to check quota and proxy to remote storage if configured."""
         # Normalize path - remove trailing slash if present (files shouldn't have trailing slashes)
         normalized_path = path.rstrip('/')
         
-        # If path ends with a file extension, it's definitely a file, not a directory
-        # Ensure we don't have a directory with this name
         username = self._get_username_from_path(normalized_path)
         if username:
-            # Check quota
+            # If remote storage is configured, proxy the write
+            if self.storage_server_url:
+                # Extract relative path
+                rel_path = normalized_path.lstrip('/')
+                if rel_path.startswith(username + '/'):
+                    rel_path = rel_path[len(username) + 1:]
+                elif rel_path == username:
+                    rel_path = ''
+                
+                try:
+                    self._proxy_upload_file(username, rel_path, content)
+                    # Invalidate cache
+                    self._invalidate_cache_for_path(username, normalized_path)
+                    logger.debug(f"[WebDAV] Proxied file upload to storage server: {normalized_path}")
+                    return  # Success, don't write locally
+                except Exception as e:
+                    logger.warning(f"[WebDAV] Failed to proxy upload to storage server: {e}, writing locally")
+                    # Fall through to local write
+            
+            # Check quota (for local storage)
             allowed, error = self._check_quota(username, len(content))
             if not allowed:
                 raise Exception(error or "Quota exceeded")
@@ -153,6 +170,40 @@ class QuotaFilesystemProvider(FilesystemProvider):
             self._invalidate_cache_for_path(username, normalized_path)
         
         return result
+    
+    def _proxy_upload_file(self, username: str, file_path: str, content: bytes):
+        """Proxy file upload to remote storage server."""
+        import requests
+        
+        url = f"{self.storage_server_url.rstrip('/')}/api/storage/upload-file"
+        headers = {}
+        if self.storage_server_token:
+            headers["Authorization"] = f"Bearer {self.storage_server_token}"
+        
+        # Determine content type
+        from pathlib import Path
+        ext = Path(file_path).suffix
+        content_type = 'application/octet-stream'
+        if ext == '.txt' or ext == '.md':
+            content_type = 'text/plain'
+        elif ext == '.json':
+            content_type = 'application/json'
+        elif ext in ['.jpg', '.jpeg']:
+            content_type = 'image/jpeg'
+        elif ext == '.png':
+            content_type = 'image/png'
+        
+        files = {
+            'file': (Path(file_path).name, content, content_type)
+        }
+        data = {
+            'username': username,
+            'file_path': file_path
+        }
+        
+        response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+        response.raise_for_status()
+        return response.json()
     
     def _locate_file_path(self, path: str) -> Optional[Path]:
         """Get the filesystem path for a WebDAV path."""
@@ -190,9 +241,29 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return super().get_resource_list(path, depth, environ)
     
     def get_resource_info(self, path: str, environ: dict = None):
-        """Override to ensure correct resource type detection by checking filesystem directly."""
+        """Override to ensure correct resource type detection, with remote storage support."""
         # Normalize path - remove trailing slash for files
         normalized_path = path.rstrip('/')
+        
+        # If remote storage is configured, try to get info from storage server first
+        if self.storage_server_url:
+            username = self._get_username_from_path(normalized_path)
+            if username:
+                # Extract relative path
+                rel_path = normalized_path.lstrip('/')
+                if rel_path.startswith(username + '/'):
+                    rel_path = rel_path[len(username) + 1:]
+                elif rel_path == username:
+                    rel_path = ''
+                
+                # Try to get info from storage server
+                try:
+                    info = self._proxy_get_info(username, rel_path)
+                    if info:
+                        logger.debug(f"[WebDAV] Got resource info from storage server for {normalized_path}")
+                        return info
+                except Exception as e:
+                    logger.debug(f"[WebDAV] Failed to get info from storage server: {e}, trying local")
         
         # Always check filesystem directly first for accurate info
         fs_path = self._locate_file_path(normalized_path)
@@ -225,6 +296,53 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     logger.debug(f"[WebDAV] Fixed resource type for {normalized_path}: directory, not file")
         
         return info
+    
+    def _proxy_get_info(self, username: str, path: str):
+        """Get file info from remote storage server."""
+        import requests
+        
+        # List the directory to find the file
+        url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
+        headers = {}
+        if self.storage_server_token:
+            headers["Authorization"] = f"Bearer {self.storage_server_token}"
+        
+        # Get parent directory and filename
+        if path:
+            path_parts = path.split('/')
+            parent_path = '/'.join(path_parts[:-1]) if len(path_parts) > 1 else ''
+            filename = path_parts[-1]
+        else:
+            parent_path = ''
+            filename = ''
+        
+        params = {
+            "username": username,
+            "path": parent_path
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Find the file in the listing
+            items = data.get('items', [])
+            for item in items:
+                if item.get('name') == filename or item.get('path') == path:
+                    # Found it - convert to WebDAV format
+                    full_path = f"/{username}/{path}" if path else f"/{username}"
+                    return {
+                        'path': full_path,
+                        'name': item.get('name', filename),
+                        'iscollection': item.get('is_directory', False),
+                        'size': item.get('size', 0) if not item.get('is_directory', False) else 0,
+                        'modified': item.get('modified', 0),
+                    }
+        except Exception as e:
+            logger.debug(f"[WebDAV] Failed to get info from storage server: {e}")
+        
+        return None
     
     def delete(self, path: str):
         """Override to invalidate cache on delete."""
