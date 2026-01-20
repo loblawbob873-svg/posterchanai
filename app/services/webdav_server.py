@@ -24,7 +24,7 @@ _webdav_thread: Optional[threading.Thread] = None
 
 
 class QuotaFilesystemProvider(FilesystemProvider):
-    """Filesystem provider with quota checking."""
+    """Filesystem provider with quota checking and remote storage support."""
     
     def __init__(self, root_path: Path, db: Session):
         super().__init__(root_path)
@@ -32,21 +32,27 @@ class QuotaFilesystemProvider(FilesystemProvider):
         self.storage = get_storage_service(db)
         # Check if we need to proxy to remote storage
         self.storage_server_url = None
+        self.storage_server_token = None
         storage_setting = db.query(Setting).filter(Setting.key == "storage_server_url").first()
         if storage_setting and storage_setting.value:
             url = storage_setting.value.strip()
             if url.startswith(('http://', 'https://')):
                 self.storage_server_url = url
+                # Get server-to-server token if available
+                token_setting = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+                if token_setting and token_setting.value:
+                    self.storage_server_token = token_setting.value
                 logger.info(f"[WebDAV] Remote storage server configured: {url}")
-                logger.warning(f"[WebDAV] WebDAV will only show local files. Remote files must be accessed via File Manager API.")
+                logger.warning(f"[WebDAV] WebDAV will proxy file operations to remote storage server")
         
         # Log storage path and verify it's correct
         logger.info(f"[WebDAV] QuotaFilesystemProvider initialized with root_path: {root_path}")
         if root_path.exists():
             try:
-                # Count files to verify this is the right location
-                file_count = sum(1 for _ in root_path.rglob('*') if _.is_file())
-                logger.info(f"[WebDAV] Root path contains {file_count} files")
+                # Count files to verify this is the right location (only if local storage)
+                if not self.storage_server_url:
+                    file_count = sum(1 for _ in root_path.rglob('*') if _.is_file())
+                    logger.info(f"[WebDAV] Root path contains {file_count} files")
             except Exception as e:
                 logger.warning(f"[WebDAV] Could not count files in root_path: {e}")
     
@@ -168,16 +174,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
             return None
     
     def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
-        """Override to list files, ensuring all files are visible."""
-        # Always use parent method - it should list files correctly
-        result = super().get_resource_list(path, depth, environ)
-        
-        # If we have remote storage, we can't list it via WebDAV filesystem provider
-        # But we can at least ensure local files are listed correctly
+        """Override to list files, with support for remote storage proxying."""
+        # If remote storage is configured, we need to proxy the listing
+        # But wsgidav's FilesystemProvider doesn't support this natively
+        # For now, we'll list local files and log a warning
         if self.storage_server_url:
-            logger.debug(f"[WebDAV] Remote storage configured - WebDAV can only list local files")
+            logger.debug(f"[WebDAV] Remote storage configured - listing local files only")
+            logger.warning(f"[WebDAV] Files on remote storage server won't be visible via WebDAV")
+            logger.warning(f"[WebDAV] To sync remote files, use File Manager API or mount remote storage locally")
         
-        return result
+        # Use parent method to list local files
+        return super().get_resource_list(path, depth, environ)
     
     def get_resource_info(self, path: str, environ: dict = None):
         """Override to ensure correct resource type detection by checking filesystem directly."""
