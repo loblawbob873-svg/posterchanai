@@ -1049,11 +1049,11 @@ class WebDAVSync:
                                     should_cache = self.cache.should_cache_directory(file_remote_path) if self.cache.cache_directories else True
                                     if should_cache:
                                         self.cache.cache_file(file_remote_path, content, info['modified'], force=True)
-                                    # Update sync state
-                                    content_hash = hashlib.md5(content).hexdigest()
-                                    self.cache.update_sync_state(file_remote_path, file_local_path, info['modified'], len(content), content_hash)
                                     else:
                                         logger.debug(f"Skipping cache for {file_remote_path} (directory not in cache_directories)")
+                                    # Update sync state (always, regardless of cache setting)
+                                    content_hash = hashlib.md5(content).hexdigest()
+                                    self.cache.update_sync_state(file_remote_path, file_local_path, info['modified'], len(content), content_hash)
                                 
                                 logger.debug(f"Downloaded: {file_remote_path}")
                             except WebDAVError as e:
