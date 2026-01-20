@@ -43,6 +43,21 @@ if [ "$EUID" -eq 0 ]; then
     exit 1
 fi
 
+# Check for python3
+if ! command -v python3 &> /dev/null; then
+    echo -e "${RED}${BOLD}[ERROR]${NC} python3 is not installed. Please install Python 3.8 or later."
+    exit 1
+fi
+
+# Check Python version (need 3.8+)
+PYTHON_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
+PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
+if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 8 ]); then
+    echo -e "${RED}${BOLD}[ERROR]${NC} Python 3.8 or later is required. Found: $PYTHON_VERSION"
+    exit 1
+fi
+
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$HOME/.local/share/posterchanai-sync"
@@ -64,11 +79,22 @@ echo -e "${GREEN}✓${NC} Directories created"
 
 # Copy files
 echo -e "${GREEN}[2/6]${NC} Copying files..."
+if [ ! -f "$SCRIPT_DIR/webdav_mount.py" ]; then
+    echo -e "${RED}${BOLD}[ERROR]${NC} webdav_mount.py not found in $SCRIPT_DIR"
+    exit 1
+fi
+if [ ! -f "$SCRIPT_DIR/requirements.txt" ]; then
+    echo -e "${RED}${BOLD}[ERROR]${NC} requirements.txt not found in $SCRIPT_DIR"
+    exit 1
+fi
+
 cp "$SCRIPT_DIR/webdav_mount.py" "$INSTALL_DIR/"
-cp "$SCRIPT_DIR/setup_wizard.py" "$INSTALL_DIR/" 2>/dev/null || true
+if [ -f "$SCRIPT_DIR/setup_wizard.py" ]; then
+    cp "$SCRIPT_DIR/setup_wizard.py" "$INSTALL_DIR/"
+    chmod +x "$INSTALL_DIR/setup_wizard.py"
+fi
 cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/webdav_mount.py"
-chmod +x "$INSTALL_DIR/setup_wizard.py" 2>/dev/null || true
 echo -e "${GREEN}✓${NC} Files copied"
 
 # Create virtual environment
@@ -82,8 +108,14 @@ fi
 
 # Install dependencies
 echo -e "${GREEN}[4/6]${NC} Installing dependencies..."
-"$INSTALL_DIR/venv/bin/pip" install --upgrade pip > /dev/null 2>&1
-"$INSTALL_DIR/venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt" > /dev/null 2>&1
+if ! "$INSTALL_DIR/venv/bin/pip" install --upgrade pip > /dev/null 2>&1; then
+    echo -e "${RED}${BOLD}[ERROR]${NC} Failed to upgrade pip"
+    exit 1
+fi
+if ! "$INSTALL_DIR/venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt" > /dev/null 2>&1; then
+    echo -e "${RED}${BOLD}[ERROR]${NC} Failed to install dependencies. Check requirements.txt"
+    exit 1
+fi
 echo -e "${GREEN}✓${NC} Dependencies installed"
 
 # Create wrapper script
@@ -104,24 +136,31 @@ echo -e "${GREEN}✓${NC} Wrapper script created"
 
 # Install systemd service
 echo -e "${GREEN}[6/6]${NC} Installing systemd user service..."
-cp "$SCRIPT_DIR/posterchanai-sync.service" "$SERVICE_DIR/"
-sed -i "s|%h|$HOME|g" "$SERVICE_DIR/posterchanai-sync.service"
-sed -i "s|%i|$USER|g" "$SERVICE_DIR/posterchanai-sync.service"
-systemctl --user daemon-reload
-echo -e "${GREEN}✓${NC} Systemd service installed"
-
-# Check for FUSE
-echo -e "${CYAN}[CHECK]${NC} Checking for FUSE..."
-if [ -e /dev/fuse ]; then
-    echo -e "${GREEN}✓${NC} FUSE is available"
+if [ ! -f "$SCRIPT_DIR/posterchanai-sync.service" ]; then
+    echo -e "${YELLOW}⚠${NC} Service file not found, skipping service installation"
 else
-    echo -e "${YELLOW}⚠${NC} FUSE may not be available"
-    echo -e "${YELLOW}   ${NC} Please install FUSE:"
-    echo -e "${YELLOW}   ${NC}   - Gentoo: emerge sys-fs/fuse"
-    echo -e "${YELLOW}   ${NC}   - Debian/Ubuntu: apt install fuse3"
-    echo -e "${YELLOW}   ${NC}   - Arch: pacman -S fuse"
-    echo -e "${YELLOW}   ${NC}   - Fedora: dnf install fuse"
-    echo -e "${YELLOW}   ${NC} Note: Python packages (fusepy, requests) will be installed automatically"
+    cp "$SCRIPT_DIR/posterchanai-sync.service" "$SERVICE_DIR/"
+    # Replace %h with $HOME in service file
+    if command -v sed &> /dev/null; then
+        sed -i "s|%h|$HOME|g" "$SERVICE_DIR/posterchanai-sync.service" 2>/dev/null || \
+        sed -i '' "s|%h|$HOME|g" "$SERVICE_DIR/posterchanai-sync.service" 2>/dev/null || true
+    fi
+    # Reload systemd if available
+    if command -v systemctl &> /dev/null && systemctl --user daemon-reload 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Systemd service installed"
+    else
+        echo -e "${YELLOW}⚠${NC} Systemd not available or not running, service file copied but not activated"
+    fi
+fi
+
+# Check for systemd (optional but recommended)
+echo -e "${CYAN}[CHECK]${NC} Checking for systemd..."
+if command -v systemctl &> /dev/null; then
+    echo -e "${GREEN}✓${NC} Systemd is available"
+else
+    echo -e "${YELLOW}⚠${NC} Systemd not found - service will not auto-start"
+    echo -e "${YELLOW}   ${NC} You can still run the client manually:"
+    echo -e "${YELLOW}   ${NC}   $BIN_DIR/posterchanai-webdav-mount"
 fi
 
 # Create default config if it doesn't exist (setup wizard will prompt user)
@@ -135,24 +174,34 @@ echo -e "${CYAN}${BOLD}═══════════════════
 echo -e "${GREEN}${BOLD}[SUCCESS]${NC} Installation complete!"
 echo ""
 echo -e "${CYAN}Next steps:${NC}"
-echo -e "  1. ${YELLOW}${BOLD}IMPORTANT:${NC} Run the setup wizard first to configure the mount:"
+echo -e "  1. ${YELLOW}${BOLD}IMPORTANT:${NC} Run the setup wizard first to configure the sync client:"
 echo -e "     ${GREEN}posterchanai-webdav-mount --setup${NC}"
-echo -e "     ${CYAN}Note:${NC} This will prompt you for server URL, WebDAV URL, and password"
+echo -e "     ${CYAN}Note:${NC} This will prompt you for:"
+echo -e "       - Server URL (e.g., https://ai.poster.place)"
+echo -e "       - Username (your email address)"
+echo -e "       - Password (your PosterchanAI password)"
+echo -e "       - Mount point (default: ~/PosterchanAI-Mount)"
 echo ""
-echo -e "  2. After setup, start the service:"
-echo -e "     ${GREEN}systemctl --user start posterchanai-sync${NC}"
-echo ""
-echo -e "  3. Enable auto-start:"
-echo -e "     ${GREEN}systemctl --user enable posterchanai-sync${NC}"
-echo ""
-echo -e "  4. Check mount status:"
+if command -v systemctl &> /dev/null; then
+    echo -e "  2. After setup, start the service:"
+    echo -e "     ${GREEN}systemctl --user start posterchanai-sync${NC}"
+    echo ""
+    echo -e "  3. Enable auto-start:"
+    echo -e "     ${GREEN}systemctl --user enable posterchanai-sync${NC}"
+    echo ""
+    echo -e "  4. Check service status:"
+    echo -e "     ${GREEN}systemctl --user status posterchanai-sync${NC}"
+    echo ""
+    echo -e "  5. View logs:"
+    echo -e "     ${GREEN}journalctl --user -u posterchanai-sync -f${NC}"
+    echo ""
+else
+    echo -e "  2. Run the client manually:"
+    echo -e "     ${GREEN}posterchanai-webdav-mount${NC}"
+    echo ""
+fi
+echo -e "  ${CYAN}Check sync status:${NC}"
 echo -e "     ${GREEN}posterchanai-webdav-mount --status${NC}"
-echo ""
-echo -e "  5. Check service status:"
-echo -e "     ${GREEN}systemctl --user status posterchanai-sync${NC}"
-echo ""
-echo -e "  6. View logs:"
-echo -e "     ${GREEN}journalctl --user -u posterchanai-sync -f${NC}"
 echo ""
 echo -e "${YELLOW}${BOLD}⚠ WARNING:${NC} Do not start the service before running setup!"
 echo -e "   The service cannot show the setup wizard and will fail if config is missing."

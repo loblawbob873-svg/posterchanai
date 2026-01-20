@@ -1,26 +1,35 @@
-# PosterchanAI WebDAV Mount Client
+# PosterchanAI WebDAV Sync Client
 
-A simple daemon that mounts your PosterchanAI storage as a local filesystem using WebDAV. Much simpler than the old sync client - just mount and use your files normally!
+A pure Python daemon that syncs your PosterchanAI storage to a local directory using WebDAV. Features bidirectional sync with automatic change detection, delete handling, and conflict resolution.
 
 ## Features
 
-- 🗂️ **Filesystem Mount**: Access your remote storage as a local directory
-- 💾 **Offline Caching**: Cache files locally for offline access
-- 🔄 **Intelligent Auto-Reconnect**: Automatically remounts with smart retry logic
-- 🌐 **Network Detection**: Checks network connectivity before attempting remount
+- 🔄 **Bidirectional Sync**: Automatic two-way synchronization between local and remote
+- 📝 **Local Change Detection**: Automatically detects and uploads locally modified files
+- 🗑️ **Delete Detection**: Detects and syncs deletions in both directions
+- 📦 **Move/Rename Detection**: Detects moved/renamed files using content hashing
+- ⚔️ **Conflict Resolution**: Configurable conflict resolution strategies
+- 💾 **Offline Caching**: Cache files locally for offline access (200GB default)
+- 🌐 **Network Detection**: Checks network connectivity before attempting sync
 - 💤 **Suspend/Resume Handling**: Automatically detects and handles system hibernation
-- 📊 **Health Monitoring**: Periodically checks mount health and fixes issues automatically
+- 📊 **Health Monitoring**: Periodically checks sync health and fixes issues automatically
 - ⏱️ **Exponential Backoff**: Smart retry intervals to avoid overwhelming the server
-- 🔄 **Automatic Sync**: Syncs pending changes when network reconnects
 - ⚙️ **Systemd Integration**: Runs as user systemd service
 - 🔐 **Secure**: Uses your PosterchanAI account credentials
-- 📝 **Simple**: No complex sync logic, just mount and use
+- 🚀 **Fast**: Optimized sync with minimal overhead
 
 ## Prerequisites
 
 **No OS packages required!** This is a pure Python implementation.
 
-All dependencies (Python packages) are installed automatically by the installer:
+**Required:**
+- Python 3.8 or later
+- Internet connection for initial setup
+
+**Optional:**
+- systemd (for service management)
+
+All Python dependencies are installed automatically by the installer:
 - `requests` - for WebDAV communication
 - That's it! No FUSE, no system packages needed.
 
@@ -42,13 +51,15 @@ The installer will:
 ## First Run Setup
 
 On first run, a setup wizard will automatically appear prompting you for:
-- **Server URL**: Your PosterchanAI server URL (e.g., `http://localhost:8000`)
-- **API Key**: Your API key (get from Settings → API Keys in web UI)
-- **WebDAV URL**: Your WebDAV server URL (e.g., `http://localhost:8080/username`)
-- **Account Password**: Your PosterchanAI account password (for WebDAV authentication)
-- **Mount Point**: Local directory where storage will be mounted (default: `~/PosterchanAI-Mount`)
+- **Server URL**: Your PosterchanAI server URL (e.g., `https://ai.poster.place`)
+- **Username**: Your PosterchanAI username (usually your email address)
+- **Password**: Your PosterchanAI account password
+- **Mount Point**: Local directory where files will be synced (default: `~/PosterchanAI-Mount`)
 
-The wizard will save your configuration automatically.
+The wizard will save your configuration automatically. You can re-run the wizard anytime with:
+```bash
+posterchanai-webdav-mount --setup
+```
 
 ## Manual Configuration
 
@@ -56,26 +67,33 @@ If you need to edit configuration manually, edit `~/.config/posterchanai-sync/co
 
 ```json
 {
-  "server_url": "http://localhost:8000",
-  "api_key": "sk-your-api-key-here",
-  "username": "your-username",
-  "webdav_url": "http://localhost:8080/your-username",
+  "server_url": "https://ai.poster.place",
+  "username": "your-email@example.com",
   "password": "your-account-password",
-  "mount_point": "/home/user/PosterchanAI-Mount"
+  "mount_point": "/home/user/PosterchanAI-Mount",
+  "sync_interval": 10,
+  "cache_max_size_mb": 204800,
+  "cache_max_age_days": 30,
+  "conflict_resolution": "last_write_wins",
+  "offline_mode": false
 }
 ```
 
 ### Configuration Options
 
-- `server_url`: Your PosterchanAI server URL
-- `api_key`: Your API key (get from PosterchanAI web UI)
-- `username`: Your username (auto-detected from server)
-- `webdav_url`: Your WebDAV server URL (usually `{server_url}:8080/{username}`)
-- `password`: Your PosterchanAI account password (for WebDAV authentication)
-- `mount_point`: Local directory where storage will be mounted
-- `enable_cache`: Enable offline caching (default: `true`)
-- `cache_max_size_mb`: Maximum cache size in MB (default: `1000`)
+- `server_url`: Your PosterchanAI server URL (required)
+- `username`: Your PosterchanAI username/email (required)
+- `password`: Your PosterchanAI account password (required)
+- `mount_point`: Local directory where files will be synced (default: `~/PosterchanAI-Mount`)
+- `sync_interval`: Sync interval in seconds (default: `10`)
+- `cache_max_size_mb`: Maximum cache size in MB (default: `204800` = 200GB)
 - `cache_max_age_days`: Maximum age of cached files in days (default: `30`)
+- `conflict_resolution`: Conflict resolution strategy (default: `last_write_wins`)
+  - `last_write_wins`: Use file with newer modification time
+  - `local_wins`: Always use local version
+  - `remote_wins`: Always use remote version
+  - `manual`: Create `.conflict` file and use remote version
+- `offline_mode`: If true, only use cache, don't try to sync (default: `false`)
 
 ## Usage
 
@@ -91,23 +109,17 @@ systemctl --user start posterchanai-sync
 systemctl --user enable posterchanai-sync
 ```
 
-### Check Mount Status
+### Check Sync Status
 
 ```bash
 posterchanai-webdav-mount --status
 ```
 
-### Manually Mount
-
-```bash
-posterchanai-webdav-mount --mount
-```
-
-### Manually Unmount
-
-```bash
-posterchanai-webdav-mount --unmount
-```
+This will show:
+- Whether the sync daemon is running
+- Last sync time
+- Number of files synced
+- Cache status
 
 ### View Logs
 
@@ -123,12 +135,20 @@ posterchanai-webdav-mount --setup
 
 ## How It Works
 
-The daemon uses pure Python to sync your WebDAV storage to a local directory. Files appear in the local directory and are automatically synced with the server. You can:
+The daemon uses pure Python to sync your WebDAV storage to a local directory. It performs bidirectional synchronization:
+
+1. **Remote → Local**: Downloads new/updated files from server
+2. **Local → Remote**: Uploads locally modified files to server
+3. **Delete Detection**: Removes files deleted on either side
+4. **Move/Rename Detection**: Detects moved/renamed files using content hashing
+5. **Conflict Resolution**: Handles conflicts when both sides were modified
+
+Files appear in the local directory and are automatically synced with the server. You can:
 
 - Access files normally via the mount point
 - Edit files directly (changes sync automatically)
 - Use any file manager or application
-- No need to manually sync - it's a real filesystem mount!
+- No need to manually sync - it's fully automatic!
 
 ### Offline Caching
 
@@ -174,22 +194,20 @@ The daemon includes intelligent monitoring that:
 
 ### Python dependencies
 
-If you see import errors, ensure Python packages are installed:
+If you see import errors, re-run the installer:
 ```bash
-pip install requests
+cd sync_client
+./install.sh
 ```
 
-That's all you need! No system packages required.
+The installer will automatically install all required Python packages.
 
-If mounting fails with permission errors, you may need to:
+### Installation issues
 
-1. Add yourself to the `fuse` group:
-   ```bash
-   sudo usermod -aG fuse $USER
-   ```
-   (Log out and back in for this to take effect)
-
-2. Ensure `/dev/fuse` has correct permissions (usually handled by udev)
+If the installer fails:
+1. Ensure Python 3.8+ is installed: `python3 --version`
+2. Check you have write permissions to `~/.local` and `~/.config`
+3. Run installer with verbose output: `bash -x install.sh`
 
 ### Service won't start
 
@@ -199,42 +217,45 @@ journalctl --user -u posterchanai-sync
 ```
 
 Common issues:
-- Invalid `webdav_url` or `password` in config
+- Invalid `server_url`, `username`, or `password` in config
 - `mount_point` doesn't exist or isn't writable
 - Missing Python dependencies (re-run installer: `./install.sh`)
+- Network connectivity issues (check server URL is reachable)
 
-### Mount point not accessible
+### Sync not working
 
-- Check if mount succeeded: `posterchanai-webdav-mount --status`
+- Check sync status: `posterchanai-webdav-mount --status`
 - Check if WebDAV server is running on your PosterchanAI server
-- Verify WebDAV URL is correct
-- Check logs for errors
+- Verify server URL and credentials are correct
+- Check logs for errors: `journalctl --user -u posterchanai-sync -f`
+- Ensure network connectivity to server
 
 ### High CPU usage
 
-This shouldn't happen with WebDAV mount - it's much more efficient than the old sync client. If you see high CPU:
+This shouldn't happen - the sync client is optimized for efficiency. If you see high CPU:
 
-- Check if mount is stuck in a reconnect loop (check logs)
-- Verify WebDAV server is accessible
+- Check if sync is stuck in a loop (check logs)
+- Verify server is accessible
 - Check network connectivity
-- The intelligent monitor uses exponential backoff to prevent rapid retries
+- Reduce sync interval in config if needed (default: 10 seconds)
+- The sync uses exponential backoff to prevent rapid retries
 
-### Mount not reconnecting after network disconnect
+### Sync not resuming after network disconnect
 
-The daemon should automatically detect network disconnects and reconnect. If it's not working:
+The daemon should automatically detect network disconnects and resume sync. If it's not working:
 
 - Check logs: `journalctl --user -u posterchanai-sync -f`
 - Verify network detection is working (should see "Network not available" messages)
-- Try manually unmounting and remounting: `posterchanai-webdav-mount --unmount && posterchanai-webdav-mount --mount`
+- Restart the service: `systemctl --user restart posterchanai-sync`
 
-### Mount not working after hibernation
+### Sync not working after hibernation
 
 The daemon should automatically detect resume from hibernation. If it's not working:
 
 - Check logs for "Suspend/resume detected" messages
 - The daemon checks for time jumps > 5 minutes to detect suspend/resume
 - Try manually checking status: `posterchanai-webdav-mount --status`
-- If not mounted, it should automatically remount within 60 seconds
+- Restart the service if needed: `systemctl --user restart posterchanai-sync`
 
 ### Offline caching
 
@@ -271,21 +292,37 @@ rm ~/.config/systemd/user/posterchanai-sync.service
 systemctl --user daemon-reload
 ```
 
-## Differences from Old Sync Client
+## Sync Features
 
-The old sync client was a complex bidirectional sync system with:
-- File watching
-- Conflict detection
-- State tracking
-- Complex sync logic
+The sync client includes comprehensive bidirectional sync:
 
-The new WebDAV mount client is much simpler:
-- Pure Python implementation (no external tools like davfs2)
-- Just mounts remote storage as a filesystem
-- No sync needed - it's a real mount!
-- Automatic reconnection on failure
-- Much lower resource usage
-- Simpler codebase
-- Intelligent network and suspend/resume handling
+### Automatic Local Change Detection
+- Polls local filesystem and compares modification times
+- Automatically marks modified files for upload
+- No manual intervention required
 
-If you need bidirectional sync, you can use tools like `rsync` or `rclone` on the mounted directory.
+### Delete Detection
+- Detects remote deletions (removes local files)
+- Detects local deletions (removes remote files)
+- Handles deletions in both directions seamlessly
+
+### Move/Rename Detection
+- Uses content hashing to detect moved files
+- Handles moves via WebDAV MOVE command
+- Detects moves before deletions (moves might look like delete+create)
+
+### Conflict Resolution
+- Detects conflicts when both local and remote files were modified
+- Configurable resolution strategies:
+  - `last_write_wins`: Use file with newer modification time (default)
+  - `local_wins`: Always use local version
+  - `remote_wins`: Always use remote version
+  - `manual`: Create `.conflict` file and use remote version
+
+### Performance Optimizations
+- Uses mtime for fast change detection (no file reads)
+- Only calculates MD5 when actually syncing files
+- Efficient polling-based sync (10 second interval)
+- Minimal resource usage
+
+See `BIDIRECTIONAL_SYNC.md` for detailed documentation.
