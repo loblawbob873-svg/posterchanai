@@ -333,10 +333,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_inst(self, path: str, environ: dict = None):
         """Override get_resource_inst - wsgidav calls this for PROPFIND requests."""
-        import traceback
         logger.error(f"[WebDAV] ⚠️ get_resource_inst CALLED: path={path}")
         
         # Strip /webdav prefix if present
+        logger.error(f"[WebDAV] ⚠️ Step 1: Normalizing path")
         normalized_path = path.strip('/')
         while normalized_path.startswith('webdav/'):
             normalized_path = normalized_path[7:]
@@ -345,28 +345,55 @@ class QuotaFilesystemProvider(FilesystemProvider):
         else:
             normalized_path = '/'
         
-        logger.info(f"[WebDAV] get_resource_inst: path={path}, normalized={normalized_path}")
+        logger.error(f"[WebDAV] ⚠️ Step 2: Normalized path={normalized_path}")
+        logger.error(f"[WebDAV] ⚠️ Step 3: storage_server_url={self.storage_server_url}")
         
-        # If remote storage is configured, we need to create a virtual resource
-        # But get_resource_inst should use the parent class which handles the filesystem
-        # The parent class will call get_resource_info if needed
-        # Actually, let's just use the parent class - it should work if we've set up the filesystem correctly
-        # But since files don't exist locally, we need to handle this differently
+        # For remote storage, we need to create a virtual resource
+        # But wsgidav's parent class expects files to exist on the filesystem
+        # Since files don't exist locally, we need to create a virtual resource object
+        if self.storage_server_url:
+            logger.error(f"[WebDAV] ⚠️ Step 4: Remote storage configured, creating virtual resource")
+            username = self._get_username_from_path(normalized_path)
+            logger.error(f"[WebDAV] ⚠️ Step 5: Username={username}")
+            if username:
+                # Create a virtual resource for the directory
+                # wsgidav expects a resource object with specific methods
+                from datetime import datetime
+                
+                class VirtualResource:
+                    def __init__(self, path, is_dir=True):
+                        self._path = path
+                        self._is_dir = is_dir
+                        self._modified = datetime.now()
+                    
+                    def get_last_modified(self):
+                        return self._modified
+                    
+                    def get_content_length(self):
+                        return 0
+                    
+                    def is_collection(self):
+                        return self._is_dir
+                    
+                    def get_display_name(self):
+                        return self._path.split('/')[-1] or self._path
+                    
+                    def get_ref_url(self):
+                        return self._path
+                
+                logger.error(f"[WebDAV] ⚠️ Step 6: Creating VirtualResource for {normalized_path}")
+                resource = VirtualResource(normalized_path, is_dir=True)
+                logger.error(f"[WebDAV] ⚠️ Step 7: Returning VirtualResource")
+                return resource
         
-        # For now, let's use the parent class and see what happens
-        # The parent class might call get_resource_info, which we've overridden
+        logger.error(f"[WebDAV] ⚠️ Step 8: Using parent class")
+        # Use parent class for local filesystem
         try:
             result = super().get_resource_inst(normalized_path, environ)
             logger.error(f"[WebDAV] ⚠️ Parent get_resource_inst returned: type={type(result)}")
             return result
         except Exception as e:
             logger.error(f"[WebDAV] get_resource_inst error from parent: {e}", exc_info=True)
-            # If parent fails, try get_resource_info
-            if self.storage_server_url:
-                username = self._get_username_from_path(normalized_path)
-                if username:
-                    logger.info(f"[WebDAV] Trying get_resource_info as fallback for {normalized_path}")
-                    return self.get_resource_info(normalized_path, environ)
             raise
     
     def get_filestream(self, path: str, environ: dict = None):
