@@ -493,6 +493,10 @@ class StorageService:
         from urllib.parse import unquote, quote
         import re
 
+        # Log the input to help debug emoji issues
+        if image_url:
+            logger.debug(f"[STORAGE] load_image_as_base64 called with image_url: {repr(image_url)} (length={len(image_url)})")
+
         # Sanitize image_url to remove emojis and other non-URL-safe characters
         def sanitize_url_path(path: str) -> str:
             """Remove emojis and invalid URL characters from path"""
@@ -555,6 +559,21 @@ class StorageService:
                         file_url = f"{url.rstrip('/')}{sanitized_image_url}"
                     
                     logger.info(f"[STORAGE PROXY] Loading image from: {file_url}")
+                    
+                    # Validate URL before making request
+                    try:
+                        from urllib.parse import urlparse
+                        parsed = urlparse(file_url)
+                        if not parsed.scheme or not parsed.netloc:
+                            logger.error(f"[STORAGE PROXY] Invalid URL structure: {file_url}")
+                            return None
+                        # Check for invalid characters in the URL
+                        if any(ord(c) > 127 for c in file_url if c not in '%'):
+                            logger.error(f"[STORAGE PROXY] URL contains non-ASCII characters: {file_url}")
+                            return None
+                    except Exception as url_err:
+                        logger.error(f"[STORAGE PROXY] URL validation error for {file_url}: {url_err}")
+                        return None
                     
                     with httpx.Client(timeout=30.0) as client:
                         response = client.get(file_url, headers=headers)

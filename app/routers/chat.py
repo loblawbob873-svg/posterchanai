@@ -457,12 +457,14 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     # If image_path provided but no image_data, load from disk
                     if image_path and not image_data:
                         try:
+                            # Log the image_path to debug emoji issues
+                            logger.info(f"[CHAT] Loading image from path: {repr(image_path)} (length={len(image_path) if image_path else 0})")
                             loaded_image = storage_service.load_image_as_base64(image_path)
                             if loaded_image:
                                 image_data = loaded_image
                                 logger.debug(f"Loaded image from path: {image_path}")
                         except Exception as e:
-                            logger.debug(f"Failed to load image from path: {e}")
+                            logger.warning(f"[CHAT] Failed to load image from path {repr(image_path)}: {e}", exc_info=True)
 
                     # Extract text from PDF if provided
                     if pdf_data:
