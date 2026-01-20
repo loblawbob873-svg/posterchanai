@@ -476,21 +476,24 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 except KeyError:
                                     return default
                             
-                            def get_directory_info(self):
-                                # Return directory info as dict for dir_browser - wsgidav's directory browser expects this
-                                from datetime import datetime
-                                return {
-                                    "display_name": self._path.split('/')[-1] or self._path,
-                                    "href": self._path,
-                                    "is_collection": self._is_dir,
-                                    "content_length": self._size if not self._is_dir else 0,
-                                    "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT'),
-                                }
+                            def __setitem__(self, key, value):
+                                # Allow item assignment for directory browser
+                                if key == "str_modified":
+                                    # Directory browser sets this after formatting
+                                    if not hasattr(self, '_dict_storage'):
+                                        self._dict_storage = {}
+                                    self._dict_storage[key] = value
+                                elif key == "display_name":
+                                    pass  # Ignore
+                                else:
+                                    # Store in a dict if needed
+                                    if not hasattr(self, '_dict_storage'):
+                                        self._dict_storage = {}
+                                    self._dict_storage[key] = value
                             
-                            def get_directory_info(self):
-                                # Return directory info as list of dicts for dir_browser
-                                # Each dict should have 'display_name', 'href', 'is_collection', etc.
-                                return []
+                            def __contains__(self, key):
+                                # Support 'in' operator
+                                return key in ["display_name", "href", "is_collection", "last_modified", "str_modified", "content_length"] or (hasattr(self, '_dict_storage') and key in self._dict_storage)
                             
                             def get_directory_info(self):
                                 # Return directory info for dir_browser - delegate to get_resource_instances
