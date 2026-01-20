@@ -289,13 +289,16 @@ class QuotaFilesystemProvider(FilesystemProvider):
             "path": path
         }
         
+        logger.info(f"[WebDAV] Proxying list request to {url} for username={username}, path={path}")
         try:
             response = requests.get(url, headers=headers, params=params, timeout=30)
+            logger.debug(f"[WebDAV] Proxy response status: {response.status_code}")
             response.raise_for_status()
             data = response.json()
             
             # Convert File Manager format to WebDAV format
             items = data.get('items', [])
+            logger.info(f"[WebDAV] Proxy returned {len(items)} items from storage server")
             webdav_resources = []
             
             for item in items:
@@ -319,11 +322,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 }
                 webdav_resources.append(resource)
             
-            logger.debug(f"[WebDAV] Proxied list from storage server: {len(webdav_resources)} items for {username}/{path}")
+            logger.info(f"[WebDAV] Proxied list from storage server: {len(webdav_resources)} items for {username}/{path}")
+            if len(webdav_resources) == 0:
+                logger.warning(f"[WebDAV] Proxy returned 0 items - this might indicate an issue with the storage server or path")
             return webdav_resources
             
         except Exception as e:
-            logger.error(f"[WebDAV] Failed to proxy list to storage server: {e}")
+            logger.error(f"[WebDAV] Failed to proxy list to storage server: {e}", exc_info=True)
             raise
     
     def get_resource_info(self, path: str, environ: dict = None):
