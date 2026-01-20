@@ -359,7 +359,23 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                 name = item.get('name', '')
                 if name.endswith('.ics'):
                     event_uid = name.replace('.ics', '')
-                    etag = str(item.get('modified', item.get('mtime', 0)))
+                    # Calculate MD5 hash for ETag
+                    try:
+                        if subpath:
+                            filepath = f"{subpath}/{name}"
+                        else:
+                            filepath = name
+                        ical_data = proxy.read_file(filepath)
+                        if ical_data:
+                            import hashlib
+                            content_hash = hashlib.md5(ical_data.encode('utf-8')).hexdigest()
+                            etag = content_hash[:16]
+                        else:
+                            etag = "0"
+                    except Exception as e:
+                        logger.debug(f"[CalDAV] Could not calculate MD5 for PROPFIND {event_uid}: {e}")
+                        etag = "0"
+                    
                     items.append({
                         "href": f"{base_url}/{quote(cal_name, safe='')}/{event_uid}.ics",
                         "props": {
@@ -384,14 +400,18 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
         
         # Check if file exists using proxy
         if proxy.file_exists(filepath):
-            # Get file info for etag
-            subpath = "" if cal_name == 'calendar' else cal_name
-            file_items = proxy.list_files(subpath)
-            etag = "0"
-            for item in file_items:
-                if item.get('name') == f"{event_uid}.ics":
-                    etag = str(item.get('modified', item.get('mtime', 0)))
-                    break
+            # Calculate MD5 hash for ETag
+            try:
+                ical_data = proxy.read_file(filepath)
+                if ical_data:
+                    import hashlib
+                    content_hash = hashlib.md5(ical_data.encode('utf-8')).hexdigest()
+                    etag = content_hash[:16]
+                else:
+                    etag = "0"
+            except Exception as e:
+                logger.debug(f"[CalDAV] Could not calculate MD5 for PROPFIND {event_uid}: {e}")
+                etag = "0"
             
             items.append({
                 "href": f"{base_url}/{path}",
@@ -1055,16 +1075,10 @@ async def handle_get(path: str, user: User, db: Session) -> Response:
         # Read file using proxy
         ical_data = proxy.read_file(filepath)
         if ical_data:
-            # Get ETag for the file (iPhone requires ETag in GET response)
-            try:
-                file_items = proxy.list_files(cal_name if cal_name != 'calendar' else "")
-                etag = "0"
-                for item in file_items:
-                    if item.get('name') == f"{event_uid}.ics":
-                        etag = str(item.get('modified', item.get('mtime', 0)))
-                        break
-            except:
-                etag = "0"
+            # Calculate MD5 hash of content for ETag (iPhone requires ETag in GET response)
+            import hashlib
+            content_hash = hashlib.md5(ical_data.encode('utf-8')).hexdigest()
+            etag = content_hash[:16]  # Use first 16 chars for ETag
             
             return Response(
                 content=ical_data,
