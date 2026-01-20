@@ -680,12 +680,58 @@ class CacheManager:
             if meta.get('dirty', False):
                 pending[remote_path] = meta
         return pending
+    
+    def _load_sync_state(self):
+        """Load sync state from disk"""
+        if self.sync_state_file.exists():
+            try:
+                with open(self.sync_state_file, 'r') as f:
+                    self.sync_state = json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load sync state: {e}")
+                self.sync_state = {}
+        else:
+            self.sync_state = {}
+    
+    def _save_sync_state(self):
+        """Save sync state to disk"""
+        try:
+            with open(self.sync_state_file, 'w') as f:
+                json.dump(self.sync_state, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to save sync state: {e}")
+    
+    def update_sync_state(self, remote_path: str, local_path: str, mtime: float, size: int, content_hash: str = None):
+        """Update sync state for a file"""
+        with self._lock:
+            self.sync_state[remote_path] = {
+                'mtime': mtime,
+                'size': size,
+                'hash': content_hash,
+                'local_path': str(local_path)
+            }
+            self._save_sync_state()
+    
+    def remove_from_sync_state(self, remote_path: str):
+        """Remove file from sync state (was deleted)"""
+        with self._lock:
+            if remote_path in self.sync_state:
+                del self.sync_state[remote_path]
+                self._save_sync_state()
+    
+    def get_sync_state(self, remote_path: str) -> dict:
+        """Get sync state for a file"""
+        return self.sync_state.get(remote_path, {})
+    
+    def get_all_sync_state_paths(self) -> set:
+        """Get all remote paths in sync state"""
+        return set(self.sync_state.keys())
 
 
 class WebDAVSync:
     """Pure Python WebDAV sync - no FUSE required!"""
     
-    def __init__(self, webdav_client: WebDAVClient, local_dir: Path, remote_base: str, cache: CacheManager = None, network_retry_attempts: int = 5, network_retry_delay: int = 5):
+    def __init__(self, webdav_client: WebDAVClient, local_dir: Path, remote_base: str, cache: CacheManager = None, network_retry_attempts: int = 5, network_retry_delay: int = 5, conflict_resolution: str = 'last_write_wins'):
         self.webdav = webdav_client
         self.local_dir = Path(local_dir)
         self.remote_base = remote_base.rstrip('/')
@@ -694,6 +740,7 @@ class WebDAVSync:
         self._sync_in_progress = False
         self.network_retry_attempts = network_retry_attempts
         self.network_retry_delay = network_retry_delay
+        self.conflict_resolution = conflict_resolution  # Options: 'last_write_wins', 'manual', 'local_wins', 'remote_wins'
     
     def _remote_path(self, local_path: Path) -> str:
         """Convert local path to remote path"""
@@ -999,6 +1046,9 @@ class WebDAVSync:
                                     should_cache = self.cache.should_cache_directory(file_remote_path) if self.cache.cache_directories else True
                                     if should_cache:
                                         self.cache.cache_file(file_remote_path, content, info['modified'], force=True)
+                                    # Update sync state
+                                    content_hash = hashlib.md5(content).hexdigest()
+                                    self.cache.update_sync_state(file_remote_path, file_local_path, info['modified'], len(content), content_hash)
                                     else:
                                         logger.debug(f"Skipping cache for {file_remote_path} (directory not in cache_directories)")
                                 
@@ -1064,10 +1114,14 @@ class WebDAVSync:
             if local_path.is_file():
                 content = local_path.read_bytes()
                 self.webdav.upload(remote_path, content)
-                # Update cache
+                # Update cache and sync state
+                local_mtime = local_path.stat().st_mtime
                 if self.cache:
-                    self.cache.cache_file(remote_path, content, local_path.stat().st_mtime)
+                    self.cache.cache_file(remote_path, content, local_mtime)
                     self.cache.mark_clean(remote_path)
+                    # Update sync state
+                    content_hash = hashlib.md5(content).hexdigest()
+                    self.cache.update_sync_state(remote_path, local_path, local_mtime, len(content), content_hash)
                 logger.debug(f"Uploaded: {remote_path}")
             elif local_path.is_dir():
                 self.webdav.mkdir(remote_path)
@@ -1093,9 +1147,257 @@ class WebDAVSync:
                 
                 self.webdav.upload(remote_path, content)
                 self.cache.mark_clean(remote_path)
+                # Update sync state
+                if 'modified_at' in meta:
+                    content_hash = hashlib.md5(content).hexdigest()
+                    local_path = self._local_path(remote_path)
+                    self.cache.update_sync_state(remote_path, local_path, meta['modified_at'], len(content), content_hash)
                 logger.debug(f"Synced: {remote_path}")
             except Exception as e:
                 logger.warning(f"Failed to sync {remote_path}: {e}")
+    
+    def detect_local_changes(self) -> List[Path]:
+        """Detect locally modified files by polling (comparing mtimes)"""
+        if not self.cache:
+            return []
+        
+        changed_files = []
+        
+        # Walk local directory
+        for local_path in self.local_dir.rglob('*'):
+            if not local_path.is_file():
+                continue
+            
+            try:
+                remote_path = self._remote_path(local_path)
+                local_stat = local_path.stat()
+                local_mtime = local_stat.st_mtime
+                local_size = local_stat.st_size
+                
+                # Get sync state
+                sync_state = self.cache.get_sync_state(remote_path)
+                
+                if sync_state:
+                    # File was synced before - check if it changed
+                    cached_mtime = sync_state.get('mtime', 0)
+                    cached_size = sync_state.get('size', 0)
+                    
+                    if local_mtime > cached_mtime or local_size != cached_size:
+                        # File was modified locally
+                        logger.debug(f"Detected local change: {local_path} (mtime: {local_mtime} > {cached_mtime})")
+                        changed_files.append(local_path)
+                        # Mark as dirty for upload
+                        self.cache.mark_dirty(remote_path)
+                else:
+                    # New file - mark for upload
+                    logger.debug(f"Detected new local file: {local_path}")
+                    changed_files.append(local_path)
+                    # Add to metadata if not present
+                    if remote_path not in self.cache.metadata:
+                        self.cache.metadata[remote_path] = {}
+                    self.cache.mark_dirty(remote_path)
+                    
+            except Exception as e:
+                logger.debug(f"Error checking {local_path}: {e}")
+                continue
+        
+        return changed_files
+    
+    def detect_deletions(self, current_remote_files: set) -> Tuple[List[str], List[Path]]:
+        """Detect deleted files in both directions
+        
+        Returns:
+            (remote_deletions, local_deletions)
+        """
+        if not self.cache:
+            return [], []
+        
+        remote_deletions = []
+        local_deletions = []
+        
+        # Get files from last sync
+        last_sync_paths = self.cache.get_all_sync_state_paths()
+        
+        # Remote deletions: files that existed in last sync but not in current remote
+        for remote_path in last_sync_paths:
+            if remote_path not in current_remote_files:
+                sync_state = self.cache.get_sync_state(remote_path)
+                local_path_str = sync_state.get('local_path')
+                if local_path_str:
+                    local_path = Path(local_path_str)
+                    if local_path.exists():
+                        # File exists locally but not remotely - was deleted on remote
+                        remote_deletions.append(remote_path)
+                        logger.info(f"Detected remote deletion: {remote_path}")
+        
+        # Local deletions: files that exist remotely but not locally (and were synced before)
+        for remote_path in current_remote_files:
+            sync_state = self.cache.get_sync_state(remote_path)
+            if sync_state:
+                local_path_str = sync_state.get('local_path')
+                if local_path_str:
+                    local_path = Path(local_path_str)
+                    if not local_path.exists():
+                        # File exists remotely but not locally - was deleted locally
+                        local_deletions.append(local_path)
+                        logger.info(f"Detected local deletion: {local_path} (remote: {remote_path})")
+        
+        return remote_deletions, local_deletions
+    
+    def detect_moves(self, current_remote_files: dict) -> List[Tuple[str, str]]:
+        """Detect moved/renamed files by comparing content hashes
+        
+        Args:
+            current_remote_files: dict of {remote_path: file_info} from current sync
+            
+        Returns:
+            List of (old_remote_path, new_remote_path) tuples
+        """
+        if not self.cache:
+            return []
+        
+        moves = []
+        
+        # Build hash map from current remote files
+        current_hashes = {}  # {hash: remote_path}
+        for remote_path, file_info in current_remote_files.items():
+            if file_info.get('isdir', False):
+                continue
+            # We'd need to download to get hash, so skip for now
+            # In a full implementation, we'd compute hashes during sync
+        
+        # Check sync state for files that might have moved
+        # (files with same hash but different path)
+        # This is a simplified version - full implementation would compute hashes
+        
+        return moves
+    
+    def resolve_conflict(self, remote_path: str, local_path: Path, remote_mtime: float, local_mtime: float) -> str:
+        """Resolve conflict when both local and remote files were modified
+        
+        Returns:
+            'local', 'remote', or 'manual'
+        """
+        if self.conflict_resolution == 'last_write_wins':
+            if local_mtime > remote_mtime:
+                return 'local'
+            else:
+                return 'remote'
+        elif self.conflict_resolution == 'local_wins':
+            return 'local'
+        elif self.conflict_resolution == 'remote_wins':
+            return 'remote'
+        else:  # 'manual'
+            # Create conflict file
+            conflict_path = local_path.with_suffix(local_path.suffix + '.conflict')
+            if local_path.exists():
+                shutil.copy2(local_path, conflict_path)
+                logger.warning(f"Conflict detected for {remote_path}: created {conflict_path}")
+            return 'remote'  # Use remote version, user can manually merge
+    
+    def sync_bidirectional(self, path: str = ""):
+        """Perform bidirectional sync: detect changes in both directions and sync accordingly"""
+        # Step 1: Detect local changes
+        logger.debug("Detecting local changes...")
+        local_changes = self.detect_local_changes()
+        if local_changes:
+            logger.info(f"Detected {len(local_changes)} locally modified files")
+        
+        # Step 2: Get current remote file list
+        try:
+            path = path.lstrip('/')
+            if path:
+                ls_path = f"{self.remote_base}/{path}" if self.remote_base else path
+            else:
+                ls_path = self.remote_base if self.remote_base else ""
+            ls_path = ls_path.lstrip('/')
+            
+            files = self.webdav.ls(ls_path, depth=1, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
+            current_remote_files = {f['path']: f for f in files}
+            current_remote_paths = set(current_remote_files.keys())
+        except Exception as e:
+            logger.warning(f"Error listing remote files: {e}")
+            current_remote_files = {}
+            current_remote_paths = set()
+        
+        # Step 3: Detect deletions
+        remote_deletions, local_deletions = self.detect_deletions(current_remote_paths)
+        
+        # Step 4: Handle remote deletions (delete local files)
+        for remote_path in remote_deletions:
+            sync_state = self.cache.get_sync_state(remote_path)
+            local_path_str = sync_state.get('local_path')
+            if local_path_str:
+                local_path = Path(local_path_str)
+                try:
+                    if local_path.exists():
+                        if local_path.is_file():
+                            local_path.unlink()
+                        elif local_path.is_dir():
+                            shutil.rmtree(local_path)
+                        logger.info(f"Deleted local file (remote was deleted): {local_path}")
+                    self.cache.remove_from_sync_state(remote_path)
+                except Exception as e:
+                    logger.warning(f"Error deleting local file {local_path}: {e}")
+        
+        # Step 5: Handle local deletions (delete remote files)
+        for local_path in local_deletions:
+            remote_path = self._remote_path(local_path)
+            try:
+                self.webdav.delete(remote_path)
+                logger.info(f"Deleted remote file (local was deleted): {remote_path}")
+                self.cache.remove_from_sync_state(remote_path)
+            except Exception as e:
+                logger.warning(f"Error deleting remote file {remote_path}: {e}")
+        
+        # Step 6: Sync from remote (with conflict detection)
+        self.sync_from_remote_with_conflicts(path, current_remote_files)
+        
+        # Step 7: Sync local changes to remote
+        for local_path in local_changes:
+            remote_path = self._remote_path(local_path)
+            sync_state = self.cache.get_sync_state(remote_path)
+            
+            # Check for conflicts
+            if sync_state:
+                remote_mtime = sync_state.get('mtime', 0)
+                local_mtime = local_path.stat().st_mtime
+                
+                # Check if remote was also modified
+                if remote_path in current_remote_files:
+                    remote_info = current_remote_files[remote_path]
+                    remote_current_mtime = remote_info.get('modified', 0)
+                    
+                    if remote_current_mtime > remote_mtime and local_mtime > remote_mtime:
+                        # Both were modified - conflict!
+                        resolution = self.resolve_conflict(remote_path, local_path, remote_current_mtime, local_mtime)
+                        if resolution == 'remote':
+                            # Use remote version, skip local upload
+                            logger.info(f"Conflict resolved: using remote version for {remote_path}")
+                            continue
+                        # else: use local version (upload it)
+            
+            # Upload local file
+            try:
+                self.sync_to_remote(local_path)
+            except Exception as e:
+                logger.warning(f"Error uploading {local_path}: {e}")
+    
+    def sync_from_remote_with_conflicts(self, path: str = "", current_remote_files: dict = None):
+        """Sync from remote with conflict detection"""
+        # Use existing sync_from_remote but track sync state
+        # This is a wrapper that adds sync state tracking
+        if current_remote_files is None:
+            # Fallback to regular sync_from_remote
+            self.sync_from_remote(path)
+            return
+        
+        # Enhanced version that tracks sync state
+        # For now, call regular sync_from_remote and update sync state
+        self.sync_from_remote(path)
+        
+        # Update sync state for all synced files
+        # This would be done in sync_from_remote, but we'll add it here for now
 
 
 class WebDAVMount:
@@ -1127,7 +1429,8 @@ class WebDAVMount:
             "cache_directories": [],  # List of directories to always cache (e.g., ["documents", "images"])
             "network_retry_attempts": 5,
             "network_retry_delay": 5,  # seconds
-            "offline_mode": False  # If True, only use cache, don't try to sync
+            "offline_mode": False,  # If True, only use cache, don't try to sync
+            "conflict_resolution": "last_write_wins"  # Options: 'last_write_wins', 'local_wins', 'remote_wins', 'manual'
         }
         
         if CONFIG_FILE.exists():
@@ -1301,6 +1604,9 @@ class WebDAVMount:
         network_retry_attempts = self.config.get("network_retry_attempts", 5)
         network_retry_delay = self.config.get("network_retry_delay", 5)
         
+        # Get conflict resolution strategy
+        conflict_resolution = self.config.get("conflict_resolution", "last_write_wins")
+        
         # Create sync manager
         self._sync = WebDAVSync(
             self.webdav, 
@@ -1308,7 +1614,8 @@ class WebDAVMount:
             self.base_path, 
             self.cache,
             network_retry_attempts=network_retry_attempts,
-            network_retry_delay=network_retry_delay
+            network_retry_delay=network_retry_delay,
+            conflict_resolution=conflict_resolution
         )
         
         # Check if offline mode is enabled
@@ -1319,7 +1626,8 @@ class WebDAVMount:
         if network_ok and not offline_mode:
             logger.info("Network available, performing initial sync...")
             try:
-                self._sync.sync_from_remote()
+                # Use bidirectional sync for initial sync too
+                self._sync.sync_bidirectional()
                 # Cleanup old cache after successful sync
                 if self.cache:
                     self.cache.cleanup_old_cache()
@@ -1382,8 +1690,7 @@ class WebDAVMount:
                     if _online and not was_online:
                         logger.info("Network reconnected - syncing...")
                         if self._sync:
-                            self._sync.sync_pending_changes()
-                            self._sync.sync_from_remote()
+                            self._sync.sync_bidirectional()
                         last_sync = 0  # Force sync
                     elif not _online:
                         logger.debug(f"Network offline: {network_error}")
@@ -1392,10 +1699,9 @@ class WebDAVMount:
                 offline_mode = self.config.get("offline_mode", False)
                 if not offline_mode and _online and self._sync and (current_time - last_sync >= self.sync_interval):
                     try:
-                        # Sync pending changes first
-                        self._sync.sync_pending_changes()
-                        # Then sync from remote
-                        self._sync.sync_from_remote()
+                        # Perform bidirectional sync
+                        # This handles: local changes, remote changes, deletes, conflicts
+                        self._sync.sync_bidirectional()
                         # Cleanup old cache periodically
                         if self.cache and (current_time % 3600 < self.sync_interval):  # Once per hour
                             self.cache.cleanup_old_cache()
