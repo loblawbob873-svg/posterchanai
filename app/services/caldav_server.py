@@ -18,7 +18,7 @@ import uuid
 import base64
 import re
 
-from app.models import User, Setting
+from app.models import User, Setting, CalDAVSyncToken
 from app.services.storage_service import get_storage_service
 from app.auth import verify_password
 from app.database import get_db
@@ -787,7 +787,6 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             # Get current sync-token (based on current file count and latest mtime)
             import hashlib
             import json
-            from app.models import CalDAVSyncToken
             
             ics_files = [item for item in file_items if item.get('name', '').endswith('.ics')]
             if ics_files:
