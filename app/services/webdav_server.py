@@ -364,9 +364,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def __init__(self, path, is_dir=True):
                         self._path = path
                         self._is_dir = is_dir
-                        self._modified = datetime.now()
+                        # wsgidav expects a timestamp (float), not datetime
+                        import time
+                        self._modified = time.time()
                     
                     def get_last_modified(self):
+                        # Return timestamp as float
                         return self._modified
                     
                     def get_content_length(self):
