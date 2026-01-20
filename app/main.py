@@ -821,12 +821,18 @@ async def startup():
                     # Wrap in middleware to strip /webdav prefix from PATH_INFO
                     def strip_webdav_prefix(wsgi_app):
                         def wrapper(environ, start_response):
-                            # Strip /webdav prefix from PATH_INFO if present
+                            # Strip /webdav prefix from PATH_INFO if present (handle multiple occurrences)
                             path_info = environ.get('PATH_INFO', '')
-                            if path_info.startswith('/webdav'):
-                                environ['PATH_INFO'] = path_info[7:]  # Remove '/webdav'
-                                if not environ['PATH_INFO']:
-                                    environ['PATH_INFO'] = '/'
+                            original_path = path_info
+                            # Remove all /webdav prefixes
+                            while path_info.startswith('/webdav'):
+                                path_info = path_info[7:]  # Remove '/webdav'
+                            if not path_info:
+                                path_info = '/'
+                            elif not path_info.startswith('/'):
+                                path_info = '/' + path_info
+                            environ['PATH_INFO'] = path_info
+                            logging.debug(f"[WebDAV Middleware] Stripped path: {original_path} -> {path_info}")
                             return wsgi_app(environ, start_response)
                         return wrapper
                     app.mount("/webdav", wsgi_middleware(strip_webdav_prefix(webdav_app)))

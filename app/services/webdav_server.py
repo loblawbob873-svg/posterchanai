@@ -252,6 +252,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
         """Override to list files, with support for remote storage proxying."""
+        # CRITICAL: This method MUST be called by wsgidav for PROPFIND requests
+        # If you don't see "[WebDAV] get_resource_list CALLED" in logs, this method isn't being called!
+        logger.error(f"[WebDAV] ⚠️ get_resource_list CALLED: path={path}, depth={depth}, environ_keys={list(environ.keys()) if environ else None}")
+        
         # Strip /webdav prefix if present (may be added multiple times)
         original_path = path
         normalized_path = path.strip('/')
@@ -264,7 +268,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
         else:
             normalized_path = '/'
         
-        logger.info(f"[WebDAV] get_resource_list CALLED: original={original_path}, normalized={normalized_path}, depth={depth}")
+        logger.info(f"[WebDAV] get_resource_list: original={original_path}, normalized={normalized_path}, depth={depth}")
         logger.info(f"[WebDAV] storage_server_url={self.storage_server_url}, storage_server_token={'Yes' if self.storage_server_token else 'No'}")
         
         # If remote storage is configured, ALWAYS proxy - never use local filesystem
@@ -298,13 +302,23 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_instances(self, path: str, environ: dict = None):
         """Override to handle resource instances - wsgidav may call this instead of get_resource_list."""
-        logger.info(f"[WebDAV] get_resource_instances CALLED: path={path}")
+        logger.error(f"[WebDAV] ⚠️ get_resource_instances CALLED: path={path}, environ_keys={list(environ.keys()) if environ else None}")
         # Try get_resource_list first
         try:
             return self.get_resource_list(path, depth=1, environ=environ)
         except Exception as e:
             logger.error(f"[WebDAV] get_resource_instances error: {e}", exc_info=True)
             raise
+    
+    def get_filestream(self, path: str, environ: dict = None):
+        """Override get_filestream - log when called."""
+        logger.error(f"[WebDAV] ⚠️ get_filestream CALLED: path={path}")
+        return super().get_filestream(path, environ)
+    
+    def get_content(self, path: str, environ: dict = None):
+        """Override get_content - log when called."""
+        logger.error(f"[WebDAV] ⚠️ get_content CALLED: path={path}")
+        return super().get_content(path, environ)
     
     def _proxy_list_files(self, username: str, path: str):
         """Proxy file listing - uses the same proxying mechanism as files router."""
