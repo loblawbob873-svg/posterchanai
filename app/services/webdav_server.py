@@ -566,13 +566,35 @@ class QuotaFilesystemProvider(FilesystemProvider):
         logger.info(f"[WebDAV] Proxying to storage server: {url} for username={username}, path={path}")
         logger.info(f"[WebDAV] Using token: {'Yes' if self.storage_server_token else 'No'}")
         try:
-            response = requests.get(url, headers=headers, params=params, timeout=30)
-            logger.info(f"[WebDAV] Storage server response: status={response.status_code}, content_length={len(response.content)}")
+            # Add retry logic for connection errors
+            max_retries = 3
+            retry_delay = 2
+            last_error = None
             
-            if response.status_code != 200:
-                logger.error(f"[WebDAV] Storage server error: {response.status_code} - {response.text[:200]}")
-            
-            response.raise_for_status()
+            for attempt in range(max_retries):
+                try:
+                    response = requests.get(url, headers=headers, params=params, timeout=30)
+                    logger.info(f"[WebDAV] Storage server response: status={response.status_code}, content_length={len(response.content)}")
+                    
+                    if response.status_code != 200:
+                        logger.error(f"[WebDAV] Storage server error: {response.status_code} - {response.text[:200]}")
+                    
+                    response.raise_for_status()
+                    break  # Success, exit retry loop
+                except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        logger.warning(f"[WebDAV] Connection error (attempt {attempt + 1}/{max_retries}): {e}, retrying in {retry_delay}s...")
+                        import time
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                    else:
+                        logger.error(f"[WebDAV] Failed to connect to storage server after {max_retries} attempts: {e}")
+                        raise
+                except requests.exceptions.RequestException as e:
+                    # Non-connection errors, don't retry
+                    logger.error(f"[WebDAV] Storage server request error: {e}")
+                    raise
             data = response.json()
             
             # Convert File Manager format to WebDAV format
