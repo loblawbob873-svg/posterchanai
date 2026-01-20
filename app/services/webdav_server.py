@@ -291,12 +291,15 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return super().get_resource_list(normalized_path, depth, environ)
     
     def _proxy_list_files(self, username: str, path: str):
-        """Proxy file listing - calls local API which automatically proxies to storage server."""
+        """Proxy file listing - calls storage server directly using storage_server_url."""
         import requests
         
-        # Call the LOCAL API endpoint - it will automatically proxy to 192.168.0.85
-        # Use localhost since we're on the same server
-        url = "http://localhost:3051/api/storage/list-files"
+        # Call storage server directly - 192.168.0.1 proxies to 192.168.0.85
+        # So we call storage_server_url which points to 192.168.0.85
+        if not self.storage_server_url:
+            raise Exception("storage_server_url not configured")
+        
+        url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
         headers = {}
         if self.storage_server_token:
             headers["Authorization"] = f"Bearer {self.storage_server_token}"
@@ -306,16 +309,16 @@ class QuotaFilesystemProvider(FilesystemProvider):
             "path": path
         }
         
-        logger.info(f"[WebDAV] Calling local API {url} (will auto-proxy to storage server) for username={username}, path={path}")
+        logger.info(f"[WebDAV] Calling storage server {url} for username={username}, path={path}")
         try:
             response = requests.get(url, headers=headers, params=params, timeout=30)
-            logger.debug(f"[WebDAV] API response status: {response.status_code}")
+            logger.debug(f"[WebDAV] Storage server response status: {response.status_code}")
             response.raise_for_status()
             data = response.json()
             
             # Convert File Manager format to WebDAV format
             items = data.get('items', [])
-            logger.info(f"[WebDAV] Local API returned {len(items)} items (auto-proxied from 192.168.0.85)")
+            logger.info(f"[WebDAV] Storage server returned {len(items)} items")
             webdav_resources = []
             
             for item in items:
