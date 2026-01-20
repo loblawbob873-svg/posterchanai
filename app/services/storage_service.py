@@ -103,7 +103,8 @@ class StorageService:
         self._load_settings()
 
     def _load_settings(self):
-        settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        from app.database import safe_query_settings
+        settings = safe_query_settings(self.db)
         self.upload_path = settings.get("upload_path", "/var/lib/posterchanai")
 
     def get_user_path(self, username: str) -> Path:

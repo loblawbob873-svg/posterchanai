@@ -302,7 +302,8 @@ def get_settings(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
-    settings = {s.key: s.value for s in db.query(Setting).all()}
+    from app.database import safe_query_settings
+    settings = safe_query_settings(db)
     return SettingsResponse(**settings)
 
 

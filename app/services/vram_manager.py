@@ -29,7 +29,8 @@ _swap_lock = threading.Lock()
 
 def _get_vram_settings(db: Session) -> dict:
     """Get VRAM management settings from database"""
-    settings = {s.key: s.value for s in db.query(Setting).all()}
+    from app.database import safe_query_settings
+    settings = safe_query_settings(db)
     return {
         "vram_mode": settings.get("vram_mode", "shared"),  # "shared" or "dedicated"
         "llm_backend": settings.get("llm_backend", "native"),

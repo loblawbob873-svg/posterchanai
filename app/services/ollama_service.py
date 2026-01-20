@@ -50,7 +50,8 @@ class OllamaService:
         self._load_settings()
 
     def _load_settings(self):
-        settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        from app.database import safe_query_settings
+        settings = safe_query_settings(self.db)
         
         # Helper to get setting with fallback for empty strings
         def get_setting(key: str, default: str) -> str:

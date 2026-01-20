@@ -34,7 +34,8 @@ _consecutive_failures: int = 0
 
 def _get_settings(db: Session) -> dict:
     """Get health check settings from database"""
-    settings = {s.key: s.value for s in db.query(Setting).all()}
+    from app.database import safe_query_settings
+    settings = safe_query_settings(db)
 
     # Get vram_mode to determine if LLM health check should run
     vram_mode = settings.get("vram_mode", "shared")

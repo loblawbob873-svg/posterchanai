@@ -37,7 +37,8 @@ class ChatService:
 
     def _load_settings(self):
         """Load settings - inference factory handles all backend-specific settings"""
-        self._settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        from app.database import safe_query_settings
+        self._settings = safe_query_settings(self.db)
         default_prompt = """You are a capable AI assistant with intelligent action capabilities. When writing code, use markdown code blocks with the language specified.
 
 INTELLIGENT ACTIONS:
