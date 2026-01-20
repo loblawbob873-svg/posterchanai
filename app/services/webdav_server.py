@@ -128,8 +128,14 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def write_file_content(self, path: str, content: bytes, *, etag: Optional[str] = None):
         """Override to check quota and proxy to remote storage if configured."""
+        # Strip /webdav prefix if present
+        path_stripped = path.strip('/')
+        if path_stripped.startswith('webdav/'):
+            path_stripped = '/' + path_stripped[7:]
+        else:
+            path_stripped = path
         # Normalize path - remove trailing slash if present (files shouldn't have trailing slashes)
-        normalized_path = path.rstrip('/')
+        normalized_path = path_stripped.rstrip('/')
         
         username = self._get_username_from_path(normalized_path)
         if username:
@@ -313,8 +319,14 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_info(self, path: str, environ: dict = None):
         """Override to ensure correct resource type detection, with remote storage support."""
+        # Strip /webdav prefix if present
+        path_stripped = path.strip('/')
+        if path_stripped.startswith('webdav/'):
+            path_stripped = '/' + path_stripped[7:]
+        else:
+            path_stripped = path
         # Normalize path - remove trailing slash for files
-        normalized_path = path.rstrip('/')
+        normalized_path = path_stripped.rstrip('/')
         
         # If remote storage is configured, try to get info from storage server first
         if self.storage_server_url:
@@ -417,12 +429,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def read_file_content(self, path: str):
         """Override to proxy file downloads from remote storage if configured."""
+        # Strip /webdav prefix if present
+        path_stripped = path.strip('/')
+        if path_stripped.startswith('webdav/'):
+            path_stripped = '/' + path_stripped[7:]
+        else:
+            path_stripped = path
+        normalized_path = path_stripped
+        
         # If remote storage is configured, try to proxy the download
         if self.storage_server_url:
-            username = self._get_username_from_path(path)
+            username = self._get_username_from_path(normalized_path)
             if username:
                 # Extract relative path
-                rel_path = path.lstrip('/')
+                rel_path = normalized_path.lstrip('/')
                 if rel_path.startswith(username + '/'):
                     rel_path = rel_path[len(username) + 1:]
                 elif rel_path == username:
@@ -431,14 +451,14 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # Try to proxy download
                 try:
                     content = self._proxy_download_file(username, rel_path)
-                    logger.debug(f"[WebDAV] Proxied file download from storage server: {path}")
+                    logger.debug(f"[WebDAV] Proxied file download from storage server: {normalized_path}")
                     return content
                 except Exception as e:
                     logger.debug(f"[WebDAV] Failed to proxy download: {e}, trying local")
                     # Fall through to local read
         
         # Use parent method to read local file
-        return super().read_file_content(path)
+        return super().read_file_content(normalized_path)
     
     def _proxy_download_file(self, username: str, file_path: str) -> bytes:
         """Proxy file download from remote storage server."""
@@ -460,24 +480,42 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def delete(self, path: str):
         """Override to invalidate cache on delete."""
-        username = self._get_username_from_path(path)
-        result = super().delete(path)
+        # Strip /webdav prefix if present
+        path_stripped = path.strip('/')
+        if path_stripped.startswith('webdav/'):
+            path_stripped = '/' + path_stripped[7:]
+        else:
+            path_stripped = path
+        normalized_path = path_stripped
+        
+        username = self._get_username_from_path(normalized_path)
+        result = super().delete(normalized_path)
         
         # Invalidate file cache for parent directory
         if username:
-            self._invalidate_cache_for_path(username, path)
+            self._invalidate_cache_for_path(username, normalized_path)
         
         return result
     
     def move(self, src_path: str, dst_path: str):
         """Override to invalidate cache on move."""
-        username = self._get_username_from_path(src_path)
-        result = super().move(src_path, dst_path)
+        # Strip /webdav prefix if present
+        def normalize(p):
+            p_stripped = p.strip('/')
+            if p_stripped.startswith('webdav/'):
+                return '/' + p_stripped[7:]
+            return p
+        
+        normalized_src = normalize(src_path)
+        normalized_dst = normalize(dst_path)
+        
+        username = self._get_username_from_path(normalized_src)
+        result = super().move(normalized_src, normalized_dst)
         
         # Invalidate cache for both source and destination directories
         if username:
-            self._invalidate_cache_for_path(username, src_path)
-            self._invalidate_cache_for_path(username, dst_path)
+            self._invalidate_cache_for_path(username, normalized_src)
+            self._invalidate_cache_for_path(username, normalized_dst)
         
         return result
     
