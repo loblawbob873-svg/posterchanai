@@ -43,6 +43,18 @@ async function loadSettings() {
                     } else if (el.tagName === 'SELECT') {
                         el.value = value || el.options[0].value;
                         loadedValues.set(key, el.value);
+                    } else if (el.type === 'number') {
+                        // For number inputs, handle empty/null values explicitly
+                        // If database has a value, use it; otherwise clear the field (don't use HTML default)
+                        if (dbValue !== '') {
+                            el.value = dbValue;
+                            loadedValues.set(key, dbValue);
+                        } else {
+                            // Database has no value - clear the field (remove HTML default)
+                            // This prevents accidentally saving the HTML default value
+                            el.value = '';
+                            loadedValues.set(key, ''); // Empty string means "not in database"
+                        }
                     } else {
                         // Always use database value, even if empty
                         // This ensures database values take precedence over HTML defaults
@@ -78,7 +90,19 @@ document.getElementById('settingsForm').addEventListener('submit', async (e) => 
             // Only send value if it's different from what was loaded from database
             // This prevents overwriting database values with HTML defaults
             const loadedValue = loadedValues.get(el.name);
-            if (loadedValue === undefined || currentValue !== loadedValue) {
+            if (loadedValue === undefined) {
+                // Field not in loadedValues - include it (new field or wasn't loaded)
+                settings[el.name] = currentValue;
+            } else if (loadedValue === '' && el.type === 'number') {
+                // Database had no value (empty string) - only save if user entered something
+                // This prevents saving HTML default values when database is empty
+                if (currentValue !== '' && currentValue !== el.getAttribute('value')) {
+                    // User entered a value (and it's not the HTML default), save it
+                    settings[el.name] = currentValue;
+                }
+                // Otherwise, don't save (keeps database empty/null)
+            } else if (currentValue !== loadedValue) {
+                // Value changed from what was loaded, save it
                 settings[el.name] = currentValue;
             }
         }
