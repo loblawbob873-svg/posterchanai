@@ -434,11 +434,12 @@ class WebDAVSync:
                             if not download_path.startswith('/'):
                                 download_path = '/' + download_path
                             content = self.webdav.download(download_path)
-                            # Check if the content is HTML (directory listing) - if so, skip it
-                            # The server created a directory when it should be a file - this is broken
+                            # Check if the content is HTML (directory listing) - if so, it's a directory with files inside
                             if content.startswith(b'<!DOCTYPE') or content.startswith(b'<html') or b'<html>' in content[:200]:
-                                logger.warning(f"{file_remote_path} returns HTML (directory listing) - server has directory where file should be, skipping")
-                                continue  # Skip this broken item
+                                # It's a directory that returns HTML - but it might contain files!
+                                # Don't skip it - treat it as a directory and recurse into it
+                                logger.debug(f"{file_remote_path} returns HTML (directory listing) - treating as directory and recursing")
+                                # Fall through to directory handling below
                             else:
                                 # Download succeeded and it's real file content!
                                 file_local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -455,7 +456,7 @@ class WebDAVSync:
                             if '404' in error_str or 'not found' in error_str:
                                 logger.debug(f"File {file_remote_path} does not exist, skipping")
                                 continue
-                            # Otherwise, treat as directory
+                            # Otherwise, treat as directory and recurse
                             logger.debug(f"Could not download {file_remote_path} as file: {e}, treating as directory")
                     
                     if info['isdir']:
@@ -492,12 +493,9 @@ class WebDAVSync:
                             rel_path = rel_path[len(self.remote_base) + 1:]
                         elif rel_path == self.remote_base:
                             continue  # Already syncing base
-                        # Don't recurse into directories that look like files (have extensions)
-                        # These are likely broken server-side directories
-                        if '.' in Path(rel_path).name and Path(rel_path).suffix:
-                            logger.debug(f"Skipping recursion into directory that looks like file: {rel_path}")
-                            continue
+                        # Recurse into directory to get files inside (even if it has a file-like name)
                         if rel_path:  # Only recurse if there's a subpath
+                            logger.debug(f"Recursing into directory: {rel_path}")
                             self.sync_from_remote(rel_path)
                     else:
                         # File - download if newer or missing
