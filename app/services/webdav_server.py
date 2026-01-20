@@ -364,7 +364,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 try:
                     info = self._proxy_get_info(username, rel_path)
                     if info:
-                        logger.error(f"[WebDAV] ⚠️ Got info from proxy: is_dir={info.get('is_directory', False)}")
+                        logger.error(f"[WebDAV] ⚠️ Got info from proxy: is_dir={info.get('is_directory', False)}, path={rel_path}")
                         # Create virtual resource based on remote storage info
                         import time
                         
@@ -692,23 +692,30 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return info
     
     def _proxy_get_info(self, username: str, path: str):
-        """Get file info - calls local API which automatically proxies to storage server."""
+        """Get file info - calls remote storage server directly."""
         import requests
         
-        # Call the LOCAL API endpoint - it will automatically proxy to 192.168.0.85
-        url = "http://localhost:3051/api/storage/list-files"
+        # Call the REMOTE storage server directly (not local API)
+        url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
         headers = {}
         if self.storage_server_token:
             headers["Authorization"] = f"Bearer {self.storage_server_token}"
         
+        # For root directory (empty path), return directory info
+        if not path:
+            # Root directory always exists - return directory info
+            return {
+                'path': f"/{username}",
+                'name': username,
+                'is_directory': True,
+                'size': 0,
+                'modified': 0,
+            }
+        
         # Get parent directory and filename
-        if path:
-            path_parts = path.split('/')
-            parent_path = '/'.join(path_parts[:-1]) if len(path_parts) > 1 else ''
-            filename = path_parts[-1]
-        else:
-            parent_path = ''
-            filename = ''
+        path_parts = path.split('/')
+        parent_path = '/'.join(path_parts[:-1]) if len(path_parts) > 1 else ''
+        filename = path_parts[-1]
         
         params = {
             "username": username,
@@ -723,18 +730,18 @@ class QuotaFilesystemProvider(FilesystemProvider):
             # Find the file in the listing
             items = data.get('items', [])
             for item in items:
-                if item.get('name') == filename or item.get('path') == path:
+                if item.get('name') == filename:
                     # Found it - convert to WebDAV format
-                    full_path = f"/{username}/{path}" if path else f"/{username}"
+                    full_path = f"/{username}/{path}"
                     return {
                         'path': full_path,
                         'name': item.get('name', filename),
-                        'iscollection': item.get('is_directory', False),
+                        'is_directory': item.get('is_directory', False),
                         'size': item.get('size', 0) if not item.get('is_directory', False) else 0,
                         'modified': item.get('modified', 0),
                     }
         except Exception as e:
-            logger.debug(f"[WebDAV] Failed to get info from storage server: {e}")
+            logger.error(f"[WebDAV] Failed to get info from storage server: {e}", exc_info=True)
         
         return None
     
