@@ -375,7 +375,6 @@ class WebDAVSync:
                 remote_path = self.remote_base if not path or path == self.remote_base else path
             logger.debug(f"sync_from_remote called with path='{path}', remote_path='{remote_path}'")
             
-            try:
             # List remote directory
             try:
                 files = self.webdav.ls(remote_path)
@@ -539,43 +538,30 @@ class WebDAVSync:
                 except Exception as e:
                     logger.warning(f"Error processing file: {e}")
                     continue  # Skip this file and continue
-            except OSError as e:
-                # Handle permission errors - don't fail completely, just log and continue
-                if 'Permission denied' in str(e) and '/verita84' in str(e):
-                    # This is the known permission error - log but continue
-                    logger.debug(f"Permission error (known issue, continuing): {e}")
-                    # Don't return - continue processing files
-                    pass
-                elif 'Permission denied' in str(e):
-                    logger.warning(f"Permission error during sync: {e}")
-                    import traceback
-                    logger.debug(f"Traceback: {traceback.format_exc()}")
-                    # Don't re-raise - continue with other files
-                    return
-                else:
-                    raise
-            except Exception as e:
-                import traceback
-                # Only log as error if it's not the known permission issue
-                if 'Permission denied' in str(e) and '/verita84' in str(e):
-                    logger.debug(f"Known permission error (continuing): {e}")
-                    # Continue processing
-                else:
-                    logger.error(f"Error syncing from remote {path}: {e}")
-                    logger.debug(f"Traceback: {traceback.format_exc()}")
-                    # For other errors, still don't fail completely - log and return
-                    # This allows the daemon to continue running
-                    return
-        except (OSError, Exception) as e:
-            # Outer catch for any errors that escape inner handlers
+        except OSError as e:
+            # Handle permission errors - don't fail completely, just log and continue
             if 'Permission denied' in str(e) and '/verita84' in str(e):
-                # Known permission error - log as debug and return gracefully
-                logger.debug(f"Outer catch: Permission error (known issue): {e}")
-                return
+                # This is the known permission error - log but continue
+                logger.debug(f"Permission error (known issue, continuing): {e}")
+                # Don't return - continue processing files
+                pass
+            elif 'Permission denied' in str(e):
+                logger.warning(f"Permission error during sync: {e}")
+                import traceback
+                logger.debug(f"Traceback: {traceback.format_exc()}")
+                # Don't re-raise - continue with sync
             else:
-                # Other errors - log and return
-                logger.warning(f"Outer catch: Error in sync_from_remote: {e}")
-                return
+                raise
+        except Exception as e:
+            import traceback
+            # Only log as error if it's not the known permission issue
+            if 'Permission denied' in str(e) and '/verita84' in str(e):
+                logger.debug(f"Known permission error (continuing): {e}")
+                # Don't return - allow sync to continue
+            else:
+                logger.error(f"Error syncing from remote {path}: {e}")
+                logger.debug(f"Traceback: {traceback.format_exc()}")
+                # For other errors, log but don't return - allow sync to complete
     
     def sync_to_remote(self, local_path: Path):
         """Sync a local file to remote"""
@@ -799,7 +785,12 @@ class WebDAVMount:
                 self._sync.sync_from_remote()
                 logger.info("Initial sync complete")
             except Exception as e:
-                logger.warning(f"Initial sync had errors: {e}")
+                # Log but don't fail - sync will retry on next interval
+                if 'Permission denied' in str(e) and '/verita84' in str(e):
+                    logger.debug(f"Initial sync permission error (known issue, will retry): {e}")
+                else:
+                    logger.warning(f"Initial sync had errors (will retry): {e}")
+                logger.info("Initial sync attempt complete")
         else:
             logger.warning(f"Network not available: {network_error}")
             logger.info("Will sync when network becomes available")
