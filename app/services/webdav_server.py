@@ -392,6 +392,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             def get_ref_url(self):
                                 return self._path
                             
+                            def get_href(self):
+                                # Return href (URL path) for the resource
+                                return self._path
+                            
                             def get_etag(self):
                                 return None
                             
@@ -474,6 +478,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         return self._path.split('/')[-1] or self._path
                     
                     def get_ref_url(self):
+                        return self._path
+                    
+                    def get_href(self):
+                        # Return href (URL path) for the resource
                         return self._path
                     
                     def get_etag(self):
@@ -634,6 +642,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         return self._path.split('/')[-1] or self._path
                     
                     def get_ref_url(self):
+                        return self._path
+                    
+                    def get_href(self):
+                        # Return href (URL path) for the resource
                         return self._path
                     
                     def get_etag(self):
