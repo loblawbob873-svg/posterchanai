@@ -132,14 +132,21 @@ class WebDAVClient:
             logger.debug(f"PROPFIND failed for {path}: {e}")
             return None
     
-    def ls(self, path: str) -> list:
-        """List directory contents"""
+    def ls(self, path: str, depth: int = 1) -> list:
+        """List directory contents
+        
+        Args:
+            path: Remote path to list
+            depth: Depth of listing (0=self, 1=children, infinity=all descendants)
+        """
         url = self._url(path)
         if not url.endswith('/'):
             url += '/'
         
         try:
-            response = self.session.request('PROPFIND', url, headers={'Depth': '1'}, timeout=10)
+            # Use Depth header - '1' for immediate children, 'infinity' for all descendants
+            depth_header = 'infinity' if depth > 1 else str(depth)
+            response = self.session.request('PROPFIND', url, headers={'Depth': depth_header}, timeout=30)
             response.raise_for_status()
             
             # Parse XML
@@ -147,6 +154,8 @@ class WebDAVClient:
             ns = {'D': 'DAV:'}
             
             files = []
+            seen_paths = set()  # Avoid duplicates
+            
             for response_elem in root.findall('.//D:response', ns):
                 href = response_elem.find('D:href', ns)
                 if href is None:
@@ -161,10 +170,16 @@ class WebDAVClient:
                     file_path = file_path.lstrip('/')
                 
                 # Skip the directory itself
-                if file_path == path.rstrip('/') or file_path == path.lstrip('/').rstrip('/'):
+                normalized_path = path.rstrip('/').lstrip('/')
+                if file_path == normalized_path or file_path == f'/{normalized_path}':
                     continue
                 
-                # Get just the filename
+                # Avoid duplicates
+                if file_path in seen_paths:
+                    continue
+                seen_paths.add(file_path)
+                
+                # Get just the filename for 'name', but keep full path for 'path'
                 filename = file_path.split('/')[-1]
                 if filename:
                     files.append({'name': filename, 'path': file_path})
