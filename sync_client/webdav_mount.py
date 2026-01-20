@@ -109,7 +109,33 @@ class WebDAVClient:
                             response_elem = elem
                             break
                 
-                # If no matching response found, use the first one
+                # If no matching response found, check if any response indicates a directory
+                # (The server might return a child item, but if it has collection tag, the parent is a directory)
+                if response_elem is None:
+                    for elem in root.findall('.//D:response', ns):
+                        href = elem.find('D:href', ns)
+                        if href is not None:
+                            href_path = href.text.rstrip('/').lstrip('/')
+                            # Check if this response is a child of the requested path
+                            if requested_path in href_path and href_path.startswith(requested_path + '/'):
+                                # Check if this item is a directory (collection)
+                                propstat = elem.find('D:propstat', ns)
+                                if propstat is not None:
+                                    prop = propstat.find('D:prop', ns)
+                                    if prop is not None:
+                                        resourcetype = prop.find('D:resourcetype', ns)
+                                        if resourcetype is not None:
+                                            resourcetype_text = resourcetype.text or ''
+                                            if resourcetype_text:
+                                                import html
+                                                decoded = html.unescape(resourcetype_text.strip())
+                                                if 'collection' in decoded.lower():
+                                                    # This is a directory, so the parent (requested path) is also a directory
+                                                    # Create a synthetic response indicating the parent is a directory
+                                                    response_elem = elem
+                                                    break
+                
+                # If still no match, use the first response
                 if response_elem is None:
                     response_elem = root.find('.//D:response', ns)
                 
@@ -152,17 +178,30 @@ class WebDAVClient:
                         # Also check if there are any child elements (collection tag)
                         if len(list(resourcetype)) > 0:
                             isdir = True
-                        
-                        # If still not detected, check if we can list it (if it's a directory, listing should work)
-                        if not isdir:
-                            # Try to list the path - if it succeeds, it's likely a directory
-                            try:
-                                test_list = self.ls(path, depth=1)
-                                # If listing returns items, it's a directory
-                                if test_list:
-                                    isdir = True
-                            except:
-                                pass
+                
+                # If the response is a child of the requested path and is a directory,
+                # then the requested path itself is also a directory
+                if not isdir and href is not None:
+                    href_path = href.text.rstrip('/').lstrip('/')
+                    if requested_path in href_path and href_path.startswith(requested_path + '/'):
+                        # This is a child item - if we detected it as a directory above, the parent is also a directory
+                        # But we already checked that above, so if we're here, it's not a directory
+                        pass
+                
+                # Final fallback: if contentlength is 0 and we can list it, it's likely a directory
+                if not isdir:
+                    contentlength = prop.find('D:getcontentlength', ns)
+                    size = int(contentlength.text) if contentlength is not None and contentlength.text else -1
+                    if size == 0:
+                        # Try to list the path - if it succeeds, it's likely a directory
+                        try:
+                            test_list = self.ls(path, depth=1)
+                            # If listing returns items, it's a directory
+                            if test_list:
+                                isdir = True
+                                logger.debug(f"Detected directory via listing fallback for {path}")
+                        except:
+                            pass
                 
                 contentlength = prop.find('D:getcontentlength', ns)
                 size = int(contentlength.text) if contentlength is not None and contentlength.text else 0
