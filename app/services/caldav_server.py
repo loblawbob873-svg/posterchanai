@@ -568,22 +568,50 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                 for component in cal.walk():
                                     if component.name in ("VEVENT", "VTODO"):
                                         dtstart = component.get('dtstart')
+                                        dtend = component.get('dtend')
+                                        
                                         if dtstart:
                                             event_start = dtstart.dt
                                             # Handle both datetime and date objects
                                             if isinstance(event_start, datetime):
-                                                if time_range[0] <= event_start <= time_range[1]:
-                                                    include_event = True
-                                                    logger.debug(f"[CalDAV] Event {name} matches time range: {event_start}")
-                                                    break
-                                            else:
-                                                # Date object - convert to datetime for comparison
-                                                from datetime import date
-                                                if isinstance(event_start, date):
-                                                    # Check if the date falls within range
-                                                    if time_range[0].date() <= event_start <= time_range[1].date():
+                                                # For datetime events, check if event overlaps with time range
+                                                # Event is included if it starts before range ends and ends after range starts
+                                                event_end = dtend.dt if dtend else event_start
+                                                if isinstance(event_end, datetime):
+                                                    # Event overlaps if: event_start <= range_end AND event_end >= range_start
+                                                    if event_start <= time_range[1] and event_end >= time_range[0]:
                                                         include_event = True
-                                                        logger.debug(f"[CalDAV] Event {name} (date) matches time range: {event_start}")
+                                                        logger.debug(f"[CalDAV] Event {name} matches time range: {event_start} to {event_end}")
+                                                        break
+                                                else:
+                                                    # dtend is a date, convert to datetime at end of day
+                                                    from datetime import date, time as dt_time
+                                                    if isinstance(event_end, date):
+                                                        event_end_dt = datetime.combine(event_end, dt_time.max)
+                                                        if event_start <= time_range[1] and event_end_dt >= time_range[0]:
+                                                            include_event = True
+                                                            logger.debug(f"[CalDAV] Event {name} (datetime start, date end) matches time range: {event_start} to {event_end}")
+                                                            break
+                                            else:
+                                                # Date object (all-day event) - check if date overlaps with range
+                                                from datetime import date, time as dt_time
+                                                if isinstance(event_start, date):
+                                                    # Convert date to datetime range (start of day to end of day)
+                                                    event_start_dt = datetime.combine(event_start, dt_time.min)
+                                                    if dtend:
+                                                        event_end = dtend.dt
+                                                        if isinstance(event_end, date):
+                                                            event_end_dt = datetime.combine(event_end, dt_time.max)
+                                                        else:
+                                                            event_end_dt = event_end if isinstance(event_end, datetime) else datetime.combine(event_start, dt_time.max)
+                                                    else:
+                                                        # No dtend, assume single day
+                                                        event_end_dt = datetime.combine(event_start, dt_time.max)
+                                                    
+                                                    # Event overlaps if: event_start_dt <= range_end AND event_end_dt >= range_start
+                                                    if event_start_dt <= time_range[1] and event_end_dt >= time_range[0]:
+                                                        include_event = True
+                                                        logger.debug(f"[CalDAV] Event {name} (all-day) matches time range: {event_start} to {event_end_dt.date() if hasattr(event_end_dt, 'date') else event_end_dt}")
                                                         break
                                         else:
                                             # No start time, include it anyway
@@ -936,7 +964,8 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         # Insert it after the opening multistatus tag
         if sync_collection_elem is not None:
             import re
-            new_sync_token_url = f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{current_sync_token}"
+            # Use current_sync_token_url which was computed earlier
+            new_sync_token_url = current_sync_token_url
             # Add sync-token after multistatus opening tag
             sync_token_xml = f'    <D:sync-token xmlns:D="DAV:">{html.escape(new_sync_token_url)}</D:sync-token>\n'
             xml = xml.replace('<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">\n', 
@@ -1158,7 +1187,23 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
         success = proxy.delete_file(filepath)
         if success:
             logger.info(f"[CalDAV] ✓ Deleted event {event_uid} from calendar {cal_name} for user {user.username}")
-            logger.info(f"[CalDAV] Sync-token will change on next PROPFIND (file count decreased)")
+            
+            # Immediately invalidate sync-token state for this calendar
+            # This ensures iPhone will detect the deletion on next sync-collection request
+            from app.models import CalDAVSyncToken
+            import json
+            
+            # Delete all sync-token records for this calendar
+            # This forces a full sync on next request, which will properly report the deletion
+            deleted_tokens = db.query(CalDAVSyncToken).filter(
+                CalDAVSyncToken.user_id == user.id,
+                CalDAVSyncToken.calendar_name == cal_name
+            ).delete()
+            db.commit()
+            
+            if deleted_tokens > 0:
+                logger.info(f"[CalDAV] Invalidated {deleted_tokens} sync-token(s) for calendar {cal_name} to ensure deletion is detected")
+            
             return Response(content="", status_code=204)
         else:
             logger.warning(f"[CalDAV] Event file not found or failed to delete: {filepath}")
