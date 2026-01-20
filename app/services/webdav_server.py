@@ -197,10 +197,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return result
     
     def _proxy_upload_file(self, username: str, file_path: str, content: bytes):
-        """Proxy file upload to remote storage server."""
+        """Proxy file upload - calls local API which automatically proxies to storage server."""
         import requests
         
-        url = f"{self.storage_server_url.rstrip('/')}/api/storage/upload-file"
+        # Call the LOCAL API endpoint - it will automatically proxy to 192.168.0.85
+        url = "http://localhost:3051/api/storage/upload-file"
         headers = {}
         if self.storage_server_token:
             headers["Authorization"] = f"Bearer {self.storage_server_token}"
@@ -290,10 +291,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return super().get_resource_list(normalized_path, depth, environ)
     
     def _proxy_list_files(self, username: str, path: str):
-        """Proxy file listing to remote storage server."""
+        """Proxy file listing - calls local API which automatically proxies to storage server."""
         import requests
         
-        url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
+        # Call the LOCAL API endpoint - it will automatically proxy to 192.168.0.85
+        # Use localhost since we're on the same server
+        url = "http://localhost:3051/api/storage/list-files"
         headers = {}
         if self.storage_server_token:
             headers["Authorization"] = f"Bearer {self.storage_server_token}"
@@ -303,16 +306,16 @@ class QuotaFilesystemProvider(FilesystemProvider):
             "path": path
         }
         
-        logger.info(f"[WebDAV] Proxying list request to {url} for username={username}, path={path}")
+        logger.info(f"[WebDAV] Calling local API {url} (will auto-proxy to storage server) for username={username}, path={path}")
         try:
             response = requests.get(url, headers=headers, params=params, timeout=30)
-            logger.debug(f"[WebDAV] Proxy response status: {response.status_code}")
+            logger.debug(f"[WebDAV] API response status: {response.status_code}")
             response.raise_for_status()
             data = response.json()
             
             # Convert File Manager format to WebDAV format
             items = data.get('items', [])
-            logger.info(f"[WebDAV] Proxy returned {len(items)} items from storage server")
+            logger.info(f"[WebDAV] Local API returned {len(items)} items (auto-proxied from 192.168.0.85)")
             webdav_resources = []
             
             for item in items:
@@ -413,11 +416,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return info
     
     def _proxy_get_info(self, username: str, path: str):
-        """Get file info from remote storage server."""
+        """Get file info - calls local API which automatically proxies to storage server."""
         import requests
         
-        # List the directory to find the file
-        url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
+        # Call the LOCAL API endpoint - it will automatically proxy to 192.168.0.85
+        url = "http://localhost:3051/api/storage/list-files"
         headers = {}
         if self.storage_server_token:
             headers["Authorization"] = f"Bearer {self.storage_server_token}"
@@ -493,10 +496,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return super().read_file_content(normalized_path)
     
     def _proxy_download_file(self, username: str, file_path: str) -> bytes:
-        """Proxy file download from remote storage server."""
+        """Proxy file download - calls local API which automatically proxies to storage server."""
         import requests
         
-        url = f"{self.storage_server_url.rstrip('/')}/api/storage/download-file"
+        # Call the LOCAL API endpoint - it will automatically proxy to 192.168.0.85
+        url = "http://localhost:3051/api/storage/download-file"
         headers = {}
         if self.storage_server_token:
             headers["Authorization"] = f"Bearer {self.storage_server_token}"
