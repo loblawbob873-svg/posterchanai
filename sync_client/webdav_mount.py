@@ -1062,11 +1062,28 @@ class WebDAVSync:
                             
                             # Try to download (with retry logic)
                             try:
+                                # Double-check this is actually a file, not a directory
+                                if isdir:
+                                    logger.warning(f"Skipping download - {file_remote_path} is a directory, not a file")
+                                    continue
+                                
                                 # Normalize path for download
                                 download_path = file_remote_path
                                 if not download_path.startswith('/'):
                                     download_path = '/' + download_path
+                                
+                                # Ensure path doesn't end with / (would request directory listing)
+                                download_path = download_path.rstrip('/')
+                                
+                                logger.debug(f"Downloading file: {download_path} (size: {info.get('size', 'unknown')})")
                                 content = self.webdav.download(download_path, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
+                                
+                                # Validate content - should not be HTML/XML
+                                if content.startswith(b'<?xml') or content.startswith(b'<html') or content.startswith(b'<!DOCTYPE'):
+                                    logger.error(f"Download returned HTML/XML instead of file content for {download_path}")
+                                    logger.error(f"Content preview: {content[:500]}")
+                                    raise WebDAVError(f"Server returned HTML/XML instead of file content for {download_path}")
+                                
                                 file_local_path.parent.mkdir(parents=True, exist_ok=True)
                                 file_local_path.write_bytes(content)
                                 # Set mtime
