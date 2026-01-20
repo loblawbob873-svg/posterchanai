@@ -175,8 +175,15 @@ class PosterchanaiDomainController:
         return "Posterchanai WebDAV"
 
 
-def create_webdav_app(db: Session) -> WsgiDAVApp:
-    """Create WebDAV WSGI application."""
+def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
+    """Create WebDAV WSGI application.
+    
+    Args:
+        db: Database session
+        mount_path: The path where WebDAV is mounted (e.g., "/webdav").
+                    When mounted at /webdav, FastAPI strips this prefix,
+                    so the provider still sees paths like /username/
+    """
     storage = get_storage_service(db)
     root_path = Path(storage.upload_path)
     root_path.mkdir(parents=True, exist_ok=True)
@@ -185,7 +192,7 @@ def create_webdav_app(db: Session) -> WsgiDAVApp:
     
     config = {
         "provider_mapping": {
-            "/": provider,
+            "/": provider,  # Handle all paths from root (after mount prefix is stripped)
         },
         "http_authenticator": {
             "domain_controller": PosterchanaiDomainController(db),
