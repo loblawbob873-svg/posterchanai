@@ -1145,9 +1145,11 @@ def send_email(
         else:
             msg = MIMEText(body, "plain", "utf-8")
 
-        # Set headers
+        # Set headers - sanitize recipient to prevent header injection
+        # Remove newlines and carriage returns from recipient (email headers can't contain these)
+        to_clean = to.replace("\n", " ").replace("\r", "").strip()
         msg["From"] = account.email
-        msg["To"] = to
+        msg["To"] = to_clean
         msg["Subject"] = subject
         msg["Date"] = formatdate(localtime=True)
 
