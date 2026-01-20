@@ -131,6 +131,8 @@ app.add_middleware(CSRFMiddleware)
 static_path = os.path.join(os.path.dirname(__file__), "..", "static")
 app.mount("/static", StaticFiles(directory=static_path), name="static")
 
+# WebDAV will be mounted at startup if enabled (see startup event)
+
 # Templates
 templates_path = os.path.join(os.path.dirname(__file__), "..", "templates")
 templates = Jinja2Templates(directory=templates_path)
@@ -794,13 +796,33 @@ async def startup():
                 start_caldav_server = None
                 start_cardav_server = None
             
-            # Start WebDAV server
-            if start_webdav_server and webdav_enabled.lower() == "true":
-                webdav_port = int(get_dav_setting("webdav_port", "8080"))
-                if start_webdav_server(db_dav, webdav_port):
-                    logging.info(f"Built-in WebDAV server started on port {webdav_port}")
-                else:
-                    logging.error("Failed to start WebDAV server")
+            # Mount WebDAV directly into FastAPI (no separate port needed!)
+            if webdav_enabled.lower() == "true":
+                try:
+                    from app.services.webdav_server import create_webdav_app
+                    # Try to get WSGI middleware - Starlette includes this
+                    try:
+                        from starlette.middleware.wsgi import WSGIMiddleware
+                        wsgi_middleware = WSGIMiddleware
+                    except ImportError:
+                        # Fallback to asgiref if available
+                        try:
+                            from asgiref.wsgi import WsgiToAsgi
+                            wsgi_middleware = WsgiToAsgi
+                        except ImportError:
+                            raise ImportError("Neither starlette.middleware.wsgi.WSGIMiddleware nor asgiref.wsgi.WsgiToAsgi available")
+                    
+                    webdav_app = create_webdav_app(db_dav)
+                    # Mount WebDAV at /webdav/ path - handles all WebDAV requests
+                    # Nginx will rewrite /username/ to /webdav/username/ so WebDAV sees the correct path
+                    app.mount("/webdav", wsgi_middleware(webdav_app))
+                    logging.info("✅ WebDAV mounted directly into FastAPI on port 443 (via /webdav/)")
+                    logging.info("   No separate port 8080 needed - all traffic goes through 443!")
+                except ImportError as e:
+                    logging.warning(f"WebDAV is enabled but dependencies not available: {e}")
+                    logging.warning("   Install wsgidav and ensure Starlette is available")
+                except Exception as e:
+                    logging.error(f"Failed to mount WebDAV: {e}", exc_info=True)
             
             # Start CalDAV server
             if start_caldav_server and caldav_enabled.lower() == "true":
@@ -831,12 +853,9 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     # Stop WebDAV/CalDAV/CardDAV servers
+    # Note: WebDAV is now mounted directly in FastAPI, no separate server to stop
     try:
-        try:
-            from app.services.webdav_server import stop_webdav_server
-            stop_webdav_server()
-        except ImportError:
-            pass  # wsgidav not installed
+        # Only stop separate CalDAV/CardDAV servers if they exist
         try:
             from app.services.caldav_server import stop_caldav_server
             from app.services.cardav_server import stop_cardav_server
