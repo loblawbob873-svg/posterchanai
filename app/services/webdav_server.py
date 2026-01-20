@@ -437,6 +437,15 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 # Return the href (path) for this resource
                                 return self._path
                             
+                            def get_directory_info(self):
+                                # Return directory info for dir_browser - delegate to get_resource_instances
+                                try:
+                                    children = self._provider.get_resource_instances(self._path, environ=None)
+                                    return children if children else []
+                                except Exception as e:
+                                    logger.error(f"[WebDAV] VirtualResource.get_directory_info error: {e}")
+                                    return []
+                            
                             def __getattr__(self, name):
                                 # Gracefully handle any other method calls
                                 logger.warning(f"[WebDAV] VirtualResource.__getattr__ called for '{name}' - returning None")
@@ -510,6 +519,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         if propname == "allprop" or "displayname" in str(propname):
                             props.append(('displayname', self._path.split('/')[-1] or self._path))
                         return props
+                    
+                    def get_directory_info(self):
+                        # Return directory info for dir_browser - return empty list
+                        return []
                     
                     # Add any other methods wsgidav might call
                     def __getattr__(self, name):
