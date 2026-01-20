@@ -349,6 +349,7 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                         # This means: event starts before/at range end AND (no end OR ends after/at range start)
                         
                         # First check: event must start before or at the range end
+                        # BUT: if the event has no end date or ends after range start, include it (ongoing events)
                         if event_start > end_date:
                             # Event starts after the range - skip it
                             summary = component.get('summary', 'No Title')
@@ -356,6 +357,7 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                             continue
                         
                         # Second check: if event has an end date, it must end at or after the range start
+                        # OR if event has no end date and started within reasonable time, include it
                         if event_end is not None:
                             if event_end < start_date:
                                 # Event ended before the range - skip it

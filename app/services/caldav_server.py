@@ -1432,6 +1432,12 @@ def create_caldav_app() -> FastAPI:
         # Log all requests for debugging (especially PUT requests from iPhone)
         logger.info(f"[CalDAV] Request: {method} {path} from user {user.username}")
         
+        # Log PUT requests with more detail
+        if method == "PUT":
+            body_size = len(await request.body()) if hasattr(request, 'body') else 0
+            logger.info(f"[CalDAV] ⚠️ PUT REQUEST RECEIVED: path={path}, user={user.username}, body_size={body_size} bytes")
+            # Re-read body for actual processing (will be done in handle_put)
+        
         # Handle OPTIONS request (required by some clients including iPhone)
         if method == "OPTIONS":
             return Response(
@@ -1453,7 +1459,10 @@ def create_caldav_app() -> FastAPI:
         elif method == "GET":
             return await handle_get(path, user, db)
         elif method == "PUT":
-            return await handle_put(path, user, db, request)
+            logger.info(f"[CalDAV] ⚠️ Calling handle_put for path: {path}")
+            result = await handle_put(path, user, db, request)
+            logger.info(f"[CalDAV] ⚠️ handle_put returned status: {result.status_code}")
+            return result
         elif method == "DELETE":
             return await handle_delete(path, user, db)
         elif method == "MKCALENDAR":
