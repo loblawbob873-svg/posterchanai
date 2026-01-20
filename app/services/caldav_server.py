@@ -626,7 +626,12 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                         if include_event:
                             event_uid = name.replace('.ics', '')
                             href_path = f"{cal_name}/{event_uid}.ics" if cal_name else f"calendar/{event_uid}.ics"
-                            etag = str(item.get('modified', item.get('mtime', 0)))
+                            
+                            # Calculate MD5 hash of content for ETag (more reliable than mtime)
+                            import hashlib
+                            content_hash = hashlib.md5(ical_data.encode('utf-8')).hexdigest()
+                            etag = content_hash[:16]  # Use first 16 chars for ETag
+                            
                             items.append({
                                 "href": f"{base_url}/{href_path}",
                                 "props": {
@@ -728,11 +733,10 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                 if href_subpath not in file_listing_cache:
                                     file_listing_cache[href_subpath] = proxy.list_files(href_subpath)
                                 
-                                etag = "0"
-                                for item in file_listing_cache[href_subpath]:
-                                    if item.get('name') == f"{event_uid}.ics":
-                                        etag = str(item.get('modified', item.get('mtime', 0)))
-                                        break
+                                # Calculate MD5 hash of content for ETag
+                                import hashlib
+                                content_hash = hashlib.md5(ical_data.encode('utf-8')).hexdigest()
+                                etag = content_hash[:16]  # Use first 16 chars for ETag
                                 
                                 items.append({
                                     "href": href,
@@ -825,16 +829,33 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             current_sync_token_hash = hashlib.md5(f"{ctag_data}_sync".encode()).hexdigest()[:16]
             current_sync_token_url = f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{current_sync_token_hash}"
             
-            # Get current event UIDs
+            # Get current event UIDs and their MD5 hashes for change detection
             current_event_uids = set()
+            current_event_hashes = {}  # {uid: md5_hash}
             for item in ics_files:
                 name = item.get('name', '')
                 if name.endswith('.ics'):
                     event_uid = name.replace('.ics', '')
                     current_event_uids.add(event_uid)
+                    
+                    # Read file to calculate MD5 hash for change detection
+                    try:
+                        if subpath:
+                            filepath = f"{subpath}/{name}"
+                        else:
+                            filepath = name
+                        ical_data = proxy.read_file(filepath)
+                        if ical_data:
+                            import hashlib
+                            content_hash = hashlib.md5(ical_data.encode('utf-8')).hexdigest()
+                            current_event_hashes[event_uid] = content_hash
+                    except Exception as e:
+                        logger.debug(f"[CalDAV] Could not calculate hash for {event_uid}: {e}")
             
-            # If old sync-token provided, find deleted events by comparing with stored state
+            # If old sync-token provided, find deleted and modified events by comparing with stored state
             deleted_event_uids = set()
+            modified_event_uids = set()  # Events that changed (different MD5 hash)
+            
             if old_sync_token:
                 # Look up the old sync-token in database
                 old_token_record = db.query(CalDAVSyncToken).filter(
@@ -845,34 +866,59 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                 
                 if old_token_record:
                     try:
-                        old_event_uids = set(json.loads(old_token_record.event_uids))
+                        old_event_data = json.loads(old_token_record.event_uids)
+                        
+                        # Handle both old format (list of UIDs) and new format (dict with hashes)
+                        if isinstance(old_event_data, dict):
+                            # New format: {uid: hash}
+                            old_event_uids = set(old_event_data.keys())
+                            old_event_hashes = old_event_data
+                        else:
+                            # Old format: list of UIDs (backward compatibility)
+                            old_event_uids = set(old_event_data)
+                            old_event_hashes = {}
+                        
+                        # Find deleted events
                         deleted_event_uids = old_event_uids - current_event_uids
-                        logger.info(f"[CalDAV] Found {len(deleted_event_uids)} deleted events since sync-token {old_sync_token[:50]}...")
+                        
+                        # Find modified events (same UID but different MD5 hash)
+                        for uid in old_event_uids & current_event_uids:  # Events in both old and current
+                            old_hash = old_event_hashes.get(uid, "")
+                            current_hash = current_event_hashes.get(uid, "")
+                            if old_hash and current_hash and old_hash != current_hash:
+                                modified_event_uids.add(uid)
+                                logger.debug(f"[CalDAV] Event {uid} modified: hash changed from {old_hash[:8]}... to {current_hash[:8]}...")
+                        
+                        logger.info(f"[CalDAV] Found {len(deleted_event_uids)} deleted events, {len(modified_event_uids)} modified events since sync-token {old_sync_token[:50]}...")
                         if deleted_event_uids:
                             logger.info(f"[CalDAV] Deleted event UIDs: {list(deleted_event_uids)[:5]}...")
+                        if modified_event_uids:
+                            logger.info(f"[CalDAV] Modified event UIDs: {list(modified_event_uids)[:5]}...")
                     except Exception as e:
                         logger.warning(f"[CalDAV] Error parsing old sync-token event list: {e}")
                 else:
                     logger.info(f"[CalDAV] Old sync-token not found in database - doing full sync")
                     # If token not found, do full sync (all current events)
             
-            # Store current sync-token state for future comparisons
+            # Store current sync-token state for future comparisons (with MD5 hashes)
             # Delete old tokens for this calendar (keep only the latest)
             db.query(CalDAVSyncToken).filter(
                 CalDAVSyncToken.user_id == user.id,
                 CalDAVSyncToken.calendar_name == cal_name
             ).delete()
             
-            # Store new sync-token state
+            # Store new sync-token state with MD5 hashes for change detection
+            # Format: {"uid1": "hash1", "uid2": "hash2", ...}
+            event_hashes_dict = {uid: current_event_hashes.get(uid, "") for uid in current_event_uids}
             new_token_record = CalDAVSyncToken(
                 user_id=user.id,
                 calendar_name=cal_name,
                 sync_token=current_sync_token_url,
-                event_uids=json.dumps(list(current_event_uids))
+                event_uids=json.dumps(event_hashes_dict)  # Store as dict with hashes
             )
             db.add(new_token_record)
             db.commit()
-            logger.info(f"[CalDAV] Stored sync-token state: {len(current_event_uids)} events for token {current_sync_token_url[:50]}...")
+            logger.info(f"[CalDAV] Stored sync-token state: {len(current_event_uids)} events with MD5 hashes for token {current_sync_token_url[:50]}...")
             
             ics_count = 0
             processed_count = 0
@@ -899,10 +945,14 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                         
                         processed_count += 1
                         
+                        # Calculate MD5 hash of content for ETag (more reliable than mtime)
+                        import hashlib
+                        content_hash = hashlib.md5(ical_data.encode('utf-8')).hexdigest()
+                        etag = content_hash[:16]  # Use first 16 chars for ETag
+                        
                         # Add event to response
                         event_uid = name.replace('.ics', '')
                         href_path = f"{cal_name}/{event_uid}.ics" if cal_name else f"calendar/{event_uid}.ics"
-                        etag = str(item.get('modified', item.get('mtime', 0)))
                         items.append({
                             "href": f"{base_url}/{href_path}",
                             "props": {
@@ -1109,24 +1159,12 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
             if not verify_data:
                 logger.warning(f"[CalDAV] File {filepath} was not found after write, but write_file returned success")
             
-            # Get ETag for the saved file (iPhone requires ETag in PUT response)
-            etag = "0"
-            try:
-                # Get file info for ETag - wait a moment for storage to update
-                import time
-                time.sleep(0.1)  # Small delay to ensure storage server has updated
-                
-                file_items = proxy.list_files(cal_name if cal_name != 'calendar' else "")
-                for item in file_items:
-                    if item.get('name') == f"{event_uid}.ics":
-                        etag = str(item.get('modified', item.get('mtime', 0)))
-                        logger.debug(f"[CalDAV] Got ETag {etag} for event {event_uid}")
-                        break
-            except Exception as e:
-                logger.warning(f"[CalDAV] Could not get ETag for {event_uid}: {e}")
-                # Use hash of content as fallback ETag
-                import hashlib
-                etag = hashlib.md5(ical_data.encode('utf-8')).hexdigest()[:16]
+            # Calculate MD5 hash of content for ETag (iPhone requires ETag in PUT response)
+            # Always use MD5 hash for reliable content verification
+            import hashlib
+            content_hash = hashlib.md5(ical_data.encode('utf-8')).hexdigest()
+            etag = content_hash[:16]  # Use first 16 chars for ETag
+            logger.debug(f"[CalDAV] Calculated MD5 ETag {etag} for event {event_uid}")
             
             # Return appropriate status code: 201 for new, 204 for updates
             # iPhone expects 201 for new events, 204 for updates
