@@ -440,13 +440,23 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         return Response(content=xml, media_type="application/xml", status_code=207)
     except Exception as e:
         logger.error(f"[CardDAV] Error handling REPORT: {e}", exc_info=True)
-        return Response(content="", status_code=500)
+        # Return proper error response
+        error_xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:error xmlns:D="DAV:">
+    <D:internal-server-error/>
+</D:error>'''
+        return Response(content=error_xml, media_type="application/xml", status_code=500)
 
 
 async def handle_get(path: str, user: User, db: Session) -> Response:
     """Handle GET request (retrieve contact). Uses storage proxy if configured."""
     from urllib.parse import unquote
     from app.services.dav_storage_proxy import DAVStorageProxy
+    
+    # Validate path (prevent path traversal)
+    if '..' in path:
+        logger.warning(f"[CardDAV] GET request with path traversal attempt: {path}")
+        return Response(content="Invalid path", status_code=400)
     
     # Use storage proxy (must be configured)
     proxy = DAVStorageProxy(db, user.username, 'cardav')

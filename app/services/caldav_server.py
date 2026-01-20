@@ -721,8 +721,8 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                     if comp.name == "VEVENT":
                                         event_summary_lower = str(comp.get('summary', '')).lower()
                                         break
-                            except:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"[CalDAV] Error parsing event for logging: {e}")
                             
                             if added_count <= 3 or event_uid in ["6e9ccaba-47d4-48d1-9729-701dd0d6be60"] or "test" in event_summary_lower:
                                 try:
@@ -989,8 +989,17 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                             old_event_mtimes = old_event_data
                         else:
                             # Old format: list of UIDs (backward compatibility)
+                            # Migrate to dict format for consistency
                             old_event_uids = set(old_event_data)
-                            old_event_mtimes = {}
+                            old_event_mtimes = {uid: 0 for uid in old_event_uids}  # mtime=0 for migrated entries
+                            # Update token record to new format
+                            try:
+                                token_record.event_uids = json.dumps(old_event_mtimes)
+                                db.commit()
+                                logger.debug(f"[CalDAV] Migrated sync-token {old_token_record.id} from list to dict format")
+                            except Exception as e:
+                                logger.warning(f"[CalDAV] Failed to migrate sync-token format: {e}")
+                                db.rollback()
                         
                         logger.info(f"[CalDAV] Old sync-token had {len(old_event_uids)} events, current has {len(current_event_uids)} events")
                         
@@ -1018,25 +1027,51 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                     # If token not found, do full sync (all current events)
             
             # Store current sync-token state for future comparisons (with mtimes for fast change detection)
-            # Delete old tokens for this calendar (keep only the latest)
-            db.query(CalDAVSyncToken).filter(
-                CalDAVSyncToken.user_id == user.id,
-                CalDAVSyncToken.calendar_name == cal_name
-            ).delete()
-            
-            # Store new sync-token state with mtimes for fast change detection
-            # Format: {"uid1": mtime1, "uid2": mtime2, ...}
-            # Using mtime is much faster than MD5 and sufficient for change detection
-            event_mtimes_dict = {uid: current_event_mtimes.get(uid, 0) for uid in current_event_uids}
-            new_token_record = CalDAVSyncToken(
-                user_id=user.id,
-                calendar_name=cal_name,
-                sync_token=current_sync_token_url,
-                event_uids=json.dumps(event_mtimes_dict)  # Store as dict with mtimes
-            )
-            db.add(new_token_record)
-            db.commit()
-            logger.info(f"[CalDAV] Stored sync-token state: {len(current_event_uids)} events with mtimes for token {current_sync_token_url[:50]}...")
+            # Keep last 5 tokens per calendar to handle concurrent requests and allow fallback
+            # Delete only very old tokens (older than 1 hour) to prevent race conditions
+            try:
+                from datetime import datetime, timedelta
+                cutoff_time = datetime.utcnow() - timedelta(hours=1)
+                
+                # Delete only tokens older than 1 hour (keep recent ones for concurrent requests)
+                deleted_count = db.query(CalDAVSyncToken).filter(
+                    CalDAVSyncToken.user_id == user.id,
+                    CalDAVSyncToken.calendar_name == cal_name,
+                    CalDAVSyncToken.created_at < cutoff_time
+                ).delete()
+                
+                # Also limit to max 5 tokens per calendar (delete oldest if more)
+                token_count = db.query(CalDAVSyncToken).filter(
+                    CalDAVSyncToken.user_id == user.id,
+                    CalDAVSyncToken.calendar_name == cal_name
+                ).count()
+                
+                if token_count >= 5:
+                    # Delete oldest tokens, keep 4 most recent
+                    oldest_tokens = db.query(CalDAVSyncToken).filter(
+                        CalDAVSyncToken.user_id == user.id,
+                        CalDAVSyncToken.calendar_name == cal_name
+                    ).order_by(CalDAVSyncToken.created_at.asc()).limit(token_count - 4).all()
+                    for token in oldest_tokens:
+                        db.delete(token)
+                
+                # Store new sync-token state with mtimes for fast change detection
+                # Format: {"uid1": mtime1, "uid2": mtime2, ...}
+                # Using mtime is much faster than MD5 and sufficient for change detection
+                event_mtimes_dict = {uid: current_event_mtimes.get(uid, 0) for uid in current_event_uids}
+                new_token_record = CalDAVSyncToken(
+                    user_id=user.id,
+                    calendar_name=cal_name,
+                    sync_token=current_sync_token_url,
+                    event_uids=json.dumps(event_mtimes_dict)  # Store as dict with mtimes
+                )
+                db.add(new_token_record)
+                db.commit()
+                logger.info(f"[CalDAV] Stored sync-token state: {len(current_event_uids)} events with mtimes for token {current_sync_token_url[:50]}...")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"[CalDAV] Error storing sync-token state: {e}", exc_info=True)
+                # Continue anyway - sync will still work, just won't detect deletions until next full sync
             
             ics_count = 0
             processed_count = 0
@@ -1158,6 +1193,11 @@ async def handle_get(path: str, user: User, db: Session) -> Response:
     from urllib.parse import unquote
     from app.services.dav_storage_proxy import DAVStorageProxy
     
+    # Validate path (prevent path traversal)
+    if '..' in path:
+        logger.warning(f"[CalDAV] GET request with path traversal attempt: {path}")
+        return Response(content="Invalid path", status_code=400)
+    
     # Use storage proxy (must be configured)
     proxy = DAVStorageProxy(db, user.username, 'caldav')
     
@@ -1228,6 +1268,17 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
         if match:
             cal_name = unquote(match.group(1))
             path_uid = match.group(2)
+            
+            # Validate calendar name (prevent path traversal)
+            if '..' in cal_name or '/' in cal_name or '\\' in cal_name:
+                logger.warning(f"[CalDAV] PUT request with invalid calendar name: {cal_name}")
+                return Response(content="Invalid calendar name", status_code=400, media_type="application/xml")
+            
+            # Validate UID (prevent path traversal)
+            if '..' in path_uid or '/' in path_uid or '\\' in path_uid:
+                logger.warning(f"[CalDAV] PUT request with invalid UID: {path_uid}")
+                return Response(content="Invalid event UID", status_code=400, media_type="application/xml")
+            
             if event_uid and event_uid != path_uid:
                 logger.warning(f"UID mismatch: path={path_uid}, ical={event_uid}, using path UID")
             event_uid = path_uid
@@ -1236,6 +1287,20 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
             # Default to "main" for iPhone sync compatibility (not "calendar" which saves to root)
             cal_name = 'main'
             logger.info(f"[CalDAV] No calendar name in path, defaulting to 'main' for iPhone sync compatibility")
+        
+        # Validate iCalendar format before saving
+        try:
+            test_cal = ICalendar.from_ical(ical_data.encode('utf-8'))
+            # Verify it's valid
+            if not test_cal.walk():
+                raise ValueError("Empty calendar")
+        except Exception as e:
+            logger.error(f"[CalDAV] Invalid iCalendar format: {e}")
+            error_xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:error xmlns:D="DAV:">
+    <D:bad-request/>
+</D:error>'''
+            return Response(content=error_xml, media_type="application/xml", status_code=400)
         
         if not event_uid:
             # Generate UID if not present
@@ -1316,20 +1381,33 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
     
     # Extract calendar name and event UID from path
     match = re.search(r'/([^/]+)/([^/]+)\.ics$', path)
-    if match:
-        cal_name = unquote(match.group(1))
-        event_uid = match.group(2)
-        
-        # Build filepath (with calendar subdirectory if not 'calendar')
-        if cal_name == 'calendar':
-            filepath = f"{event_uid}.ics"
-        else:
-            filepath = f"{cal_name}/{event_uid}.ics"
-        
-        logger.info(f"[CalDAV] DELETE request for event {event_uid} in calendar {cal_name} (filepath: {filepath})")
-        
-        # Delete file using proxy
-        success = proxy.delete_file(filepath)
+    if not match:
+        logger.warning(f"[CalDAV] DELETE request with invalid path format: {path}")
+        return Response(content="Invalid path", status_code=400)
+    
+    cal_name = unquote(match.group(1))
+    event_uid = match.group(2)
+    
+    # Validate calendar name (prevent path traversal)
+    if '..' in cal_name or '/' in cal_name or '\\' in cal_name:
+        logger.warning(f"[CalDAV] DELETE request with invalid calendar name: {cal_name}")
+        return Response(content="Invalid calendar name", status_code=400)
+    
+    # Validate event UID (prevent path traversal)
+    if '..' in event_uid or '/' in event_uid or '\\' in event_uid:
+        logger.warning(f"[CalDAV] DELETE request with invalid event UID: {event_uid}")
+        return Response(content="Invalid event UID", status_code=400)
+    
+    # Build filepath (with calendar subdirectory if not 'calendar')
+    if cal_name == 'calendar':
+        filepath = f"{event_uid}.ics"
+    else:
+        filepath = f"{cal_name}/{event_uid}.ics"
+    
+    logger.info(f"[CalDAV] DELETE request for event {event_uid} in calendar {cal_name} (filepath: {filepath})")
+    
+    # Delete file using proxy
+    success = proxy.delete_file(filepath)
         if success:
             logger.info(f"[CalDAV] ✓ Deleted event {event_uid} from calendar {cal_name} for user {user.username}")
             
@@ -1345,35 +1423,42 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
             ).all()
             
             updated_count = 0
-            for token_record in sync_tokens:
-                try:
-                    event_data = json.loads(token_record.event_uids)
-                    
-                    # Handle both old format (list) and new format (dict)
-                    if isinstance(event_data, dict):
-                        # New format: {uid: mtime}
-                        if event_uid in event_data:
-                            del event_data[event_uid]
-                            token_record.event_uids = json.dumps(event_data)
-                            updated_count += 1
-                            logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (dict format)")
-                    else:
-                        # Old format: list of UIDs
-                        event_uids = set(event_data)
-                        if event_uid in event_uids:
-                            event_uids.remove(event_uid)
-                            token_record.event_uids = json.dumps(list(event_uids))
-                            updated_count += 1
-                            logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (list format)")
-                except Exception as e:
-                    logger.warning(f"[CalDAV] Error updating sync-token {token_record.id}: {e}", exc_info=True)
-            
-            if updated_count > 0:
-                db.commit()
-                logger.info(f"[CalDAV] ✓ Updated {updated_count} sync-token(s) for calendar {cal_name} to reflect deletion of event {event_uid}")
-            else:
-                # No existing sync-tokens, that's fine - next sync will create a new one
-                logger.info(f"[CalDAV] No existing sync-tokens to update for calendar {cal_name} (will be detected on next sync)")
+            try:
+                for token_record in sync_tokens:
+                    try:
+                        event_data = json.loads(token_record.event_uids)
+                        
+                        # Handle both old format (list) and new format (dict)
+                        if isinstance(event_data, dict):
+                            # New format: {uid: mtime}
+                            if event_uid in event_data:
+                                del event_data[event_uid]
+                                token_record.event_uids = json.dumps(event_data)
+                                updated_count += 1
+                                logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (dict format)")
+                        else:
+                            # Old format: list of UIDs - migrate to dict format
+                            event_uids = set(event_data)
+                            if event_uid in event_uids:
+                                event_uids.remove(event_uid)
+                                # Migrate to dict format while updating
+                                event_data_dict = {uid: 0 for uid in event_uids}  # mtime=0 for migrated entries
+                                token_record.event_uids = json.dumps(event_data_dict)
+                                updated_count += 1
+                                logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (migrated from list to dict format)")
+                    except Exception as e:
+                        logger.warning(f"[CalDAV] Error updating sync-token {token_record.id}: {e}", exc_info=True)
+                
+                if updated_count > 0:
+                    db.commit()
+                    logger.info(f"[CalDAV] ✓ Updated {updated_count} sync-token(s) for calendar {cal_name} to reflect deletion of event {event_uid}")
+                else:
+                    # No existing sync-tokens, that's fine - next sync will create a new one
+                    logger.info(f"[CalDAV] No existing sync-tokens to update for calendar {cal_name} (will be detected on next sync)")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"[CalDAV] Error updating sync-token state after deletion: {e}", exc_info=True)
+                # Continue - deletion succeeded, sync-token update failed but will be fixed on next sync
             
             return Response(content="", status_code=204)
         else:
@@ -1387,6 +1472,15 @@ async def handle_mkcalendar(path: str, user: User, db: Session) -> Response:
     """Handle MKCALENDAR request. Creates a new calendar directory."""
     from urllib.parse import unquote, quote
     from app.services.dav_storage_proxy import DAVStorageProxy
+    
+    # Validate path (prevent path traversal)
+    if '..' in path:
+        logger.warning(f"[CalDAV] MKCALENDAR request with path traversal attempt: {path}")
+        error_xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:error xmlns:D="DAV:">
+    <D:bad-request/>
+</D:error>'''
+        return Response(content=error_xml, media_type="application/xml", status_code=400)
     
     # Normalize path
     path = path.rstrip('/')
