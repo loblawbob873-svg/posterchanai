@@ -778,7 +778,7 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             old_sync_token = None
             if sync_token_elem is not None and sync_token_elem.text:
                 old_sync_token = sync_token_elem.text.strip()
-                logger.info(f"[CalDAV] sync-collection with sync-token: {old_sync_token[:50]}...")
+                logger.info(f"[CalDAV] sync-collection with sync-token: {old_sync_token[:80]}...")
             
             # List all events from the specified calendar directory using proxy
             file_items = proxy.list_files(subpath)
@@ -786,22 +786,66 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             
             # Get current sync-token (based on current file count and latest mtime)
             import hashlib
+            import json
+            from app.models import CalDAVSyncToken
+            
             ics_files = [item for item in file_items if item.get('name', '').endswith('.ics')]
             if ics_files:
                 latest_mtime = max(item.get('modified', item.get('mtime', 0)) for item in ics_files)
                 ctag_data = f"{cal_name}_{user.username}_{len(ics_files)}_{latest_mtime}"
             else:
                 ctag_data = f"{cal_name}_{user.username}_0"
-            current_sync_token = hashlib.md5(f"{ctag_data}_sync".encode()).hexdigest()[:16]
+            current_sync_token_hash = hashlib.md5(f"{ctag_data}_sync".encode()).hexdigest()[:16]
+            current_sync_token_url = f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{current_sync_token_hash}"
             
-            # If sync-token changed, we need to report deletions
-            # For now, if there's an old sync-token and it's different, we'll do a full sync
-            # (proper implementation would track what events existed at old token)
-            if old_sync_token and old_sync_token != f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{current_sync_token}":
-                logger.info(f"[CalDAV] sync-token changed - doing full sync (old token provided, changes detected)")
-                # Full sync mode - return all current events
-                # Note: Proper sync-collection would track deleted events, but for simplicity
-                # we'll rely on multiget to handle deletions when iPhone queries specific events
+            # Get current event UIDs
+            current_event_uids = set()
+            for item in ics_files:
+                name = item.get('name', '')
+                if name.endswith('.ics'):
+                    event_uid = name.replace('.ics', '')
+                    current_event_uids.add(event_uid)
+            
+            # If old sync-token provided, find deleted events by comparing with stored state
+            deleted_event_uids = set()
+            if old_sync_token:
+                # Look up the old sync-token in database
+                old_token_record = db.query(CalDAVSyncToken).filter(
+                    CalDAVSyncToken.user_id == user.id,
+                    CalDAVSyncToken.calendar_name == cal_name,
+                    CalDAVSyncToken.sync_token == old_sync_token
+                ).first()
+                
+                if old_token_record:
+                    try:
+                        old_event_uids = set(json.loads(old_token_record.event_uids))
+                        deleted_event_uids = old_event_uids - current_event_uids
+                        logger.info(f"[CalDAV] Found {len(deleted_event_uids)} deleted events since sync-token {old_sync_token[:50]}...")
+                        if deleted_event_uids:
+                            logger.info(f"[CalDAV] Deleted event UIDs: {list(deleted_event_uids)[:5]}...")
+                    except Exception as e:
+                        logger.warning(f"[CalDAV] Error parsing old sync-token event list: {e}")
+                else:
+                    logger.info(f"[CalDAV] Old sync-token not found in database - doing full sync")
+                    # If token not found, do full sync (all current events)
+            
+            # Store current sync-token state for future comparisons
+            # Delete old tokens for this calendar (keep only the latest)
+            db.query(CalDAVSyncToken).filter(
+                CalDAVSyncToken.user_id == user.id,
+                CalDAVSyncToken.calendar_name == cal_name
+            ).delete()
+            
+            # Store new sync-token state
+            new_token_record = CalDAVSyncToken(
+                user_id=user.id,
+                calendar_name=cal_name,
+                sync_token=current_sync_token_url,
+                event_uids=json.dumps(list(current_event_uids))
+            )
+            db.add(new_token_record)
+            db.commit()
+            logger.info(f"[CalDAV] Stored sync-token state: {len(current_event_uids)} events for token {current_sync_token_url[:50]}...")
             
             ics_count = 0
             processed_count = 0
@@ -843,7 +887,7 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                         added_count += 1
                         
                         # Log first few events and any with "test" in summary
-                        if added_count <= 3:
+                        if added_count <= 3 or "test" in event_uid.lower():
                             try:
                                 cal = ICalendar.from_ical(ical_data.encode('utf-8'))
                                 for component in cal.walk():
@@ -860,12 +904,26 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                         logger.warning(f"[CalDAV] Error processing event {name}: {e}", exc_info=True)
                         continue
             
+            # Add deleted events with 404 status so iPhone removes them
+            deleted_count = 0
+            for deleted_uid in deleted_event_uids:
+                href_path = f"{cal_name}/{deleted_uid}.ics" if cal_name else f"calendar/{deleted_uid}.ics"
+                items.append({
+                    "href": f"{base_url}/{href_path}",
+                    "props": {},
+                    "status": 404  # 404 tells iPhone to remove this event
+                })
+                deleted_count += 1
+                if deleted_count <= 5:
+                    logger.info(f"[CalDAV] Reporting deleted event with 404: {deleted_uid}")
+            
             logger.info(f"[CalDAV] sync-collection summary for calendar '{cal_name}':")
             logger.info(f"  - Total .ics files: {ics_count}")
             logger.info(f"  - Successfully read: {processed_count}")
             logger.info(f"  - Failed to read: {read_failed_count}")
             logger.info(f"  - Added to response: {added_count}")
-            logger.info(f"[CalDAV] sync-collection returning {len(items)} events for calendar '{cal_name}'")
+            logger.info(f"  - Deleted events reported (404): {deleted_count}")
+            logger.info(f"[CalDAV] sync-collection returning {len(items)} items ({added_count} events + {deleted_count} deletions) for calendar '{cal_name}'")
             logger.info(f"[CalDAV] New sync-token: {new_sync_token_url}")
             
             # Add sync-token to response by adding it as a special item
