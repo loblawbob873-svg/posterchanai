@@ -1462,46 +1462,46 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
         
         updated_count = 0
         try:
-                for token_record in sync_tokens:
-                    try:
-                        event_data = json.loads(token_record.event_uids)
-                        
-                        # Handle both old format (list) and new format (dict)
-                        if isinstance(event_data, dict):
-                            # New format: {uid: mtime}
-                            if event_uid in event_data:
-                                del event_data[event_uid]
-                                token_record.event_uids = json.dumps(event_data)
-                                updated_count += 1
-                                logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (dict format)")
-                            else:
-                                logger.debug(f"[CalDAV] Event {event_uid} not found in sync-token {token_record.sync_token[:50]}... (already removed or never existed)")
+            for token_record in sync_tokens:
+                try:
+                    event_data = json.loads(token_record.event_uids)
+                    
+                    # Handle both old format (list) and new format (dict)
+                    if isinstance(event_data, dict):
+                        # New format: {uid: mtime}
+                        if event_uid in event_data:
+                            del event_data[event_uid]
+                            token_record.event_uids = json.dumps(event_data)
+                            updated_count += 1
+                            logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (dict format)")
                         else:
-                            # Old format: list of UIDs - migrate to dict format
-                            event_uids = set(event_data)
-                            if event_uid in event_uids:
-                                event_uids.remove(event_uid)
-                                # Migrate to dict format while updating
-                                event_data_dict = {uid: 0 for uid in event_uids}  # mtime=0 for migrated entries
-                                token_record.event_uids = json.dumps(event_data_dict)
-                                updated_count += 1
-                                logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (migrated from list to dict format)")
-                            else:
-                                logger.debug(f"[CalDAV] Event {event_uid} not found in sync-token {token_record.sync_token[:50]}... (already removed or never existed)")
-                    except Exception as e:
-                        logger.warning(f"[CalDAV] Error updating sync-token {token_record.id}: {e}", exc_info=True)
-                
-                if updated_count > 0:
-                    db.commit()
-                    logger.info(f"[CalDAV] ✓ Updated {updated_count} sync-token(s) for calendar {cal_name} to reflect deletion of event {event_uid}")
-                else:
-                    # No existing sync-tokens, that's fine - next sync will create a new one
-                    logger.info(f"[CalDAV] No sync-tokens updated for calendar {cal_name} (event {event_uid} not in any token, or no tokens exist)")
-                    logger.info(f"[CalDAV] Deletion will be detected on next sync-collection when comparing current vs stored state")
-            except Exception as e:
-                db.rollback()
-                logger.error(f"[CalDAV] Error updating sync-token state after deletion: {e}", exc_info=True)
-                # Continue - deletion succeeded, sync-token update failed but will be fixed on next sync
+                            logger.debug(f"[CalDAV] Event {event_uid} not found in sync-token {token_record.sync_token[:50]}... (already removed or never existed)")
+                    else:
+                        # Old format: list of UIDs - migrate to dict format
+                        event_uids = set(event_data)
+                        if event_uid in event_uids:
+                            event_uids.remove(event_uid)
+                            # Migrate to dict format while updating
+                            event_data_dict = {uid: 0 for uid in event_uids}  # mtime=0 for migrated entries
+                            token_record.event_uids = json.dumps(event_data_dict)
+                            updated_count += 1
+                            logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (migrated from list to dict format)")
+                        else:
+                            logger.debug(f"[CalDAV] Event {event_uid} not found in sync-token {token_record.sync_token[:50]}... (already removed or never existed)")
+                except Exception as e:
+                    logger.warning(f"[CalDAV] Error updating sync-token {token_record.id}: {e}", exc_info=True)
+            
+            if updated_count > 0:
+                db.commit()
+                logger.info(f"[CalDAV] ✓ Updated {updated_count} sync-token(s) for calendar {cal_name} to reflect deletion of event {event_uid}")
+            else:
+                # No existing sync-tokens, that's fine - next sync will create a new one
+                logger.info(f"[CalDAV] No sync-tokens updated for calendar {cal_name} (event {event_uid} not in any token, or no tokens exist)")
+                logger.info(f"[CalDAV] Deletion will be detected on next sync-collection when comparing current vs stored state")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"[CalDAV] Error updating sync-token state after deletion: {e}", exc_info=True)
+            # Continue - deletion succeeded, sync-token update failed but will be fixed on next sync
         
         return Response(content="", status_code=204)
     else:
