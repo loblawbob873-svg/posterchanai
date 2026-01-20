@@ -438,6 +438,26 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 return self._path
                             
                             def get_directory_info(self):
+                                # Return dict-like info for directory browser
+                                return {
+                                    "display_name": self.get_display_name(),
+                                    "href": self.get_href(),
+                                    "is_collection": self.is_collection(),
+                                    "get_last_modified": self.get_last_modified(),
+                                    "get_content_length": self.get_content_length(),
+                                }
+                            
+                            def __getitem__(self, key):
+                                # Make it dict-like for directory browser
+                                if key == "display_name":
+                                    return self.get_display_name()
+                                elif key == "href":
+                                    return self.get_href()
+                                elif key == "is_collection":
+                                    return self.is_collection()
+                                raise KeyError(key)
+                            
+                            def get_directory_info(self):
                                 # Return directory info as dict for dir_browser - wsgidav's directory browser expects this
                                 from datetime import datetime
                                 return {
