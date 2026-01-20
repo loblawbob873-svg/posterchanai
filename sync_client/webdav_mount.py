@@ -82,24 +82,44 @@ class WebDAVClient:
     
     def info(self, path: str) -> dict:
         """Get file/directory info via PROPFIND"""
-        url = self._url(path)
-        try:
-            response = self.session.request('PROPFIND', url, headers={'Depth': '0'}, timeout=10)
-            response.raise_for_status()
-            
-            # Parse XML response
-            root = ET.fromstring(response.content)
-            ns = {'D': 'DAV:'}
-            
-            # Find the response element
-            response_elem = root.find('.//D:response', ns)
-            if response_elem is None:
-                return None
-            
-            # Get href (path)
-            href = response_elem.find('D:href', ns)
-            if href is None:
-                return None
+        # Try with and without trailing slash for directories
+        urls_to_try = [self._url(path)]
+        if not path.endswith('/'):
+            urls_to_try.append(self._url(path + '/'))
+        
+        for url in urls_to_try:
+            try:
+                response = self.session.request('PROPFIND', url, headers={'Depth': '0'}, timeout=10)
+                response.raise_for_status()
+                
+                # Parse XML response
+                root = ET.fromstring(response.content)
+                ns = {'D': 'DAV:'}
+                
+                # Find the response element that matches our requested path
+                # The server might return child items, so we need to find the right one
+                requested_path = path.rstrip('/').lstrip('/')
+                response_elem = None
+                for elem in root.findall('.//D:response', ns):
+                    href = elem.find('D:href', ns)
+                    if href is not None:
+                        href_path = href.text.rstrip('/').lstrip('/')
+                        # Check if this response matches our requested path
+                        if href_path == requested_path or href_path.endswith('/' + requested_path):
+                            response_elem = elem
+                            break
+                
+                # If no matching response found, use the first one
+                if response_elem is None:
+                    response_elem = root.find('.//D:response', ns)
+                
+                if response_elem is None:
+                    continue  # Try next URL
+                
+                # Get href (path)
+                href = response_elem.find('D:href', ns)
+                if href is None:
+                    continue  # Try next URL
             
             # Get properties
             propstat = response_elem.find('D:propstat', ns)
@@ -160,14 +180,18 @@ class WebDAVClient:
                 except:
                     pass
             
-            return {
-                'isdir': isdir,
-                'size': size,
-                'modified': mtime
-            }
-        except Exception as e:
-            logger.debug(f"PROPFIND failed for {path}: {e}")
-            return None
+                return {
+                    'isdir': isdir,
+                    'size': size,
+                    'modified': mtime
+                }
+            except Exception as e:
+                logger.debug(f"PROPFIND failed for {url}: {e}")
+                continue  # Try next URL
+        
+        # If all URLs failed, return None
+        logger.debug(f"PROPFIND failed for all URLs for {path}")
+        return None
     
     def ls(self, path: str, depth: int = 1, retry_attempts: int = 3, retry_delay: int = 2) -> list:
         """List directory contents with retry logic for network disconnects
