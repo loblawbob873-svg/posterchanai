@@ -164,16 +164,19 @@ class WebDAVClient:
                                                     break
                                             
                                             # Final check: serialize the resourcetype element and check for collection
-                                            # Some servers put the collection tag as HTML-encoded text or in the XML structure
+                                            # The server returns HTML-encoded XML like &lt;D:collection/&gt; in the text
+                                            # When parsed, this becomes text content, so we need to check the serialized XML
                                             if not parent_is_dir:
                                                 try:
                                                     full_xml = ET.tostring(resourcetype, encoding='unicode')
+                                                    # Check if collection appears anywhere in the XML (text, attributes, children)
                                                     if 'collection' in full_xml.lower():
                                                         parent_is_dir = True
                                                         response_elem = elem
                                                         logger.info(f"[WebDAV Client] ✓ Detected parent directory: child {href_path} has collection in resourcetype XML")
                                                         break
-                                                except:
+                                                except Exception as e:
+                                                    logger.debug(f"[WebDAV Client] Error serializing resourcetype: {e}")
                                                     pass
                 
                 # If still no match, use the first response
