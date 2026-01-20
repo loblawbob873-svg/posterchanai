@@ -415,27 +415,48 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # For now, let's try using the parent's _locate_file_path and creating resources through it
                 # But since files don't exist locally, we need a different approach
                 
-                # Create a ResourceInfo-like object that wsgidav expects
-                # wsgidav's FilesystemProvider returns objects with get_last_modified(), etc.
-                # Let's create a simple object that implements the required interface
-                class VirtualResourceInfo:
-                    def __init__(self, path, is_dir, size, modified):
-                        self.path = path
-                        self.is_dir = is_dir
-                        self.size = size
-                        self.modified = modified
+                # wsgidav's FilesystemProvider.get_resource_list returns a list of ResourceInfo objects
+                # These need to have methods like get_last_modified(), get_content_length(), etc.
+                # Let's create a proper resource info object
+                # Actually, let's check what the parent class expects by looking at its implementation
+                # For now, let's try using get_resource_info to create proper resource objects
+                try:
+                    # Try to get resource info using parent class - but this won't work for virtual files
+                    # Instead, let's create a minimal resource info object
+                    from wsgidav.dav_provider import _DAVResource
                     
-                    def get_last_modified(self):
-                        return self.modified
+                    # Create a resource object that wsgidav can use
+                    # The parent class uses _DAVResource internally
+                    resource = _DAVResource(full_path, is_directory)
+                    resource.set_last_modified(modified_dt)
+                    if not is_directory:
+                        resource.set_content_length(size)
                     
-                    def get_content_length(self):
-                        return self.size if not self.is_dir else 0
+                    webdav_resources.append(resource)
+                except Exception as e:
+                    logger.error(f"[WebDAV] Failed to create resource for {full_path}: {e}", exc_info=True)
+                    # Fallback: create a simple object with required methods
+                    class SimpleResource:
+                        def __init__(self, path, is_dir, size, modified):
+                            self._path = path
+                            self._is_dir = is_dir
+                            self._size = size
+                            self._modified = modified
+                        
+                        def get_last_modified(self):
+                            return self._modified
+                        
+                        def get_content_length(self):
+                            return self._size if not self._is_dir else 0
+                        
+                        def is_collection(self):
+                            return self._is_dir
+                        
+                        def get_display_name(self):
+                            return self._path.split('/')[-1] or self._path
                     
-                    def is_collection(self):
-                        return self.is_dir
-                
-                resource = VirtualResourceInfo(full_path, is_directory, size, modified_dt)
-                webdav_resources.append(resource)
+                    resource = SimpleResource(full_path, is_directory, size, modified_dt)
+                    webdav_resources.append(resource)
             
             logger.info(f"[WebDAV] Proxied list from storage server: {len(webdav_resources)} items for {username}/{path}")
             if len(webdav_resources) == 0:
