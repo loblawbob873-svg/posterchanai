@@ -39,6 +39,16 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 self.storage_server_url = url
                 logger.info(f"[WebDAV] Remote storage server configured: {url}")
                 logger.warning(f"[WebDAV] WebDAV will only show local files. Remote files must be accessed via File Manager API.")
+        
+        # Log storage path and verify it's correct
+        logger.info(f"[WebDAV] QuotaFilesystemProvider initialized with root_path: {root_path}")
+        if root_path.exists():
+            try:
+                # Count files to verify this is the right location
+                file_count = sum(1 for _ in root_path.rglob('*') if _.is_file())
+                logger.info(f"[WebDAV] Root path contains {file_count} files")
+            except Exception as e:
+                logger.warning(f"[WebDAV] Could not count files in root_path: {e}")
     
     def create_collection(self, path: str):
         """Override to prevent creating directories with file names."""
@@ -165,16 +175,28 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return super().get_resource_list(path, depth, environ)
     
     def get_resource_info(self, path: str, environ: dict = None):
-        """Override to ensure correct resource type detection."""
+        """Override to ensure correct resource type detection by checking filesystem directly."""
         # Normalize path - remove trailing slash for files
         normalized_path = path.rstrip('/')
         
-        # Get resource info from parent
+        # Always check filesystem directly first for accurate info
+        fs_path = self._locate_file_path(normalized_path)
+        if fs_path and fs_path.exists():
+            # Get info directly from filesystem - most accurate
+            stat = fs_path.stat()
+            info = {
+                'iscollection': fs_path.is_dir(),
+                'size': 0 if fs_path.is_dir() else stat.st_size,
+                'modified': stat.st_mtime,
+            }
+            logger.debug(f"[WebDAV] Resource info from filesystem for {normalized_path}: isdir={fs_path.is_dir()}, size={info['size']}")
+            return info
+        
+        # If filesystem path doesn't exist, try parent method
         info = super().get_resource_info(normalized_path, environ)
         
         if info:
-            # Check if this is actually a file but reported as directory
-            fs_path = self._locate_file_path(normalized_path)
+            # Double-check against filesystem if possible
             if fs_path and fs_path.exists():
                 if fs_path.is_file() and info.get('iscollection', False):
                     # File is incorrectly reported as collection - fix it
@@ -186,18 +208,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     info['iscollection'] = True
                     info['size'] = 0
                     logger.debug(f"[WebDAV] Fixed resource type for {normalized_path}: directory, not file")
-        elif normalized_path:
-            # If parent didn't return info, check filesystem directly
-            fs_path = self._locate_file_path(normalized_path)
-            if fs_path and fs_path.exists():
-                # Create info dict from filesystem
-                stat = fs_path.stat()
-                info = {
-                    'iscollection': fs_path.is_dir(),
-                    'size': 0 if fs_path.is_dir() else stat.st_size,
-                    'modified': stat.st_mtime,
-                }
-                logger.debug(f"[WebDAV] Created resource info from filesystem for {normalized_path}")
         
         return info
     
@@ -311,6 +321,23 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
     root_path = Path(storage.upload_path)
     root_path.mkdir(parents=True, exist_ok=True)
     logger.info(f"[WebDAV] Using storage path: {root_path}")
+    
+    # Verify the path exists and log what's in it
+    if root_path.exists():
+        try:
+            # Count files in storage to verify it's the right location
+            total_files = 0
+            total_size = 0
+            for item in root_path.rglob('*'):
+                if item.is_file():
+                    total_files += 1
+                    try:
+                        total_size += item.stat().st_size
+                    except:
+                        pass
+            logger.info(f"[WebDAV] Storage path contains {total_files} files ({total_size / (1024**3):.2f} GB)")
+        except Exception as e:
+            logger.warning(f"[WebDAV] Could not scan storage path: {e}")
     
     provider = QuotaFilesystemProvider(root_path, db)
     
