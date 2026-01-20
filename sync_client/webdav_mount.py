@@ -188,10 +188,21 @@ class WebDAVClient:
                         continue
                     seen_paths.add(file_path)
                     
+                    # Get properties to determine if it's a directory
+                    propstat = response_elem.find('D:propstat', ns)
+                    isdir = False
+                    if propstat is not None:
+                        prop = propstat.find('D:prop', ns)
+                        if prop is not None:
+                            resourcetype = prop.find('D:resourcetype', ns)
+                            if resourcetype is not None:
+                                collection = resourcetype.find('D:collection', ns)
+                                isdir = collection is not None
+                    
                     # Get just the filename for 'name', but keep full path for 'path'
                     filename = file_path.split('/')[-1]
                     if filename:
-                        files.append({'name': filename, 'path': file_path})
+                        files.append({'name': filename, 'path': file_path, 'isdir': isdir})
                 
                 return files
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
@@ -574,6 +585,8 @@ class WebDAVSync:
             for file_info in files:
                 try:
                     file_remote_path = file_info['path']
+                    # Check if this is a directory from the listing (if available)
+                    is_dir_from_listing = file_info.get('isdir', False)
                     
                     # Skip the base directory itself (it's the mount point, not a file to sync)
                     normalized_remote = file_remote_path.rstrip('/')
@@ -593,18 +606,23 @@ class WebDAVSync:
                         continue
                     
                     # Get file info - ensure path is in correct format
-                    try:
-                        # Normalize path for info() call
-                        info_path = file_remote_path
-                        if not info_path.startswith('/'):
-                            # Add leading slash if missing
-                            info_path = '/' + info_path
-                        info = self.webdav.info(info_path)
-                    except Exception as e:
-                        logger.warning(f"Error getting info for {file_remote_path}: {e}")
-                        continue
-                    if not info:
-                        continue
+                    # Use directory info from listing if available to avoid extra PROPFIND call
+                    if is_dir_from_listing:
+                        # We already know it's a directory from the listing
+                        info = {'isdir': True, 'size': 0, 'modified': time.time()}
+                    else:
+                        try:
+                            # Normalize path for info() call
+                            info_path = file_remote_path
+                            if not info_path.startswith('/'):
+                                # Add leading slash if missing
+                                info_path = '/' + info_path
+                            info = self.webdav.info(info_path)
+                        except Exception as e:
+                            logger.warning(f"Error getting info for {file_remote_path}: {e}")
+                            continue
+                        if not info:
+                            continue
                     
                     # If server reports it as a directory but it has a file extension,
                     # try downloading it first to verify it's actually a file
