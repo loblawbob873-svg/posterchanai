@@ -652,9 +652,8 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
         if url.startswith(('http://', 'https://')):
             # Files are on remote storage server - WebDAV can't access them directly
             # We need to either proxy or mount the remote storage
-            logger.warning(f"[WebDAV] Storage is on remote server ({url}), but WebDAV only supports local storage")
-            logger.warning(f"[WebDAV] Files on remote server won't be accessible via WebDAV")
-            logger.warning(f"[WebDAV] Consider using local storage or implementing WebDAV proxy to remote storage")
+            # This warning is outdated - we now proxy to remote storage
+            logger.info(f"[WebDAV] Storage is on remote server ({url}) - WebDAV will proxy all operations to it")
     
     root_path = Path(storage.upload_path)
     root_path.mkdir(parents=True, exist_ok=True)
