@@ -131,34 +131,49 @@ class WebDAVClient:
                                     if prop is not None:
                                         resourcetype = prop.find('D:resourcetype', ns)
                                         if resourcetype is not None:
-                                            # Check for collection child element first
+                                            # Check for collection child element first (proper XML structure)
                                             collection = resourcetype.find('D:collection', ns)
                                             if collection is not None:
                                                 parent_is_dir = True
                                                 response_elem = elem
                                                 logger.info(f"[WebDAV Client] ✓ Detected parent directory: child {href_path} has collection element")
                                                 break
-                                            # Check resourcetype text (may be HTML-encoded)
+                                            
+                                            # Check resourcetype text (may be HTML-encoded like &lt;D:collection/&gt;)
                                             resourcetype_text = resourcetype.text
-                                            logger.debug(f"[WebDAV Client] resourcetype.text: {repr(resourcetype_text)}")
                                             if resourcetype_text:
                                                 import html
                                                 decoded = html.unescape(resourcetype_text.strip())
-                                                logger.debug(f"[WebDAV Client] Decoded resourcetype: {repr(decoded)}")
                                                 if 'collection' in decoded.lower() or decoded.strip() == '<D:collection/>':
-                                                    # This child is a directory, so the parent (requested path) is also a directory
                                                     parent_is_dir = True
-                                                    response_elem = elem  # Use this response for other properties
-                                                    logger.info(f"[WebDAV Client] ✓ Detected parent directory: child {href_path} has collection in resourcetype: {decoded}")
+                                                    response_elem = elem
+                                                    logger.info(f"[WebDAV Client] ✓ Detected parent directory: child {href_path} has collection in resourcetype text: {decoded}")
                                                     break
-                                            # Also check if resourcetype has any child elements
-                                            children_count = len(list(resourcetype))
-                                            logger.debug(f"[WebDAV Client] resourcetype has {children_count} children")
-                                            if children_count > 0:
-                                                parent_is_dir = True
-                                                response_elem = elem
-                                                logger.info(f"[WebDAV Client] ✓ Detected parent directory: child {href_path} has {children_count} resourcetype children")
-                                                break
+                                            
+                                            # Also check if resourcetype has any child elements (collection tag as child)
+                                            children = list(resourcetype)
+                                            if len(children) > 0:
+                                                # Check if any child is a collection tag
+                                                for child in children:
+                                                    if 'collection' in child.tag.lower() or child.tag.endswith('collection'):
+                                                        parent_is_dir = True
+                                                        response_elem = elem
+                                                        logger.info(f"[WebDAV Client] ✓ Detected parent directory: child {href_path} has collection child element: {child.tag}")
+                                                        break
+                                                if parent_is_dir:
+                                                    break
+                                            
+                                            # Final check: if resourcetype has any content indicating it's a collection
+                                            # Some servers put the collection tag in the text content as HTML-encoded XML
+                                            if not parent_is_dir:
+                                                # Try parsing the entire resourcetype element as XML
+                                                import html
+                                                full_text = ET.tostring(resourcetype, encoding='unicode')
+                                                if 'collection' in full_text.lower():
+                                                    parent_is_dir = True
+                                                    response_elem = elem
+                                                    logger.info(f"[WebDAV Client] ✓ Detected parent directory: child {href_path} has collection in resourcetype XML: {full_text[:100]}")
+                                                    break
                 
                 # If still no match, use the first response
                 if response_elem is None:
