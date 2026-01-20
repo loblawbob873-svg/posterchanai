@@ -21,6 +21,9 @@ nypost.com|NY Post
 foxnews.com|Fox News
 newsweek.com|Newsweek`;
 
+// Store loaded values to detect changes
+const loadedValues = new Map();
+
 // Load settings
 async function loadSettings() {
     try {
@@ -30,15 +33,20 @@ async function loadSettings() {
             for (const [key, value] of Object.entries(settings)) {
                 const el = document.getElementById(key);
                 if (el) {
+                    // Store the loaded value (from database) for comparison later
+                    const dbValue = value !== null && value !== undefined ? String(value) : '';
+                    loadedValues.set(key, dbValue);
+                    
                     if (el.type === 'checkbox') {
                         el.checked = value === 'true' || value === true;
+                        loadedValues.set(key, el.checked ? 'true' : 'false');
                     } else if (el.tagName === 'SELECT') {
                         el.value = value || el.options[0].value;
+                        loadedValues.set(key, el.value);
                     } else {
-                        // Only update if there's a value - preserve HTML defaults
-                        if (value !== null && value !== undefined && value !== '') {
-                            el.value = value;
-                        }
+                        // Always use database value, even if empty
+                        // This ensures database values take precedence over HTML defaults
+                        el.value = dbValue;
                     }
                 }
             }
@@ -60,10 +68,18 @@ document.getElementById('settingsForm').addEventListener('submit', async (e) => 
     const settings = {};
     for (const el of form.querySelectorAll('input, textarea, select')) {
         if (el.name) {
+            let currentValue;
             if (el.type === 'checkbox') {
-                settings[el.name] = el.checked ? 'true' : 'false';
+                currentValue = el.checked ? 'true' : 'false';
             } else {
-                settings[el.name] = el.value;
+                currentValue = el.value || '';
+            }
+            
+            // Only send value if it's different from what was loaded from database
+            // This prevents overwriting database values with HTML defaults
+            const loadedValue = loadedValues.get(el.name);
+            if (loadedValue === undefined || currentValue !== loadedValue) {
+                settings[el.name] = currentValue;
             }
         }
     }
