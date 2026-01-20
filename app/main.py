@@ -567,6 +567,22 @@ load_enabled_plugins(app)
 
 # CalDAV/CardDAV proxy routes - forward requests to standalone CalDAV/CardDAV servers
 # These routes are needed because nginx may route all requests to port 3051
+
+# Handle /webdav/.well-known/caldav and /webdav/.well-known/carddav (nginx prepends /webdav/)
+@app.api_route("/webdav/.well-known/caldav", methods=["GET", "PROPFIND", "OPTIONS"])
+async def webdav_caldav_discovery(request: Request):
+    """Redirect /webdav/.well-known/caldav to /caldav/"""
+    host = request.headers.get("Host", "ai.poster.place")
+    scheme = request.headers.get("X-Forwarded-Proto", "https")
+    return RedirectResponse(url=f"{scheme}://{host}/caldav/", status_code=301)
+
+@app.api_route("/webdav/.well-known/carddav", methods=["GET", "PROPFIND", "OPTIONS"])
+async def webdav_carddav_discovery(request: Request):
+    """Redirect /webdav/.well-known/carddav to /carddav/"""
+    host = request.headers.get("Host", "ai.poster.place")
+    scheme = request.headers.get("X-Forwarded-Proto", "https")
+    return RedirectResponse(url=f"{scheme}://{host}/carddav/", status_code=301)
+
 @app.api_route("/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCALENDAR", "MKCOL", "MOVE", "COPY", "OPTIONS"])
 async def proxy_caldav(request: Request, path: str, db: Session = Depends(get_db)):
     """Proxy /caldav/... requests to CalDAV server on port 8081."""

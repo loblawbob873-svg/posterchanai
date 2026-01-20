@@ -1360,11 +1360,8 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
         # This was causing all file downloads to get HTML pages instead of actual files
         "dir_browser": {
             "enable": False,
-            "response_trailer": "",  # No HTML trailer
-            "davmount": False,
-            "ms_mount": False,
         },
-        # Also disable error printing in responses
+        # Also configure HTTP authentication
         "http_authenticator": {
             "accept_basic": True,
             "accept_digest": False,
