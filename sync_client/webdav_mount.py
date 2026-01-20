@@ -109,10 +109,9 @@ class WebDAVClient:
             contentlength = prop.find('D:getcontentlength', ns)
             size = int(contentlength.text) if contentlength is not None and contentlength.text else 0
             
-            # If it has a size > 0, it's definitely a file, not a directory
-            # Some WebDAV servers incorrectly report files as directories
-            if size > 0:
-                isdir = False
+            # Always trust resourcetype/collection - it's the authoritative check
+            # Directories can have non-zero size on some filesystems (e.g., XFS metadata)
+            # The storage server now correctly reports is_dir(), so we should trust it
             
             getlastmodified = prop.find('D:getlastmodified', ns)
             mtime = time.time()
