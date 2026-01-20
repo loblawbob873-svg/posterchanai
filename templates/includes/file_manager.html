@@ -126,12 +126,14 @@
 <div class="modal" id="fileEmailModal" style="display: none;">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>📧 Email File</h2>
+            <h2>📧 Email Files</h2>
             <button class="btn-icon modal-close modal-close-cyberpunk" onclick="document.getElementById('fileEmailModal').style.display='none'">✕</button>
         </div>
         <div class="modal-body">
             <input type="hidden" id="emailFilePath">
-            <p><strong>File:</strong> <span id="emailFileName"></span></p>
+            <div id="emailFilesList" class="email-files-list">
+                <!-- Files will be listed here -->
+            </div>
             <div class="form-group">
                 <label for="emailTo">To:</label>
                 <input type="text" id="emailTo" list="emailToAutocomplete" placeholder="Start typing email or name..." autocomplete="off" required>
@@ -140,11 +142,11 @@
             </div>
             <div class="form-group">
                 <label for="emailSubject">Subject:</label>
-                <input type="text" id="emailSubject" placeholder="Shared file">
+                <input type="text" id="emailSubject" placeholder="Shared files">
             </div>
             <div class="form-group">
                 <label for="emailBody">Message:</label>
-                <textarea id="emailBody" rows="4" placeholder="Please find the attached file."></textarea>
+                <textarea id="emailBody" rows="4" placeholder="Please find the attached files."></textarea>
             </div>
         </div>
         <div class="modal-footer">

@@ -3220,12 +3220,12 @@ class ChatHandler {
         }
     }
 
-    async emailFile(filePath, fileName) {
+    async emailFile(filePath, fileName, apiUrl = null) {
         // Open email modal with file pre-selected
         // Try to use FileManager if available
         if (window.fileManager && typeof window.fileManager.emailFile === 'function') {
             try {
-                await window.fileManager.emailFile(filePath, fileName);
+                await window.fileManager.emailFile(filePath, fileName, apiUrl);
                 return;
             } catch (e) {
                 console.warn('FileManager.emailFile failed, using fallback:', e);
@@ -3235,13 +3235,47 @@ class ChatHandler {
         // Fallback: Show email modal directly
         const modal = document.getElementById('fileEmailModal');
         if (modal) {
-            // Set file info
-            document.getElementById('emailFilePath').value = filePath;
-            document.getElementById('emailFileName').textContent = fileName;
+            const emailFilesList = document.getElementById('emailFilesList');
+            if (emailFilesList) {
+                // Add file to the list (support multiple files)
+                const fileItem = document.createElement('div');
+                fileItem.className = 'email-file-item';
+                fileItem.dataset.filePath = filePath || '';
+                fileItem.dataset.fileName = fileName || 'Unknown file';
+                if (apiUrl) {
+                    fileItem.dataset.apiUrl = apiUrl;
+                }
+                const escapedName = this.escapeHtml ? this.escapeHtml(fileName || 'Unknown file') : (fileName || 'Unknown file').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                fileItem.innerHTML = `
+                    <span class="email-file-name">${escapedName}</span>
+                    <button class="email-file-remove" onclick="this.parentElement.remove(); if(window.fileManager && window.fileManager.updateEmailSubjectAndBody) window.fileManager.updateEmailSubjectAndBody();" title="Remove">✕</button>
+                `;
+                emailFilesList.appendChild(fileItem);
+                
+                // Update subject and body
+                if (window.fileManager && typeof window.fileManager.updateEmailSubjectAndBody === 'function') {
+                    window.fileManager.updateEmailSubjectAndBody();
+                } else {
+                    // Fallback update
+                    const fileItems = emailFilesList.querySelectorAll('.email-file-item');
+                    const fileCount = fileItems.length;
+                    const emailSubjectInput = document.getElementById('emailSubject');
+                    const emailBodyInput = document.getElementById('emailBody');
+                    if (emailSubjectInput && emailBodyInput) {
+                        if (fileCount === 1) {
+                            emailSubjectInput.value = `Shared file: ${fileName}`;
+                            emailBodyInput.value = `Please find the attached file: ${fileName}`;
+                        } else {
+                            emailSubjectInput.value = `Shared files (${fileCount} files)`;
+                            const fileNames = Array.from(fileItems).map(item => item.dataset.fileName).join(', ');
+                            emailBodyInput.value = `Please find the attached files:\n${fileNames}`;
+                        }
+                    }
+                }
+            }
+            
             const emailToInput = document.getElementById('emailTo');
-            emailToInput.value = '';
-            document.getElementById('emailSubject').value = `Shared file: ${fileName}`;
-            document.getElementById('emailBody').value = `Please find the attached file: ${fileName}`;
+            if (emailToInput) emailToInput.value = '';
             
             // Load contacts for autocomplete if function exists
             if (window.fileManager && typeof window.fileManager.loadContactEmailsForAutocomplete === 'function') {
@@ -3249,8 +3283,10 @@ class ChatHandler {
             }
             
             // Show modal
-            modal.style.display = 'block';
-            setTimeout(() => emailToInput.focus(), 100);
+            modal.style.display = 'flex';
+            setTimeout(() => {
+                if (emailToInput) emailToInput.focus();
+            }, 100);
         } else {
             // Last resort: prompt
             console.warn('Email modal not found, using prompt');
@@ -3258,6 +3294,18 @@ class ChatHandler {
             if (!to) return;
             
             try {
+                const requestBody = {
+                    to: to,
+                    subject: `Shared file: ${fileName}`,
+                    body: `Please find the attached file: ${fileName}`
+                };
+                
+                if (apiUrl) {
+                    requestBody.file_urls = [apiUrl];
+                } else {
+                    requestBody.file_paths = [filePath];
+                }
+                
                 const response = await fetch('/api/files/email', {
                     method: 'POST',
                     headers: { 
@@ -3265,12 +3313,7 @@ class ChatHandler {
                         'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || ''
                     },
                     credentials: 'include',
-                    body: JSON.stringify({
-                        file_paths: [filePath],
-                        to: to,
-                        subject: `Shared file: ${fileName}`,
-                        body: `Please find the attached file: ${fileName}`
-                    })
+                    body: JSON.stringify(requestBody)
                 });
                 
                 if (!response.ok) {
@@ -3288,12 +3331,28 @@ class ChatHandler {
     
     async sendEmailFromModal() {
         // Fallback sendEmail function when FileManager is not available
-        const filePath = document.getElementById('emailFilePath')?.value;
-        let to = document.getElementById('emailTo')?.value.trim();
-        const subject = document.getElementById('emailSubject')?.value.trim();
-        const body = document.getElementById('emailBody')?.value.trim();
+        const emailFilesList = document.getElementById('emailFilesList');
+        const emailToInput = document.getElementById('emailTo');
+        const emailSubjectInput = document.getElementById('emailSubject');
+        const emailBodyInput = document.getElementById('emailBody');
         
-        if (!filePath || !to) {
+        if (!emailFilesList || !emailToInput) {
+            alert('Email form error. Please refresh the page.');
+            return;
+        }
+        
+        // Get all selected files
+        const fileItems = emailFilesList.querySelectorAll('.email-file-item');
+        if (fileItems.length === 0) {
+            alert('Please select at least one file to email');
+            return;
+        }
+        
+        let to = emailToInput.value.trim();
+        const subject = emailSubjectInput?.value.trim() || 'Shared files';
+        const body = emailBodyInput?.value.trim() || 'Please find the attached files.';
+        
+        if (!to) {
             alert('Please enter recipient email address');
             return;
         }
@@ -3312,6 +3371,34 @@ class ChatHandler {
         }
         
         try {
+            // Collect file paths and URLs
+            const filePaths = [];
+            const fileUrls = [];
+            
+            fileItems.forEach(item => {
+                const filePath = item.dataset.filePath;
+                const apiUrl = item.dataset.apiUrl;
+                
+                if (apiUrl) {
+                    fileUrls.push(apiUrl);
+                } else if (filePath) {
+                    filePaths.push(filePath);
+                }
+            });
+            
+            const requestBody = {
+                to: to,
+                subject: subject,
+                body: body
+            };
+            
+            if (fileUrls.length > 0) {
+                requestBody.file_urls = fileUrls;
+            }
+            if (filePaths.length > 0) {
+                requestBody.file_paths = filePaths;
+            }
+            
             const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
             const response = await fetch('/api/files/email', {
                 method: 'POST',
@@ -3320,18 +3407,18 @@ class ChatHandler {
                     'X-CSRFToken': csrfToken
                 },
                 credentials: 'include',
-                body: JSON.stringify({
-                    file_paths: [filePath],
-                    to: to,
-                    subject: subject || 'Shared file',
-                    body: body || 'Please find the attached file.'
-                })
+                body: JSON.stringify(requestBody)
             });
             
             const data = await response.json();
             if (response.ok) {
-                alert('Email sent successfully!');
-                document.getElementById('fileEmailModal').style.display = 'none';
+                const fileCount = filePaths.length + fileUrls.length;
+                alert(`Email sent successfully with ${fileCount} file(s)!`);
+                const emailModal = document.getElementById('fileEmailModal');
+                if (emailModal) {
+                    emailFilesList.innerHTML = '';
+                    emailModal.style.display = 'none';
+                }
             } else {
                 alert('Error: ' + (data.detail || 'Failed to send email'));
             }

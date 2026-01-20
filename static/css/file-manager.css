@@ -1277,6 +1277,55 @@
     font-size: 12px;
 }
 
+/* Email files list */
+.email-files-list {
+    margin-bottom: 20px;
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px;
+    background: var(--bg-secondary);
+}
+
+.email-file-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px;
+    margin-bottom: 8px;
+    background: var(--bg-tertiary);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+}
+
+.email-file-item:last-child {
+    margin-bottom: 0;
+}
+
+.email-file-name {
+    flex: 1;
+    color: var(--text-primary);
+    font-size: 14px;
+    word-break: break-word;
+}
+
+.email-file-remove {
+    margin-left: 10px;
+    padding: 4px 8px;
+    background: #e74c3c;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.2s;
+}
+
+.email-file-remove:hover {
+    background: #c0392b;
+}
+
 .file-modal-footer {
     padding: 20px 24px;
     border-top: 1px solid var(--border-color);
