@@ -177,11 +177,14 @@ class QuotaFilesystemProvider(FilesystemProvider):
         """Override to list files, with support for remote storage proxying."""
         # If remote storage is configured, we need to proxy the listing
         # But wsgidav's FilesystemProvider doesn't support this natively
-        # For now, we'll list local files and log a warning
+        # We can't easily override this to proxy, so we'll list local files
+        # and the user will need to use local storage or mount remote storage
         if self.storage_server_url:
             logger.debug(f"[WebDAV] Remote storage configured - listing local files only")
-            logger.warning(f"[WebDAV] Files on remote storage server won't be visible via WebDAV")
-            logger.warning(f"[WebDAV] To sync remote files, use File Manager API or mount remote storage locally")
+            logger.warning(f"[WebDAV] Files on remote storage server ({self.storage_server_url}) won't be visible via WebDAV")
+            logger.warning(f"[WebDAV] To access remote files via WebDAV, either:")
+            logger.warning(f"[WebDAV]   1. Use local storage (remove storage_server_url setting)")
+            logger.warning(f"[WebDAV]   2. Mount remote storage locally (NFS/SSHFS) and point WebDAV to mount point")
         
         # Use parent method to list local files
         return super().get_resource_list(path, depth, environ)
