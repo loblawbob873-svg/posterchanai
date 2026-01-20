@@ -1072,7 +1072,7 @@ class WebDAVMount:
             "password": "",
             "mount_point": str(Path.home() / "PosterchanAI-Mount"),
             "enable_cache": True,
-            "sync_interval": 30,
+            "sync_interval": 10,  # Reduced from 30s for faster sync
             "cache_max_size_mb": 204800,  # Default 200GB cache
             "cache_max_age_days": 30,
             "cache_directories": [],  # List of directories to always cache (e.g., ["documents", "images"])
