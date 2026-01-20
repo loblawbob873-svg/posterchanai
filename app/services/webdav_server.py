@@ -471,11 +471,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 size = item.get('size', 0) if not is_directory else 0
                 modified = item.get('modified', 0)
                 
-                # Convert modified timestamp to datetime if it's a number
+                # Convert modified timestamp - wsgidav expects timestamp (float), not datetime
+                import time
                 if isinstance(modified, (int, float)):
-                    modified_dt = datetime.fromtimestamp(modified)
+                    modified_ts = float(modified)
                 else:
-                    modified_dt = datetime.now()
+                    modified_ts = time.time()
                 
                 # Create a virtual resource object that wsgidav can use
                 # wsgidav expects ResourceInfo objects with specific methods
@@ -499,7 +500,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         self._modified = modified
                     
                     def get_last_modified(self):
-                        return self._modified
+                        # Return timestamp as float (not datetime)
+                        return float(self._modified) if isinstance(self._modified, (int, float)) else time.time()
                     
                     def get_content_length(self):
                         return self._size if not self._is_dir else 0
@@ -513,7 +515,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_ref_url(self):
                         return self._path
                 
-                resource = SimpleResource(full_path, is_directory, size, modified_dt)
+                resource = SimpleResource(full_path, is_directory, size, modified_ts)
                 webdav_resources.append(resource)
             
             logger.info(f"[WebDAV] Proxied list from storage server: {len(webdav_resources)} items for {username}/{path}")
