@@ -118,7 +118,10 @@ class WebDAVClient:
                         if href is not None:
                             href_path = href.text.rstrip('/').lstrip('/')
                             # Check if this response is a child of the requested path
-                            if requested_path in href_path and href_path.startswith(requested_path + '/'):
+                            # href_path might be like "verita84@poster.place/chat/chat/1"
+                            # requested_path is "verita84@poster.place/chat"
+                            # So we check if href_path starts with requested_path + "/"
+                            if href_path.startswith(requested_path + '/'):
                                 # Check if this item is a directory (collection)
                                 propstat = elem.find('D:propstat', ns)
                                 if propstat is not None:
