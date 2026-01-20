@@ -166,6 +166,10 @@ class WebDAVClient:
                         continue
                     
                     file_path = href.text.rstrip('/')
+                    # URL-decode the path (server returns URL-encoded paths like verita84%40poster.place)
+                    from urllib.parse import unquote
+                    file_path = unquote(file_path)
+                    
                     # Remove base URL to get relative path
                     if file_path.startswith(self.base_url):
                         file_path = file_path[len(self.base_url):].lstrip('/')
@@ -175,6 +179,8 @@ class WebDAVClient:
                     
                     # Skip the directory itself
                     normalized_path = path.rstrip('/').lstrip('/')
+                    # Also URL-decode normalized_path for comparison
+                    normalized_path = unquote(normalized_path) if normalized_path else normalized_path
                     if file_path == normalized_path or file_path == f'/{normalized_path}':
                         continue
                     
