@@ -522,9 +522,27 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                             if end_dt.tzinfo is None:
                                 end_dt = end_dt.replace(tzinfo=timezone.utc)
                             
-                            time_range = (start_dt, end_dt)
+                            # Expand range slightly to ensure we don't miss events on boundaries
+                            # Add 1 second before start and after end to catch events exactly on boundaries
+                            from datetime import timedelta
+                            time_range = (start_dt - timedelta(seconds=1), end_dt + timedelta(seconds=1))
+                            
                             logger.info(f"[CalDAV] Time range filter: {start_str} to {end_str} (iPhone query)")
-                            logger.info(f"[CalDAV] Parsed time range: {start_dt} to {end_dt} (timezone-aware)")
+                            logger.info(f"[CalDAV] Parsed time range: {time_range[0]} to {time_range[1]} (expanded by 1s for boundary inclusion)")
+                            
+                            # Log what days are in the range for debugging
+                            from datetime import date as date_type
+                            range_start_date = time_range[0].date()
+                            range_end_date = time_range[1].date()
+                            logger.info(f"[CalDAV] Time range covers dates: {range_start_date} to {range_end_date}")
+                            if range_start_date <= range_end_date:
+                                # Log which days of week are included
+                                current_date = range_start_date
+                                days_included = []
+                                while current_date <= range_end_date:
+                                    days_included.append(f"{current_date.strftime('%A')} {current_date}")
+                                    current_date += timedelta(days=1)
+                                logger.info(f"[CalDAV] Days in range: {', '.join(days_included[:7])}...")
                         except Exception as e:
                             logger.warning(f"[CalDAV] Error parsing time range: {e}")
                             pass
@@ -584,7 +602,7 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                         
                                         if dtstart:
                                             event_start = dtstart.dt
-                                            from datetime import date, time as dt_time, timezone
+                                            from datetime import date, time as dt_time, timezone, timedelta
                                             
                                             # Handle both datetime and date objects
                                             if isinstance(event_start, datetime):
@@ -610,9 +628,17 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                                 
                                                 # Event overlaps if: event_start <= range_end AND event_end >= range_start
                                                 # Use >= and <= to include events that start/end exactly on boundaries
-                                                if event_start <= time_range[1] and event_end >= time_range[0]:
+                                                overlaps = event_start <= time_range[1] and event_end >= time_range[0]
+                                                
+                                                # Also check if event date falls within range dates (more permissive)
+                                                event_date = event_start.date()
+                                                range_start_date = time_range[0].date()
+                                                range_end_date = time_range[1].date()
+                                                date_in_range = range_start_date <= event_date <= range_end_date
+                                                
+                                                if overlaps or date_in_range:
                                                     include_event = True
-                                                    logger.debug(f"[CalDAV] Event {name} matches time range: {event_start} to {event_end} (range: {time_range[0]} to {time_range[1]})")
+                                                    logger.debug(f"[CalDAV] Event {name} matches time range: {event_start} to {event_end} (overlaps: {overlaps}, date_in_range: {date_in_range})")
                                                     break
                                             else:
                                                 # Date object (all-day event) - check if date overlaps with range
@@ -638,10 +664,16 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                                         event_end_dt = datetime.combine(event_start, dt_time.max, tzinfo=timezone.utc)
                                                     
                                                     # Event overlaps if: event_start_dt <= range_end AND event_end_dt >= range_start
-                                                    # This ensures all-day events on Monday are included if the range includes Monday
-                                                    if event_start_dt <= time_range[1] and event_end_dt >= time_range[0]:
+                                                    overlaps = event_start_dt <= time_range[1] and event_end_dt >= time_range[0]
+                                                    
+                                                    # Also check if event date falls within range dates (more permissive for all-day events)
+                                                    range_start_date = time_range[0].date()
+                                                    range_end_date = time_range[1].date()
+                                                    date_in_range = range_start_date <= event_start <= range_end_date
+                                                    
+                                                    if overlaps or date_in_range:
                                                         include_event = True
-                                                        logger.debug(f"[CalDAV] Event {name} (all-day {event_start}) matches time range: {event_start_dt} to {event_end_dt} (range: {time_range[0]} to {time_range[1]})")
+                                                        logger.debug(f"[CalDAV] Event {name} (all-day {event_start}) matches time range: {event_start_dt} to {event_end_dt} (overlaps: {overlaps}, date_in_range: {date_in_range})")
                                                         break
                                         else:
                                             # No start time, include it anyway
@@ -698,7 +730,7 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                     logger.debug(f"[CalDAV] Could not parse event {event_uid} for logging: {e}")
                         else:
                             time_filtered_count += 1
-                            # Log filtered events for debugging (especially Monday events)
+                            # Log filtered events for debugging (especially Monday events and events in the week range)
                             try:
                                 cal_test = ICalendar.from_ical(ical_data.encode('utf-8'))
                                 for comp in cal_test.walk():
@@ -707,18 +739,37 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                         dtstart = comp.get('dtstart')
                                         if dtstart:
                                             start_val = dtstart.dt
-                                            # Log if it's a Monday event or if we've filtered few events
                                             from datetime import date as date_type
+                                            
+                                            # Get event date
                                             if isinstance(start_val, date_type):
-                                                # Check if it's Monday (weekday 0 = Monday)
-                                                if start_val.weekday() == 0 or time_filtered_count <= 5:
-                                                    logger.info(f"[CalDAV] Filtered out event '{summary}' on {start_val} (Monday: {start_val.weekday() == 0})")
+                                                event_date = start_val
                                             elif isinstance(start_val, datetime):
-                                                if start_val.weekday() == 0 or time_filtered_count <= 5:
-                                                    logger.info(f"[CalDAV] Filtered out event '{summary}' on {start_val} (Monday: {start_val.weekday() == 0})")
+                                                event_date = start_val.date()
+                                            else:
+                                                event_date = None
+                                            
+                                            # Check if event date is in the requested week range
+                                            range_start_date = time_range[0].date()
+                                            range_end_date = time_range[1].date()
+                                            in_week_range = event_date and (range_start_date <= event_date <= range_end_date)
+                                            
+                                            # Log if it's a Monday event, in the week range, or if we've filtered few events
+                                            is_monday = event_date and event_date.weekday() == 0
+                                            should_log = is_monday or in_week_range or time_filtered_count <= 10
+                                            
+                                            if should_log:
+                                                logger.warning(f"[CalDAV] ⚠️ Filtered out event '{summary}' on {event_date} (Monday: {is_monday}, In week range: {in_week_range}, Range: {range_start_date} to {range_end_date})")
+                                                
+                                                # Log why it was filtered (for debugging)
+                                                if event_date:
+                                                    if event_date < range_start_date:
+                                                        logger.warning(f"[CalDAV]   Reason: Event date {event_date} is before range start {range_start_date}")
+                                                    elif event_date > range_end_date:
+                                                        logger.warning(f"[CalDAV]   Reason: Event date {event_date} is after range end {range_end_date}")
                                         break
-                            except:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"[CalDAV] Error logging filtered event {name}: {e}")
                             if time_filtered_count <= 3:
                                 logger.debug(f"[CalDAV] Event {name} filtered out by time range")
                     except Exception as e:
