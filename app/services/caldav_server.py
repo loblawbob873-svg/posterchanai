@@ -69,65 +69,65 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
         # But we should not add any properties
         if status != 404:
             for prop_name, prop_value in props.items():
-            if prop_name == 'resourcetype':
-                if prop_value == 'calendar':
-                    xml += '                <D:resourcetype><D:collection/><C:calendar xmlns:C="urn:ietf:params:xml:ns:caldav"/></D:resourcetype>\n'
-                elif prop_value == 'collection':
-                    xml += f'                <D:resourcetype><D:collection/></D:resourcetype>\n'
-                else:
-                    xml += f'                <D:resourcetype><D:collection/></D:resourcetype>\n'
-            elif prop_name == 'displayname':
-                xml += f'                <D:displayname>{html.escape(str(prop_value))}</D:displayname>\n'
-            elif prop_name == 'getcontenttype':
-                xml += f'                <D:getcontenttype>{html.escape(str(prop_value))}</D:getcontenttype>\n'
-            elif prop_name == 'getetag':
-                xml += f'                <D:getetag>"{html.escape(str(prop_value))}"</D:getetag>\n'
-            elif prop_name == 'calendar-data':
-                # Calendar data should be in CDATA, but we need to handle ]]> sequences
-                # If ]]> appears in the data, we need to split the CDATA section
-                # For now, replace ]]> with a safe alternative or escape it
-                safe_data = prop_value.replace(']]>', ']]]]><![CDATA[>')
-                xml += f'                <C:calendar-data xmlns:C="urn:ietf:params:xml:ns:caldav"><![CDATA[{safe_data}]]></C:calendar-data>\n'
-            elif prop_name == 'supported-calendar-component-set':
-                xml += '                <C:supported-calendar-component-set xmlns:C="urn:ietf:params:xml:ns:caldav">\n'
-                for comp in prop_value.split(','):
-                    xml += f'                    <C:comp name="{comp.strip()}"/>\n'
-                xml += '                </C:supported-calendar-component-set>\n'
-            elif prop_name == 'calendar-description':
-                xml += f'                <C:calendar-description xmlns:C="urn:ietf:params:xml:ns:caldav">{html.escape(str(prop_value))}</C:calendar-description>\n'
-            elif prop_name == 'calendar-color':
-                xml += f'                <ical:calendar-color xmlns:ical="http://apple.com/ns/ical/">{html.escape(str(prop_value))}</ical:calendar-color>\n'
-            elif prop_name == 'calendar-timezone':
-                xml += f'                <C:calendar-timezone xmlns:C="urn:ietf:params:xml:ns:caldav">{html.escape(str(prop_value))}</C:calendar-timezone>\n'
-            elif prop_name == 'sync-token':
-                xml += f'                <D:sync-token xmlns:D="DAV:">{html.escape(str(prop_value))}</D:sync-token>\n'
-            elif prop_name == 'getctag':
-                # CTag is like ETag but for collections (calendars)
-                xml += f'                <CS:getctag xmlns:CS="http://calendarserver.org/ns/">{html.escape(str(prop_value))}</CS:getctag>\n'
-            elif prop_name == 'calendar-home-set':
-                xml += f'                <C:calendar-home-set xmlns:C="urn:ietf:params:xml:ns:caldav"><D:href xmlns:D="DAV:">{html.escape(str(prop_value))}</D:href></C:calendar-home-set>\n'
-            elif prop_name == 'calendar-user-address-set':
-                xml += f'                <C:calendar-user-address-set xmlns:C="urn:ietf:params:xml:ns:caldav"><D:href xmlns:D="DAV:">{html.escape(str(prop_value))}</D:href></C:calendar-user-address-set>\n'
-            elif prop_name == 'supported-report-set':
-                # Return supported reports for calendars
-                xml += '                <D:supported-report-set xmlns:D="DAV:">\n'
-                xml += '                    <D:supported-report>\n'
-                xml += '                        <D:report><C:calendar-query xmlns:C="urn:ietf:params:xml:ns:caldav"/></D:report>\n'
-                xml += '                    </D:supported-report>\n'
-                xml += '                    <D:supported-report>\n'
-                xml += '                        <D:report><C:calendar-multiget xmlns:C="urn:ietf:params:xml:ns:caldav"/></D:report>\n'
-                xml += '                    </D:supported-report>\n'
-                xml += '                </D:supported-report-set>\n'
-            elif prop_name == 'current-user-privilege-set':
-                # Return write privileges to indicate calendar is writable
-                xml += '                <D:current-user-privilege-set xmlns:D="DAV:">\n'
-                xml += '                    <D:privilege><D:read/></D:privilege>\n'
-                xml += '                    <D:privilege><D:write/></D:privilege>\n'
-                xml += '                    <D:privilege><D:write-content/></D:privilege>\n'
-                xml += '                    <D:privilege><D:write-properties/></D:privilege>\n'
-                xml += '                    <D:privilege><D:bind/></D:privilege>\n'
-                xml += '                    <D:privilege><D:unbind/></D:privilege>\n'
-                xml += '                </D:current-user-privilege-set>\n'
+                if prop_name == 'resourcetype':
+                    if prop_value == 'calendar':
+                        xml += '                <D:resourcetype><D:collection/><C:calendar xmlns:C="urn:ietf:params:xml:ns:caldav"/></D:resourcetype>\n'
+                    elif prop_value == 'collection':
+                        xml += f'                <D:resourcetype><D:collection/></D:resourcetype>\n'
+                    else:
+                        xml += f'                <D:resourcetype><D:collection/></D:resourcetype>\n'
+                elif prop_name == 'displayname':
+                    xml += f'                <D:displayname>{html.escape(str(prop_value))}</D:displayname>\n'
+                elif prop_name == 'getcontenttype':
+                    xml += f'                <D:getcontenttype>{html.escape(str(prop_value))}</D:getcontenttype>\n'
+                elif prop_name == 'getetag':
+                    xml += f'                <D:getetag>"{html.escape(str(prop_value))}"</D:getetag>\n'
+                elif prop_name == 'calendar-data':
+                    # Calendar data should be in CDATA, but we need to handle ]]> sequences
+                    # If ]]> appears in the data, we need to split the CDATA section
+                    # For now, replace ]]> with a safe alternative or escape it
+                    safe_data = prop_value.replace(']]>', ']]]]><![CDATA[>')
+                    xml += f'                <C:calendar-data xmlns:C="urn:ietf:params:xml:ns:caldav"><![CDATA[{safe_data}]]></C:calendar-data>\n'
+                elif prop_name == 'supported-calendar-component-set':
+                    xml += '                <C:supported-calendar-component-set xmlns:C="urn:ietf:params:xml:ns:caldav">\n'
+                    for comp in prop_value.split(','):
+                        xml += f'                    <C:comp name="{comp.strip()}"/>\n'
+                    xml += '                </C:supported-calendar-component-set>\n'
+                elif prop_name == 'calendar-description':
+                    xml += f'                <C:calendar-description xmlns:C="urn:ietf:params:xml:ns:caldav">{html.escape(str(prop_value))}</C:calendar-description>\n'
+                elif prop_name == 'calendar-color':
+                    xml += f'                <ical:calendar-color xmlns:ical="http://apple.com/ns/ical/">{html.escape(str(prop_value))}</ical:calendar-color>\n'
+                elif prop_name == 'calendar-timezone':
+                    xml += f'                <C:calendar-timezone xmlns:C="urn:ietf:params:xml:ns:caldav">{html.escape(str(prop_value))}</C:calendar-timezone>\n'
+                elif prop_name == 'sync-token':
+                    xml += f'                <D:sync-token xmlns:D="DAV:">{html.escape(str(prop_value))}</D:sync-token>\n'
+                elif prop_name == 'getctag':
+                    # CTag is like ETag but for collections (calendars)
+                    xml += f'                <CS:getctag xmlns:CS="http://calendarserver.org/ns/">{html.escape(str(prop_value))}</CS:getctag>\n'
+                elif prop_name == 'calendar-home-set':
+                    xml += f'                <C:calendar-home-set xmlns:C="urn:ietf:params:xml:ns:caldav"><D:href xmlns:D="DAV:">{html.escape(str(prop_value))}</D:href></C:calendar-home-set>\n'
+                elif prop_name == 'calendar-user-address-set':
+                    xml += f'                <C:calendar-user-address-set xmlns:C="urn:ietf:params:xml:ns:caldav"><D:href xmlns:D="DAV:">{html.escape(str(prop_value))}</D:href></C:calendar-user-address-set>\n'
+                elif prop_name == 'supported-report-set':
+                    # Return supported reports for calendars
+                    xml += '                <D:supported-report-set xmlns:D="DAV:">\n'
+                    xml += '                    <D:supported-report>\n'
+                    xml += '                        <D:report><C:calendar-query xmlns:C="urn:ietf:params:xml:ns:caldav"/></D:report>\n'
+                    xml += '                    </D:supported-report>\n'
+                    xml += '                    <D:supported-report>\n'
+                    xml += '                        <D:report><C:calendar-multiget xmlns:C="urn:ietf:params:xml:ns:caldav"/></D:report>\n'
+                    xml += '                    </D:supported-report>\n'
+                    xml += '                </D:supported-report-set>\n'
+                elif prop_name == 'current-user-privilege-set':
+                    # Return write privileges to indicate calendar is writable
+                    xml += '                <D:current-user-privilege-set xmlns:D="DAV:">\n'
+                    xml += '                    <D:privilege><D:read/></D:privilege>\n'
+                    xml += '                    <D:privilege><D:write/></D:privilege>\n'
+                    xml += '                    <D:privilege><D:write-content/></D:privilege>\n'
+                    xml += '                    <D:privilege><D:write-properties/></D:privilege>\n'
+                    xml += '                    <D:privilege><D:bind/></D:privilege>\n'
+                    xml += '                    <D:privilege><D:unbind/></D:privilege>\n'
+                    xml += '                </D:current-user-privilege-set>\n'
         
         # Close prop element
         xml += '            </D:prop>\n'
