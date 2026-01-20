@@ -164,10 +164,11 @@ class WebDAVClient:
                     if href is None:
                         continue
                     
-                    file_path = href.text.rstrip('/')
+                    # Keep original href for directory detection (don't strip / yet)
+                    href_text = href.text
                     # URL-decode the path (server returns URL-encoded paths like verita84%40poster.place)
                     from urllib.parse import unquote
-                    file_path = unquote(file_path)
+                    file_path = unquote(href_text).rstrip('/')
                     
                     # Remove base URL to get relative path
                     if file_path.startswith(self.base_url):
@@ -191,13 +192,24 @@ class WebDAVClient:
                     # Get properties to determine if it's a directory
                     propstat = response_elem.find('D:propstat', ns)
                     isdir = False
-                    if propstat is not None:
+                    
+                    # First check: if original href ends with / (and it's not the parent directory), it's a directory
+                    if href_text.endswith('/') and file_path != normalized_path:
+                        isdir = True
+                    
+                    # Second check: look for resourcetype/collection in properties
+                    if not isdir and propstat is not None:
                         prop = propstat.find('D:prop', ns)
                         if prop is not None:
                             resourcetype = prop.find('D:resourcetype', ns)
                             if resourcetype is not None:
                                 collection = resourcetype.find('D:collection', ns)
-                                isdir = collection is not None
+                                if collection is not None:
+                                    isdir = True
+                            
+                            # Third check: if there's no contentlength AND no resourcetype, 
+                            # we need to use info() to check (but that's expensive, so we'll do it in sync_from_remote)
+                            # For now, if href doesn't end with / and no collection tag, assume it's a file
                     
                     # Get just the filename for 'name', but keep full path for 'path'
                     filename = file_path.split('/')[-1]
@@ -605,25 +617,24 @@ class WebDAVSync:
                         logger.warning(f"Skipping path outside mount point: {file_remote_path} -> {file_local_path}")
                         continue
                     
-                    # Get file info - use directory info from listing if available to avoid extra PROPFIND call
-                    if is_dir_from_listing:
-                        # We already know it's a directory from the listing
-                        info = {'isdir': True, 'size': 0, 'modified': time.time()}
-                    else:
-                        try:
-                            # Normalize path for info() call
-                            info_path = file_remote_path
-                            if not info_path.startswith('/'):
-                                # Add leading slash if missing
-                                info_path = '/' + info_path
-                            info = self.webdav.info(info_path)
-                        except Exception as e:
-                            logger.warning(f"Error getting info for {file_remote_path}: {e}")
-                            continue
-                        if not info:
-                            continue
+                    # Get file info - always call info() to get accurate directory detection
+                    # The PROPFIND listing might not include proper resourcetype tags
+                    try:
+                        # Normalize path for info() call
+                        info_path = file_remote_path
+                        if not info_path.startswith('/'):
+                            # Add leading slash if missing
+                            info_path = '/' + info_path
+                        info = self.webdav.info(info_path)
+                    except Exception as e:
+                        logger.warning(f"Error getting info for {file_remote_path}: {e}")
+                        continue
+                    if not info:
+                        continue
                     
-                    # Trust the server's directory detection - no workarounds needed
+                    # If listing said it's a directory but info() says it's not, trust info()
+                    # If listing didn't detect it as directory but info() says it is, trust info()
+                    # info() does a PROPFIND Depth=0 which should be more accurate
                     
                     if info['isdir']:
                         # It's really a directory - create locally and recurse
