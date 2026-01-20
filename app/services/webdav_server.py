@@ -280,8 +280,21 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
                     so the provider still sees paths like /username/
     """
     storage = get_storage_service(db)
+    
+    # Check if storage is on a remote server
+    storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    if storage_server_url and storage_server_url.value:
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            # Files are on remote storage server - WebDAV can't access them directly
+            # We need to either proxy or mount the remote storage
+            logger.warning(f"[WebDAV] Storage is on remote server ({url}), but WebDAV only supports local storage")
+            logger.warning(f"[WebDAV] Files on remote server won't be accessible via WebDAV")
+            logger.warning(f"[WebDAV] Consider using local storage or implementing WebDAV proxy to remote storage")
+    
     root_path = Path(storage.upload_path)
     root_path.mkdir(parents=True, exist_ok=True)
+    logger.info(f"[WebDAV] Using storage path: {root_path}")
     
     provider = QuotaFilesystemProvider(root_path, db)
     
