@@ -749,6 +749,36 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         return props
                     
                     def get_directory_info(self):
+                        # Directory browser expects this method to return a dict-like structure
+                        return {
+                            "display_name": self.get_display_name(),
+                            "path": self._path,
+                            "is_directory": self._is_dir,
+                            "size": self._size,
+                            "modified": self._modified
+                        }
+                    
+                    # Make it subscriptable for directory browser compatibility
+                    def __getitem__(self, key):
+                        # Allow dict-like access for directory browser
+                        if key == "display_name":
+                            return self.get_display_name()
+                        elif key == "path":
+                            return self._path
+                        elif key == "is_directory":
+                            return self._is_dir
+                        elif key == "size":
+                            return self._size
+                        elif key == "modified":
+                            return self._modified
+                        else:
+                            raise KeyError(f"'{key}' not found in SimpleResource")
+                    
+                    def __contains__(self, key):
+                        # Support 'in' operator
+                        return key in ["display_name", "path", "is_directory", "size", "modified"]
+                    
+                    def get_directory_info(self):
                         # Return directory info as dict for dir_browser - wsgidav's directory browser expects this
                         from datetime import datetime
                         return {
