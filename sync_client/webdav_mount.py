@@ -120,66 +120,50 @@ class WebDAVClient:
                 href = response_elem.find('D:href', ns)
                 if href is None:
                     continue  # Try next URL
-            
-            # Get properties
-            propstat = response_elem.find('D:propstat', ns)
-            if propstat is None:
-                return None
-            
-            prop = propstat.find('D:prop', ns)
-            if prop is None:
-                return None
-            
-            # Extract info
-            resourcetype = prop.find('D:resourcetype', ns)
-            isdir = False
-            if resourcetype is not None:
-                # Check for collection child element (proper XML structure)
-                collection = resourcetype.find('D:collection', ns)
-                if collection is not None:
-                    isdir = True
-                else:
-                    # Check if resourcetype text contains collection (may be HTML-encoded XML like &lt;D:collection/&gt;)
-                    resourcetype_text = resourcetype.text or ''
-                    if resourcetype_text:
-                        # Decode HTML entities (e.g., &lt; becomes <)
-                        import html
-                        decoded_text = html.unescape(resourcetype_text.strip())
-                        # Check if decoded text contains collection tag
-                        if 'collection' in decoded_text.lower():
-                            isdir = True
-                    # Also check if there are any child elements (collection tag)
-                    if len(list(resourcetype)) > 0:
+                
+                # Get properties
+                propstat = response_elem.find('D:propstat', ns)
+                if propstat is None:
+                    continue  # Try next URL
+                
+                prop = propstat.find('D:prop', ns)
+                if prop is None:
+                    continue  # Try next URL
+                
+                # Extract info
+                resourcetype = prop.find('D:resourcetype', ns)
+                isdir = False
+                if resourcetype is not None:
+                    # Check for collection child element (proper XML structure)
+                    collection = resourcetype.find('D:collection', ns)
+                    if collection is not None:
                         isdir = True
-                    
-                    # Additional check: if contentlength is 0 and no extension, might be a directory
-                    # But this is less reliable, so only use as fallback
-                    if not isdir:
-                        contentlength = prop.find('D:getcontentlength', ns)
-                        size = int(contentlength.text) if contentlength is not None and contentlength.text else -1
-                        if size == 0:
-                            # Check if path has no extension (heuristic for directory)
-                            path_name = href.text.split('/')[-1] if href is not None else ''
-                            if '.' not in path_name or path_name.startswith('.'):
-                                # Might be a directory, but we can't be sure without trying to list it
-                                pass
-            
-            contentlength = prop.find('D:getcontentlength', ns)
-            size = int(contentlength.text) if contentlength is not None and contentlength.text else 0
-            
-            # Always trust resourcetype/collection - it's the authoritative check
-            # Directories can have non-zero size on some filesystems (e.g., XFS metadata)
-            # The storage server now correctly reports is_dir(), so we should trust it
-            
-            getlastmodified = prop.find('D:getlastmodified', ns)
-            mtime = time.time()
-            if getlastmodified is not None and getlastmodified.text:
-                from email.utils import parsedate_to_datetime
-                try:
-                    mtime = parsedate_to_datetime(getlastmodified.text).timestamp()
-                except:
-                    pass
-            
+                    else:
+                        # Check if resourcetype text contains collection (may be HTML-encoded XML like &lt;D:collection/&gt;)
+                        resourcetype_text = resourcetype.text or ''
+                        if resourcetype_text:
+                            # Decode HTML entities (e.g., &lt; becomes <)
+                            import html
+                            decoded_text = html.unescape(resourcetype_text.strip())
+                            # Check if decoded text contains collection tag
+                            if 'collection' in decoded_text.lower():
+                                isdir = True
+                        # Also check if there are any child elements (collection tag)
+                        if len(list(resourcetype)) > 0:
+                            isdir = True
+                
+                contentlength = prop.find('D:getcontentlength', ns)
+                size = int(contentlength.text) if contentlength is not None and contentlength.text else 0
+                
+                getlastmodified = prop.find('D:getlastmodified', ns)
+                mtime = time.time()
+                if getlastmodified is not None and getlastmodified.text:
+                    from email.utils import parsedate_to_datetime
+                    try:
+                        mtime = parsedate_to_datetime(getlastmodified.text).timestamp()
+                    except:
+                        pass
+                
                 return {
                     'isdir': isdir,
                     'size': size,
