@@ -769,9 +769,12 @@ async def startup():
         # Auto-start WebDAV/CalDAV/CardDAV servers if enabled
         db_dav = SessionLocal()
         try:
+            from app.database import safe_query_settings
+            # Use safe_query_settings to handle schema issues
+            dav_settings = safe_query_settings(db_dav)
+            
             def get_dav_setting(key, default=""):
-                s = db_dav.query(Setting).filter(Setting.key == key).first()
-                return s.value if s and s.value else default
+                return dav_settings.get(key, default)
             
             # Get all DAV settings once to avoid duplicate queries
             webdav_enabled = get_dav_setting("webdav_enabled", "false")
