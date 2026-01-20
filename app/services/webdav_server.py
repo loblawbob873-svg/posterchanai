@@ -291,11 +291,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return super().get_resource_list(normalized_path, depth, environ)
     
     def _proxy_list_files(self, username: str, path: str):
-        """Proxy file listing - calls storage server directly using storage_server_url."""
+        """Proxy file listing - uses the same proxying mechanism as files router."""
         import requests
         
-        # Call storage server directly - 192.168.0.1 proxies to 192.168.0.85
-        # So we call storage_server_url which points to 192.168.0.85
+        # Use the same proxying logic as /api/files/list
+        # Call storage_server_url/api/storage/list-files with server token
         if not self.storage_server_url:
             raise Exception("storage_server_url not configured")
         
@@ -303,22 +303,31 @@ class QuotaFilesystemProvider(FilesystemProvider):
         headers = {}
         if self.storage_server_token:
             headers["Authorization"] = f"Bearer {self.storage_server_token}"
+        else:
+            logger.warning(f"[WebDAV] No storage_server_token configured - authentication may fail")
         
         params = {
             "username": username,
             "path": path
         }
         
-        logger.info(f"[WebDAV] Calling storage server {url} for username={username}, path={path}")
+        logger.info(f"[WebDAV] Proxying to storage server: {url} for username={username}, path={path}")
+        logger.info(f"[WebDAV] Using token: {'Yes' if self.storage_server_token else 'No'}")
         try:
             response = requests.get(url, headers=headers, params=params, timeout=30)
-            logger.debug(f"[WebDAV] Storage server response status: {response.status_code}")
+            logger.info(f"[WebDAV] Storage server response: status={response.status_code}, content_length={len(response.content)}")
+            
+            if response.status_code != 200:
+                logger.error(f"[WebDAV] Storage server error: {response.status_code} - {response.text[:200]}")
+            
             response.raise_for_status()
             data = response.json()
             
             # Convert File Manager format to WebDAV format
             items = data.get('items', [])
-            logger.info(f"[WebDAV] Storage server returned {len(items)} items")
+            logger.info(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path}")
+            if len(items) == 0:
+                logger.warning(f"[WebDAV] Storage server returned 0 items - check if files exist on storage server")
             webdav_resources = []
             
             for item in items:
