@@ -836,12 +836,14 @@ body {
 
 .upload-preview {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
     padding: 8px 12px;
     background: var(--bg-primary);
     border-radius: 12px;
     border: 1px solid var(--border-color);
+    max-height: 200px;
+    overflow-y: auto;
 }
 .upload-preview img {
     max-width: 80px;
@@ -860,9 +862,76 @@ body {
 .remove-upload {
     font-size: 16px;
     color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    flex-shrink: 0;
 }
 .remove-upload:hover {
     color: var(--danger);
+}
+
+/* Attachments list for multiple files */
+.attachments-list {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.attachment-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.attachment-item.attachment-image {
+    padding: 4px;
+}
+
+.attachment-thumb {
+    width: 60px;
+    height: 60px;
+    object-fit: cover;
+    border-radius: 6px;
+    flex-shrink: 0;
+}
+
+.attachment-icon {
+    font-size: 24px;
+    flex-shrink: 0;
+    width: 40px;
+    text-align: center;
+}
+
+.attachment-name {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text-primary);
+    word-break: break-word;
+    min-width: 0;
+}
+
+.attachment-remove {
+    font-size: 16px;
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.attachment-remove:hover {
+    color: var(--danger);
+    background: rgba(255, 51, 102, 0.1);
 }
 .btn-send {
     background: linear-gradient(135deg, var(--accent) 0%, #00cccc 100%);
