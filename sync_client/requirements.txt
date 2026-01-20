@@ -1,4 +1,10 @@
+# Core dependencies
 requests>=2.31.0
 watchdog>=3.0.0
 pystray>=0.19.5
 Pillow>=10.0.0
+
+# Note: tkinter is optional and not installable via pip
+# It's a system package that comes with Python (when compiled with tk support)
+# The sync client works without tkinter in headless mode
+# The setup wizard will use CLI mode if tkinter is not available

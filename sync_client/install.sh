@@ -91,6 +91,12 @@ echo -e "${GREEN}[5/6]${NC} Creating wrapper script..."
 cat > "$BIN_DIR/posterchanai-sync" << EOF
 #!/bin/bash
 cd "$INSTALL_DIR"
+# Handle --setup flag to run setup wizard
+if [ "\$1" = "--setup" ]; then
+    "$INSTALL_DIR/venv/bin/python" setup_wizard.py --force
+    exit \$?
+fi
+# All other arguments (including --status, --help) are passed to sync_client.py
 "$INSTALL_DIR/venv/bin/python" sync_client.py "\$@"
 EOF
 chmod +x "$BIN_DIR/posterchanai-sync"
@@ -115,18 +121,24 @@ echo -e "${CYAN}${BOLD}═══════════════════
 echo -e "${GREEN}${BOLD}[SUCCESS]${NC} Installation complete!"
 echo ""
 echo -e "${CYAN}Next steps:${NC}"
-echo -e "  1. Start the service (setup wizard will run on first start):"
-echo -e "     ${GREEN}systemctl --user start posterchanai-sync${NC}"
-echo -e "     ${CYAN}Note:${NC} A setup wizard will appear to configure server URL and API key"
+echo -e "  1. ${YELLOW}${BOLD}IMPORTANT:${NC} Run the setup wizard first to configure the client:"
+echo -e "     ${GREEN}posterchanai-sync --setup${NC}"
+echo -e "     ${CYAN}Note:${NC} This will prompt you for server URL and API key"
 echo ""
-echo -e "  2. Enable auto-start:"
+echo -e "  2. After setup, start the service:"
+echo -e "     ${GREEN}systemctl --user start posterchanai-sync${NC}"
+echo ""
+echo -e "  3. Enable auto-start:"
 echo -e "     ${GREEN}systemctl --user enable posterchanai-sync${NC}"
 echo ""
-echo -e "  3. Check status:"
+echo -e "  4. Check status:"
 echo -e "     ${GREEN}systemctl --user status posterchanai-sync${NC}"
 echo ""
-echo -e "  4. View logs:"
+echo -e "  5. View logs:"
 echo -e "     ${GREEN}journalctl --user -u posterchanai-sync -f${NC}"
+echo ""
+echo -e "${YELLOW}${BOLD}⚠ WARNING:${NC} Do not start the service before running setup!"
+echo -e "   The service cannot show the setup wizard and will fail if config is missing."
 echo ""
 echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════${NC}"
 echo ""
