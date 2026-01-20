@@ -899,7 +899,16 @@ async def handle_put(path: str, user: User, db: Session, request: StarletteReque
     from urllib.parse import unquote
     from app.services.dav_storage_proxy import DAVStorageProxy
     
-    body = await request.body()
+    try:
+        body = await request.body()
+        logger.info(f"[CalDAV] handle_put: path={path}, user={user.username}, body_size={len(body)} bytes")
+    except Exception as e:
+        logger.error(f"[CalDAV] Error reading body in handle_put: {e}", exc_info=True)
+        error_xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:error xmlns:D="DAV:">
+    <D:internal-server-error/>
+</D:error>'''
+        return Response(content=error_xml, media_type="application/xml", status_code=500)
     
     # Use storage proxy (must be configured)
     proxy = DAVStorageProxy(db, user.username, 'caldav')
@@ -1434,9 +1443,14 @@ def create_caldav_app() -> FastAPI:
         
         # Log PUT requests with more detail
         if method == "PUT":
-            body_size = len(await request.body()) if hasattr(request, 'body') else 0
-            logger.info(f"[CalDAV] ⚠️ PUT REQUEST RECEIVED: path={path}, user={user.username}, body_size={body_size} bytes")
-            # Re-read body for actual processing (will be done in handle_put)
+            # Read body to get size, but handle_put will read it again
+            try:
+                body_bytes = await request.body()
+                body_size = len(body_bytes) if body_bytes else 0
+                logger.info(f"[CalDAV] ⚠️ PUT REQUEST RECEIVED: path={path}, user={user.username}, body_size={body_size} bytes")
+            except Exception as e:
+                logger.error(f"[CalDAV] Error reading PUT request body: {e}")
+                body_size = 0
         
         # Handle OPTIONS request (required by some clients including iPhone)
         if method == "OPTIONS":
