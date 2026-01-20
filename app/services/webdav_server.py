@@ -348,24 +348,77 @@ class QuotaFilesystemProvider(FilesystemProvider):
         logger.error(f"[WebDAV] ⚠️ Step 2: Normalized path={normalized_path}")
         logger.error(f"[WebDAV] ⚠️ Step 3: storage_server_url={self.storage_server_url}")
         
-        # For remote storage, we need to create a virtual resource
-        # But wsgidav's parent class expects files to exist on the filesystem
-        # Since files don't exist locally, we need to create a virtual resource object
-        # Actually, let's just use the parent class - it should handle directories even if empty
-        # The parent class will call get_resource_info and get_resource_instances which we've overridden
+        # For remote storage, we MUST proxy - never use local filesystem
         if self.storage_server_url:
-            logger.error(f"[WebDAV] ⚠️ Step 4: Remote storage configured, using parent class")
-            # Use parent class - it will call our overridden get_resource_info and get_resource_instances
-            # But we need to ensure the path exists in the filesystem for the parent class
-            # OR we can create a minimal filesystem entry
-            try:
-                # Try parent class first - it might work if we create a directory
-                fs_path = self._locate_file_path(normalized_path)
-                if fs_path and not fs_path.exists():
-                    # Create directory so parent class can work
-                    fs_path.mkdir(parents=True, exist_ok=True)
-                    logger.error(f"[WebDAV] ⚠️ Created directory at {fs_path} for parent class")
+            logger.error(f"[WebDAV] ⚠️ Step 4: Remote storage configured, proxying to remote storage")
+            username = self._get_username_from_path(normalized_path)
+            if username:
+                # Extract relative path
+                rel_path = normalized_path.lstrip('/')
+                if rel_path.startswith(username + '/'):
+                    rel_path = rel_path[len(username) + 1:]
+                elif rel_path == username:
+                    rel_path = ''
                 
+                # Get resource info from remote storage
+                try:
+                    info = self._proxy_get_info(username, rel_path)
+                    if info:
+                        logger.error(f"[WebDAV] ⚠️ Got info from proxy: is_dir={info.get('is_directory', False)}")
+                        # Create virtual resource based on remote storage info
+                        import time
+                        
+                        class VirtualResource:
+                            def __init__(self, path, info_dict):
+                                self._path = path
+                                self._info = info_dict
+                                self._is_dir = info_dict.get('is_directory', False)
+                                self._modified = info_dict.get('modified', time.time())
+                                self._size = info_dict.get('size', 0)
+                            
+                            def get_last_modified(self):
+                                return float(self._modified) if isinstance(self._modified, (int, float)) else time.time()
+                            
+                            def get_content_length(self):
+                                return self._size if not self._is_dir else 0
+                            
+                            def is_collection(self):
+                                return self._is_dir
+                            
+                            def get_display_name(self):
+                                return self._path.split('/')[-1] or self._path
+                            
+                            def get_ref_url(self):
+                                return self._path
+                            
+                            def get_etag(self):
+                                return None
+                            
+                            def get_content_type(self):
+                                return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
+                            
+                            def get_descendants(self, depth=1):
+                                # Return empty list - children are handled by get_resource_instances
+                                return []
+                            
+                            def __getattr__(self, name):
+                                # Gracefully handle any other method calls
+                                logger.warning(f"[WebDAV] VirtualResource.__getattr__ called for '{name}' - returning None")
+                                return None
+                        
+                        result = VirtualResource(normalized_path, info)
+                        logger.error(f"[WebDAV] ⚠️ Created VirtualResource for {normalized_path}")
+                        return result
+                    else:
+                        logger.warning(f"[WebDAV] No info returned from proxy for {username}/{rel_path}")
+                except Exception as e:
+                    logger.error(f"[WebDAV] Failed to get info from proxy: {e}", exc_info=True)
+                    # Don't fall back to local - raise the error
+                    raise
+            
+            # If we can't get username, try parent class as fallback
+            logger.warning(f"[WebDAV] Could not extract username from path {normalized_path}, trying parent class")
+            try:
                 result = super().get_resource_inst(normalized_path, environ)
                 logger.error(f"[WebDAV] ⚠️ Parent get_resource_inst returned: type={type(result)}")
                 return result
