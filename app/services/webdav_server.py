@@ -439,12 +439,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             
                             def get_directory_info(self):
                                 # Return dict-like info for directory browser
+                                from datetime import datetime
                                 return {
                                     "display_name": self.get_display_name(),
                                     "href": self.get_href(),
                                     "is_collection": self.is_collection(),
-                                    "get_last_modified": self.get_last_modified(),
-                                    "get_content_length": self.get_content_length(),
+                                    "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT'),
+                                    "content_length": self.get_content_length(),
                                 }
                             
                             def __getitem__(self, key):
@@ -455,7 +456,19 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     return self.get_href()
                                 elif key == "is_collection":
                                     return self.is_collection()
+                                elif key == "last_modified":
+                                    from datetime import datetime
+                                    return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                                elif key == "content_length":
+                                    return self.get_content_length()
                                 raise KeyError(key)
+                            
+                            def get(self, key, default=None):
+                                # Dict-like get() method for directory browser compatibility
+                                try:
+                                    return self.__getitem__(key)
+                                except KeyError:
+                                    return default
                             
                             def get_directory_info(self):
                                 # Return directory info as dict for dir_browser - wsgidav's directory browser expects this
@@ -747,6 +760,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         if propname == "allprop" or "displayname" in str(propname):
                             props.append(('displayname', self._path.split('/')[-1] or self._path))
                         return props
+                    
+                    def get(self, key, default=None):
+                        # Dict-like get() method for directory browser compatibility
+                        try:
+                            return self.__getitem__(key)
+                        except KeyError:
+                            return default
                     
                     def get_directory_info(self):
                         # Directory browser expects this method to return a dict-like structure
