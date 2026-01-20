@@ -900,18 +900,38 @@ def delete_message(user_id: int, db: Session, account_email: str, uid: str, fold
                 return False
 
             try:
-                status, _ = imap.select(folder)
-                if status != "OK":
+                # Ensure socket timeout is set
+                if hasattr(imap, 'socket') and imap.socket():
+                    imap.socket().settimeout(MAIL_OPERATION_TIMEOUT)
+
+                # Wrap select with timeout
+                def select_folder():
+                    return imap.select(folder)
+                
+                result = run_with_timeout(select_folder, timeout=MAIL_OPERATION_TIMEOUT)
+                if not result or result[0] != "OK":
                     logger.error(f"Failed to select folder {folder}")
                     return False
 
-                # Use UID STORE to mark for deletion
-                status, _ = imap.uid("store", uid, "+FLAGS", "\\Deleted")
-                if status != "OK":
+                # Wrap store with timeout
+                def store_deleted():
+                    return imap.uid("store", uid, "+FLAGS", "\\Deleted")
+                
+                result = run_with_timeout(store_deleted, timeout=MAIL_OPERATION_TIMEOUT)
+                if not result or result[0] != "OK":
                     logger.error(f"Failed to mark message {uid} for deletion")
                     return False
 
-                imap.expunge()
+                # Wrap expunge with timeout - this is the operation that often times out
+                def expunge_messages():
+                    return imap.expunge()
+                
+                result = run_with_timeout(expunge_messages, timeout=MAIL_OPERATION_TIMEOUT)
+                if result is None:
+                    logger.warning(f"Expunge timed out for message {uid}, but message was marked for deletion")
+                    # Message is still marked for deletion, so consider it a partial success
+                    # The server will expunge it eventually or on next connection
+                
                 logger.info(f"Deleted message {uid} from {folder} in {account_email}")
                 return True
             except Exception as e:
@@ -937,24 +957,52 @@ def delete_all_messages(user_id: int, db: Session, account_email: str) -> int:
                 return -1
 
             try:
-                imap.select("INBOX")
-                # Search for all messages in this inbox
-                status, data = imap.search(None, "ALL")
-                if status != "OK":
+                # Ensure socket timeout is set
+                if hasattr(imap, 'socket') and imap.socket():
+                    imap.socket().settimeout(MAIL_OPERATION_TIMEOUT)
+
+                # Wrap select with timeout
+                def select_inbox():
+                    return imap.select("INBOX")
+                
+                result = run_with_timeout(select_inbox, timeout=MAIL_OPERATION_TIMEOUT)
+                if not result or result[0] != "OK":
+                    logger.error("Failed to select INBOX")
                     return -1
 
+                # Wrap search with timeout
+                def search_all():
+                    return imap.search(None, "ALL")
+                
+                result = run_with_timeout(search_all, timeout=MAIL_OPERATION_TIMEOUT)
+                if not result or result[0] != "OK":
+                    return -1
+
+                status, data = result
                 message_ids = data[0].split()
                 if not message_ids:
                     return 0
 
                 count = len(message_ids)
 
-                # Mark all for deletion
+                # Mark all for deletion with timeout protection
                 for uid in message_ids:
-                    imap.store(uid, "+FLAGS", "\\Deleted")
+                    # Create a closure that captures the uid value
+                    def make_store_func(u):
+                        def store_deleted():
+                            return imap.store(u, "+FLAGS", "\\Deleted")
+                        return store_deleted
+                    run_with_timeout(make_store_func(uid), timeout=MAIL_OPERATION_TIMEOUT)
 
-                # Expunge to permanently delete
-                imap.expunge()
+                # Wrap expunge with timeout - this is the operation that often times out
+                def expunge_messages():
+                    return imap.expunge()
+                
+                result = run_with_timeout(expunge_messages, timeout=MAIL_TOTAL_TIMEOUT)
+                if result is None:
+                    logger.warning(f"Expunge timed out for {count} messages, but messages were marked for deletion")
+                    # Messages are still marked for deletion, so consider it a partial success
+                
                 logger.info(f"Purged {count} messages from {account_email} inbox")
                 return count
 
@@ -1023,9 +1071,22 @@ def archive_message(user_id: int, db: Session, account_email: str, uid: str, fol
                     logger.error(f"Failed to copy message UID {uid} to {archive_folder}: {result}")
                     return False
 
-                # Delete from source folder using UID command
-                imap.uid("STORE", uid, "+FLAGS", "\\Deleted")
-                imap.expunge()
+                # Delete from source folder using UID command with timeout protection
+                def store_deleted():
+                    return imap.uid("STORE", uid, "+FLAGS", "\\Deleted")
+                
+                result = run_with_timeout(store_deleted, timeout=MAIL_OPERATION_TIMEOUT)
+                if not result or result[0] != "OK":
+                    logger.warning(f"Failed to mark message {uid} for deletion after archiving")
+                    # Still return True since copy succeeded
+                
+                # Wrap expunge with timeout - this is the operation that often times out
+                def expunge_messages():
+                    return imap.expunge()
+                
+                result = run_with_timeout(expunge_messages, timeout=MAIL_OPERATION_TIMEOUT)
+                if result is None:
+                    logger.warning(f"Expunge timed out for archived message {uid}, but message was marked for deletion")
 
                 logger.info(f"Archived message {uid} from {account_email}:{folder} to {archive_folder}")
                 return True
