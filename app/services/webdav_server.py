@@ -252,15 +252,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
         """Override to list files, with support for remote storage proxying."""
-        # Strip /webdav prefix if present
+        # Strip /webdav prefix if present (may be added multiple times)
         original_path = path
         normalized_path = path.strip('/')
-        if normalized_path.startswith('webdav/'):
-            normalized_path = '/' + normalized_path[7:]  # Remove 'webdav/' and restore leading /
+        # Remove all /webdav/ prefixes (in case it's duplicated)
+        while normalized_path.startswith('webdav/'):
+            normalized_path = normalized_path[7:]  # Remove 'webdav/'
+        # Restore leading / if we have a path
+        if normalized_path:
+            normalized_path = '/' + normalized_path
         else:
-            normalized_path = path
+            normalized_path = '/'
         
-        logger.debug(f"[WebDAV] get_resource_list: original={original_path}, normalized={normalized_path}")
+        logger.info(f"[WebDAV] get_resource_list CALLED: original={original_path}, normalized={normalized_path}, depth={depth}")
+        logger.info(f"[WebDAV] storage_server_url={self.storage_server_url}, storage_server_token={'Yes' if self.storage_server_token else 'No'}")
         
         # If remote storage is configured, ALWAYS proxy - never use local filesystem
         if self.storage_server_url:
