@@ -185,17 +185,54 @@ def extract_xlsx_text(xlsx_base64: str, max_chars: int = 50000) -> Optional[str]
         wb = load_workbook(io.BytesIO(xlsx_bytes), data_only=True)
 
         text_parts = []
-        for sheet_name in wb.sheetnames:
+        current_length = 0
+        max_rows_per_sheet = 1000  # Limit rows per sheet to prevent huge extractions
+        max_sheets = 10  # Limit number of sheets to process
+        
+        sheets_processed = 0
+        for sheet_name in wb.sheetnames[:max_sheets]:
+            if sheets_processed >= max_sheets:
+                break
+            sheets_processed += 1
+            
             sheet = wb[sheet_name]
-            text_parts.append(f"--- Sheet: {sheet_name} ---")
-
+            sheet_header = f"--- Sheet: {sheet_name} ---\n"
+            text_parts.append(sheet_header)
+            current_length += len(sheet_header)
+            
+            rows_processed = 0
             for row in sheet.iter_rows(values_only=True):
+                if rows_processed >= max_rows_per_sheet:
+                    text_parts.append(f"[... {max_rows_per_sheet} rows shown, more rows in sheet ...]")
+                    break
+                
+                # Only process rows with actual data
                 row_values = [str(cell) if cell is not None else "" for cell in row]
-                if any(v.strip() for v in row_values):
-                    text_parts.append(" | ".join(row_values))
+                # Filter out empty cells
+                non_empty = [v for v in row_values if v.strip()]
+                if non_empty:
+                    row_text = " | ".join(non_empty)
+                    row_line = row_text + "\n"
+                    
+                    # Check if adding this row would exceed limit
+                    if current_length + len(row_line) > max_chars:
+                        text_parts.append(f"\n[Document truncated at {current_length:,} characters...]")
+                        current_length = max_chars + 1
+                        break
+                    
+                    text_parts.append(row_line)
+                    current_length += len(row_line)
+                    rows_processed += 1
+                
+                # Early exit if we've hit the limit
+                if current_length >= max_chars:
+                    break
+            
+            if current_length >= max_chars:
+                break
 
         wb.close()
-        full_text = "\n".join(text_parts)
+        full_text = "".join(text_parts)
 
         if len(full_text) > max_chars:
             full_text = full_text[:max_chars] + "\n\n[Document truncated...]"

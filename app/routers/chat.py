@@ -808,6 +808,26 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                         "content": f"{content or 'The user uploaded an image.'} [Note: An image was uploaded but no text could be extracted from it. Please ask the user to describe what they see.]"
                                     })
                             elif file_content:
+                                # Get context size to intelligently truncate file content
+                                # Leave room for system prompt, message history, user message, and response
+                                try:
+                                    from app.database import safe_query_settings
+                                    settings = safe_query_settings(db)
+                                    context_size = int(settings.get("ollama_num_ctx", "4096"))
+                                    # Reserve space: system prompt (~500), history (~2000), user message (~500), response (~1000)
+                                    # Use ~60% of context for file content to be safe
+                                    max_file_chars = int(context_size * 0.6)
+                                    
+                                    if len(file_content) > max_file_chars:
+                                        logger.info(f"Truncating file content from {len(file_content):,} to {max_file_chars:,} chars (context size: {context_size})")
+                                        file_content = file_content[:max_file_chars] + "\n\n[File content truncated - document is too large for context window]"
+                                except Exception as e:
+                                    logger.warning(f"Could not get context size for truncation: {e}")
+                                    # Fallback: use a conservative limit
+                                    max_file_chars = 20000
+                                    if len(file_content) > max_file_chars:
+                                        file_content = file_content[:max_file_chars] + "\n\n[File content truncated - document is too large]"
+                                
                                 messages.append({
                                     "role": "user",
                                     "content": f"Here is a file the user uploaded:\n\n```\n{file_content}\n```\n\nUser's message: {content}"
