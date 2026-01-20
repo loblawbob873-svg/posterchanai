@@ -773,96 +773,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT'),
                         }
                     
-                    # Make it fully dict-like for directory browser
-                    def __getitem__(self, key):
-                        # Support dict-like access
-                        if key == "display_name":
-                            return self.get_display_name()
-                        elif key == "href":
-                            return self.get_href()
-                        elif key == "is_collection":
-                            return self.is_collection()
-                        elif key == "is_directory":
-                            return self._is_dir
-                        elif key == "content_length":
-                            return self.get_content_length()
-                        elif key == "size":
-                            return self._size
-                        elif key == "modified":
-                            return self._modified
-                        elif key == "last_modified":
-                            from datetime import datetime
-                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
-                        elif key == "path":
-                            return self._path
-                        else:
-                            raise KeyError(f"'{key}' not found in SimpleResource")
-                    
-                    def __setitem__(self, key, value):
-                        # Support dict-like assignment for directory browser
-                        if key == "str_modified" or key == "last_modified" or key == "modified":
-                            # Allow setting modified time
-                            pass  # Ignore - we don't store it
-                        elif key == "display_name":
-                            pass  # Ignore
-                        else:
-                            # Store in a dict if needed
-                            if not hasattr(self, '_dict_data'):
-                                self._dict_data = {}
-                            self._dict_data[key] = value
-                    
-                    def get(self, key, default=None):
-                        # Support dict-like .get() method
-                        try:
-                            return self.__getitem__(key)
-                        except KeyError:
-                            return default
-                    
-                    def __contains__(self, key):
-                        # Support 'in' operator
-                        return key in ["display_name", "href", "is_collection", "is_directory", "content_length", "size", "modified", "last_modified", "path"]
-                    
-                    # Make it fully dict-like for directory browser
-                    def __getitem__(self, key):
-                        # Allow dict-like access for directory browser
-                        if key == "display_name":
-                            return self.get_display_name()
-                        elif key == "path":
-                            return self._path
-                        elif key == "is_directory":
-                            return self._is_dir
-                        elif key == "is_collection":
-                            return self._is_dir  # Same as is_directory
-                        elif key == "size":
-                            return self._size
-                        elif key == "modified":
-                            return self._modified
-                        elif key == "last_modified":
-                            return self._modified
-                        elif key == "href":
-                            return self.get_href()
-                        else:
-                            raise KeyError(f"'{key}' not found in SimpleResource")
-                    
-                    def __setitem__(self, key, value):
-                        # Allow dict-like assignment for directory browser
-                        # Store in a dict-like storage
-                        if not hasattr(self, '_dict_storage'):
-                            self._dict_storage = {}
-                        self._dict_storage[key] = value
-                    
-                    def get(self, key, default=None):
-                        # Dict-like get() method for directory browser
-                        try:
-                            return self[key]
-                        except KeyError:
-                            return default
-                    
-                    def __contains__(self, key):
-                        # Support 'in' operator
-                        return key in ["display_name", "path", "is_directory", "is_collection", "size", "modified", "last_modified", "href"]
-                    
-                    # Make it fully dict-like for directory browser
+                    # Make it fully dict-like for directory browser - SINGLE VERSION
                     def __getitem__(self, key):
                         # Support all keys the directory browser might use
                         from datetime import datetime
@@ -881,12 +792,15 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         elif key == "modified":
                             return self._modified
                         elif key == "last_modified":
-                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT') if isinstance(self._modified, (int, float)) else ""
                         elif key == "str_modified":
-                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT') if isinstance(self._modified, (int, float)) else ""
                         elif key == "content_length":
                             return self._size if not self._is_dir else 0
                         else:
+                            # Check if it's in dict_storage (for keys set by directory browser)
+                            if hasattr(self, '_dict_storage') and key in self._dict_storage:
+                                return self._dict_storage[key]
                             raise KeyError(f"'{key}' not found in SimpleResource")
                     
                     def __setitem__(self, key, value):
@@ -912,207 +826,25 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     
                     def __contains__(self, key):
                         # Support 'in' operator
-                        return key in ["display_name", "href", "is_collection", "is_directory", "path", "size", "modified", "last_modified", "str_modified", "content_length"]
+                        return key in ["display_name", "href", "is_collection", "is_directory", "path", "size", "modified", "last_modified", "str_modified", "content_length"] or (hasattr(self, '_dict_storage') and key in self._dict_storage)
                     
                     def get_directory_info(self):
                         # Return directory info as dict for dir_browser
                         from datetime import datetime
                         return {
                             "display_name": self.get_display_name(),
-                            "href": self._path,
-                            "is_collection": self._is_dir,
-                            "is_directory": self._is_dir,  # Support both
-                            "content_length": self._size if not self._is_dir else 0,
-                            "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT'),
-                        }
-                    
-                    # Make it fully dict-like for directory browser
-                    def __getitem__(self, key):
-                        # Allow dict-like access for directory browser
-                        if key == "display_name":
-                            return self.get_display_name()
-                        elif key == "href":
-                            return self._path
-                        elif key == "is_collection" or key == "is_directory":
-                            return self._is_dir
-                        elif key == "size" or key == "content_length":
-                            return self._size if not self._is_dir else 0
-                        elif key == "modified" or key == "last_modified":
-                            from datetime import datetime
-                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
-                        elif key == "str_modified":
-                            from datetime import datetime
-                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
-                        else:
-                            raise KeyError(f"'{key}' not found in SimpleResource")
-                    
-                    def __setitem__(self, key, value):
-                        # Allow item assignment for directory browser
-                        # Store in a dict-like structure
-                        if not hasattr(self, '_dict_data'):
-                            self._dict_data = {}
-                        self._dict_data[key] = value
-                    
-                    def get(self, key, default=None):
-                        # Dict-like get() method for directory browser
-                        try:
-                            return self.__getitem__(key)
-                        except KeyError:
-                            return default
-                    
-                    def __contains__(self, key):
-                        # Support 'in' operator
-                        return key in ["display_name", "href", "is_collection", "is_directory", "size", "content_length", "modified", "last_modified", "str_modified"]
-                    
-                    # Make it fully dict-like for directory browser
-                    def __getitem__(self, key):
-                        # Support dict-like access
-                        if key == "display_name":
-                            return self.get_display_name()
-                        elif key == "href":
-                            return self.get_href()
-                        elif key == "is_collection":
-                            return self.is_collection()
-                        elif key == "is_directory":
-                            return self._is_dir
-                        elif key == "path":
-                            return self._path
-                        elif key == "size":
-                            return self._size
-                        elif key == "modified":
-                            return self._modified
-                        elif key == "last_modified":
-                            return self.get_last_modified()
-                        elif key == "content_length":
-                            return self.get_content_length()
-                        elif key == "str_modified":
-                            from datetime import datetime
-                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
-                        else:
-                            raise KeyError(f"'{key}' not found in SimpleResource")
-                    
-                    def __setitem__(self, key, value):
-                        # Support dict-like assignment (directory browser writes to entries)
-                        if key == "str_modified":
-                            # Allow setting str_modified for directory browser
-                            pass  # Ignore - we compute it from _modified
-                        elif key == "display_name":
-                            pass  # Read-only
-                        elif key == "href":
-                            pass  # Read-only
-                        else:
-                            # Store in a dict for unknown keys
-                            if not hasattr(self, '_extra_attrs'):
-                                self._extra_attrs = {}
-                            self._extra_attrs[key] = value
-                    
-                    def get(self, key, default=None):
-                        # Dict-like get() method
-                        try:
-                            return self[key]
-                        except KeyError:
-                            return default
-                    
-                    def __contains__(self, key):
-                        # Support 'in' operator
-                        return key in ["display_name", "href", "is_collection", "is_directory", "path", "size", "modified", "last_modified", "content_length", "str_modified"]
-                    
-                    # Make it fully dict-like for directory browser
-                    def __getitem__(self, key):
-                        # Allow dict-like access for directory browser
-                        if key == "display_name":
-                            return self.get_display_name()
-                        elif key == "path" or key == "href":
-                            return self._path
-                        elif key == "is_directory" or key == "is_collection":
-                            return self._is_dir
-                        elif key == "size" or key == "content_length":
-                            return self._size if not self._is_dir else 0
-                        elif key == "modified" or key == "last_modified":
-                            return self._modified
-                        elif key == "str_modified":
-                            from datetime import datetime
-                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT') if isinstance(self._modified, (int, float)) else ""
-                        else:
-                            raise KeyError(f"'{key}' not found in SimpleResource")
-                    
-                    def __setitem__(self, key, value):
-                        # Allow dict-like assignment for directory browser
-                        # Store in a dict-like storage
-                        if not hasattr(self, '_dict_storage'):
-                            self._dict_storage = {}
-                        self._dict_storage[key] = value
-                    
-                    def get(self, key, default=None):
-                        # Dict-like .get() method for directory browser
-                        try:
-                            return self[key]
-                        except KeyError:
-                            return default
-                    
-                    def __contains__(self, key):
-                        # Support 'in' operator
-                        return key in ["display_name", "path", "href", "is_directory", "is_collection", "size", "content_length", "modified", "last_modified", "str_modified"]
-                    
-                    def get(self, key, default=None):
-                        # Dict-like get() method for directory browser compatibility
-                        try:
-                            return self.__getitem__(key)
-                        except KeyError:
-                            return default
-                    
-                    def get_directory_info(self):
-                        # Directory browser expects this method to return a dict-like structure
-                        return {
-                            "display_name": self.get_display_name(),
-                            "path": self._path,
+                            "href": self.get_href(),
+                            "is_collection": self.is_collection(),
                             "is_directory": self._is_dir,
-                            "size": self._size,
-                            "modified": self._modified
+                            "content_length": self.get_content_length(),
+                            "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT') if isinstance(self._modified, (int, float)) else "",
                         }
-                    
-                    # Make it subscriptable for directory browser compatibility
-                    def __getitem__(self, key):
-                        # Allow dict-like access for directory browser
-                        if key == "display_name":
-                            return self.get_display_name()
-                        elif key == "path":
-                            return self._path
-                        elif key == "is_directory":
-                            return self._is_dir
-                        elif key == "size":
-                            return self._size
-                        elif key == "modified":
-                            return self._modified
-                        else:
-                            raise KeyError(f"'{key}' not found in SimpleResource")
-                    
-                    def __contains__(self, key):
-                        # Support 'in' operator
-                        return key in ["display_name", "path", "is_directory", "size", "modified"]
-                    
-                    def get_directory_info(self):
-                        # Return directory info as dict for dir_browser - wsgidav's directory browser expects this
-                        from datetime import datetime
-                        return {
-                            "display_name": self._path.split('/')[-1] or self._path,
-                            "href": self._path,
-                            "is_collection": self._is_dir,
-                            "content_length": self._size if not self._is_dir else 0,
-                            "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT'),
-                        }
-                    
-                    def get_directory_info(self):
-                        # Return directory info as list of dicts for dir_browser
-                        # Each dict should have 'display_name', 'href', 'is_collection', etc.
-                        return []
-                    
-                    def get_href(self):
-                        # Return the href (path) for this resource
-                        return self._path
                 
                 resource = SimpleResource(full_path, is_directory, size, modified_ts)
                 webdav_resources.append(resource)
+            
+            logger.info(f"[WebDAV] Created {len(webdav_resources)} SimpleResource objects from {len(items)} storage items")
+            return webdav_resources
             
             logger.info(f"[WebDAV] Proxied list from storage server: {len(webdav_resources)} items for {username}/{path}")
             if len(webdav_resources) == 0:
