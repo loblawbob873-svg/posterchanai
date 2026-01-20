@@ -784,8 +784,9 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                                 event_date = None
                                             
                                             # Check if event date is in the requested week range
-                                            range_start_date = time_range[0].date()
-                                            range_end_date = time_range[1].date()
+                                            # Use original dates (before expansion) for accurate comparison
+                                            range_start_date = original_start_dt.date() if original_start_dt else time_range[0].date()
+                                            range_end_date = original_end_dt.date() if original_end_dt else time_range[1].date()
                                             in_week_range = event_date and (range_start_date <= event_date <= range_end_date)
                                             
                                             # Log if it's a Monday event, in the week range, or if we've filtered few events
