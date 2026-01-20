@@ -108,6 +108,31 @@ async def _get_next_image_server(servers: List[str]) -> str:
         return server
 
 
+def sanitize_server_url(url: str) -> str:
+    """Remove emojis and invalid characters from server URL"""
+    if not url:
+        return url
+    import re
+    # Remove emojis and other non-ASCII characters
+    # Keep only ASCII printable characters, forward slashes, colons, and URL-encoded sequences (%XX)
+    parts = []
+    i = 0
+    while i < len(url):
+        if url[i] == '%' and i + 2 < len(url) and url[i+1:i+3].isalnum():
+            # Preserve URL-encoded sequences
+            parts.append(url[i:i+3])
+            i += 3
+        elif ord(url[i]) < 128 and (url[i].isprintable() or url[i] in '/:.-'):
+            # Keep ASCII printable characters, forward slashes, colons, dots, and hyphens
+            parts.append(url[i])
+            i += 1
+        else:
+            # Skip emojis and other non-ASCII characters
+            i += 1
+    sanitized = ''.join(parts)
+    return sanitized.strip()
+
+
 def parse_image_server_urls(urls_string: str, exclude_self: bool = False, current_port: int = 3051) -> List[str]:
     """Parse comma-separated server URLs into a list.
 
@@ -140,6 +165,16 @@ def parse_image_server_urls(urls_string: str, exclude_self: bool = False, curren
     for url in urls_string.split(','):
         url = url.strip().rstrip('/')
         if not url:
+            continue
+
+        # Sanitize URL to remove emojis and invalid characters
+        sanitized_url = sanitize_server_url(url)
+        if sanitized_url != url:
+            logger.warning(f"[IMAGE LOAD BALANCER] Sanitized server URL (removed invalid characters): {url} -> {sanitized_url}")
+            url = sanitized_url
+        
+        if not url:
+            logger.warning(f"[IMAGE LOAD BALANCER] Skipping empty URL after sanitization")
             continue
 
         if not (url.startswith('http://') or url.startswith('https://')):
