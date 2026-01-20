@@ -408,18 +408,33 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     modified_dt = datetime.now()
                 
                 # Create a virtual resource object that wsgidav can use
-                # We'll use the parent class's method to create proper resource objects
-                # But since we're proxying, we need to create them manually
-                if is_directory:
-                    resource = DAVCollection(full_path, environ=None)
-                else:
-                    resource = DAVNonCollection(full_path, environ=None)
+                # wsgidav expects ResourceInfo objects with specific methods
+                # Let's use the parent class to create proper resources by creating virtual files
+                # OR we can create a custom ResourceInfo-like object
+                # Actually, let's check what the parent class returns and mimic that
+                # For now, let's try using the parent's _locate_file_path and creating resources through it
+                # But since files don't exist locally, we need a different approach
                 
-                # Set properties
-                resource.set_last_modified(modified_dt)
-                if not is_directory:
-                    resource.set_content_length(size)
+                # Create a ResourceInfo-like object that wsgidav expects
+                # wsgidav's FilesystemProvider returns objects with get_last_modified(), etc.
+                # Let's create a simple object that implements the required interface
+                class VirtualResourceInfo:
+                    def __init__(self, path, is_dir, size, modified):
+                        self.path = path
+                        self.is_dir = is_dir
+                        self.size = size
+                        self.modified = modified
+                    
+                    def get_last_modified(self):
+                        return self.modified
+                    
+                    def get_content_length(self):
+                        return self.size if not self.is_dir else 0
+                    
+                    def is_collection(self):
+                        return self.is_dir
                 
+                resource = VirtualResourceInfo(full_path, is_directory, size, modified_dt)
                 webdav_resources.append(resource)
             
             logger.info(f"[WebDAV] Proxied list from storage server: {len(webdav_resources)} items for {username}/{path}")
