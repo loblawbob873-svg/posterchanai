@@ -1188,21 +1188,35 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
         if success:
             logger.info(f"[CalDAV] ✓ Deleted event {event_uid} from calendar {cal_name} for user {user.username}")
             
-            # Immediately invalidate sync-token state for this calendar
+            # Update sync-token state to remove this event UID
             # This ensures iPhone will detect the deletion on next sync-collection request
             from app.models import CalDAVSyncToken
             import json
             
-            # Delete all sync-token records for this calendar
-            # This forces a full sync on next request, which will properly report the deletion
-            deleted_tokens = db.query(CalDAVSyncToken).filter(
+            # Update all sync-token records for this calendar to remove the deleted event UID
+            sync_tokens = db.query(CalDAVSyncToken).filter(
                 CalDAVSyncToken.user_id == user.id,
                 CalDAVSyncToken.calendar_name == cal_name
-            ).delete()
-            db.commit()
+            ).all()
             
-            if deleted_tokens > 0:
-                logger.info(f"[CalDAV] Invalidated {deleted_tokens} sync-token(s) for calendar {cal_name} to ensure deletion is detected")
+            updated_count = 0
+            for token_record in sync_tokens:
+                try:
+                    event_uids = set(json.loads(token_record.event_uids))
+                    if event_uid in event_uids:
+                        event_uids.remove(event_uid)
+                        token_record.event_uids = json.dumps(list(event_uids))
+                        updated_count += 1
+                        logger.debug(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}...")
+                except Exception as e:
+                    logger.warning(f"[CalDAV] Error updating sync-token {token_record.id}: {e}")
+            
+            if updated_count > 0:
+                db.commit()
+                logger.info(f"[CalDAV] Updated {updated_count} sync-token(s) for calendar {cal_name} to reflect deletion of event {event_uid}")
+            else:
+                # No existing sync-tokens, that's fine - next sync will create a new one
+                logger.debug(f"[CalDAV] No existing sync-tokens to update for calendar {cal_name}")
             
             return Response(content="", status_code=204)
         else:
