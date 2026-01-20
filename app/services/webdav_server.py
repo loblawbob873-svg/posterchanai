@@ -190,16 +190,15 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
     
     provider = QuotaFilesystemProvider(root_path, db)
     
+    # Use simple_dc for authentication - it accepts all users
+    # We'll handle authentication at the FastAPI level via middleware
     config = {
         "provider_mapping": {
             "/": provider,  # Handle all paths from root (after mount prefix is stripped)
         },
-        "http_authenticator": {
-            "domain_controller": PosterchanaiDomainController(db),
-        },
         "simple_dc": {
             "user_mapping": {
-                "*": True,  # Accept all authenticated users
+                "*": True,  # Accept all users (authentication handled by FastAPI)
             }
         },
         "verbose": 1,
