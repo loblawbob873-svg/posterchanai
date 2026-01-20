@@ -565,6 +565,92 @@ from plugins import load_enabled_plugins
 load_enabled_plugins(app)
 
 
+# CalDAV/CardDAV proxy routes - forward requests to standalone CalDAV/CardDAV servers
+# These routes are needed because nginx may route all requests to port 3051
+@app.api_route("/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCALENDAR", "MKCOL", "MOVE", "COPY", "OPTIONS"])
+async def proxy_caldav(request: Request, path: str, db: Session = Depends(get_db)):
+    """Proxy /caldav/... requests to CalDAV server on port 8081."""
+    from fastapi.responses import Response
+    import httpx
+    from app.database import safe_query_settings
+    dav_settings = safe_query_settings(db)
+    caldav_port = int(dav_settings.get("caldav_port", "8081"))
+    caldav_url = f"http://127.0.0.1:{caldav_port}/caldav/{path}"
+    if request.url.query:
+        caldav_url += f"?{request.url.query}"
+
+    logging.debug(f"[CalDAV Proxy] {request.method} /caldav/{path} -> {caldav_url}")
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            headers = dict(request.headers)
+            headers.pop("host", None)
+            body_content = await request.body()
+            response = await client.request(
+                method=request.method,
+                url=caldav_url,
+                headers=headers,
+                content=body_content,
+                follow_redirects=False
+            )
+            # Copy response headers but filter out hop-by-hop headers
+            resp_headers = {}
+            for k, v in response.headers.items():
+                if k.lower() not in ('transfer-encoding', 'connection', 'keep-alive'):
+                    resp_headers[k] = v
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=resp_headers,
+                media_type=response.headers.get('content-type')
+            )
+    except Exception as e:
+        logging.error(f"[CalDAV Proxy] Error proxying to CalDAV server: {e}")
+        return Response(content=f"CalDAV server error: {e}", status_code=502)
+
+
+@app.api_route("/carddav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL", "MOVE", "COPY", "OPTIONS"])
+async def proxy_carddav(request: Request, path: str, db: Session = Depends(get_db)):
+    """Proxy /carddav/... requests to CardDAV server on port 8082."""
+    from fastapi.responses import Response
+    import httpx
+    from app.database import safe_query_settings
+    dav_settings = safe_query_settings(db)
+    carddav_port = int(dav_settings.get("carddav_port", "8082"))
+    carddav_url = f"http://127.0.0.1:{carddav_port}/carddav/{path}"
+    if request.url.query:
+        carddav_url += f"?{request.url.query}"
+
+    logging.debug(f"[CardDAV Proxy] {request.method} /carddav/{path} -> {carddav_url}")
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            headers = dict(request.headers)
+            headers.pop("host", None)
+            body_content = await request.body()
+            response = await client.request(
+                method=request.method,
+                url=carddav_url,
+                headers=headers,
+                content=body_content,
+                follow_redirects=False
+            )
+            # Copy response headers but filter out hop-by-hop headers
+            resp_headers = {}
+            for k, v in response.headers.items():
+                if k.lower() not in ('transfer-encoding', 'connection', 'keep-alive'):
+                    resp_headers[k] = v
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=resp_headers,
+                media_type=response.headers.get('content-type')
+            )
+    except Exception as e:
+        logging.error(f"[CardDAV Proxy] Error proxying to CardDAV server: {e}")
+        return Response(content=f"CardDAV server error: {e}", status_code=502)
+
+
 @app.on_event("startup")
 async def startup():
     try:
@@ -824,6 +910,17 @@ async def startup():
                             # Strip /webdav prefix from PATH_INFO if present (handle multiple occurrences)
                             path_info = environ.get('PATH_INFO', '')
                             original_path = path_info
+
+                            # CRITICAL: Don't process /webdav/caldav/ or /webdav/carddav/ paths here
+                            # These should be handled by the explicit proxy routes defined above
+                            # Return 404 so FastAPI can try other routes
+                            if path_info.startswith('/caldav') or path_info.startswith('/carddav'):
+                                # This request was already stripped and is for CalDAV/CardDAV
+                                # Return 404 to let FastAPI handle it with the proxy routes
+                                logging.warning(f"[WebDAV Middleware] Rejecting CalDAV/CardDAV path: {path_info}")
+                                start_response('404 Not Found', [('Content-Type', 'text/plain')])
+                                return [b'CalDAV/CardDAV requests should use /caldav/ or /carddav/ endpoints directly']
+
                             # Remove all /webdav prefixes
                             while path_info.startswith('/webdav'):
                                 path_info = path_info[7:]  # Remove '/webdav'
