@@ -303,7 +303,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
         
         # Only use local filesystem if remote storage is NOT configured
         logger.info(f"[WebDAV] Using local filesystem (no remote storage configured)")
-        return super().get_resource_list(normalized_path, depth, environ)
+        result = super().get_resource_list(normalized_path, depth, environ)
+        logger.error(f"[WebDAV] ⚠️ Parent get_resource_list returned: type={type(result)}, len={len(result) if hasattr(result, '__len__') else 'N/A'}")
+        if result and len(result) > 0:
+            logger.error(f"[WebDAV] ⚠️ First item type: {type(result[0])}, methods: {[m for m in dir(result[0]) if 'get' in m.lower() or 'last' in m.lower()]}")
+        return result
     
     def get_resource_instances(self, path: str, environ: dict = None):
         """Override to handle resource instances - wsgidav may call this instead of get_resource_list."""
