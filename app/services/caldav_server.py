@@ -6,6 +6,7 @@ Full implementation supporting all calendar and todo commands.
 import logging
 import threading
 import xml.etree.ElementTree as ET
+import html
 from pathlib import Path
 from typing import Optional, List, Dict
 from datetime import datetime, timedelta
