@@ -274,14 +274,19 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 elif rel_path == username:
                     rel_path = ''
                 
-                # Proxy to storage server
+                # Proxy to storage server - this is the ONLY way when remote storage is configured
                 try:
-                    return self._proxy_list_files(username, rel_path)
+                    result = self._proxy_list_files(username, rel_path)
+                    logger.info(f"[WebDAV] Proxied list returned {len(result)} items for {username}/{rel_path}")
+                    if len(result) == 0:
+                        logger.warning(f"[WebDAV] Proxy returned 0 items - check if storage_server_url ({self.storage_server_url}) is correct")
+                    return result
                 except Exception as e:
-                    logger.warning(f"[WebDAV] Failed to proxy list to storage server: {e}, falling back to local")
-                    # Fall through to local listing
+                    logger.error(f"[WebDAV] Failed to proxy list to storage server: {e}", exc_info=True)
+                    # Don't fall back to local - raise the error
+                    raise
         
-        # Use parent method to list local files (with normalized path)
+        # Only use local filesystem if remote storage is NOT configured
         return super().get_resource_list(normalized_path, depth, environ)
     
     def _proxy_list_files(self, username: str, path: str):
