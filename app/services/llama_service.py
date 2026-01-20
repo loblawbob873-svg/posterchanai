@@ -308,31 +308,50 @@ class LlamaService:
                         raise
                 except Exception as e:
                     error_msg = str(e)
-                    logger.error(f"Failed to load model: {error_msg}")
+                    error_type = type(e).__name__
+                    logger.error(f"Failed to load model (attempting context size {attempt_ctx}): {error_type}: {error_msg}")
                     logger.error(f"  Model path: {resolved_path}")
                     logger.error(f"  File exists: {model_path_obj.exists()}")
                     logger.error(f"  File readable: {os.access(self.model_path, os.R_OK)}")
                     logger.error(f"  File size: {file_size:,} bytes")
-                    logger.error(f"  Context size: {self.num_ctx}")
+                    logger.error(f"  Context size: {attempt_ctx} (configured: {self.num_ctx})")
                     logger.error(f"  GPU layers: {gpu_layers}")
                     
-                    # Check for common issues
-                    if "load model from file" in error_msg.lower() or "failed to load" in error_msg.lower():
+                    # Check if this is a memory-related error that might be fixed by reducing GPU layers
+                    is_memory_error = (
+                        "memory" in error_msg.lower() or 
+                        "allocation" in error_msg.lower() or
+                        "cuda" in error_msg.lower() or
+                        "out of memory" in error_msg.lower() or
+                        "load model from file" in error_msg.lower()
+                    )
+                    
+                    if is_memory_error and attempt_ctx == context_sizes_to_try[-1]:
+                        # Last attempt failed - might be GPU layers issue, not just context
+                        logger.error("All context size attempts failed. This might be a GPU memory issue.")
                         logger.error("Possible causes:")
-                        logger.error("  1. Model file is corrupted or incomplete")
-                        logger.error("  2. Insufficient GPU/system memory")
-                        logger.error("  3. Model format incompatible with llama-cpp-python version")
-                        logger.error("  4. File permissions issue (check file is readable)")
-                        logger.error("  5. Context size too large for available memory")
+                        logger.error("  1. GPU layers (llm_gpu_layers) too high - model weights don't fit in VRAM")
+                        logger.error("  2. Context size still too large even after reduction")
+                        logger.error("  3. Model file corrupted or incompatible")
+                        logger.error("Try:")
+                        logger.error(f"  - Reducing GPU layers: Set llm_gpu_layers to 20-30 (currently: {gpu_layers})")
+                        logger.error(f"  - Using CPU mode: Set llm_cpu_mode to true")
+                        logger.error(f"  - Check GPU memory: nvidia-smi")
+                        logger.error(f"  - Verify model file: ls -lh {resolved_path}")
+                        raise RuntimeError(f"Failed to load model after trying all context sizes. Last error: {error_type}: {error_msg}. Try reducing GPU layers or using CPU mode.")
+                    elif is_memory_error:
+                        # Not the last attempt, try next context size
+                        logger.warning(f"  Memory-related error with context size {attempt_ctx}, trying smaller size...")
+                        continue
+                    else:
+                        # Non-memory error - likely file corruption or format issue
+                        logger.error("This appears to be a non-memory error (file corruption or format issue)")
                         logger.error("Try:")
                         logger.error("  - Verifying model file integrity (re-download if needed)")
-                        logger.error("  - Reducing context size (ollama_num_ctx)")
-                        logger.error("  - Reducing GPU layers (llm_gpu_layers)")
-                        logger.error("  - Using CPU mode temporarily (llm_cpu_mode=true)")
+                        logger.error("  - Checking file format compatibility with llama-cpp-python version")
                         logger.error(f"  - Checking file: ls -lh {resolved_path}")
                         logger.error(f"  - Testing file: file {resolved_path}")
-                    
-                    raise
+                        raise
             self._model_path = self.model_path
             logger.info("Model loaded successfully")
 
