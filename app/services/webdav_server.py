@@ -397,7 +397,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             def get_content_type(self):
                                 return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
                             
-                            def get_descendants(self, depth=1):
+                            def get_descendants(self, depth=1, add_self=False):
                                 # Return empty list - children are handled by get_resource_instances
                                 return []
                             
@@ -454,7 +454,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_content_type(self):
                         return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
                     
-                    def get_descendants(self, depth=1):
+                    def get_descendants(self, depth=1, add_self=False):
                         return []
                     
                     # Add any other methods wsgidav might call
