@@ -103,8 +103,20 @@ class WebDAVClient:
             
             # Extract info
             resourcetype = prop.find('D:resourcetype', ns)
-            collection = resourcetype.find('D:collection', ns) if resourcetype is not None else None
-            isdir = collection is not None
+            isdir = False
+            if resourcetype is not None:
+                # Check for collection child element
+                collection = resourcetype.find('D:collection', ns)
+                if collection is not None:
+                    isdir = True
+                else:
+                    # Check if resourcetype text contains collection (HTML-encoded XML)
+                    resourcetype_text = resourcetype.text or ''
+                    if 'collection' in resourcetype_text.lower():
+                        isdir = True
+                    # Also check if there are any child elements (collection tag)
+                    if len(list(resourcetype)) > 0:
+                        isdir = True
             
             contentlength = prop.find('D:getcontentlength', ns)
             size = int(contentlength.text) if contentlength is not None and contentlength.text else 0
