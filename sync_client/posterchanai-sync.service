@@ -1,0 +1,15 @@
+[Unit]
+Description=PosterchanAI Sync Client
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+ExecStart=%h/.local/bin/posterchanai-sync
+Restart=on-failure
+RestartSec=5
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=%h/.Xauthority"
+
+[Install]
+WantedBy=default.target
