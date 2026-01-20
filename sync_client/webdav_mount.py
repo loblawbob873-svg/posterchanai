@@ -109,8 +109,9 @@ class WebDAVClient:
                             response_elem = elem
                             break
                 
-                # If no matching response found, check if any response indicates a directory
+                # If no matching response found, check if any response indicates the parent is a directory
                 # (The server might return a child item, but if it has collection tag, the parent is a directory)
+                parent_is_dir = False
                 if response_elem is None:
                     for elem in root.findall('.//D:response', ns):
                         href = elem.find('D:href', ns)
@@ -130,9 +131,9 @@ class WebDAVClient:
                                                 import html
                                                 decoded = html.unescape(resourcetype_text.strip())
                                                 if 'collection' in decoded.lower():
-                                                    # This is a directory, so the parent (requested path) is also a directory
-                                                    # Create a synthetic response indicating the parent is a directory
-                                                    response_elem = elem
+                                                    # This child is a directory, so the parent (requested path) is also a directory
+                                                    parent_is_dir = True
+                                                    response_elem = elem  # Use this response for other properties
                                                     break
                 
                 # If still no match, use the first response
@@ -158,7 +159,7 @@ class WebDAVClient:
                 
                 # Extract info
                 resourcetype = prop.find('D:resourcetype', ns)
-                isdir = False
+                isdir = parent_is_dir  # Start with parent_is_dir (set above if child is a directory)
                 if resourcetype is not None:
                     # Check for collection child element (proper XML structure)
                     collection = resourcetype.find('D:collection', ns)
@@ -178,15 +179,6 @@ class WebDAVClient:
                         # Also check if there are any child elements (collection tag)
                         if len(list(resourcetype)) > 0:
                             isdir = True
-                
-                # If the response is a child of the requested path and is a directory,
-                # then the requested path itself is also a directory
-                if not isdir and href is not None:
-                    href_path = href.text.rstrip('/').lstrip('/')
-                    if requested_path in href_path and href_path.startswith(requested_path + '/'):
-                        # This is a child item - if we detected it as a directory above, the parent is also a directory
-                        # But we already checked that above, so if we're here, it's not a directory
-                        pass
                 
                 # Final fallback: if contentlength is 0 and we can list it, it's likely a directory
                 if not isdir:
