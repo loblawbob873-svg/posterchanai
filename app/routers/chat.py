@@ -448,11 +448,25 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                 if data.get("type") == "message":
                     manager.set_stop(user.id, False)  # Reset for new message
                     content = data.get("content", "").strip()
-                    image_data = data.get("image_data")  # base64 image
+                    image_data = data.get("image_data")  # base64 image (single, for backward compat)
+                    images = data.get("images", [])  # Array of {base64, filename}
                     image_path = data.get("image_path")  # path to stored image (for editing)
-                    file_content = data.get("file_content")  # text file content
-                    pdf_data = data.get("pdf_data")  # base64 PDF
-                    document_data = data.get("document_data")  # base64 Office document
+                    file_content = data.get("file_content")  # text file content (single, for backward compat)
+                    files = data.get("files", [])  # Array of {content, filename}
+                    pdf_data = data.get("pdf_data")  # base64 PDF (single, for backward compat)
+                    pdfs = data.get("pdfs", [])  # Array of {base64, filename}
+                    document_data = data.get("document_data")  # base64 Office document (single, for backward compat)
+                    documents = data.get("documents", [])  # Array of {base64, filename, type}
+                    
+                    # If arrays are provided, use them; otherwise fall back to single values for backward compat
+                    if images and not image_data:
+                        image_data = images[0].get("base64") if images else None
+                    if pdfs and not pdf_data:
+                        pdf_data = pdfs[0].get("base64") if pdfs else None
+                    if documents and not document_data:
+                        document_data = documents[0].get("base64") if documents else None
+                    if files and not file_content:
+                        file_content = files[0].get("content") if files else None
 
                     # If image_path provided but no image_data, load from disk
                     if image_path and not image_data:
@@ -546,14 +560,39 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             def should_stop_command():
                                 return manager.should_stop(user.id, conn_id)
 
-                            # Prepare attachments for mail command
+                            # Prepare attachments for mail command - support multiple attachments
                             mail_attachments = None
                             if command == "mail":
                                 import base64
                                 mail_attachments = []
 
-                                # Handle image attachment
-                                if image_data:
+                                # Handle multiple image attachments
+                                if images:
+                                    for img in images:
+                                        try:
+                                            img_base64 = img.get("base64") or img  # Support both object and string
+                                            if isinstance(img, dict):
+                                                img_base64 = img.get("base64")
+                                            else:
+                                                img_base64 = img
+                                            img_bytes = base64.b64decode(img_base64)
+                                            filename = img.get("filename", "image") if isinstance(img, dict) else "image"
+                                            content_type = "image/png"
+                                            if img_base64.startswith("/9j/"):
+                                                content_type = "image/jpeg"
+                                                if not filename.endswith(('.jpg', '.jpeg')):
+                                                    filename = f"{filename}.jpg" if '.' not in filename else filename.rsplit('.', 1)[0] + '.jpg'
+                                            elif img_base64.startswith("R0lGOD"):
+                                                content_type = "image/gif"
+                                                if not filename.endswith('.gif'):
+                                                    filename = f"{filename}.gif" if '.' not in filename else filename.rsplit('.', 1)[0] + '.gif'
+                                            else:
+                                                if not filename.endswith('.png'):
+                                                    filename = f"{filename}.png" if '.' not in filename else filename.rsplit('.', 1)[0] + '.png'
+                                            mail_attachments.append((filename, img_bytes, content_type))
+                                        except Exception as att_err:
+                                            logger.warning(f"Failed to process image attachment: {att_err}")
+                                elif image_data:  # Backward compat: single image
                                     try:
                                         img_bytes = base64.b64decode(image_data)
                                         content_type = "image/png"
@@ -566,16 +605,49 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                     except Exception as att_err:
                                         logger.warning(f"Failed to process image attachment: {att_err}")
 
-                                # Handle PDF attachment
-                                if pdf_data:
+                                # Handle multiple PDF attachments
+                                if pdfs:
+                                    for pdf in pdfs:
+                                        try:
+                                            pdf_base64 = pdf.get("base64") if isinstance(pdf, dict) else pdf
+                                            pdf_bytes = base64.b64decode(pdf_base64)
+                                            filename = pdf.get("filename", "document.pdf") if isinstance(pdf, dict) else "document.pdf"
+                                            mail_attachments.append((filename, pdf_bytes, "application/pdf"))
+                                        except Exception as att_err:
+                                            logger.warning(f"Failed to process PDF attachment: {att_err}")
+                                elif pdf_data:  # Backward compat: single PDF
                                     try:
                                         pdf_bytes = base64.b64decode(pdf_data)
                                         mail_attachments.append(("document.pdf", pdf_bytes, "application/pdf"))
                                     except Exception as att_err:
                                         logger.warning(f"Failed to process PDF attachment: {att_err}")
 
-                                # Handle Office document attachment
-                                if document_data:
+                                # Handle multiple Office document attachments
+                                if documents:
+                                    for doc in documents:
+                                        try:
+                                            doc_base64 = doc.get("base64") if isinstance(doc, dict) else doc
+                                            doc_bytes = base64.b64decode(doc_base64)
+                                            doc_type = doc.get("type", "docx") if isinstance(doc, dict) else "docx"
+                                            filename = doc.get("filename", "document") if isinstance(doc, dict) else "document"
+                                            # Try to guess type from content
+                                            content_type = "application/octet-stream"
+                                            if doc_bytes[:4] == b'PK\x03\x04':  # ZIP-based (docx, xlsx, pptx)
+                                                if b'word/' in doc_bytes[:2000]:
+                                                    content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                                    if not filename.endswith('.docx'):
+                                                        filename = f"{filename}.docx" if '.' not in filename else filename.rsplit('.', 1)[0] + '.docx'
+                                                elif b'xl/' in doc_bytes[:2000]:
+                                                    content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                                    if not filename.endswith('.xlsx'):
+                                                        filename = f"{filename}.xlsx" if '.' not in filename else filename.rsplit('.', 1)[0] + '.xlsx'
+                                                else:
+                                                    if not filename.endswith('.pptx'):
+                                                        filename = f"{filename}.pptx" if '.' not in filename else filename.rsplit('.', 1)[0] + '.pptx'
+                                            mail_attachments.append((filename, doc_bytes, content_type))
+                                        except Exception as att_err:
+                                            logger.warning(f"Failed to process document attachment: {att_err}")
+                                elif document_data:  # Backward compat: single document
                                     try:
                                         doc_bytes = base64.b64decode(document_data)
                                         # Try to guess type from content
@@ -594,8 +666,19 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                     except Exception as att_err:
                                         logger.warning(f"Failed to process document attachment: {att_err}")
 
-                                # Handle text file as attachment (only if no PDF/document was sent)
-                                if file_content and not pdf_data and not document_data:
+                                # Handle multiple text file attachments (only if no PDF/document was sent)
+                                if files and not pdfs and not documents:
+                                    for file_item in files:
+                                        try:
+                                            file_content_item = file_item.get("content") if isinstance(file_item, dict) else file_item
+                                            filename = file_item.get("filename", "attachment.txt") if isinstance(file_item, dict) else "attachment.txt"
+                                            # Only attach raw text files, not extracted content
+                                            if not file_content_item.startswith("[PDF Document]") and not file_content_item.startswith("[Office Document]"):
+                                                if len(file_content_item) < 50000:  # Reasonable file size
+                                                    mail_attachments.append((filename, file_content_item.encode("utf-8"), "text/plain"))
+                                        except Exception as att_err:
+                                            logger.warning(f"Failed to process text file attachment: {att_err}")
+                                elif file_content and not pdf_data and not document_data:  # Backward compat: single file
                                     # Only attach raw text files, not extracted content
                                     if not file_content.startswith("[PDF Document]") and not file_content.startswith("[Office Document]"):
                                         if len(file_content) < 50000:  # Reasonable file size

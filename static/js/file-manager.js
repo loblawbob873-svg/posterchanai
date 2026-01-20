@@ -849,8 +849,8 @@ class FileManager {
         this.updateSelectionUI();
     }
     
-    async emailFile(filePath, fileName) {
-        console.log('FileManager: emailFile called', { filePath, fileName });
+    async emailFile(filePath, fileName, apiUrl = null) {
+        console.log('FileManager: emailFile called', { filePath, fileName, apiUrl });
         try {
             // Show email modal
             const modal = document.getElementById('fileEmailModal');
@@ -860,24 +860,34 @@ class FileManager {
                 return;
             }
             
-            const emailFilePathInput = document.getElementById('emailFilePath');
-            const emailFileNameSpan = document.getElementById('emailFileName');
+            const emailFilesList = document.getElementById('emailFilesList');
             const emailToInput = document.getElementById('emailTo');
             const emailSubjectInput = document.getElementById('emailSubject');
             const emailBodyInput = document.getElementById('emailBody');
             
-            if (!emailFilePathInput || !emailFileNameSpan || !emailToInput || !emailSubjectInput || !emailBodyInput) {
+            if (!emailFilesList || !emailToInput || !emailSubjectInput || !emailBodyInput) {
                 console.error('FileManager: Required email modal elements not found!');
                 alert('Email form elements not found. Please refresh the page.');
                 return;
             }
             
-            emailFilePathInput.value = filePath || '';
-            emailFilePathInput.dataset.apiUrl = ''; // Clear any previous API URL
-            emailFileNameSpan.textContent = fileName || 'Unknown file';
+            // Add file to the list (support multiple files)
+            const fileItem = document.createElement('div');
+            fileItem.className = 'email-file-item';
+            fileItem.dataset.filePath = filePath || '';
+            fileItem.dataset.fileName = fileName || 'Unknown file';
+            if (apiUrl) {
+                fileItem.dataset.apiUrl = apiUrl;
+            }
+            const escapedName = this.escapeHtml ? this.escapeHtml(fileName || 'Unknown file') : (fileName || 'Unknown file').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            fileItem.innerHTML = `
+                <span class="email-file-name">${escapedName}</span>
+                <button class="email-file-remove" onclick="this.parentElement.remove(); if(window.fileManager && window.fileManager.updateEmailSubjectAndBody) window.fileManager.updateEmailSubjectAndBody();" title="Remove">✕</button>
+            `;
+            emailFilesList.appendChild(fileItem);
+            
             emailToInput.value = '';
-            emailSubjectInput.value = `Shared file: ${fileName || 'file'}`;
-            emailBodyInput.value = `Please find the attached file: ${fileName || 'file'}`;
+            updateEmailSubjectAndBody();
             
             // Load contact emails for autocomplete
             await this.loadContactEmailsForAutocomplete();
@@ -890,6 +900,31 @@ class FileManager {
         } catch (error) {
             console.error('FileManager: Error in emailFile:', error);
             alert('Error opening email dialog: ' + (error.message || 'Unknown error'));
+        }
+    }
+    
+    // Helper function to update email subject and body based on selected files
+    updateEmailSubjectAndBody() {
+        const emailFilesList = document.getElementById('emailFilesList');
+        const emailSubjectInput = document.getElementById('emailSubject');
+        const emailBodyInput = document.getElementById('emailBody');
+        
+        if (!emailFilesList || !emailSubjectInput || !emailBodyInput) return;
+        
+        const fileItems = emailFilesList.querySelectorAll('.email-file-item');
+        const fileCount = fileItems.length;
+        
+        if (fileCount === 0) {
+            emailSubjectInput.value = 'Shared files';
+            emailBodyInput.value = 'Please find the attached files.';
+        } else if (fileCount === 1) {
+            const fileName = fileItems[0].dataset.fileName || 'file';
+            emailSubjectInput.value = `Shared file: ${fileName}`;
+            emailBodyInput.value = `Please find the attached file: ${fileName}`;
+        } else {
+            emailSubjectInput.value = `Shared files (${fileCount} files)`;
+            const fileNames = Array.from(fileItems).map(item => item.dataset.fileName).join(', ');
+            emailBodyInput.value = `Please find the attached files:\n${fileNames}`;
         }
     }
     
@@ -941,19 +976,24 @@ class FileManager {
     }
     
     async sendEmail() {
-        const emailFilePathInput = document.getElementById('emailFilePath');
+        const emailFilesList = document.getElementById('emailFilesList');
         const emailToInput = document.getElementById('emailTo');
         const emailSubjectInput = document.getElementById('emailSubject');
         const emailBodyInput = document.getElementById('emailBody');
         
-        if (!emailFilePathInput || !emailToInput || !emailSubjectInput || !emailBodyInput) {
+        if (!emailFilesList || !emailToInput || !emailSubjectInput || !emailBodyInput) {
             console.error('FileManager: Required email form elements not found');
             alert('Email form error. Please refresh the page.');
             return;
         }
         
-        const filePath = emailFilePathInput.value;
-        const apiUrl = emailFilePathInput.dataset.apiUrl; // For note attachments
+        // Get all selected files
+        const fileItems = emailFilesList.querySelectorAll('.email-file-item');
+        if (fileItems.length === 0) {
+            alert('Please select at least one file to email');
+            return;
+        }
+        
         let to = emailToInput.value.trim();
         const subject = emailSubjectInput.value.trim();
         const body = emailBodyInput.value.trim();
@@ -977,19 +1017,34 @@ class FileManager {
         }
         
         try {
-            // Check if this is a note attachment (has apiUrl in data attribute)
+            // Collect file paths and URLs
+            const filePaths = [];
+            const fileUrls = [];
+            
+            fileItems.forEach(item => {
+                const filePath = item.dataset.filePath;
+                const apiUrl = item.dataset.apiUrl;
+                
+                if (apiUrl) {
+                    // For note attachments, use API URL
+                    fileUrls.push(apiUrl);
+                } else if (filePath) {
+                    // For regular files, use file path
+                    filePaths.push(filePath);
+                }
+            });
+            
             const requestBody = {
                 to: to,
-                subject: subject || 'Shared file',
-                body: body || 'Please find the attached file.'
+                subject: subject || 'Shared files',
+                body: body || 'Please find the attached files.'
             };
             
-            if (apiUrl) {
-                // For note attachments, send the API URL
-                requestBody.file_urls = [apiUrl];
-            } else {
-                // For regular files, send file paths
-                requestBody.file_paths = [filePath];
+            if (fileUrls.length > 0) {
+                requestBody.file_urls = fileUrls;
+            }
+            if (filePaths.length > 0) {
+                requestBody.file_paths = filePaths;
             }
             
             const response = await csrfFetch('/api/files/email', {
@@ -1000,9 +1055,14 @@ class FileManager {
             
             const data = await response.json();
             if (response.ok) {
-                alert('Email sent successfully!');
+                const fileCount = filePaths.length + fileUrls.length;
+                alert(`Email sent successfully with ${fileCount} file(s)!`);
                 const emailModal = document.getElementById('fileEmailModal');
-                if (emailModal) emailModal.style.display = 'none';
+                if (emailModal) {
+                    // Clear the file list
+                    emailFilesList.innerHTML = '';
+                    emailModal.style.display = 'none';
+                }
             } else {
                 alert('Error: ' + (data.detail || 'Failed to send email'));
             }

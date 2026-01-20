@@ -26,14 +26,14 @@ class ChatHandler {
         // User settings
         this.notificationEmail = null;
 
-        // Stored upload data
-        this.uploadedImage = null;  // base64 image data
-        this.uploadedFile = null;   // text file content
-        this.uploadedPDF = null;    // base64 PDF data
+        // Stored upload data - now arrays to support multiple attachments
+        this.uploadedImages = [];  // Array of {base64, filename, dataUrl}
+        this.uploadedFiles = [];   // Array of {content, filename}
+        this.uploadedPDFs = [];    // Array of {base64, filename}
+        this.uploadedDocuments = []; // Array of {base64, filename, type}
 
         // Callback for when stream ends (used by news to delete prompt)
         this.onStreamEndCallback = null;
-        this.uploadedDocument = null; // base64 office document data
 
         // Last payload for retry functionality
         this.lastPayload = null;
@@ -145,20 +145,12 @@ class ChatHandler {
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     const base64 = event.target.result.split(',')[1];
-                    this.uploadedImage = base64;
-                    this.uploadedFile = null;
-                    this.uploadedPDF = null;
-                    this.uploadedDocument = null;
-
-                    // Show preview
-                    this.imagePreview.src = event.target.result;
-                    this.imagePreview.style.display = 'block';
-                    this.filePreview.textContent = '';
-                    this.filePreview.style.display = 'none';
-                    this.uploadPreview.style.display = 'flex';
+                    const dataUrl = event.target.result;
+                    this.uploadedImages.push({ base64, filename: file.name, dataUrl });
+                    this.updateAttachmentsPreview();
                 };
                 reader.readAsDataURL(file);
-                break;  // Only handle first image
+                // Don't break - allow multiple images
             }
         }
     }
@@ -1609,85 +1601,138 @@ class ChatHandler {
     }
 
     handleFileSelect(e) {
-        const file = e.target.files[0];
-        if (!file) return;
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
 
-        const isImage = file.type.startsWith('image/');
-        const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+        // Process each file
+        files.forEach(file => {
+            const isImage = file.type.startsWith('image/');
+            const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 
-        if (isImage) {
-            // Handle image upload
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const base64 = e.target.result.split(',')[1];  // Remove data:image/...;base64, prefix
-                this.uploadedImage = base64;
-                this.uploadedFile = null;
-                this.uploadedPDF = null;
-
-                // Show preview
-                this.imagePreview.src = e.target.result;
-                this.imagePreview.style.display = 'block';
-                this.filePreview.textContent = '';
-                this.filePreview.style.display = 'none';
-                this.uploadPreview.style.display = 'flex';
-            };
-            reader.readAsDataURL(file);
-        } else if (isPDF) {
-            // Handle PDF upload - send as base64
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const base64 = e.target.result.split(',')[1];
-                this.uploadedPDF = base64;
-                this.uploadedImage = null;
-                this.uploadedFile = null;
-                this.uploadedDocument = null;
-
-                // Show preview
-                this.imagePreview.style.display = 'none';
-                this.filePreview.textContent = `📕 ${file.name} (${this.formatFileSize(file.size)})`;
-                this.filePreview.style.display = 'block';
-                this.uploadPreview.style.display = 'flex';
-            };
-            reader.readAsDataURL(file);
-        } else if (this.isOfficeFile(file.name)) {
-            // Handle Office documents - send as base64
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const base64 = e.target.result.split(',')[1];
-                this.uploadedDocument = base64;
-                this.uploadedImage = null;
-                this.uploadedFile = null;
-                this.uploadedPDF = null;
-
-                // Show preview with appropriate icon
-                const icon = file.name.endsWith('.docx') ? '📝' :
-                            file.name.endsWith('.xlsx') ? '📊' :
-                            file.name.endsWith('.pptx') ? '📽️' : '📄';
-                this.imagePreview.style.display = 'none';
-                this.filePreview.textContent = `${icon} ${file.name} (${this.formatFileSize(file.size)})`;
-                this.filePreview.style.display = 'block';
-                this.uploadPreview.style.display = 'flex';
-            };
-            reader.readAsDataURL(file);
-        } else {
-            // Handle text file upload
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                this.uploadedFile = e.target.result;
-                this.uploadedImage = null;
-                this.uploadedPDF = null;
-
-                // Show preview
-                this.imagePreview.style.display = 'none';
-                this.filePreview.textContent = `📄 ${file.name} (${this.formatFileSize(file.size)})`;
-                this.filePreview.style.display = 'block';
-                this.uploadPreview.style.display = 'flex';
-            };
-            reader.readAsText(file);
-        }
+            if (isImage) {
+                // Handle image upload
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const base64 = e.target.result.split(',')[1];
+                    const dataUrl = e.target.result;
+                    this.uploadedImages.push({ base64, filename: file.name, dataUrl });
+                    this.updateAttachmentsPreview();
+                };
+                reader.readAsDataURL(file);
+            } else if (isPDF) {
+                // Handle PDF upload - send as base64
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const base64 = e.target.result.split(',')[1];
+                    this.uploadedPDFs.push({ base64, filename: file.name });
+                    this.updateAttachmentsPreview();
+                };
+                reader.readAsDataURL(file);
+            } else if (this.isOfficeFile(file.name)) {
+                // Handle Office documents - send as base64
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const base64 = e.target.result.split(',')[1];
+                    const type = file.name.endsWith('.docx') ? 'docx' :
+                                file.name.endsWith('.xlsx') ? 'xlsx' :
+                                file.name.endsWith('.pptx') ? 'pptx' : 'docx';
+                    this.uploadedDocuments.push({ base64, filename: file.name, type });
+                    this.updateAttachmentsPreview();
+                };
+                reader.readAsDataURL(file);
+            } else {
+                // Handle text file upload
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    this.uploadedFiles.push({ content: e.target.result, filename: file.name });
+                    this.updateAttachmentsPreview();
+                };
+                reader.readAsText(file);
+            }
+        });
 
         // Clear input so same file can be selected again
         this.fileInput.value = '';
+    }
+
+    updateAttachmentsPreview() {
+        const attachmentsList = document.getElementById('attachmentsList');
+        const uploadPreview = document.getElementById('uploadPreview');
+        if (!attachmentsList || !uploadPreview) return;
+
+        const totalAttachments = this.uploadedImages.length + this.uploadedPDFs.length + 
+                                this.uploadedDocuments.length + this.uploadedFiles.length;
+
+        if (totalAttachments === 0) {
+            uploadPreview.style.display = 'none';
+            attachmentsList.innerHTML = '';
+            return;
+        }
+
+        uploadPreview.style.display = 'flex';
+        attachmentsList.innerHTML = '';
+
+        // Add images
+        this.uploadedImages.forEach((img, index) => {
+            const item = document.createElement('div');
+            item.className = 'attachment-item attachment-image';
+            item.innerHTML = `
+                <img src="${img.dataUrl}" alt="${this.escapeHtml(img.filename)}" class="attachment-thumb">
+                <span class="attachment-name">${this.escapeHtml(img.filename)}</span>
+                <button class="btn-icon attachment-remove" onclick="window.chatHandler.removeAttachment('image', ${index})" title="Remove">×</button>
+            `;
+            attachmentsList.appendChild(item);
+        });
+
+        // Add PDFs
+        this.uploadedPDFs.forEach((pdf, index) => {
+            const item = document.createElement('div');
+            item.className = 'attachment-item attachment-pdf';
+            item.innerHTML = `
+                <span class="attachment-icon">📕</span>
+                <span class="attachment-name">${this.escapeHtml(pdf.filename)}</span>
+                <button class="btn-icon attachment-remove" onclick="window.chatHandler.removeAttachment('pdf', ${index})" title="Remove">×</button>
+            `;
+            attachmentsList.appendChild(item);
+        });
+
+        // Add documents
+        this.uploadedDocuments.forEach((doc, index) => {
+            const icon = doc.type === 'docx' ? '📝' : doc.type === 'xlsx' ? '📊' : '📽️';
+            const item = document.createElement('div');
+            item.className = 'attachment-item attachment-document';
+            item.innerHTML = `
+                <span class="attachment-icon">${icon}</span>
+                <span class="attachment-name">${this.escapeHtml(doc.filename)}</span>
+                <button class="btn-icon attachment-remove" onclick="window.chatHandler.removeAttachment('document', ${index})" title="Remove">×</button>
+            `;
+            attachmentsList.appendChild(item);
+        });
+
+        // Add text files
+        this.uploadedFiles.forEach((file, index) => {
+            const item = document.createElement('div');
+            item.className = 'attachment-item attachment-file';
+            item.innerHTML = `
+                <span class="attachment-icon">📄</span>
+                <span class="attachment-name">${this.escapeHtml(file.filename)}</span>
+                <button class="btn-icon attachment-remove" onclick="window.chatHandler.removeAttachment('file', ${index})" title="Remove">×</button>
+            `;
+            attachmentsList.appendChild(item);
+        });
+    }
+
+    removeAttachment(type, index) {
+        if (type === 'image') {
+            this.uploadedImages.splice(index, 1);
+        } else if (type === 'pdf') {
+            this.uploadedPDFs.splice(index, 1);
+        } else if (type === 'document') {
+            this.uploadedDocuments.splice(index, 1);
+        } else if (type === 'file') {
+            this.uploadedFiles.splice(index, 1);
+        }
+        this.updateAttachmentsPreview();
     }
 
     formatFileSize(bytes) {
@@ -1703,13 +1748,11 @@ class ChatHandler {
     }
 
     clearUpload() {
-        this.uploadedImage = null;
-        this.uploadedFile = null;
-        this.uploadedPDF = null;
-        this.uploadedDocument = null;
-        this.uploadPreview.style.display = 'none';
-        this.imagePreview.src = '';
-        this.filePreview.textContent = '';
+        this.uploadedImages = [];
+        this.uploadedFiles = [];
+        this.uploadedPDFs = [];
+        this.uploadedDocuments = [];
+        this.updateAttachmentsPreview();
     }
 
     getCookie(name) {
@@ -1799,8 +1842,10 @@ class ChatHandler {
         const mode = window.app ? window.app.getMode() : '';
         const displayContent = content;
 
-        // Need either content or a file upload
-        if (!content && !this.uploadedFile && !this.uploadedImage) return;
+        // Need either content or at least one attachment
+        const hasAttachments = this.uploadedImages.length > 0 || this.uploadedPDFs.length > 0 || 
+                              this.uploadedDocuments.length > 0 || this.uploadedFiles.length > 0;
+        if (!content && !hasAttachments) return;
 
         // Save to message history for up arrow recall
         this.saveToHistory(displayContent);
@@ -1811,14 +1856,16 @@ class ChatHandler {
 
         // Build display message
         let displayMsg = displayContent;
-        if (this.uploadedFile) {
-            displayMsg = displayContent + ' [with file]';
+        if (hasAttachments) {
+            const count = this.uploadedImages.length + this.uploadedPDFs.length + 
+                         this.uploadedDocuments.length + this.uploadedFiles.length;
+            displayMsg = displayContent + (displayContent ? ' ' : '') + `[with ${count} attachment${count > 1 ? 's' : ''}]`;
         }
 
-        // Get image data URL before clearing (so we can show it inline)
+        // Get first image data URL for preview (if any)
         let imageDataUrl = null;
-        if (this.uploadedImage) {
-            imageDataUrl = this.imagePreview.src;  // This is the data:image/... URL
+        if (this.uploadedImages.length > 0) {
+            imageDataUrl = this.uploadedImages[0].dataUrl;
         }
 
         // Add user message to UI (show what user typed, not the command)
@@ -1832,9 +1879,15 @@ class ChatHandler {
         const prevUserActionBtns = this.messagesContainer.querySelectorAll('.message.user .btn-regenerate, .message.user .btn-edit');
         prevUserActionBtns.forEach(btn => btn.remove());
 
-        // Store image data on message element for editing later
-        if (this.uploadedImage) {
-            this.lastUserMessage._imageData = this.uploadedImage;
+        // Store attachment data on message element for editing later
+        if (this.uploadedImages.length > 0) {
+            this.lastUserMessage._imageData = this.uploadedImages[0].base64;
+            this.lastUserMessage._allAttachments = {
+                images: this.uploadedImages,
+                pdfs: this.uploadedPDFs,
+                documents: this.uploadedDocuments,
+                files: this.uploadedFiles
+            };
         }
 
         // Add edit button
@@ -1871,18 +1924,23 @@ class ChatHandler {
             content: content
         };
 
-        // Include uploaded data
-        if (this.uploadedImage) {
-            payload.image_data = this.uploadedImage;
+        // Include uploaded data - send first of each type for backward compatibility
+        // Backend will process all attachments from the arrays
+        if (this.uploadedImages.length > 0) {
+            payload.image_data = this.uploadedImages[0].base64;  // First image for backward compat
+            payload.images = this.uploadedImages.map(img => ({ base64: img.base64, filename: img.filename }));
         }
-        if (this.uploadedFile) {
-            payload.file_content = this.uploadedFile;
+        if (this.uploadedPDFs.length > 0) {
+            payload.pdf_data = this.uploadedPDFs[0].base64;  // First PDF for backward compat
+            payload.pdfs = this.uploadedPDFs.map(pdf => ({ base64: pdf.base64, filename: pdf.filename }));
         }
-        if (this.uploadedPDF) {
-            payload.pdf_data = this.uploadedPDF;
+        if (this.uploadedDocuments.length > 0) {
+            payload.document_data = this.uploadedDocuments[0].base64;  // First document for backward compat
+            payload.documents = this.uploadedDocuments.map(doc => ({ base64: doc.base64, filename: doc.filename, type: doc.type }));
         }
-        if (this.uploadedDocument) {
-            payload.document_data = this.uploadedDocument;
+        if (this.uploadedFiles.length > 0) {
+            payload.file_content = this.uploadedFiles[0].content;  // First file for backward compat
+            payload.files = this.uploadedFiles.map(file => ({ content: file.content, filename: file.filename }));
         }
 
         // Store payload for potential retry
@@ -1893,6 +1951,11 @@ class ChatHandler {
 
         // Clear upload after sending
         this.clearUpload();
+        
+        // Make removeAttachment available globally for onclick handlers
+        if (!window.chatHandler) {
+            window.chatHandler = this;
+        }
 
         // Show typing indicator
         this.showTypingIndicator();
@@ -3220,12 +3283,12 @@ class ChatHandler {
         }
     }
 
-    async emailFile(filePath, fileName) {
+    async emailFile(filePath, fileName, apiUrl = null) {
         // Open email modal with file pre-selected
         // Try to use FileManager if available
         if (window.fileManager && typeof window.fileManager.emailFile === 'function') {
             try {
-                await window.fileManager.emailFile(filePath, fileName);
+                await window.fileManager.emailFile(filePath, fileName, apiUrl);
                 return;
             } catch (e) {
                 console.warn('FileManager.emailFile failed, using fallback:', e);
@@ -3235,13 +3298,47 @@ class ChatHandler {
         // Fallback: Show email modal directly
         const modal = document.getElementById('fileEmailModal');
         if (modal) {
-            // Set file info
-            document.getElementById('emailFilePath').value = filePath;
-            document.getElementById('emailFileName').textContent = fileName;
+            const emailFilesList = document.getElementById('emailFilesList');
+            if (emailFilesList) {
+                // Add file to the list (support multiple files)
+                const fileItem = document.createElement('div');
+                fileItem.className = 'email-file-item';
+                fileItem.dataset.filePath = filePath || '';
+                fileItem.dataset.fileName = fileName || 'Unknown file';
+                if (apiUrl) {
+                    fileItem.dataset.apiUrl = apiUrl;
+                }
+                const escapedName = this.escapeHtml ? this.escapeHtml(fileName || 'Unknown file') : (fileName || 'Unknown file').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                fileItem.innerHTML = `
+                    <span class="email-file-name">${escapedName}</span>
+                    <button class="email-file-remove" onclick="this.parentElement.remove(); if(window.fileManager && window.fileManager.updateEmailSubjectAndBody) window.fileManager.updateEmailSubjectAndBody();" title="Remove">✕</button>
+                `;
+                emailFilesList.appendChild(fileItem);
+                
+                // Update subject and body
+                if (window.fileManager && typeof window.fileManager.updateEmailSubjectAndBody === 'function') {
+                    window.fileManager.updateEmailSubjectAndBody();
+                } else {
+                    // Fallback update
+                    const fileItems = emailFilesList.querySelectorAll('.email-file-item');
+                    const fileCount = fileItems.length;
+                    const emailSubjectInput = document.getElementById('emailSubject');
+                    const emailBodyInput = document.getElementById('emailBody');
+                    if (emailSubjectInput && emailBodyInput) {
+                        if (fileCount === 1) {
+                            emailSubjectInput.value = `Shared file: ${fileName}`;
+                            emailBodyInput.value = `Please find the attached file: ${fileName}`;
+                        } else {
+                            emailSubjectInput.value = `Shared files (${fileCount} files)`;
+                            const fileNames = Array.from(fileItems).map(item => item.dataset.fileName).join(', ');
+                            emailBodyInput.value = `Please find the attached files:\n${fileNames}`;
+                        }
+                    }
+                }
+            }
+            
             const emailToInput = document.getElementById('emailTo');
-            emailToInput.value = '';
-            document.getElementById('emailSubject').value = `Shared file: ${fileName}`;
-            document.getElementById('emailBody').value = `Please find the attached file: ${fileName}`;
+            if (emailToInput) emailToInput.value = '';
             
             // Load contacts for autocomplete if function exists
             if (window.fileManager && typeof window.fileManager.loadContactEmailsForAutocomplete === 'function') {
@@ -3249,8 +3346,10 @@ class ChatHandler {
             }
             
             // Show modal
-            modal.style.display = 'block';
-            setTimeout(() => emailToInput.focus(), 100);
+            modal.style.display = 'flex';
+            setTimeout(() => {
+                if (emailToInput) emailToInput.focus();
+            }, 100);
         } else {
             // Last resort: prompt
             console.warn('Email modal not found, using prompt');
@@ -3258,6 +3357,18 @@ class ChatHandler {
             if (!to) return;
             
             try {
+                const requestBody = {
+                    to: to,
+                    subject: `Shared file: ${fileName}`,
+                    body: `Please find the attached file: ${fileName}`
+                };
+                
+                if (apiUrl) {
+                    requestBody.file_urls = [apiUrl];
+                } else {
+                    requestBody.file_paths = [filePath];
+                }
+                
                 const response = await fetch('/api/files/email', {
                     method: 'POST',
                     headers: { 
@@ -3265,12 +3376,7 @@ class ChatHandler {
                         'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || ''
                     },
                     credentials: 'include',
-                    body: JSON.stringify({
-                        file_paths: [filePath],
-                        to: to,
-                        subject: `Shared file: ${fileName}`,
-                        body: `Please find the attached file: ${fileName}`
-                    })
+                    body: JSON.stringify(requestBody)
                 });
                 
                 if (!response.ok) {
@@ -3288,12 +3394,28 @@ class ChatHandler {
     
     async sendEmailFromModal() {
         // Fallback sendEmail function when FileManager is not available
-        const filePath = document.getElementById('emailFilePath')?.value;
-        let to = document.getElementById('emailTo')?.value.trim();
-        const subject = document.getElementById('emailSubject')?.value.trim();
-        const body = document.getElementById('emailBody')?.value.trim();
+        const emailFilesList = document.getElementById('emailFilesList');
+        const emailToInput = document.getElementById('emailTo');
+        const emailSubjectInput = document.getElementById('emailSubject');
+        const emailBodyInput = document.getElementById('emailBody');
         
-        if (!filePath || !to) {
+        if (!emailFilesList || !emailToInput) {
+            alert('Email form error. Please refresh the page.');
+            return;
+        }
+        
+        // Get all selected files
+        const fileItems = emailFilesList.querySelectorAll('.email-file-item');
+        if (fileItems.length === 0) {
+            alert('Please select at least one file to email');
+            return;
+        }
+        
+        let to = emailToInput.value.trim();
+        const subject = emailSubjectInput?.value.trim() || 'Shared files';
+        const body = emailBodyInput?.value.trim() || 'Please find the attached files.';
+        
+        if (!to) {
             alert('Please enter recipient email address');
             return;
         }
@@ -3312,6 +3434,34 @@ class ChatHandler {
         }
         
         try {
+            // Collect file paths and URLs
+            const filePaths = [];
+            const fileUrls = [];
+            
+            fileItems.forEach(item => {
+                const filePath = item.dataset.filePath;
+                const apiUrl = item.dataset.apiUrl;
+                
+                if (apiUrl) {
+                    fileUrls.push(apiUrl);
+                } else if (filePath) {
+                    filePaths.push(filePath);
+                }
+            });
+            
+            const requestBody = {
+                to: to,
+                subject: subject,
+                body: body
+            };
+            
+            if (fileUrls.length > 0) {
+                requestBody.file_urls = fileUrls;
+            }
+            if (filePaths.length > 0) {
+                requestBody.file_paths = filePaths;
+            }
+            
             const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
             const response = await fetch('/api/files/email', {
                 method: 'POST',
@@ -3320,18 +3470,18 @@ class ChatHandler {
                     'X-CSRFToken': csrfToken
                 },
                 credentials: 'include',
-                body: JSON.stringify({
-                    file_paths: [filePath],
-                    to: to,
-                    subject: subject || 'Shared file',
-                    body: body || 'Please find the attached file.'
-                })
+                body: JSON.stringify(requestBody)
             });
             
             const data = await response.json();
             if (response.ok) {
-                alert('Email sent successfully!');
-                document.getElementById('fileEmailModal').style.display = 'none';
+                const fileCount = filePaths.length + fileUrls.length;
+                alert(`Email sent successfully with ${fileCount} file(s)!`);
+                const emailModal = document.getElementById('fileEmailModal');
+                if (emailModal) {
+                    emailFilesList.innerHTML = '';
+                    emailModal.style.display = 'none';
+                }
             } else {
                 alert('Error: ' + (data.detail || 'Failed to send email'));
             }
