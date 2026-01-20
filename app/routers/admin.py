@@ -1176,3 +1176,84 @@ async def get_transcode_status(
     
     status = await asyncio.to_thread(_get_status)
     return status
+
+
+@router.get("/webdav-sync-config")
+async def get_webdav_sync_config(
+    current_user: User = Depends(get_admin_user)
+):
+    """Get WebDAV sync client configuration from config.json"""
+    import json
+    from pathlib import Path
+    
+    config_path = Path.home() / ".config" / "posterchanai-sync" / "config.json"
+    
+    if not config_path.exists():
+        return {
+            "enable_cache": True,
+            "cache_max_size_mb": 10240,
+            "cache_max_age_days": 30,
+            "cache_directories": [],
+            "network_retry_attempts": 5,
+            "network_retry_delay": 5,
+            "offline_mode": False
+        }
+    
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        return {
+            "enable_cache": config.get("enable_cache", True),
+            "cache_max_size_mb": config.get("cache_max_size_mb", 10240),
+            "cache_max_age_days": config.get("cache_max_age_days", 30),
+            "cache_directories": config.get("cache_directories", []),
+            "network_retry_attempts": config.get("network_retry_attempts", 5),
+            "network_retry_delay": config.get("network_retry_delay", 5),
+            "offline_mode": config.get("offline_mode", False)
+        }
+    except Exception as e:
+        logger.error(f"Error reading WebDAV sync config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/webdav-sync-config")
+async def update_webdav_sync_config(
+    config: dict,
+    current_user: User = Depends(get_admin_user)
+):
+    """Update WebDAV sync client configuration in config.json"""
+    import json
+    from pathlib import Path
+    
+    config_path = Path.home() / ".config" / "posterchanai-sync" / "config.json"
+    config_dir = config_path.parent
+    config_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        # Load existing config
+        existing_config = {}
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                existing_config = json.load(f)
+        
+        # Update with new values
+        existing_config.update({
+            "enable_cache": config.get("enable_cache", True),
+            "cache_max_size_mb": config.get("cache_max_size_mb", 10240),
+            "cache_max_age_days": config.get("cache_max_age_days", 30),
+            "cache_directories": config.get("cache_directories", []),
+            "network_retry_attempts": config.get("network_retry_attempts", 5),
+            "network_retry_delay": config.get("network_retry_delay", 5),
+            "offline_mode": config.get("offline_mode", False)
+        })
+        
+        # Write back
+        with open(config_path, 'w') as f:
+            json.dump(existing_config, f, indent=4)
+        
+        logger.info(f"WebDAV sync config updated: cache={existing_config['enable_cache']}, size={existing_config['cache_max_size_mb']}MB, dirs={existing_config['cache_directories']}")
+        
+        return {"status": "success", "message": "Configuration saved"}
+    except Exception as e:
+        logger.error(f"Error writing WebDAV sync config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
