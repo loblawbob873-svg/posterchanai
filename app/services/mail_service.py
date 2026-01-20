@@ -1177,23 +1177,61 @@ def send_email(
             logger.error(f"SMTP connection blocked: invalid server address {smtp_server}")
             return False
 
-        if smtp_port == 465:
-            smtp = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=MAIL_CONNECTION_TIMEOUT)
-        else:
-            smtp = smtplib.SMTP(smtp_server, smtp_port, timeout=MAIL_CONNECTION_TIMEOUT)
-            smtp.starttls()
+        smtp = None
+        try:
+            # Establish SMTP connection with timeout protection
+            logger.debug(f"Connecting to SMTP server {smtp_server}:{smtp_port}")
+            if smtp_port == 465:
+                smtp = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=MAIL_CONNECTION_TIMEOUT)
+            else:
+                smtp = smtplib.SMTP(smtp_server, smtp_port, timeout=MAIL_CONNECTION_TIMEOUT)
+                # Start TLS - this can fail if server doesn't support it
+                smtp.starttls()
+            
+            logger.debug(f"SMTP connection established, authenticating as {account.email}")
+            # Login with timeout protection
+            smtp.login(account.email, account.password)
+            logger.debug("SMTP authentication successful")
 
-        smtp.login(account.email, account.password)
+            # Collect all recipients
+            recipients = [to_clean]
+            if cc:
+                recipients.extend([addr.strip() for addr in cc.split(",")])
+            if bcc:
+                recipients.extend([addr.strip() for addr in bcc.split(",")])
 
-        # Collect all recipients
-        recipients = [to]
-        if cc:
-            recipients.extend([addr.strip() for addr in cc.split(",")])
-        if bcc:
-            recipients.extend([addr.strip() for addr in bcc.split(",")])
+            # Verify connection is still active before sending
+            try:
+                # Test connection with a no-op command
+                smtp.noop()
+            except Exception as e:
+                logger.error(f"SMTP connection lost before send: {e}")
+                raise Exception(f"Connection lost: {e}")
 
-        smtp.sendmail(account.email, recipients, msg.as_string())
-        smtp.quit()
+            # Send email
+            logger.debug(f"Sending email to {recipients}")
+            smtp.sendmail(account.email, recipients, msg.as_string())
+            logger.debug("Email sent successfully")
+            
+        except smtplib.SMTPNotConnectedError as e:
+            logger.error(f"SMTP server not connected: {e}. Server: {smtp_server}:{smtp_port}")
+            return False
+        except smtplib.SMTPException as e:
+            logger.error(f"SMTP error sending email: {e}. Server: {smtp_server}:{smtp_port}")
+            return False
+        except Exception as e:
+            logger.error(f"Error during SMTP connection/send: {e}. Server: {smtp_server}:{smtp_port}")
+            return False
+        finally:
+            # Always close the connection properly
+            if smtp:
+                try:
+                    smtp.quit()
+                except Exception:
+                    try:
+                        smtp.close()
+                    except Exception:
+                        pass
 
         logger.info(f"Sent email from {account.email} to {to}: {subject}")
 
@@ -1286,16 +1324,21 @@ def forward_message(
     folder: str = "INBOX",
 ) -> bool:
     """Forward a message to another recipient."""
-    # Get the original message
-    original = get_message_by_id(user_id, db, account_email, uid, folder=folder)
-    if not original:
-        logger.error(f"Original message not found: {account_email}/{uid}")
-        return False
+    try:
+        # Get the original message
+        original = get_message_by_id(user_id, db, account_email, uid, folder=folder)
+        if not original:
+            logger.error(f"Original message not found: {account_email}/{uid} in folder {folder}")
+            return False
 
-    # Get the account
-    accounts = get_user_mail_accounts(user_id, db)
-    account = next((a for a in accounts if a.email == account_email), None)
-    if not account:
+        # Get the account
+        accounts = get_user_mail_accounts(user_id, db)
+        account = next((a for a in accounts if a.email == account_email), None)
+        if not account:
+            logger.error(f"Account not found: {account_email}")
+            return False
+    except Exception as e:
+        logger.error(f"Error preparing forward message: {e}")
         return False
 
     # Prepare forward subject
@@ -1323,7 +1366,26 @@ To: {original.to}
     else:
         full_body = f"{forward_header}\n{original_body}"
 
-    return send_email(account=account, to=to, subject=subject, body=full_body, attachments=attachments)
+    # Merge original message attachments with any new attachments
+    all_attachments = []
+    
+    # Convert original message attachments to the format expected by send_email
+    # Format: List[Tuple[str, bytes, str]] = (filename, data, content_type)
+    for orig_att in original.attachments:
+        all_attachments.append((orig_att.filename, orig_att.data, orig_att.content_type))
+    
+    # Add any new attachments passed in
+    if attachments:
+        all_attachments.extend(attachments)
+    
+    try:
+        result = send_email(account=account, to=to, subject=subject, body=full_body, attachments=all_attachments if all_attachments else None)
+        if not result:
+            logger.error(f"Failed to send forwarded email to {to}")
+        return result
+    except Exception as e:
+        logger.error(f"Error forwarding message to {to}: {e}")
+        return False
 
 
 def get_attachment(

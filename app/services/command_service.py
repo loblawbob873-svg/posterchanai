@@ -3284,16 +3284,57 @@ Return ONLY valid JSON, no other text.""",
                 account_hint = parts[1]
                 uid_part = parts[2]
                 # parts[3] contains recipient and optionally body text (due to maxsplit=3 in mail command handler)
-                # Split by first space: first part is recipient, rest is body
                 recipient_and_body = parts[3].strip()
-                if " " in recipient_and_body:
-                    recipient, forward_body = recipient_and_body.split(maxsplit=1)
-                else:
-                    recipient = recipient_and_body
-                    forward_body = ""
                 
-                # Sanitize recipient - remove newlines and other invalid characters for email headers
-                recipient = recipient.replace("\n", " ").replace("\r", "").strip()
+                # Extract recipient - look for email pattern (contains @) or take first word
+                # Handle quoted recipients and extract email address
+                recipient = None
+                forward_body = ""
+                
+                # Try to find an email address pattern in the string
+                # Email pattern: word characters, dots, hyphens, plus signs, followed by @, then domain
+                email_pattern = r'\b[\w\.\-+]+@[\w\.\-]+\.[a-zA-Z]{2,}\b'
+                email_match = re.search(email_pattern, recipient_and_body)
+                
+                if email_match:
+                    # Found an email address - extract it and everything after it is the body
+                    email_start = email_match.start()
+                    email_end = email_match.end()
+                    recipient = email_match.group(0).strip('"\'')  # Remove quotes if present
+                    # Get body text after the email (skip any spaces immediately after)
+                    body_start = email_end
+                    while body_start < len(recipient_and_body) and recipient_and_body[body_start] in ' \t':
+                        body_start += 1
+                    if body_start < len(recipient_and_body):
+                        forward_body = recipient_and_body[body_start:].strip()
+                else:
+                    # No email pattern found - try to extract first word/token as recipient
+                    # Remove quotes if present
+                    tokens = recipient_and_body.split(maxsplit=1)
+                    recipient = tokens[0].strip('"\'')
+                    if len(tokens) > 1:
+                        forward_body = tokens[1].strip()
+                
+                # Sanitize recipient - remove newlines, quotes, and other invalid characters for email headers
+                if recipient:
+                    recipient = recipient.replace("\n", " ").replace("\r", "").strip()
+                    # Remove surrounding quotes if present
+                    recipient = recipient.strip('"\'')
+                else:
+                    recipient = ""
+                
+                # Basic email validation - check if it looks like an email address
+                # Must contain @ and have a domain part (something after @)
+                if not recipient:
+                    return {"type": "text", "content": "No recipient email address provided. Usage: `mail forward <account> <id> <recipient> [message]`"}
+                
+                if "@" not in recipient:
+                    return {"type": "text", "content": f"Invalid recipient: `{recipient}`. Please provide a valid email address (must contain @). Example: `mail forward verita84 123 user@example.com`"}
+                
+                # Check that there's a domain part after @
+                email_parts = recipient.split("@")
+                if len(email_parts) != 2 or not email_parts[1] or "." not in email_parts[1]:
+                    return {"type": "text", "content": f"Invalid email address: `{recipient}`. Email must have a domain (e.g., user@example.com)."}
 
                 # Parse folder:uid format (e.g., "INBOX.Archive:456")
                 folder = "INBOX"
