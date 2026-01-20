@@ -415,6 +415,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     logger.error(f"[WebDAV] VirtualResource.get_descendants traceback: {traceback.format_exc()}")
                                     return []
                             
+                            def get_properties(self, propname="allprop"):
+                                # Return properties dict - wsgidav calls this to get resource properties
+                                from datetime import datetime
+                                props = {}
+                                if propname == "allprop" or "getlastmodified" in str(propname):
+                                    props['getlastmodified'] = datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                                if propname == "allprop" or "getcontentlength" in str(propname):
+                                    props['getcontentlength'] = str(self._size) if not self._is_dir else "0"
+                                if propname == "allprop" or "resourcetype" in str(propname):
+                                    props['resourcetype'] = '<D:collection/>' if self._is_dir else ''
+                                if propname == "allprop" or "displayname" in str(propname):
+                                    props['displayname'] = self._path.split('/')[-1] or self._path
+                                return props
+                            
                             def __getattr__(self, name):
                                 # Gracefully handle any other method calls
                                 logger.warning(f"[WebDAV] VirtualResource.__getattr__ called for '{name}' - returning None")
@@ -470,6 +484,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     
                     def get_descendants(self, depth=1, add_self=False):
                         return []
+                    
+                    def get_properties(self, propname="allprop"):
+                        # Return properties dict - wsgidav calls this to get resource properties
+                        from datetime import datetime
+                        props = {}
+                        if propname == "allprop" or "getlastmodified" in str(propname):
+                            props['getlastmodified'] = datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                        if propname == "allprop" or "getcontentlength" in str(propname):
+                            props['getcontentlength'] = "0"  # Directory has no content length
+                        if propname == "allprop" or "resourcetype" in str(propname):
+                            props['resourcetype'] = '<D:collection/>' if self._is_dir else ''
+                        if propname == "allprop" or "displayname" in str(propname):
+                            props['displayname'] = self._path.split('/')[-1] or self._path
+                        return props
                     
                     # Add any other methods wsgidav might call
                     def __getattr__(self, name):
@@ -618,6 +646,21 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_descendants(self, depth=1, add_self=False):
                         # Return empty list or None - wsgidav will call get_resource_instances for children
                         return []
+                    
+                    def get_properties(self, propname="allprop"):
+                        # Return properties dict - wsgidav calls this to get resource properties
+                        # Return a dict with standard WebDAV properties
+                        from datetime import datetime
+                        props = {}
+                        if propname == "allprop" or "getlastmodified" in str(propname):
+                            props['getlastmodified'] = datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                        if propname == "allprop" or "getcontentlength" in str(propname):
+                            props['getcontentlength'] = str(self._size) if not self._is_dir else "0"
+                        if propname == "allprop" or "resourcetype" in str(propname):
+                            props['resourcetype'] = '<D:collection/>' if self._is_dir else ''
+                        if propname == "allprop" or "displayname" in str(propname):
+                            props['displayname'] = self._path.split('/')[-1] or self._path
+                        return props
                 
                 resource = SimpleResource(full_path, is_directory, size, modified_ts)
                 webdav_resources.append(resource)
