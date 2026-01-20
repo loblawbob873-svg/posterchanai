@@ -315,7 +315,9 @@ class LlamaService:
                 except Exception as e:
                     error_msg = str(e)
                     error_type = type(e).__name__
+                    import traceback
                     logger.error(f"Failed to load model (attempting context size {attempt_ctx}): {error_type}: {error_msg}")
+                    logger.debug(f"Full exception traceback: {traceback.format_exc()}")
                     logger.error(f"  Model path: {resolved_path}")
                     logger.error(f"  File exists: {model_path_obj.exists()}")
                     logger.error(f"  File readable: {os.access(self.model_path, os.R_OK)}")
@@ -363,10 +365,15 @@ class LlamaService:
 
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Original error loading model: {e}")
-            logger.error(f"Error type: {type(e).__name__}")
+            error_type = type(e).__name__
+            logger.error(f"Original error loading model: {error_type}: {error_msg}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
+            
+            # Don't re-wrap RuntimeErrors that already have helpful messages
+            if isinstance(e, RuntimeError) and ("Try reducing" in error_msg or "Try:" in error_msg or "after trying all" in error_msg):
+                # This is already a helpful error message from inner handler, just re-raise
+                raise
             
             # Provide helpful error messages for common issues
             if "memory" in error_msg.lower() or "dnnl" in error_msg.lower() or "oneDNN" in error_msg:
