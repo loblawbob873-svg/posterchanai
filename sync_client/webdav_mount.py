@@ -668,12 +668,28 @@ class WebDAVMount:
             path = parsed.path.rstrip('/') or ''
             path_parts = path.strip('/').split('/') if path else []
             
+            # Extract base_path - skip 'webdav' if present, use username
             if path_parts:
-                self.base_path = '/'.join(path_parts)
-                base_url = f"{parsed.scheme}://{parsed.netloc}"
+                # If path contains 'webdav', skip it and use the next part (username)
+                if 'webdav' in path_parts:
+                    webdav_idx = path_parts.index('webdav')
+                    if webdav_idx + 1 < len(path_parts):
+                        # Use everything after 'webdav' as base_path
+                        self.base_path = '/'.join(path_parts[webdav_idx + 1:])
+                    else:
+                        # webdav is last, use username
+                        self.base_path = self.username
+                else:
+                    # No 'webdav' in path, use all path parts
+                    self.base_path = '/'.join(path_parts)
+                # Base URL is always scheme://netloc/webdav (if webdav is in path)
+                if 'webdav' in path_parts:
+                    base_url = f"{parsed.scheme}://{parsed.netloc}/webdav"
+                else:
+                    base_url = f"{parsed.scheme}://{parsed.netloc}"
             else:
                 self.base_path = self.username
-                base_url = self.webdav_url.rstrip('/')
+                base_url = f"{parsed.scheme}://{parsed.netloc}/webdav"
             
             self.webdav = WebDAVClient(base_url, self.username, self.password)
             logger.debug(f"WebDAV client configured: {base_url} (base_path: {self.base_path})")
