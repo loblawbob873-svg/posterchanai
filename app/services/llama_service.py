@@ -201,6 +201,10 @@ class LlamaService:
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Original error loading model: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            
             # Provide helpful error messages for common issues
             if "memory" in error_msg.lower() or "dnnl" in error_msg.lower() or "oneDNN" in error_msg:
                 logger.error(f"Memory allocation failed loading model: {e}")
@@ -210,6 +214,18 @@ class LlamaService:
                 logger.error("  - Using a smaller model")
                 logger.error("  - Closing other applications")
                 raise RuntimeError(f"Memory allocation failed: {e}. Try reducing context/batch size or using a smaller model.")
+            elif "llama_context" in error_msg.lower() or "create.*context" in error_msg.lower():
+                logger.error(f"Failed to create llama context: {e}")
+                logger.error("This usually means:")
+                logger.error("  - Context size (ollama_num_ctx) is too large for available memory")
+                logger.error("  - GPU memory is insufficient or fragmented")
+                logger.error("  - Model file may be corrupted")
+                logger.error("Try:")
+                logger.error("  - Reducing context size (ollama_num_ctx) - try 2048 or 4096")
+                logger.error("  - Reducing GPU layers (llm_gpu_layers) - try 20-30 instead of -1")
+                logger.error("  - Setting llm_cpu_mode to true to use CPU instead")
+                logger.error("  - Checking GPU memory: nvidia-smi")
+                raise RuntimeError(f"Failed to create llama context: {e}. Try reducing context size or GPU layers.")
             elif ("No such file" in error_msg or "not found" in error_msg.lower()) and not os.path.exists(self.model_path):
                 logger.error(f"Model file not found: {self.model_path}")
                 raise FileNotFoundError(f"Model file not found: {self.model_path}")
