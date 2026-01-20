@@ -563,13 +563,13 @@ class WebDAVSync:
                     logger.debug(f"Permission error during listing (known issue, continuing): {e}")
                     files = []
                 elif 'connection' in error_str or 'timeout' in error_str or 'network' in error_str:
-                    logger.warning(f"Network error listing {remote_path}: {e}")
+                    logger.warning(f"Network error listing {ls_path}: {e}")
                     # If we have cache, try to use cached file list
                     files = []
                     if self.cache:
                         logger.info("Network unavailable, using cache if available")
                 else:
-                    logger.warning(f"Error listing {remote_path}: {e}")
+                    logger.warning(f"Error listing {ls_path}: {e}")
                     files = []
             
             for file_info in files:
