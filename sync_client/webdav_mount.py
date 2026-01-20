@@ -540,8 +540,11 @@ class WebDAVSync:
             logger.debug(f"sync_from_remote called with path='{path}', remote_path='{remote_path}'")
             
             # List remote directory (with retry logic)
+            # remote_path already includes base_path, so pass it directly to ls()
             try:
-                files = self.webdav.ls(remote_path, depth=1, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
+                # Ensure remote_path doesn't have leading slash (WebDAVClient._url handles it)
+                ls_path = remote_path.lstrip('/')
+                files = self.webdav.ls(ls_path, depth=1, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
             except Exception as e:
                 # If listing fails, log but try to continue
                 error_str = str(e).lower()
