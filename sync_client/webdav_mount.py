@@ -1039,7 +1039,23 @@ class WebDAVSync:
                         if file_local_path.exists():
                             try:
                                 local_mtime = file_local_path.stat().st_mtime
-                                if local_mtime >= info.get('modified', 0):
+                                # Check if local file is HTML/XML when it shouldn't be (corrupted download)
+                                # Excel files should start with PK (ZIP header), not HTML
+                                if file_local_path.suffix.lower() in ('.xlsx', '.xls', '.docx', '.doc', '.pptx', '.ppt', '.zip', '.jar'):
+                                    # These are ZIP-based formats, should start with PK
+                                    try:
+                                        with open(file_local_path, 'rb') as f:
+                                            first_bytes = f.read(4)
+                                            if first_bytes.startswith(b'<!') or first_bytes.startswith(b'<?') or first_bytes.startswith(b'<html'):
+                                                logger.warning(f"Local file {file_local_path} appears to be HTML/XML instead of expected format, forcing re-download")
+                                                file_local_path.unlink()  # Delete corrupted file
+                                                should_download = True
+                                            elif local_mtime >= info.get('modified', 0):
+                                                should_download = False
+                                    except Exception as e:
+                                        logger.debug(f"Error checking file format for {file_local_path}: {e}")
+                                        should_download = True
+                                elif local_mtime >= info.get('modified', 0):
                                     should_download = False
                             except OSError:
                                 # File might have been deleted, download it
@@ -1079,10 +1095,27 @@ class WebDAVSync:
                                 content = self.webdav.download(download_path, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
                                 
                                 # Validate content - should not be HTML/XML
+                                # For Office files (.xlsx, .docx, etc.), they should start with PK (ZIP header)
+                                file_ext = file_local_path.suffix.lower()
+                                is_office_file = file_ext in ('.xlsx', '.xls', '.docx', '.doc', '.pptx', '.ppt', '.zip', '.jar')
+                                
                                 if content.startswith(b'<?xml') or content.startswith(b'<html') or content.startswith(b'<!DOCTYPE'):
                                     logger.error(f"Download returned HTML/XML instead of file content for {download_path}")
                                     logger.error(f"Content preview: {content[:500]}")
+                                    # If this is an Office file, it's definitely wrong
+                                    if is_office_file:
+                                        logger.error(f"Office file {download_path} returned HTML/XML - this is a server error, file may be a directory on server")
                                     raise WebDAVError(f"Server returned HTML/XML instead of file content for {download_path}")
+                                
+                                # Additional validation for Office files - they should start with PK (ZIP header)
+                                if is_office_file and not content.startswith(b'PK'):
+                                    # Check if it's HTML/XML masquerading as Office file
+                                    if content.startswith(b'<!') or content.startswith(b'<?') or b'<html' in content[:100]:
+                                        logger.error(f"Office file {download_path} appears to be HTML/XML, not a valid Office file")
+                                        logger.error(f"Content preview: {content[:500]}")
+                                        raise WebDAVError(f"Server returned HTML/XML instead of Office file content for {download_path}")
+                                    else:
+                                        logger.warning(f"Office file {download_path} doesn't start with PK header, but also not HTML - may be corrupted")
                                 
                                 file_local_path.parent.mkdir(parents=True, exist_ok=True)
                                 file_local_path.write_bytes(content)
