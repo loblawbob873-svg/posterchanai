@@ -110,10 +110,14 @@ class WebDAVClient:
                 if collection is not None:
                     isdir = True
                 else:
-                    # Check if resourcetype text contains collection (HTML-encoded XML)
+                    # Check if resourcetype text contains collection (may be HTML-encoded XML)
                     resourcetype_text = resourcetype.text or ''
-                    if 'collection' in resourcetype_text.lower():
-                        isdir = True
+                    if resourcetype_text:
+                        # Decode HTML entities (e.g., &lt; becomes <)
+                        import html
+                        decoded_text = html.unescape(resourcetype_text)
+                        if 'collection' in decoded_text.lower():
+                            isdir = True
                     # Also check if there are any child elements (collection tag)
                     if len(list(resourcetype)) > 0:
                         isdir = True
