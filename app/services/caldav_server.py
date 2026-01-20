@@ -1460,8 +1460,8 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
             CalDAVSyncToken.calendar_name == cal_name
         ).all()
         
-            updated_count = 0
-            try:
+        updated_count = 0
+        try:
                 for token_record in sync_tokens:
                     try:
                         event_data = json.loads(token_record.event_uids)
