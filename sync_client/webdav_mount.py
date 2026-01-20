@@ -531,19 +531,21 @@ class WebDAVSync:
         try:
             # Ensure path doesn't start with / to avoid absolute path issues
             path = path.lstrip('/')
-            # Don't sync if path would be outside mount point
-            if path and not path.startswith(self.remote_base):
-                # Build full remote path
-                remote_path = f"{self.remote_base}/{path}" if path else self.remote_base
+            # Build remote path relative to base_path
+            if path:
+                # Path is relative to base_path
+                remote_path = f"{self.remote_base}/{path}" if self.remote_base else path
             else:
-                remote_path = self.remote_base if not path or path == self.remote_base else path
+                # Empty path means root (base_path itself)
+                remote_path = self.remote_base
             logger.debug(f"sync_from_remote called with path='{path}', remote_path='{remote_path}'")
             
             # List remote directory (with retry logic)
-            # remote_path already includes base_path, so pass it directly to ls()
+            # remote_path is relative to base_url, so pass it directly to ls()
             try:
                 # Ensure remote_path doesn't have leading slash (WebDAVClient._url handles it)
                 ls_path = remote_path.lstrip('/')
+                logger.debug(f"Calling ls() with path: '{ls_path}' (remote_base: '{self.remote_base}')")
                 files = self.webdav.ls(ls_path, depth=1, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
             except Exception as e:
                 # If listing fails, log but try to continue
