@@ -785,7 +785,13 @@ class WebDAVSync:
                             if not path_str.startswith(mount_str):
                                 logger.warning(f"Skipping invalid path: {file_remote_path} -> {file_local_path}")
                                 continue
-                            logger.debug(f"Creating directory: {file_local_path}")
+                            
+                            # If a file exists at this path, remove it first (it should be a directory)
+                            if file_local_path.exists() and file_local_path.is_file():
+                                logger.info(f"Removing file that should be directory: {file_local_path}")
+                                file_local_path.unlink()
+                            
+                            logger.info(f"Creating directory: {file_local_path}")
                             # Create parent directories first, then the directory itself
                             file_local_path.parent.mkdir(parents=True, exist_ok=True)
                             file_local_path.mkdir(exist_ok=True)
