@@ -540,10 +540,12 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                             logger.info(f"[CalDAV] Parsed time range: {time_range[0]} to {time_range[1]} (expanded by 1s for boundary inclusion)")
                             
                             # Log what days are in the range for debugging
+                            # Use ORIGINAL dates (before expansion) for date-based comparisons
+                            # This ensures Monday events are included when the range starts on Monday
                             from datetime import date as date_type
-                            range_start_date = time_range[0].date()
-                            range_end_date = time_range[1].date()
-                            logger.info(f"[CalDAV] Time range covers dates: {range_start_date} to {range_end_date}")
+                            range_start_date = original_start_dt.date()  # Use original start date, not expanded
+                            range_end_date = original_end_dt.date()  # Use original end date, not expanded
+                            logger.info(f"[CalDAV] Time range covers dates: {range_start_date} to {range_end_date} (original dates, not expanded)")
                             if range_start_date <= range_end_date:
                                 # Log which days of week are included
                                 current_date = range_start_date
@@ -640,14 +642,29 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                                 overlaps = event_start <= time_range[1] and event_end >= time_range[0]
                                                 
                                                 # Also check if event date falls within range dates (more permissive)
+                                                # Use ORIGINAL range dates (before 1-second expansion) for date comparison
+                                                # This ensures events on Monday are included when range starts on Monday
                                                 event_date = event_start.date()
-                                                range_start_date = time_range[0].date()
-                                                range_end_date = time_range[1].date()
+                                                # Use original dates stored in outer scope
+                                                range_start_date = original_start_dt.date() if original_start_dt else time_range[0].date()
+                                                range_end_date = original_end_dt.date() if original_end_dt else time_range[1].date()
+                                                
+                                                # More permissive: include if event date is within OR on the boundary dates
+                                                # Also include if event overlaps the date range by at least one day
                                                 date_in_range = range_start_date <= event_date <= range_end_date
+                                                
+                                                # Additional check: if event spans multiple days, check if any day overlaps
+                                                if dtend and isinstance(dtend.dt, date):
+                                                    event_end_date = dtend.dt
+                                                    # Event spans from event_date to event_end_date
+                                                    # Include if any day in the event overlaps the range
+                                                    date_overlaps = not (event_end_date < range_start_date or event_date > range_end_date)
+                                                    if date_overlaps:
+                                                        date_in_range = True
                                                 
                                                 if overlaps or date_in_range:
                                                     include_event = True
-                                                    logger.debug(f"[CalDAV] Event {name} matches time range: {event_start} to {event_end} (overlaps: {overlaps}, date_in_range: {date_in_range})")
+                                                    logger.debug(f"[CalDAV] Event {name} matches time range: {event_start} to {event_end} (overlaps: {overlaps}, date_in_range: {date_in_range}, event_date: {event_date}, range: {range_start_date} to {range_end_date})")
                                                     break
                                             else:
                                                 # Date object (all-day event) - check if date overlaps with range
@@ -676,9 +693,17 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                                     overlaps = event_start_dt <= time_range[1] and event_end_dt >= time_range[0]
                                                     
                                                     # Also check if event date falls within range dates (more permissive for all-day events)
-                                                    range_start_date = time_range[0].date()
-                                                    range_end_date = time_range[1].date()
+                                                    # Use ORIGINAL range dates (before expansion) for date comparison
+                                                    range_start_date = original_start_dt.date() if original_start_dt else time_range[0].date()
+                                                    range_end_date = original_end_dt.date() if original_end_dt else time_range[1].date()
                                                     date_in_range = range_start_date <= event_start <= range_end_date
+                                                    
+                                                    # For multi-day all-day events, check if any day overlaps
+                                                    if dtend and isinstance(dtend.dt, date):
+                                                        event_end_date = dtend.dt
+                                                        date_overlaps = not (event_end_date < range_start_date or event_start > range_end_date)
+                                                        if date_overlaps:
+                                                            date_in_range = True
                                                     
                                                     if overlaps or date_in_range:
                                                         include_event = True
@@ -767,8 +792,12 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                             is_monday = event_date and event_date.weekday() == 0
                                             should_log = is_monday or in_week_range or time_filtered_count <= 10
                                             
+                                            # Use original range dates for logging
+                                            log_range_start = original_start_dt.date() if original_start_dt else range_start_date
+                                            log_range_end = original_end_dt.date() if original_end_dt else range_end_date
+                                            
                                             if should_log:
-                                                logger.warning(f"[CalDAV] ⚠️ Filtered out event '{summary}' on {event_date} (Monday: {is_monday}, In week range: {in_week_range}, Range: {range_start_date} to {range_end_date})")
+                                                logger.warning(f"[CalDAV] ⚠️ Filtered out event '{summary}' on {event_date} (Monday: {is_monday}, In week range: {in_week_range}, Range: {log_range_start} to {log_range_end}, Event overlaps: {overlaps if 'overlaps' in locals() else 'N/A'})")
                                                 
                                                 # Log why it was filtered (for debugging)
                                                 if event_date:
