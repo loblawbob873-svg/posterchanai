@@ -293,7 +293,18 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     raise
         
         # Only use local filesystem if remote storage is NOT configured
+        logger.info(f"[WebDAV] Using local filesystem (no remote storage configured)")
         return super().get_resource_list(normalized_path, depth, environ)
+    
+    def get_resource_instances(self, path: str, environ: dict = None):
+        """Override to handle resource instances - wsgidav may call this instead of get_resource_list."""
+        logger.info(f"[WebDAV] get_resource_instances CALLED: path={path}")
+        # Try get_resource_list first
+        try:
+            return self.get_resource_list(path, depth=1, environ=environ)
+        except Exception as e:
+            logger.error(f"[WebDAV] get_resource_instances error: {e}", exc_info=True)
+            raise
     
     def _proxy_list_files(self, username: str, path: str):
         """Proxy file listing - uses the same proxying mechanism as files router."""
