@@ -820,14 +820,17 @@ class WebDAVSync:
                             continue
                         
                         # Calculate relative path for recursive sync
+                        # file_remote_path is like "verita84@poster.place/Documents"
+                        # We need to extract just "Documents" to recurse into it
                         rel_path = file_remote_path.lstrip('/')
                         if rel_path.startswith(self.remote_base + '/'):
+                            # Remove the remote_base prefix to get just the directory name
                             rel_path = rel_path[len(self.remote_base) + 1:]
                         elif rel_path == self.remote_base:
                             continue  # Already syncing base
                         # Recurse into directory to get files inside (even if it has a file-like name)
                         if rel_path:  # Only recurse if there's a subpath
-                            logger.debug(f"Recursing into directory: {rel_path}")
+                            logger.debug(f"Recursing into directory: {rel_path} (from {file_remote_path})")
                             self.sync_from_remote(rel_path)
                     else:
                         # File - download if newer or missing
