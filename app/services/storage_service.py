@@ -515,10 +515,21 @@ class StorageService:
                             # Convert to base64
                             return base64.b64encode(response.content).decode('utf-8')
                         else:
-                            logger.error(f"[STORAGE PROXY] Failed to load image: {response.status_code}")
+                            # Log warning instead of error - this is expected if file doesn't exist or server is down
+                            logger.warning(f"[STORAGE PROXY] Failed to load image from {file_url}: HTTP {response.status_code}")
+                            # Don't log response body as it might be large
                             return None
+                except httpx.HTTPStatusError as e:
+                    # Handle HTTP errors gracefully
+                    logger.warning(f"[STORAGE PROXY] HTTP error loading image from storage server: {e.response.status_code}")
+                    return None
+                except httpx.RequestError as e:
+                    # Handle connection/timeout errors gracefully
+                    logger.warning(f"[STORAGE PROXY] Connection error loading image from storage server: {e}")
+                    return None
                 except Exception as e:
-                    logger.error(f"[STORAGE PROXY] Error loading image: {e}")
+                    # Catch any other exceptions to prevent 500 errors
+                    logger.warning(f"[STORAGE PROXY] Error loading image from storage server: {e}")
                     return None
 
         # Local filesystem access (original code)

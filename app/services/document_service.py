@@ -18,9 +18,29 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
     try:
         import pytesseract
         from PIL import Image, ExifTags
+        import shutil
+        import os
 
+        # Try to find tesseract executable - check common paths
+        tesseract_cmd = None
+        common_paths = [
+            '/usr/bin/tesseract',
+            '/usr/local/bin/tesseract',
+            '/opt/homebrew/bin/tesseract',  # macOS Homebrew
+            shutil.which('tesseract'),  # Check PATH
+        ]
+        
+        for path in common_paths:
+            if path and os.path.exists(path) and os.access(path, os.X_OK):
+                tesseract_cmd = path
+                break
+        
+        if not tesseract_cmd:
+            logger.warning("Tesseract OCR not found - OCR will be unavailable. Install tesseract-ocr package.")
+            return None
+        
         # Set tesseract path explicitly
-        pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
 
         image_bytes = base64.b64decode(image_base64)
         image = Image.open(io.BytesIO(image_bytes))
@@ -62,7 +82,6 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
 
         # Save to BMP format (uncompressed, always supported by leptonica)
         import tempfile
-        import os
         with tempfile.NamedTemporaryFile(suffix='.bmp', delete=False) as tmp:
             tmp_path = tmp.name
             image.save(tmp_path, format='BMP')
@@ -70,9 +89,21 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
         try:
             # Run OCR on the temp file
             text = pytesseract.image_to_string(tmp_path)
+        except pytesseract.TesseractNotFoundError:
+            logger.warning("Tesseract OCR executable not found - OCR unavailable")
+            return None
+        except pytesseract.TesseractError as e:
+            logger.warning(f"Tesseract OCR error: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"OCR processing error: {e}")
+            return None
         finally:
             # Clean up temp file
-            os.unlink(tmp_path)
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass  # Ignore cleanup errors
 
         if text and text.strip():
             result = text.strip()
@@ -83,8 +114,11 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
 
         logger.debug("OCR found no text in image")
         return None
+    except ImportError:
+        logger.warning("pytesseract not installed - OCR unavailable")
+        return None
     except Exception as e:
-        logger.error(f"OCR extraction error: {e}")
+        logger.error(f"OCR extraction error: {e}", exc_info=True)
         return None
 
 
