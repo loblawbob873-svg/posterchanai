@@ -763,6 +763,59 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     
                     # Make it fully dict-like for directory browser
                     def __getitem__(self, key):
+                        # Support dict-like access
+                        if key == "display_name":
+                            return self.get_display_name()
+                        elif key == "href":
+                            return self.get_href()
+                        elif key == "is_collection":
+                            return self.is_collection()
+                        elif key == "is_directory":
+                            return self._is_dir
+                        elif key == "path":
+                            return self._path
+                        elif key == "size":
+                            return self._size
+                        elif key == "modified":
+                            return self._modified
+                        elif key == "last_modified":
+                            return self.get_last_modified()
+                        elif key == "content_length":
+                            return self.get_content_length()
+                        elif key == "str_modified":
+                            from datetime import datetime
+                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                        else:
+                            raise KeyError(f"'{key}' not found in SimpleResource")
+                    
+                    def __setitem__(self, key, value):
+                        # Support dict-like assignment (directory browser writes to entries)
+                        if key == "str_modified":
+                            # Allow setting str_modified for directory browser
+                            pass  # Ignore - we compute it from _modified
+                        elif key == "display_name":
+                            pass  # Read-only
+                        elif key == "href":
+                            pass  # Read-only
+                        else:
+                            # Store in a dict for unknown keys
+                            if not hasattr(self, '_extra_attrs'):
+                                self._extra_attrs = {}
+                            self._extra_attrs[key] = value
+                    
+                    def get(self, key, default=None):
+                        # Dict-like get() method
+                        try:
+                            return self[key]
+                        except KeyError:
+                            return default
+                    
+                    def __contains__(self, key):
+                        # Support 'in' operator
+                        return key in ["display_name", "href", "is_collection", "is_directory", "path", "size", "modified", "last_modified", "content_length", "str_modified"]
+                    
+                    # Make it fully dict-like for directory browser
+                    def __getitem__(self, key):
                         # Allow dict-like access for directory browser
                         if key == "display_name":
                             return self.get_display_name()
