@@ -768,9 +768,40 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             # This is similar to calendar-query but without time filtering
             logger.info(f"[CalDAV] Handling sync-collection request for calendar '{cal_name}' (iPhone sync)")
             
+            # Parse sync-token from request (if provided)
+            sync_token_elem = sync_collection_elem.find('.//{DAV:}sync-token')
+            if sync_token_elem is None:
+                sync_token_elem = sync_collection_elem.find('.//D:sync-token', namespaces)
+            if sync_token_elem is None:
+                sync_token_elem = sync_collection_elem.find('.//sync-token')
+            
+            old_sync_token = None
+            if sync_token_elem is not None and sync_token_elem.text:
+                old_sync_token = sync_token_elem.text.strip()
+                logger.info(f"[CalDAV] sync-collection with sync-token: {old_sync_token[:50]}...")
+            
             # List all events from the specified calendar directory using proxy
             file_items = proxy.list_files(subpath)
             logger.info(f"[CalDAV] sync-collection for calendar '{cal_name}' (subpath='{subpath}'): found {len(file_items)} items")
+            
+            # Get current sync-token (based on current file count and latest mtime)
+            import hashlib
+            ics_files = [item for item in file_items if item.get('name', '').endswith('.ics')]
+            if ics_files:
+                latest_mtime = max(item.get('modified', item.get('mtime', 0)) for item in ics_files)
+                ctag_data = f"{cal_name}_{user.username}_{len(ics_files)}_{latest_mtime}"
+            else:
+                ctag_data = f"{cal_name}_{user.username}_0"
+            current_sync_token = hashlib.md5(f"{ctag_data}_sync".encode()).hexdigest()[:16]
+            
+            # If sync-token changed, we need to report deletions
+            # For now, if there's an old sync-token and it's different, we'll do a full sync
+            # (proper implementation would track what events existed at old token)
+            if old_sync_token and old_sync_token != f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{current_sync_token}":
+                logger.info(f"[CalDAV] sync-token changed - doing full sync (old token provided, changes detected)")
+                # Full sync mode - return all current events
+                # Note: Proper sync-collection would track deleted events, but for simplicity
+                # we'll rely on multiget to handle deletions when iPhone queries specific events
             
             ics_count = 0
             processed_count = 0
@@ -835,8 +866,25 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             logger.info(f"  - Failed to read: {read_failed_count}")
             logger.info(f"  - Added to response: {added_count}")
             logger.info(f"[CalDAV] sync-collection returning {len(items)} events for calendar '{cal_name}'")
+            logger.info(f"[CalDAV] New sync-token: {new_sync_token_url}")
+            
+            # Add sync-token to response by adding it as a special item
+            # The sync-token should be in the multistatus response root, not as an item
+            # We'll handle this in the XML generation
         
+        # Generate XML response
         xml = create_caldav_response(items)
+        
+        # For sync-collection, we need to add the sync-token to the response
+        # Insert it after the opening multistatus tag
+        if sync_collection_elem is not None:
+            import re
+            new_sync_token_url = f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{current_sync_token}"
+            # Add sync-token after multistatus opening tag
+            sync_token_xml = f'    <D:sync-token xmlns:D="DAV:">{html.escape(new_sync_token_url)}</D:sync-token>\n'
+            xml = xml.replace('<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">\n', 
+                            f'<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">\n{sync_token_xml}')
+        
         return Response(content=xml, media_type="application/xml", status_code=207)
     except Exception as e:
         logger.error(f"[CalDAV] Error handling REPORT: {e}", exc_info=True)
