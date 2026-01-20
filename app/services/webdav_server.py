@@ -1356,6 +1356,20 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
         "hotfixes": {
             "emulate_win32_lastmod": False,
         },
+        # CRITICAL: Disable directory browser - it returns HTML instead of file content
+        # This was causing all file downloads to get HTML pages instead of actual files
+        "dir_browser": {
+            "enable": False,
+            "response_trailer": "",  # No HTML trailer
+            "davmount": False,
+            "ms_mount": False,
+        },
+        # Also disable error printing in responses
+        "http_authenticator": {
+            "accept_basic": True,
+            "accept_digest": False,
+            "default_to_digest": False,
+        },
     }
     
     logger.error(f"[WebDAV] ⚠️ Creating WsgiDAVApp with provider_mapping: {list(config['provider_mapping'].keys())}")

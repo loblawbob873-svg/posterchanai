@@ -282,6 +282,3 @@ class ExternalStorage(Base):
     
     # Many-to-many relationship with User (users allowed to access this storage)
     allowed_users = relationship("User", secondary=external_storage_users, backref="external_storage_mounts")
-    
-    # Many-to-many relationship with User
-    allowed_users = relationship("User", secondary=external_storage_users, backref="external_storage_mounts")

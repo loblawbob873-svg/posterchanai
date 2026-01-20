@@ -512,6 +512,8 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                 filter_elem = query_elem.find('.//filter')
             
             time_range = None
+            original_start_dt = None
+            original_end_dt = None
             if filter_elem is not None:
                 time_range_elem = filter_elem.find('.//{urn:ietf:params:xml:ns:caldav}time-range')
                 if time_range_elem is None:
@@ -533,7 +535,13 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                 start_dt = start_dt.replace(tzinfo=timezone.utc)
                             if end_dt.tzinfo is None:
                                 end_dt = end_dt.replace(tzinfo=timezone.utc)
-                            
+
+                            # Store original dates BEFORE expansion for accurate date comparisons
+                            # This is critical for Monday events - if range starts on Monday,
+                            # we need to use the original Monday date, not the expanded one
+                            original_start_dt = start_dt
+                            original_end_dt = end_dt
+
                             # Expand range slightly to ensure we don't miss events on boundaries
                             # Add 1 second before start and after end to catch events exactly on boundaries
                             from datetime import timedelta

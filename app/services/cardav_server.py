@@ -907,7 +907,7 @@ def create_cardav_app() -> FastAPI:
                 # Strip any whitespace that might have been introduced
                 username = username.strip()
                 password = password.strip()
-                logger.info(f"[CardDAV] Auth attempt - username: '{username}' (len={len(username)}), password len: {len(password)}")
+                logger.debug(f"[CardDAV] Auth attempt - username: '{username}'")
             except Exception as e:
                 logger.warning(f"[CardDAV] Failed to parse credentials: {e}", exc_info=True)
                 return Response(
@@ -940,7 +940,7 @@ def create_cardav_app() -> FastAPI:
                     # Try with password without stripping (in case whitespace is significant)
                     password_valid_alt = verify_password(password.strip(), user.password_hash) if password != password.strip() else False
                     if not password_valid_alt:
-                        logger.warning(f"[CardDAV] Invalid password for user: {user.username} (auth username: '{username}', password len: {len(password)}, hash: {user.password_hash[:20]}...)")
+                        logger.warning(f"[CardDAV] Invalid password for user: {user.username} (auth username: '{username}')")
                         return Response(
                             content="Invalid credentials",
                             status_code=401,

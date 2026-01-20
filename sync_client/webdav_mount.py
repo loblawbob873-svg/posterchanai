@@ -75,8 +75,31 @@ class WebDAVClient:
         if not url.endswith('/'):
             # Check if it looks like a file (has extension)
             path_parts = path.split('/')
-            if path_parts and '.' in path_parts[-1] and path_parts[-1].split('.')[-1] in ['log', 'db', 'ics', 'csv', 'jpeg', 'xbel', 'shm', 'wal']:
-                pass  # It's a file, don't add /
+            if path_parts and '.' in path_parts[-1]:
+                # Common file extensions - don't add trailing slash
+                ext = path_parts[-1].split('.')[-1].lower()
+                known_file_extensions = {
+                    # Documents
+                    'pdf', 'doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'markdown',
+                    # Spreadsheets
+                    'xls', 'xlsx', 'ods', 'csv',
+                    # Presentations
+                    'ppt', 'pptx', 'odp',
+                    # Images
+                    'png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp', 'ico', 'tiff', 'tif',
+                    # Audio/Video
+                    'mp3', 'mp4', 'avi', 'mkv', 'mov', 'wav', 'flac', 'ogg', 'webm',
+                    # Archives
+                    'zip', 'tar', 'gz', 'bz2', 'xz', '7z', 'rar',
+                    # Code/Config
+                    'py', 'js', 'ts', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg',
+                    # Data
+                    'db', 'sqlite', 'sqlite3', 'sql', 'ics', 'vcf', 'xbel',
+                    # Other
+                    'log', 'shm', 'wal', 'jar', 'exe', 'bin', 'so', 'dll',
+                }
+                if ext in known_file_extensions:
+                    pass  # It's a file, don't add /
             # For directories, we'll let the server handle it
         return url
     

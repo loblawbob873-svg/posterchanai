@@ -3676,16 +3676,54 @@ def delete_todo_from_calendar(
                 logger.error(f"[CalDAV] Set storage_server_url in Admin settings.")
                 return False
             
-            filepath = f"{todo_uid}.ics"
-            success = proxy.delete_file(filepath)
-            
+            # Search for todo in all calendar directories using helper function
+            todo_filepath = _find_event_filepath(proxy, todo_uid)
+
+            if not todo_filepath:
+                # Fallback: try root directory
+                todo_filepath = f"{todo_uid}.ics"
+                if not proxy.file_exists(todo_filepath):
+                    logger.warning(f"[CalDAV] Todo file not found: {todo_uid}.ics")
+                    return False
+
+            success = proxy.delete_file(todo_filepath)
+
             if success:
-                logger.info(f"Deleted todo {todo_uid} from built-in storage")
+                logger.info(f"Deleted todo {todo_uid} from built-in storage at {todo_filepath}")
+
+                # Update sync-token state (same as events)
+                from app.models import CalDAVSyncToken
+                import json
+
+                if '/' in todo_filepath:
+                    cal_name = todo_filepath.split('/')[0]
+                else:
+                    cal_name = 'calendar'
+
+                sync_tokens = db.query(CalDAVSyncToken).filter(
+                    CalDAVSyncToken.user_id == user_id,
+                    CalDAVSyncToken.calendar_name == cal_name
+                ).all()
+
+                for token_record in sync_tokens:
+                    try:
+                        event_data = json.loads(token_record.event_uids)
+                        if isinstance(event_data, dict) and todo_uid in event_data:
+                            del event_data[todo_uid]
+                            token_record.event_uids = json.dumps(event_data)
+                    except Exception as e:
+                        logger.debug(f"[CalDAV] Error updating sync-token for todo: {e}")
+
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
                 return True
             else:
-                logger.warning(f"Todo file not found or failed to delete: {filepath}")
+                logger.warning(f"Todo file not found or failed to delete: {todo_filepath}")
                 return False
-        
+
         # Otherwise use CalDAV protocol (for external servers)
         client = create_caldav_client(url, username, password)
 
@@ -3766,9 +3804,61 @@ def delete_event_from_calendar(
             
             # Delete the file
             success = proxy.delete_file(event_filepath)
-            
+
             if success:
                 logger.info(f"[CalDAV] Deleted event {event_uid} from built-in storage at {event_filepath}")
+
+                # Update sync-token state to remove this event UID
+                # This ensures iPhone will detect the deletion on next sync-collection request
+                from app.models import CalDAVSyncToken
+                import json
+
+                # Determine calendar name from filepath
+                if '/' in event_filepath:
+                    cal_name = event_filepath.split('/')[0]
+                else:
+                    cal_name = 'calendar'  # Legacy root
+
+                # Update all sync-token records for this calendar to remove the deleted event UID
+                sync_tokens = db.query(CalDAVSyncToken).filter(
+                    CalDAVSyncToken.user_id == user_id,
+                    CalDAVSyncToken.calendar_name == cal_name
+                ).all()
+
+                updated_count = 0
+                try:
+                    for token_record in sync_tokens:
+                        try:
+                            event_data = json.loads(token_record.event_uids)
+
+                            # Handle both old format (list) and new format (dict)
+                            if isinstance(event_data, dict):
+                                # New format: {uid: mtime}
+                                if event_uid in event_data:
+                                    del event_data[event_uid]
+                                    token_record.event_uids = json.dumps(event_data)
+                                    updated_count += 1
+                                    logger.info(f"[CalDAV] Removed event {event_uid} from sync-token (WebUI delete)")
+                            else:
+                                # Old format: list of UIDs - migrate to dict format
+                                event_uids = set(event_data)
+                                if event_uid in event_uids:
+                                    event_uids.remove(event_uid)
+                                    event_data_dict = {uid: 0 for uid in event_uids}
+                                    token_record.event_uids = json.dumps(event_data_dict)
+                                    updated_count += 1
+                                    logger.info(f"[CalDAV] Removed event {event_uid} from sync-token (WebUI delete, migrated format)")
+                        except Exception as e:
+                            logger.warning(f"[CalDAV] Error updating sync-token {token_record.id}: {e}")
+
+                    if updated_count > 0:
+                        db.commit()
+                        logger.info(f"[CalDAV] Updated {updated_count} sync-token(s) for calendar {cal_name} after WebUI deletion")
+                except Exception as e:
+                    db.rollback()
+                    logger.error(f"[CalDAV] Error updating sync-token state after WebUI deletion: {e}")
+                    # Continue - deletion succeeded, sync-token update failed but will be fixed on next sync
+
                 return True
             else:
                 logger.warning(f"[CalDAV] Event file not found or failed to delete: {event_filepath}")
