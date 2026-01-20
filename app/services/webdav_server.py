@@ -31,6 +31,27 @@ class QuotaFilesystemProvider(FilesystemProvider):
         self.db = db
         self.storage = get_storage_service(db)
     
+    def create_collection(self, path: str):
+        """Override to prevent creating directories with file names."""
+        # Normalize path
+        normalized_path = path.rstrip('/')
+        
+        # Check if this looks like a file (has extension)
+        from pathlib import Path as PathLib
+        path_obj = PathLib(normalized_path)
+        if path_obj.suffix and path_obj.name != path_obj.stem:
+            # This has a file extension - don't allow creating it as a directory
+            logger.warning(f"[WebDAV] Attempted to create directory with file name: {normalized_path}")
+            raise Exception(f"Cannot create directory with file name: {normalized_path}")
+        
+        # Check if a file exists at this path
+        fs_path = self._locate_file_path(normalized_path)
+        if fs_path and fs_path.exists() and fs_path.is_file():
+            logger.warning(f"[WebDAV] File exists at directory path {normalized_path}")
+            raise Exception(f"File exists at path: {normalized_path}")
+        
+        return super().create_collection(normalized_path)
+    
     def _get_username_from_path(self, path: str) -> Optional[str]:
         """Extract username from WebDAV path."""
         # Path format: /username/...
@@ -76,19 +97,81 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return total
     
     def write_file_content(self, path: str, content: bytes, *, etag: Optional[str] = None):
-        """Override to check quota before writing."""
-        username = self._get_username_from_path(path)
+        """Override to check quota before writing and ensure files are created, not directories."""
+        # Normalize path - remove trailing slash if present (files shouldn't have trailing slashes)
+        normalized_path = path.rstrip('/')
+        
+        # If path ends with a file extension, it's definitely a file, not a directory
+        # Ensure we don't have a directory with this name
+        username = self._get_username_from_path(normalized_path)
         if username:
+            # Check quota
             allowed, error = self._check_quota(username, len(content))
             if not allowed:
                 raise Exception(error or "Quota exceeded")
+            
+            # Get the actual filesystem path
+            fs_path = self._locate_file_path(normalized_path)
+            if fs_path and fs_path.exists() and fs_path.is_dir():
+                # A directory exists with this name - remove it and create a file instead
+                logger.warning(f"[WebDAV] Directory exists at file path {normalized_path}, removing and creating file")
+                try:
+                    fs_path.rmdir()  # Only works if directory is empty
+                except OSError:
+                    # Directory not empty - this is a problem, but try to continue
+                    logger.error(f"[WebDAV] Cannot remove non-empty directory at {normalized_path}")
         
-        result = super().write_file_content(path, content, etag=etag)
+        result = super().write_file_content(normalized_path, content, etag=etag)
         
         # Invalidate file cache for parent directory
-        self._invalidate_cache_for_path(username, path)
+        if username:
+            self._invalidate_cache_for_path(username, normalized_path)
         
         return result
+    
+    def _locate_file_path(self, path: str) -> Optional[Path]:
+        """Get the filesystem path for a WebDAV path."""
+        try:
+            # Remove leading slash and split
+            parts = path.strip('/').split('/')
+            if not parts or not parts[0]:
+                return None
+            
+            # Build filesystem path
+            fs_path = self.root_path
+            for part in parts:
+                if not part:  # Skip empty parts
+                    continue
+                fs_path = fs_path / part
+            
+            return fs_path
+        except Exception:
+            return None
+    
+    def get_resource_info(self, path: str, environ: dict = None):
+        """Override to ensure correct resource type detection."""
+        # Normalize path - remove trailing slash for files
+        normalized_path = path.rstrip('/')
+        
+        # Get resource info from parent
+        info = super().get_resource_info(normalized_path, environ)
+        
+        if info:
+            # Check if this is actually a file but reported as directory
+            fs_path = self._locate_file_path(normalized_path)
+            if fs_path and fs_path.exists():
+                if fs_path.is_file() and info.get('iscollection', False):
+                    # File is incorrectly reported as collection - fix it
+                    info['iscollection'] = False
+                    info['size'] = fs_path.stat().st_size
+                    logger.debug(f"[WebDAV] Fixed resource type for {normalized_path}: file, not directory")
+                elif fs_path.is_dir() and not info.get('iscollection', False):
+                    # Directory is incorrectly reported as file - fix it
+                    info['iscollection'] = True
+                    info['size'] = 0
+                    logger.debug(f"[WebDAV] Fixed resource type for {normalized_path}: directory, not file")
+        
+        return info
     
     def delete(self, path: str):
         """Override to invalidate cache on delete."""
