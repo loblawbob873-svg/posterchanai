@@ -289,6 +289,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 elif rel_path == username:
                     rel_path = ''
                 
+                # First check if this is a file (not a directory) - if so, return empty list
+                # We can't list files inside a file
+                try:
+                    info = self._proxy_get_info(username, rel_path)
+                    if info and not info.get('is_directory', False):
+                        logger.debug(f"[WebDAV] Path {normalized_path} is a file, not a directory - returning empty list")
+                        return []
+                except Exception as e:
+                    logger.debug(f"[WebDAV] Could not get info for {normalized_path}, assuming directory: {e}")
+                    # Continue to try listing - might be a directory
+                
                 # Proxy to storage server - this is the ONLY way when remote storage is configured
                 try:
                     result = self._proxy_list_files(username, rel_path)
@@ -298,6 +309,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     return result
                 except Exception as e:
                     logger.error(f"[WebDAV] Failed to proxy list to storage server: {e}", exc_info=True)
+                    # If it's a 400 error and the path looks like a file, return empty list
+                    if "400" in str(e) and (rel_path.endswith('.log') or rel_path.endswith('.ics') or '.' in rel_path.split('/')[-1]):
+                        logger.warning(f"[WebDAV] Path {rel_path} appears to be a file (400 error), returning empty list")
+                        return []
                     # Don't fall back to local - raise the error
                     raise
         
