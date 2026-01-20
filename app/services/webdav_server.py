@@ -761,6 +761,66 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             props.append(('displayname', self._path.split('/')[-1] or self._path))
                         return props
                     
+                    def get_directory_info(self):
+                        # Return directory info as dict for dir_browser
+                        from datetime import datetime
+                        return {
+                            "display_name": self.get_display_name(),
+                            "href": self.get_href(),
+                            "is_collection": self.is_collection(),
+                            "content_length": self.get_content_length(),
+                            "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT'),
+                        }
+                    
+                    # Make it fully dict-like for directory browser
+                    def __getitem__(self, key):
+                        # Support dict-like access
+                        if key == "display_name":
+                            return self.get_display_name()
+                        elif key == "href":
+                            return self.get_href()
+                        elif key == "is_collection":
+                            return self.is_collection()
+                        elif key == "is_directory":
+                            return self._is_dir
+                        elif key == "content_length":
+                            return self.get_content_length()
+                        elif key == "size":
+                            return self._size
+                        elif key == "modified":
+                            return self._modified
+                        elif key == "last_modified":
+                            from datetime import datetime
+                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                        elif key == "path":
+                            return self._path
+                        else:
+                            raise KeyError(f"'{key}' not found in SimpleResource")
+                    
+                    def __setitem__(self, key, value):
+                        # Support dict-like assignment for directory browser
+                        if key == "str_modified" or key == "last_modified" or key == "modified":
+                            # Allow setting modified time
+                            pass  # Ignore - we don't store it
+                        elif key == "display_name":
+                            pass  # Ignore
+                        else:
+                            # Store in a dict if needed
+                            if not hasattr(self, '_dict_data'):
+                                self._dict_data = {}
+                            self._dict_data[key] = value
+                    
+                    def get(self, key, default=None):
+                        # Support dict-like .get() method
+                        try:
+                            return self.__getitem__(key)
+                        except KeyError:
+                            return default
+                    
+                    def __contains__(self, key):
+                        # Support 'in' operator
+                        return key in ["display_name", "href", "is_collection", "is_directory", "content_length", "size", "modified", "last_modified", "path"]
+                    
                     # Make it fully dict-like for directory browser
                     def __getitem__(self, key):
                         # Allow dict-like access for directory browser
