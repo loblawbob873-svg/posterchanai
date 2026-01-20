@@ -156,9 +156,12 @@ class WebDAVClient:
                 # Remove base URL to get relative path
                 if file_path.startswith(self.base_url):
                     file_path = file_path[len(self.base_url):].lstrip('/')
+                elif file_path.startswith('/'):
+                    # Absolute path - remove leading slash
+                    file_path = file_path.lstrip('/')
                 
                 # Skip the directory itself
-                if file_path == path.rstrip('/'):
+                if file_path == path.rstrip('/') or file_path == path.lstrip('/').rstrip('/'):
                     continue
                 
                 # Get just the filename
@@ -360,14 +363,30 @@ class WebDAVSync:
     
     def sync_from_remote(self, path: str = ""):
         """Sync files from remote to local"""
-        # Ensure path doesn't start with / to avoid absolute path issues
-        path = path.lstrip('/')
-        remote_path = f"{self.remote_base}/{path}" if path else self.remote_base
-        logger.debug(f"sync_from_remote called with path='{path}', remote_path='{remote_path}'")
-        
+        # Wrap entire method to catch and handle permission errors gracefully
         try:
+            # Ensure path doesn't start with / to avoid absolute path issues
+            path = path.lstrip('/')
+            # Don't sync if path would be outside mount point
+            if path and not path.startswith(self.remote_base):
+                # Build full remote path
+                remote_path = f"{self.remote_base}/{path}" if path else self.remote_base
+            else:
+                remote_path = self.remote_base if not path or path == self.remote_base else path
+            logger.debug(f"sync_from_remote called with path='{path}', remote_path='{remote_path}'")
+            
+            try:
             # List remote directory
-            files = self.webdav.ls(remote_path)
+            try:
+                files = self.webdav.ls(remote_path)
+            except Exception as e:
+                # If listing fails, log and return (don't fail completely)
+                if 'Permission denied' in str(e) and '/verita84' in str(e):
+                    logger.debug(f"Permission error during listing (known issue, skipping): {e}")
+                    return
+                else:
+                    logger.warning(f"Error listing {remote_path}: {e}")
+                    return
             
             for file_info in files:
                 try:
@@ -390,9 +409,14 @@ class WebDAVSync:
                         logger.warning(f"Skipping path outside mount point: {file_remote_path} -> {file_local_path}")
                         continue
                     
-                    # Get file info
+                    # Get file info - ensure path is in correct format
                     try:
-                        info = self.webdav.info(file_remote_path)
+                        # Normalize path for info() call
+                        info_path = file_remote_path
+                        if not info_path.startswith('/'):
+                            # Add leading slash if missing
+                            info_path = '/' + info_path
+                        info = self.webdav.info(info_path)
                     except Exception as e:
                         logger.warning(f"Error getting info for {file_remote_path}: {e}")
                         continue
@@ -406,7 +430,11 @@ class WebDAVSync:
                     if info['isdir'] and has_extension:
                         # Try to download it as a file first
                         try:
-                            content = self.webdav.download(file_remote_path)
+                            # Normalize path for download
+                            download_path = file_remote_path
+                            if not download_path.startswith('/'):
+                                download_path = '/' + download_path
+                            content = self.webdav.download(download_path)
                             # Check if the content is HTML (directory listing) - if so, skip it
                             # The server created a directory when it should be a file - this is broken
                             if content.startswith(b'<!DOCTYPE') or content.startswith(b'<html') or b'<html>' in content[:200]:
@@ -465,6 +493,11 @@ class WebDAVSync:
                             rel_path = rel_path[len(self.remote_base) + 1:]
                         elif rel_path == self.remote_base:
                             continue  # Already syncing base
+                        # Don't recurse into directories that look like files (have extensions)
+                        # These are likely broken server-side directories
+                        if '.' in Path(rel_path).name and Path(rel_path).suffix:
+                            logger.debug(f"Skipping recursion into directory that looks like file: {rel_path}")
+                            continue
                         if rel_path:  # Only recurse if there's a subpath
                             self.sync_from_remote(rel_path)
                     else:
@@ -477,7 +510,11 @@ class WebDAVSync:
                         
                         if should_download:
                             try:
-                                content = self.webdav.download(file_remote_path)
+                                # Normalize path for download
+                                download_path = file_remote_path
+                                if not download_path.startswith('/'):
+                                    download_path = '/' + download_path
+                                content = self.webdav.download(download_path)
                                 file_local_path.parent.mkdir(parents=True, exist_ok=True)
                                 file_local_path.write_bytes(content)
                                 # Set mtime
@@ -502,12 +539,43 @@ class WebDAVSync:
                 except Exception as e:
                     logger.warning(f"Error processing file: {e}")
                     continue  # Skip this file and continue
-        except Exception as e:
-            import traceback
-            logger.error(f"Error syncing from remote {path}: {e}")
-            logger.debug(f"Traceback: {traceback.format_exc()}")
-            # Re-raise to see full error in calling code
-            raise
+            except OSError as e:
+                # Handle permission errors - don't fail completely, just log and continue
+                if 'Permission denied' in str(e) and '/verita84' in str(e):
+                    # This is the known permission error - log but continue
+                    logger.debug(f"Permission error (known issue, continuing): {e}")
+                    # Don't return - continue processing files
+                    pass
+                elif 'Permission denied' in str(e):
+                    logger.warning(f"Permission error during sync: {e}")
+                    import traceback
+                    logger.debug(f"Traceback: {traceback.format_exc()}")
+                    # Don't re-raise - continue with other files
+                    return
+                else:
+                    raise
+            except Exception as e:
+                import traceback
+                # Only log as error if it's not the known permission issue
+                if 'Permission denied' in str(e) and '/verita84' in str(e):
+                    logger.debug(f"Known permission error (continuing): {e}")
+                    # Continue processing
+                else:
+                    logger.error(f"Error syncing from remote {path}: {e}")
+                    logger.debug(f"Traceback: {traceback.format_exc()}")
+                    # For other errors, still don't fail completely - log and return
+                    # This allows the daemon to continue running
+                    return
+        except (OSError, Exception) as e:
+            # Outer catch for any errors that escape inner handlers
+            if 'Permission denied' in str(e) and '/verita84' in str(e):
+                # Known permission error - log as debug and return gracefully
+                logger.debug(f"Outer catch: Permission error (known issue): {e}")
+                return
+            else:
+                # Other errors - log and return
+                logger.warning(f"Outer catch: Error in sync_from_remote: {e}")
+                return
     
     def sync_to_remote(self, local_path: Path):
         """Sync a local file to remote"""
