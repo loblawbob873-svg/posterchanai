@@ -379,13 +379,15 @@ class WebDAVSync:
             try:
                 files = self.webdav.ls(remote_path)
             except Exception as e:
-                # If listing fails, log and return (don't fail completely)
+                # If listing fails, log but try to continue
                 if 'Permission denied' in str(e) and '/verita84' in str(e):
-                    logger.debug(f"Permission error during listing (known issue, skipping): {e}")
-                    return
+                    logger.debug(f"Permission error during listing (known issue, continuing): {e}")
+                    # Don't return - try to continue with empty list
+                    files = []
                 else:
                     logger.warning(f"Error listing {remote_path}: {e}")
-                    return
+                    # For other errors, also try to continue
+                    files = []
             
             for file_info in files:
                 try:
@@ -781,14 +783,26 @@ class WebDAVMount:
             logger.info("Network available, performing initial sync...")
             try:
                 self._sync.sync_from_remote()
-                logger.info("Initial sync complete")
+                # Check if files were actually synced
+                synced_files = list(self.mount_point.rglob('*'))
+                file_count = len([f for f in synced_files if f.is_file()])
+                if file_count > 0:
+                    logger.info(f"Initial sync complete - {file_count} files synced")
+                else:
+                    logger.warning("Initial sync completed but no files found")
             except Exception as e:
                 # Log but don't fail - sync will retry on next interval
                 if 'Permission denied' in str(e) and '/verita84' in str(e):
                     logger.debug(f"Initial sync permission error (known issue, will retry): {e}")
                 else:
                     logger.warning(f"Initial sync had errors (will retry): {e}")
-                logger.info("Initial sync attempt complete")
+                # Still check if any files were synced despite the error
+                synced_files = list(self.mount_point.rglob('*'))
+                file_count = len([f for f in synced_files if f.is_file()])
+                if file_count > 0:
+                    logger.info(f"Initial sync attempt complete - {file_count} files synced despite errors")
+                else:
+                    logger.info("Initial sync attempt complete (no files synced)")
         else:
             logger.warning(f"Network not available: {network_error}")
             logger.info("Will sync when network becomes available")

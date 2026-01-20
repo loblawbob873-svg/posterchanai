@@ -170,6 +170,18 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     info['iscollection'] = True
                     info['size'] = 0
                     logger.debug(f"[WebDAV] Fixed resource type for {normalized_path}: directory, not file")
+        elif normalized_path:
+            # If parent didn't return info, check filesystem directly
+            fs_path = self._locate_file_path(normalized_path)
+            if fs_path and fs_path.exists():
+                # Create info dict from filesystem
+                stat = fs_path.stat()
+                info = {
+                    'iscollection': fs_path.is_dir(),
+                    'size': 0 if fs_path.is_dir() else stat.st_size,
+                    'modified': stat.st_mtime,
+                }
+                logger.debug(f"[WebDAV] Created resource info from filesystem for {normalized_path}")
         
         return info
     
