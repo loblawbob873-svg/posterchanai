@@ -67,6 +67,7 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
         
         # For 404 status, we still need to include the prop element (even if empty)
         # But we should not add any properties
+        # iPhone requires empty <D:prop> for deleted items
         if status != 404:
             for prop_name, prop_value in props.items():
                 if prop_name == 'resourcetype':
@@ -136,7 +137,9 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
         if status == 404:
             # For 404, we need to return a proper response with empty props and 404 status
             # iPhone expects this format to know the resource was deleted
+            # CRITICAL: The propstat must have empty prop element and 404 status
             xml += '            <D:status>HTTP/1.1 404 Not Found</D:status>\n        </D:propstat>\n    </D:response>\n'
+            logger.debug(f"[CalDAV] Added 404 response for deleted item: {href}")
         else:
             xml += '            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
     xml += '</D:multistatus>'
@@ -1165,22 +1168,27 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                         continue
             
             # Add deleted events with 404 status so iPhone removes them
+            # CRITICAL: This must happen BEFORE we add current events, or iPhone might ignore them
             deleted_count = 0
-            for deleted_uid in deleted_event_uids:
-                href_path = f"{cal_name}/{deleted_uid}.ics" if cal_name else f"calendar/{deleted_uid}.ics"
-                # Use full URL path for href (iPhone expects this format)
-                full_href = f"{base_url}/{href_path}"
-                items.append({
-                    "href": full_href,
-                    "props": {},  # Empty props for deleted items
-                    "status": 404  # 404 tells iPhone to remove this event
-                })
-                deleted_count += 1
-                logger.info(f"[CalDAV] ✓ Reporting deleted event with 404: {deleted_uid} (href: {full_href})")
-            
-            if deleted_count > 0:
+            if deleted_event_uids:
+                logger.info(f"[CalDAV] Preparing to report {len(deleted_event_uids)} deleted events with 404 status")
+                for deleted_uid in deleted_event_uids:
+                    href_path = f"{cal_name}/{deleted_uid}.ics" if cal_name else f"calendar/{deleted_uid}.ics"
+                    # Use full URL path for href (iPhone expects this format)
+                    full_href = f"{base_url}/{href_path}"
+                    # Insert at the beginning of items list to ensure deletions are processed first
+                    items.insert(0, {
+                        "href": full_href,
+                        "props": {},  # Empty props for deleted items
+                        "status": 404  # 404 tells iPhone to remove this event
+                    })
+                    deleted_count += 1
+                    logger.info(f"[CalDAV] ✓ Reporting deleted event with 404: {deleted_uid} (href: {full_href})")
+                
                 logger.info(f"[CalDAV] ✓ Reporting {deleted_count} deleted events to iPhone (404 status)")
                 logger.info(f"[CalDAV] Deleted UIDs: {list(deleted_event_uids)[:10]}")
+            else:
+                logger.debug(f"[CalDAV] No deleted events to report (deleted_event_uids is empty)")
             
             logger.info(f"[CalDAV] sync-collection summary for calendar '{cal_name}':")
             logger.info(f"  - Total .ics files: {ics_count}")
@@ -1452,43 +1460,48 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
             CalDAVSyncToken.calendar_name == cal_name
         ).all()
         
-        updated_count = 0
-        try:
-            for token_record in sync_tokens:
-                try:
-                    event_data = json.loads(token_record.event_uids)
-                    
-                    # Handle both old format (list) and new format (dict)
-                    if isinstance(event_data, dict):
-                        # New format: {uid: mtime}
-                        if event_uid in event_data:
-                            del event_data[event_uid]
-                            token_record.event_uids = json.dumps(event_data)
-                            updated_count += 1
-                            logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (dict format)")
-                    else:
-                        # Old format: list of UIDs - migrate to dict format
-                        event_uids = set(event_data)
-                        if event_uid in event_uids:
-                            event_uids.remove(event_uid)
-                            # Migrate to dict format while updating
-                            event_data_dict = {uid: 0 for uid in event_uids}  # mtime=0 for migrated entries
-                            token_record.event_uids = json.dumps(event_data_dict)
-                            updated_count += 1
-                            logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (migrated from list to dict format)")
-                except Exception as e:
-                    logger.warning(f"[CalDAV] Error updating sync-token {token_record.id}: {e}", exc_info=True)
-            
-            if updated_count > 0:
-                db.commit()
-                logger.info(f"[CalDAV] ✓ Updated {updated_count} sync-token(s) for calendar {cal_name} to reflect deletion of event {event_uid}")
-            else:
-                # No existing sync-tokens, that's fine - next sync will create a new one
-                logger.info(f"[CalDAV] No existing sync-tokens to update for calendar {cal_name} (will be detected on next sync)")
-        except Exception as e:
-            db.rollback()
-            logger.error(f"[CalDAV] Error updating sync-token state after deletion: {e}", exc_info=True)
-            # Continue - deletion succeeded, sync-token update failed but will be fixed on next sync
+            updated_count = 0
+            try:
+                for token_record in sync_tokens:
+                    try:
+                        event_data = json.loads(token_record.event_uids)
+                        
+                        # Handle both old format (list) and new format (dict)
+                        if isinstance(event_data, dict):
+                            # New format: {uid: mtime}
+                            if event_uid in event_data:
+                                del event_data[event_uid]
+                                token_record.event_uids = json.dumps(event_data)
+                                updated_count += 1
+                                logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (dict format)")
+                            else:
+                                logger.debug(f"[CalDAV] Event {event_uid} not found in sync-token {token_record.sync_token[:50]}... (already removed or never existed)")
+                        else:
+                            # Old format: list of UIDs - migrate to dict format
+                            event_uids = set(event_data)
+                            if event_uid in event_uids:
+                                event_uids.remove(event_uid)
+                                # Migrate to dict format while updating
+                                event_data_dict = {uid: 0 for uid in event_uids}  # mtime=0 for migrated entries
+                                token_record.event_uids = json.dumps(event_data_dict)
+                                updated_count += 1
+                                logger.info(f"[CalDAV] Removed event {event_uid} from sync-token {token_record.sync_token[:50]}... (migrated from list to dict format)")
+                            else:
+                                logger.debug(f"[CalDAV] Event {event_uid} not found in sync-token {token_record.sync_token[:50]}... (already removed or never existed)")
+                    except Exception as e:
+                        logger.warning(f"[CalDAV] Error updating sync-token {token_record.id}: {e}", exc_info=True)
+                
+                if updated_count > 0:
+                    db.commit()
+                    logger.info(f"[CalDAV] ✓ Updated {updated_count} sync-token(s) for calendar {cal_name} to reflect deletion of event {event_uid}")
+                else:
+                    # No existing sync-tokens, that's fine - next sync will create a new one
+                    logger.info(f"[CalDAV] No sync-tokens updated for calendar {cal_name} (event {event_uid} not in any token, or no tokens exist)")
+                    logger.info(f"[CalDAV] Deletion will be detected on next sync-collection when comparing current vs stored state")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"[CalDAV] Error updating sync-token state after deletion: {e}", exc_info=True)
+                # Continue - deletion succeeded, sync-token update failed but will be fixed on next sync
         
         return Response(content="", status_code=204)
     else:
