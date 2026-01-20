@@ -183,17 +183,32 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
             
             calendar_dirs = []
             # Known calendar directory names (even if storage server incorrectly marks them as files)
-            known_calendar_dirs = {'main', 'wwwcanoncityschoolsorg', 'caldav', 'carddav'}
+            # Storage server bug: directories with size > 0 are marked as files
+            known_calendar_dirs = {'main', 'wwwcanoncityschoolsorg'}
             
             for item in root_items:
                 item_name = item.get('name', '')
                 is_dir = item.get('is_directory', False)
+                size = item.get('size', 0)
                 
                 # Workaround: Storage server sometimes returns directories as files (with size > 0)
                 # If the name matches a known calendar directory, treat it as a directory
-                if not is_dir and item_name in known_calendar_dirs:
-                    logger.warning(f"[CalDAV] Storage server marked '{item_name}' as file but it's a known calendar directory - treating as directory")
-                    is_dir = True
+                # Also, if item has no extension and small size, it might be a directory
+                if not is_dir:
+                    if item_name in known_calendar_dirs:
+                        logger.warning(f"[CalDAV] Storage server marked '{item_name}' as file (size={size}) but it's a known calendar directory - treating as directory")
+                        is_dir = True
+                    elif '.' not in item_name and size < 100:
+                        # No extension and small size - likely a directory that storage server misidentified
+                        logger.info(f"[CalDAV] Item '{item_name}' has no extension and small size ({size}) - treating as potential directory")
+                        # Try to list it - if it succeeds, it's a directory
+                        try:
+                            test_items = proxy.list_files(item_name)
+                            if test_items is not None:
+                                logger.info(f"[CalDAV] ✓ '{item_name}' is a directory (can list {len(test_items)} items)")
+                                is_dir = True
+                        except:
+                            pass  # Not a directory
                 
                 if is_dir and not item_name.startswith('.'):
                     calendar_dirs.append(item_name)
