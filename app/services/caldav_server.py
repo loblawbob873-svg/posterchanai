@@ -64,7 +64,11 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
         status = item.get('status', 200)  # Default to 200 OK if not specified
         
         xml += f'    <D:response>\n        <D:href>{href}</D:href>\n        <D:propstat>\n            <D:prop>\n'
-        for prop_name, prop_value in props.items():
+        
+        # For 404 status, we still need to include the prop element (even if empty)
+        # But we should not add any properties
+        if status != 404:
+            for prop_name, prop_value in props.items():
             if prop_name == 'resourcetype':
                 if prop_value == 'calendar':
                     xml += '                <D:resourcetype><D:collection/><C:calendar xmlns:C="urn:ietf:params:xml:ns:caldav"/></D:resourcetype>\n'
@@ -125,13 +129,16 @@ def create_caldav_response(multistatus_items: List[Dict]) -> str:
                 xml += '                    <D:privilege><D:unbind/></D:privilege>\n'
                 xml += '                </D:current-user-privilege-set>\n'
         
+        # Close prop element
+        xml += '            </D:prop>\n'
+        
         # Add status code based on item status
         if status == 404:
             # For 404, we need to return a proper response with empty props and 404 status
             # iPhone expects this format to know the resource was deleted
-            xml += '            <D:prop>\n            </D:prop>\n            <D:status>HTTP/1.1 404 Not Found</D:status>\n        </D:response>\n'
+            xml += '            <D:status>HTTP/1.1 404 Not Found</D:status>\n        </D:propstat>\n    </D:response>\n'
         else:
-            xml += '            </D:prop>\n            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
+            xml += '            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
     xml += '</D:multistatus>'
     return xml
 
