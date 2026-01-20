@@ -511,11 +511,20 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                     end_str = time_range_elem.get('end', '')
                     if start_str and end_str:
                         try:
+                            # Parse time range - handle both UTC (Z) and timezone-aware formats
                             start_dt = date_parser.parse(start_str.replace('Z', '+00:00'))
                             end_dt = date_parser.parse(end_str.replace('Z', '+00:00'))
+                            
+                            # Ensure timezone-aware (default to UTC if naive)
+                            from datetime import timezone
+                            if start_dt.tzinfo is None:
+                                start_dt = start_dt.replace(tzinfo=timezone.utc)
+                            if end_dt.tzinfo is None:
+                                end_dt = end_dt.replace(tzinfo=timezone.utc)
+                            
                             time_range = (start_dt, end_dt)
                             logger.info(f"[CalDAV] Time range filter: {start_str} to {end_str} (iPhone query)")
-                            logger.info(f"[CalDAV] This will return events between {start_dt} and {end_dt}")
+                            logger.info(f"[CalDAV] Parsed time range: {start_dt} to {end_dt} (timezone-aware)")
                         except Exception as e:
                             logger.warning(f"[CalDAV] Error parsing time range: {e}")
                             pass
@@ -575,46 +584,64 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                         
                                         if dtstart:
                                             event_start = dtstart.dt
+                                            from datetime import date, time as dt_time, timezone
+                                            
                                             # Handle both datetime and date objects
                                             if isinstance(event_start, datetime):
+                                                # Make timezone-aware if needed (default to UTC)
+                                                if event_start.tzinfo is None:
+                                                    event_start = event_start.replace(tzinfo=timezone.utc)
+                                                
                                                 # For datetime events, check if event overlaps with time range
                                                 # Event is included if it starts before range ends and ends after range starts
-                                                event_end = dtend.dt if dtend else event_start
-                                                if isinstance(event_end, datetime):
-                                                    # Event overlaps if: event_start <= range_end AND event_end >= range_start
-                                                    if event_start <= time_range[1] and event_end >= time_range[0]:
-                                                        include_event = True
-                                                        logger.debug(f"[CalDAV] Event {name} matches time range: {event_start} to {event_end}")
-                                                        break
+                                                if dtend:
+                                                    event_end = dtend.dt
+                                                    if isinstance(event_end, datetime):
+                                                        if event_end.tzinfo is None:
+                                                            event_end = event_end.replace(tzinfo=timezone.utc)
+                                                    elif isinstance(event_end, date):
+                                                        # dtend is a date, convert to datetime at end of day in UTC
+                                                        event_end = datetime.combine(event_end, dt_time.max, tzinfo=timezone.utc)
+                                                    else:
+                                                        event_end = event_start
                                                 else:
-                                                    # dtend is a date, convert to datetime at end of day
-                                                    from datetime import date, time as dt_time
-                                                    if isinstance(event_end, date):
-                                                        event_end_dt = datetime.combine(event_end, dt_time.max)
-                                                        if event_start <= time_range[1] and event_end_dt >= time_range[0]:
-                                                            include_event = True
-                                                            logger.debug(f"[CalDAV] Event {name} (datetime start, date end) matches time range: {event_start} to {event_end}")
-                                                            break
+                                                    # No dtend, assume event ends at start time (instant event)
+                                                    event_end = event_start
+                                                
+                                                # Event overlaps if: event_start <= range_end AND event_end >= range_start
+                                                # Use >= and <= to include events that start/end exactly on boundaries
+                                                if event_start <= time_range[1] and event_end >= time_range[0]:
+                                                    include_event = True
+                                                    logger.debug(f"[CalDAV] Event {name} matches time range: {event_start} to {event_end} (range: {time_range[0]} to {time_range[1]})")
+                                                    break
                                             else:
                                                 # Date object (all-day event) - check if date overlaps with range
-                                                from datetime import date, time as dt_time
                                                 if isinstance(event_start, date):
-                                                    # Convert date to datetime range (start of day to end of day)
-                                                    event_start_dt = datetime.combine(event_start, dt_time.min)
+                                                    # Convert date to datetime range (start of day to end of day in UTC)
+                                                    # All-day events are considered to span the entire day
+                                                    event_start_dt = datetime.combine(event_start, dt_time.min, tzinfo=timezone.utc)
+                                                    
                                                     if dtend:
                                                         event_end = dtend.dt
                                                         if isinstance(event_end, date):
-                                                            event_end_dt = datetime.combine(event_end, dt_time.max)
+                                                            # Multi-day all-day event: ends at end of end date
+                                                            event_end_dt = datetime.combine(event_end, dt_time.max, tzinfo=timezone.utc)
+                                                        elif isinstance(event_end, datetime):
+                                                            if event_end.tzinfo is None:
+                                                                event_end_dt = event_end.replace(tzinfo=timezone.utc)
+                                                            else:
+                                                                event_end_dt = event_end
                                                         else:
-                                                            event_end_dt = event_end if isinstance(event_end, datetime) else datetime.combine(event_start, dt_time.max)
+                                                            event_end_dt = datetime.combine(event_start, dt_time.max, tzinfo=timezone.utc)
                                                     else:
-                                                        # No dtend, assume single day
-                                                        event_end_dt = datetime.combine(event_start, dt_time.max)
+                                                        # No dtend, assume single day - ends at end of same day
+                                                        event_end_dt = datetime.combine(event_start, dt_time.max, tzinfo=timezone.utc)
                                                     
                                                     # Event overlaps if: event_start_dt <= range_end AND event_end_dt >= range_start
+                                                    # This ensures all-day events on Monday are included if the range includes Monday
                                                     if event_start_dt <= time_range[1] and event_end_dt >= time_range[0]:
                                                         include_event = True
-                                                        logger.debug(f"[CalDAV] Event {name} (all-day) matches time range: {event_start} to {event_end_dt.date() if hasattr(event_end_dt, 'date') else event_end_dt}")
+                                                        logger.debug(f"[CalDAV] Event {name} (all-day {event_start}) matches time range: {event_start_dt} to {event_end_dt} (range: {time_range[0]} to {time_range[1]})")
                                                         break
                                         else:
                                             # No start time, include it anyway
@@ -622,8 +649,8 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                             logger.debug(f"[CalDAV] Event {name} has no dtstart, including")
                                             break
                             except Exception as e:
-                                logger.warning(f"[CalDAV] Error parsing iCalendar for time range check {name}: {e}")
-                                # If we can't parse, include it anyway
+                                logger.warning(f"[CalDAV] Error parsing iCalendar for time range check {name}: {e}", exc_info=True)
+                                # If we can't parse, include it anyway to avoid missing events
                                 include_event = True
                         
                         if include_event:
@@ -671,6 +698,27 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                                     logger.debug(f"[CalDAV] Could not parse event {event_uid} for logging: {e}")
                         else:
                             time_filtered_count += 1
+                            # Log filtered events for debugging (especially Monday events)
+                            try:
+                                cal_test = ICalendar.from_ical(ical_data.encode('utf-8'))
+                                for comp in cal_test.walk():
+                                    if comp.name == "VEVENT":
+                                        summary = str(comp.get('summary', ''))
+                                        dtstart = comp.get('dtstart')
+                                        if dtstart:
+                                            start_val = dtstart.dt
+                                            # Log if it's a Monday event or if we've filtered few events
+                                            from datetime import date as date_type
+                                            if isinstance(start_val, date_type):
+                                                # Check if it's Monday (weekday 0 = Monday)
+                                                if start_val.weekday() == 0 or time_filtered_count <= 5:
+                                                    logger.info(f"[CalDAV] Filtered out event '{summary}' on {start_val} (Monday: {start_val.weekday() == 0})")
+                                            elif isinstance(start_val, datetime):
+                                                if start_val.weekday() == 0 or time_filtered_count <= 5:
+                                                    logger.info(f"[CalDAV] Filtered out event '{summary}' on {start_val} (Monday: {start_val.weekday() == 0})")
+                                        break
+                            except:
+                                pass
                             if time_filtered_count <= 3:
                                 logger.debug(f"[CalDAV] Event {name} filtered out by time range")
                     except Exception as e:
