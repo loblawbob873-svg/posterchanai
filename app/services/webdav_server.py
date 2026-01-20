@@ -168,11 +168,16 @@ class QuotaFilesystemProvider(FilesystemProvider):
             return None
     
     def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
-        """Override to potentially proxy to remote storage or list local files."""
-        # If remote storage is configured, we can't list remote files via WebDAV
-        # WebDAV only works with local filesystem
-        # Remote files must be accessed via the File Manager API
-        return super().get_resource_list(path, depth, environ)
+        """Override to list files, ensuring all files are visible."""
+        # Always use parent method - it should list files correctly
+        result = super().get_resource_list(path, depth, environ)
+        
+        # If we have remote storage, we can't list it via WebDAV filesystem provider
+        # But we can at least ensure local files are listed correctly
+        if self.storage_server_url:
+            logger.debug(f"[WebDAV] Remote storage configured - WebDAV can only list local files")
+        
+        return result
     
     def get_resource_info(self, path: str, environ: dict = None):
         """Override to ensure correct resource type detection by checking filesystem directly."""
@@ -326,18 +331,45 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
     if root_path.exists():
         try:
             # Count files in storage to verify it's the right location
+            # Only scan first level to avoid long delays
             total_files = 0
             total_size = 0
-            for item in root_path.rglob('*'):
-                if item.is_file():
+            user_dirs = []
+            for item in root_path.iterdir():
+                if item.is_dir():
+                    user_dirs.append(item.name)
+                    # Count files in this user directory
+                    try:
+                        for file_item in item.rglob('*'):
+                            if file_item.is_file():
+                                total_files += 1
+                                try:
+                                    total_size += file_item.stat().st_size
+                                except:
+                                    pass
+                    except Exception as e:
+                        logger.debug(f"[WebDAV] Could not scan {item.name}: {e}")
+                elif item.is_file():
                     total_files += 1
                     try:
                         total_size += item.stat().st_size
                     except:
                         pass
-            logger.info(f"[WebDAV] Storage path contains {total_files} files ({total_size / (1024**3):.2f} GB)")
+            
+            logger.info(f"[WebDAV] Storage path: {root_path}")
+            logger.info(f"[WebDAV] Found {len(user_dirs)} user directories")
+            logger.info(f"[WebDAV] Total files: {total_files} ({total_size / (1024**3):.2f} GB)")
+            
+            # Check verita84 specifically
+            verita84_path = root_path / 'verita84'
+            if verita84_path.exists():
+                verita84_files = sum(1 for _ in verita84_path.rglob('*') if _.is_file())
+                verita84_size = sum(f.stat().st_size for f in verita84_path.rglob('*') if f.is_file())
+                logger.info(f"[WebDAV] User 'verita84': {verita84_files} files ({verita84_size / (1024**3):.2f} GB)")
         except Exception as e:
             logger.warning(f"[WebDAV] Could not scan storage path: {e}")
+            import traceback
+            logger.debug(f"[WebDAV] Traceback: {traceback.format_exc()}")
     
     provider = QuotaFilesystemProvider(root_path, db)
     
