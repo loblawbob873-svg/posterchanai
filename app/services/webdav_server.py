@@ -383,6 +383,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     
                     def get_ref_url(self):
                         return self._path
+                    
+                    def get_etag(self):
+                        # Return None or empty string if no ETag
+                        return None
+                    
+                    def get_content_type(self):
+                        return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
                 
                 logger.error(f"[WebDAV] ⚠️ Step 6: Creating VirtualResource for {normalized_path}")
                 resource = VirtualResource(normalized_path, is_dir=True)
@@ -514,6 +521,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     
                     def get_ref_url(self):
                         return self._path
+                    
+                    def get_etag(self):
+                        # Return None or empty string if no ETag
+                        return None
+                    
+                    def get_content_type(self):
+                        return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
                 
                 resource = SimpleResource(full_path, is_directory, size, modified_ts)
                 webdav_resources.append(resource)
