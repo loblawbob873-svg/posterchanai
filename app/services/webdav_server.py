@@ -142,7 +142,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
         
         username = self._get_username_from_path(normalized_path)
         if username:
-            # If remote storage is configured, proxy the write
+            # If remote storage is configured, ALWAYS proxy - never use local filesystem
             if self.storage_server_url:
                 # Extract relative path
                 rel_path = normalized_path.lstrip('/')
@@ -151,15 +151,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 elif rel_path == username:
                     rel_path = ''
                 
+                # Proxy upload - this is the ONLY way when remote storage is configured
                 try:
                     self._proxy_upload_file(username, rel_path, content)
                     # Invalidate cache
                     self._invalidate_cache_for_path(username, normalized_path)
-                    logger.debug(f"[WebDAV] Proxied file upload to storage server: {normalized_path}")
+                    logger.debug(f"[WebDAV] Proxied file upload to storage server: {normalized_path} ({len(content)} bytes)")
                     return  # Success, don't write locally
                 except Exception as e:
-                    logger.warning(f"[WebDAV] Failed to proxy upload to storage server: {e}, writing locally")
-                    # Fall through to local write
+                    logger.error(f"[WebDAV] Failed to proxy upload to storage server: {e}")
+                    # Don't fall back to local - raise the error
+                    raise
             
             # Check quota (for local storage)
             allowed, error = self._check_quota(username, len(content))
@@ -335,7 +337,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
         # Normalize path - remove trailing slash for files
         normalized_path = path_stripped.rstrip('/')
         
-        # If remote storage is configured, try to get info from storage server first
+        # If remote storage is configured, ALWAYS proxy - never use local filesystem
         if self.storage_server_url:
             username = self._get_username_from_path(normalized_path)
             if username:
@@ -346,14 +348,18 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 elif rel_path == username:
                     rel_path = ''
                 
-                # Try to get info from storage server
+                # Get info from storage server - this is the ONLY way when remote storage is configured
                 try:
                     info = self._proxy_get_info(username, rel_path)
                     if info:
                         logger.debug(f"[WebDAV] Got resource info from storage server for {normalized_path}")
                         return info
+                    # If not found, return None (404)
+                    return None
                 except Exception as e:
-                    logger.debug(f"[WebDAV] Failed to get info from storage server: {e}, trying local")
+                    logger.error(f"[WebDAV] Failed to get info from storage server: {e}")
+                    # Don't fall back to local - raise the error
+                    raise
         
         # Always check filesystem directly first for accurate info
         fs_path = self._locate_file_path(normalized_path)
