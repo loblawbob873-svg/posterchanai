@@ -1133,15 +1133,24 @@ def send_email(
             if attachments:
                 total_size = 0
                 for filename, data, content_type in attachments:
+                    # Skip if data is None or empty
+                    if not data:
+                        logger.warning(f"Skipping attachment {filename}: empty data")
+                        continue
+                    
                     # No size limits - include all attachments
-
                     total_size += len(data)
                     safe_filename = sanitize_filename(filename)
-                    part = MIMEBase(*content_type.split("/", 1))
-                    part.set_payload(data)
-                    encoders.encode_base64(part)
-                    part.add_header("Content-Disposition", f'attachment; filename="{safe_filename}"')
-                    msg.attach(part)
+                    try:
+                        part = MIMEBase(*content_type.split("/", 1))
+                        part.set_payload(data)
+                        encoders.encode_base64(part)
+                        part.add_header("Content-Disposition", f'attachment; filename="{safe_filename}"')
+                        msg.attach(part)
+                    except Exception as e:
+                        logger.error(f"Error attaching {filename}: {e}")
+                        # Continue with other attachments
+                        continue
         else:
             msg = MIMEText(body, "plain", "utf-8")
 
@@ -1201,26 +1210,25 @@ def send_email(
                 recipients.extend([addr.strip() for addr in bcc.split(",")])
 
             # Verify connection is still active before sending
-            try:
-                # Test connection with a no-op command
-                smtp.noop()
-            except Exception as e:
-                logger.error(f"SMTP connection lost before send: {e}")
-                raise Exception(f"Connection lost: {e}")
+            # Note: Some servers don't support NOOP, so we'll skip this check
+            # The sendmail call itself will fail if connection is lost
 
             # Send email
             logger.debug(f"Sending email to {recipients}")
             smtp.sendmail(account.email, recipients, msg.as_string())
             logger.debug("Email sent successfully")
             
-        except smtplib.SMTPNotConnectedError as e:
-            logger.error(f"SMTP server not connected: {e}. Server: {smtp_server}:{smtp_port}")
+        except smtplib.SMTPConnectError as e:
+            logger.error(f"SMTP connection error: {e}. Server: {smtp_server}:{smtp_port}")
+            return False
+        except smtplib.SMTPAuthenticationError as e:
+            logger.error(f"SMTP authentication error: {e}. Server: {smtp_server}:{smtp_port}")
             return False
         except smtplib.SMTPException as e:
             logger.error(f"SMTP error sending email: {e}. Server: {smtp_server}:{smtp_port}")
             return False
         except Exception as e:
-            logger.error(f"Error during SMTP connection/send: {e}. Server: {smtp_server}:{smtp_port}")
+            logger.error(f"Error during SMTP connection/send: {e}. Server: {smtp_server}:{smtp_port}", exc_info=True)
             return False
         finally:
             # Always close the connection properly
@@ -1371,20 +1379,29 @@ To: {original.to}
     
     # Convert original message attachments to the format expected by send_email
     # Format: List[Tuple[str, bytes, str]] = (filename, data, content_type)
-    for orig_att in original.attachments:
-        all_attachments.append((orig_att.filename, orig_att.data, orig_att.content_type))
+    try:
+        for orig_att in original.attachments:
+            if orig_att and orig_att.data:
+                all_attachments.append((orig_att.filename, orig_att.data, orig_att.content_type))
+        logger.debug(f"Forward: found {len(original.attachments)} original attachments, converted {len(all_attachments)}")
+    except Exception as e:
+        logger.warning(f"Error processing original attachments: {e}")
     
     # Add any new attachments passed in
     if attachments:
         all_attachments.extend(attachments)
     
+    logger.debug(f"Forward: total attachments to send: {len(all_attachments)}")
+    
     try:
         result = send_email(account=account, to=to, subject=subject, body=full_body, attachments=all_attachments if all_attachments else None)
         if not result:
-            logger.error(f"Failed to send forwarded email to {to}")
+            logger.error(f"Failed to send forwarded email to {to} (send_email returned False)")
+        else:
+            logger.info(f"Successfully forwarded message {uid} from {account_email} to {to}")
         return result
     except Exception as e:
-        logger.error(f"Error forwarding message to {to}: {e}")
+        logger.error(f"Error forwarding message to {to}: {e}", exc_info=True)
         return False
 
 

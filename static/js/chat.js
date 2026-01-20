@@ -4170,7 +4170,7 @@ class ChatHandler {
             }
             // Special case: mail forward <account> <id> <email> -> recipient filled, show message hint
             if (/^mail\s+forward\s+\S+\s+\d+\s+\S+@\S+$/i.test(cmdPrefix)) {
-                this.showToast('Type your message (optional), press Enter to forward');
+                this.showToast('Type your message (optional, can be multi-line). Original attachments will be included. Press Enter to forward');
                 return;
             }
             

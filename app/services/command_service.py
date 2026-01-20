@@ -3278,7 +3278,7 @@ Return ONLY valid JSON, no other text.""",
                 if len(parts) < 4:
                     return {
                         "type": "text",
-                        "content": "Usage: `mail forward <account> [folder:]<id> <recipient> [message]`\n\nExample: `mail forward verita84 123 john@example.com` or `mail forward verita84 123 john@example.com Check this out!`",
+                        "content": "Usage: `mail forward <account> [folder:]<id> <recipient> [message]`\n\n**Examples:**\n- `mail forward verita84 123 john@example.com` - Forward message #123 to john@example.com\n- `mail forward verita84 123 john@example.com Check this out!` - Forward with custom message\n- `mail forward verita84 123 john@example.com \"case #12345\" Hello, here is my info:` - Forward with multi-line message\n\n**Note:** The message body can be multi-line. Original message attachments are automatically included.",
                     }
 
                 account_hint = parts[1]

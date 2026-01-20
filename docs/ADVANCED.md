@@ -1076,7 +1076,7 @@ The mail command provides full IMAP/SMTP email functionality with encrypted pass
 | `mail summary <account> [folder:]<id>` | AI summary of a message with key points |
 | `mail translate <account> [folder:]<id>` | Translate a message to English |
 | `mail reply <account> [folder:]<id> <message>` | Reply to a message |
-| `mail forward <account> [folder:]<id> <recipient> [message]` | Forward a message |
+| `mail forward <account> [folder:]<id> <recipient> [message]` | Forward a message (includes original attachments) |
 | `mail send [account] <recipient> <message>` | Send new email |
 | `mail archive <account> <id>` | Archive a message (moves to INBOX.Archive) |
 | `mail delete <account> [folder:]<id>` | Delete a message |
@@ -1093,8 +1093,9 @@ The mail command provides full IMAP/SMTP email functionality with encrypted pass
 - `mail send john Hey!` - Send email to John (uses first account)
 - `mail send work john Hey!` - Send from work account to John
 - `mail reply work INBOX:456 Thanks!` - Reply to message #456
-- `mail forward work 789 john@example.com` - Forward message #789 to John
+- `mail forward work 789 john@example.com` - Forward message #789 to John (includes original attachments)
 - `mail forward work 789 john@example.com Check this out!` - Forward with custom message
+- `mail forward work 789 john@example.com "case #12345" Hello, here is my info:` - Forward with multi-line message body
 
 **Tab Autocomplete:** Type `mail folders ` or `mail folder ` and press Tab to see available accounts, then Tab again for folder hints.
 
