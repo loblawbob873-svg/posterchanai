@@ -369,12 +369,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         import time
                         
                         class VirtualResource:
-                            def __init__(self, path, info_dict):
+                            def __init__(self, path, info_dict, provider):
                                 self._path = path
                                 self._info = info_dict
                                 self._is_dir = info_dict.get('is_directory', False)
                                 self._modified = info_dict.get('modified', time.time())
                                 self._size = info_dict.get('size', 0)
+                                self._provider = provider  # Store reference to provider to call get_resource_instances
                             
                             def get_last_modified(self):
                                 return float(self._modified) if isinstance(self._modified, (int, float)) else time.time()
@@ -398,15 +399,22 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
                             
                             def get_descendants(self, depth=1, add_self=False):
-                                # Return empty list - children are handled by get_resource_instances
-                                return []
+                                # Get children by calling get_resource_instances
+                                # This is what wsgidav expects when it calls get_descendants on a resource
+                                try:
+                                    children = self._provider.get_resource_instances(self._path, environ=None)
+                                    logger.error(f"[WebDAV] VirtualResource.get_descendants: returning {len(children) if children else 0} children for {self._path}")
+                                    return children if children else []
+                                except Exception as e:
+                                    logger.error(f"[WebDAV] VirtualResource.get_descendants error: {e}", exc_info=True)
+                                    return []
                             
                             def __getattr__(self, name):
                                 # Gracefully handle any other method calls
                                 logger.warning(f"[WebDAV] VirtualResource.__getattr__ called for '{name}' - returning None")
                                 return None
                         
-                        result = VirtualResource(normalized_path, info)
+                        result = VirtualResource(normalized_path, info, self)
                         logger.error(f"[WebDAV] ⚠️ Created VirtualResource for {normalized_path}")
                         return result
                     else:
