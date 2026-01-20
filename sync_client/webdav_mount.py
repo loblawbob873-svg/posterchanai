@@ -231,20 +231,20 @@ class WebDAVClient:
                         if len(list(resourcetype)) > 0:
                             isdir = True
                 
-                # Final fallback: if contentlength is 0 and we can list it, it's likely a directory
+                # Final fallback: if we can list the path and get results, it's definitely a directory
+                # This is the most reliable method when PROPFIND doesn't properly identify directories
                 if not isdir:
-                    contentlength = prop.find('D:getcontentlength', ns)
-                    size = int(contentlength.text) if contentlength is not None and contentlength.text else -1
-                    if size == 0:
-                        # Try to list the path - if it succeeds, it's likely a directory
-                        try:
-                            test_list = self.ls(path, depth=1)
-                            # If listing returns items, it's a directory
-                            if test_list:
-                                isdir = True
-                                logger.debug(f"Detected directory via listing fallback for {path}")
-                        except:
-                            pass
+                    try:
+                        # Try to list the path - if it succeeds and returns items, it's a directory
+                        test_list = self.ls(path, depth=1, retry_attempts=1, retry_delay=1)
+                        # If listing returns items, it's a directory
+                        if test_list and len(test_list) > 0:
+                            isdir = True
+                            logger.info(f"[WebDAV Client] ✓ Detected directory via listing fallback for {path} ({len(test_list)} items found)")
+                    except Exception as e:
+                        # If listing fails, it might be a file or the path doesn't exist
+                        logger.debug(f"[WebDAV Client] Listing fallback failed for {path}: {e}")
+                        pass
                 
                 contentlength = prop.find('D:getcontentlength', ns)
                 size = int(contentlength.text) if contentlength is not None and contentlength.text else 0
