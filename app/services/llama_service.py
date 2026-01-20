@@ -168,6 +168,42 @@ class LlamaService:
         logger.info(f"  GPU layers: {self.n_gpu_layers}")
         logger.info(f"  CPU threads: {self.n_threads}")
 
+        # Validate model file before attempting to load
+        import os
+        from pathlib import Path
+        
+        model_path_obj = Path(self.model_path)
+        if not model_path_obj.exists():
+            error_msg = f"Model file does not exist: {self.model_path}"
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+        
+        if not model_path_obj.is_file():
+            error_msg = f"Model path is not a file: {self.model_path}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        # Check file permissions
+        if not os.access(self.model_path, os.R_OK):
+            error_msg = f"Model file is not readable: {self.model_path}"
+            logger.error(error_msg)
+            logger.error(f"  File permissions: {oct(model_path_obj.stat().st_mode)}")
+            logger.error(f"  File owner: UID={model_path_obj.stat().st_uid}, GID={model_path_obj.stat().st_gid}")
+            raise PermissionError(error_msg)
+        
+        # Check file size (should be > 0)
+        file_size = model_path_obj.stat().st_size
+        logger.info(f"  Model file size: {file_size:,} bytes ({file_size / (1024**3):.2f} GB)")
+        if file_size == 0:
+            error_msg = f"Model file is empty: {self.model_path}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        # Resolve absolute path to avoid path issues
+        resolved_path = str(model_path_obj.resolve())
+        if resolved_path != self.model_path:
+            logger.info(f"  Resolved path: {resolved_path}")
+        
         try:
             from llama_cpp import Llama
             import llama_cpp.llama_cpp as llama_cpp_lib
@@ -205,8 +241,10 @@ class LlamaService:
                     pass  # nvidia-smi not available or failed, skip check
 
             try:
+                # Use resolved path for loading
+                logger.info(f"  Attempting to load model from: {resolved_path}")
                 self._model = Llama(
-                    model_path=self.model_path,
+                    model_path=resolved_path,
                     n_ctx=self.num_ctx,
                     n_gpu_layers=gpu_layers,
                     n_threads=self.n_threads,
@@ -219,14 +257,42 @@ class LlamaService:
                 )
             except ValueError as ve:
                 # Catch ValueError specifically for llama_context errors
-                if "llama_context" in str(ve).lower() or "create" in str(ve).lower():
+                error_msg = str(ve)
+                if "llama_context" in error_msg.lower() or "create" in error_msg.lower():
                     logger.error(f"Failed to create llama context with current settings:")
                     logger.error(f"  Context size: {self.num_ctx}")
                     logger.error(f"  GPU layers: {gpu_layers}")
-                    logger.error(f"  Model: {self.model_path}")
+                    logger.error(f"  Model: {resolved_path}")
                     logger.error("This usually means the context size is too large for available memory.")
                     logger.error("Try reducing ollama_num_ctx in admin settings (e.g., 2048 or 4096)")
                     raise RuntimeError(f"Failed to create llama context: {ve}. Try reducing context size (ollama_num_ctx) in admin settings.")
+                raise
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"Failed to load model: {error_msg}")
+                logger.error(f"  Model path: {resolved_path}")
+                logger.error(f"  File exists: {model_path_obj.exists()}")
+                logger.error(f"  File readable: {os.access(self.model_path, os.R_OK)}")
+                logger.error(f"  File size: {file_size:,} bytes")
+                logger.error(f"  Context size: {self.num_ctx}")
+                logger.error(f"  GPU layers: {gpu_layers}")
+                
+                # Check for common issues
+                if "load model from file" in error_msg.lower() or "failed to load" in error_msg.lower():
+                    logger.error("Possible causes:")
+                    logger.error("  1. Model file is corrupted or incomplete")
+                    logger.error("  2. Insufficient GPU/system memory")
+                    logger.error("  3. Model format incompatible with llama-cpp-python version")
+                    logger.error("  4. File permissions issue (check file is readable)")
+                    logger.error("  5. Context size too large for available memory")
+                    logger.error("Try:")
+                    logger.error("  - Verifying model file integrity (re-download if needed)")
+                    logger.error("  - Reducing context size (ollama_num_ctx)")
+                    logger.error("  - Reducing GPU layers (llm_gpu_layers)")
+                    logger.error("  - Using CPU mode temporarily (llm_cpu_mode=true)")
+                    logger.error(f"  - Checking file: ls -lh {resolved_path}")
+                    logger.error(f"  - Testing file: file {resolved_path}")
+                
                 raise
             self._model_path = self.model_path
             logger.info("Model loaded successfully")
@@ -262,6 +328,28 @@ class LlamaService:
             elif ("No such file" in error_msg or "not found" in error_msg.lower()) and not os.path.exists(self.model_path):
                 logger.error(f"Model file not found: {self.model_path}")
                 raise FileNotFoundError(f"Model file not found: {self.model_path}")
+            elif "load model from file" in error_msg.lower() or "failed to load" in error_msg.lower():
+                logger.error(f"Failed to load model from file: {e}")
+                logger.error(f"  Model path: {self.model_path}")
+                if os.path.exists(self.model_path):
+                    stat = os.stat(self.model_path)
+                    logger.error(f"  File exists: Yes")
+                    logger.error(f"  File size: {stat.st_size:,} bytes ({stat.st_size / (1024**3):.2f} GB)")
+                    logger.error(f"  File readable: {os.access(self.model_path, os.R_OK)}")
+                    logger.error(f"  File permissions: {oct(stat.st_mode)}")
+                else:
+                    logger.error(f"  File exists: No")
+                logger.error("Possible causes:")
+                logger.error("  1. Model file is corrupted or incomplete")
+                logger.error("  2. Insufficient GPU/system memory")
+                logger.error("  3. Model format incompatible with llama-cpp-python version")
+                logger.error("  4. Context size too large for available memory")
+                logger.error("Try:")
+                logger.error("  - Verifying model file: file " + self.model_path)
+                logger.error("  - Reducing context size (ollama_num_ctx) - try 2048 or 4096")
+                logger.error("  - Reducing GPU layers (llm_gpu_layers) - try 20-30 instead of -1")
+                logger.error("  - Using CPU mode temporarily (llm_cpu_mode=true)")
+                raise RuntimeError(f"Failed to load model from file: {e}. Check file integrity and memory settings.")
             else:
                 logger.error(f"Failed to load model: {e}")
                 raise
