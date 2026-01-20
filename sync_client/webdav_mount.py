@@ -145,9 +145,10 @@ class WebDAVClient:
                             # Decode HTML entities (e.g., &lt; becomes <)
                             import html
                             decoded_text = html.unescape(resourcetype_text.strip())
-                            # Check if decoded text contains collection tag
-                            if 'collection' in decoded_text.lower():
+                            # Check if decoded text contains collection tag or is exactly <D:collection/>
+                            if 'collection' in decoded_text.lower() or decoded_text.strip() == '<D:collection/>':
                                 isdir = True
+                                logger.debug(f"Detected directory via resourcetype text: {decoded_text}")
                         # Also check if there are any child elements (collection tag)
                         if len(list(resourcetype)) > 0:
                             isdir = True
