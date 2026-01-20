@@ -80,14 +80,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
     def _get_username_from_path(self, path: str) -> Optional[str]:
         """Extract username from WebDAV path."""
         # Path format: /username/... or /webdav/username/...
+        # Username can contain @ (e.g., verita84@poster.place)
         # Strip /webdav prefix if present (WSGI middleware might not strip it)
         normalized_path = path.strip('/')
         if normalized_path.startswith('webdav/'):
             normalized_path = normalized_path[7:]  # Remove 'webdav/'
         
-        parts = normalized_path.split('/')
-        if parts and parts[0]:
-            username = parts[0]
+        # Username might contain @, so we need to be careful with splitting
+        # The username is everything before the first /, but it might contain @
+        if '/' in normalized_path:
+            username = normalized_path.split('/', 1)[0]  # Split only on first /
+        else:
+            username = normalized_path
+        
+        if username:
             logger.debug(f"[WebDAV] Extracted username '{username}' from path '{path}' (normalized: '{normalized_path}')")
             return username
         logger.debug(f"[WebDAV] Could not extract username from path '{path}' (normalized: '{normalized_path}')")
