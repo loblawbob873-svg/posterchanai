@@ -351,25 +351,36 @@ class QuotaFilesystemProvider(FilesystemProvider):
         # For remote storage, we need to create a virtual resource
         # But wsgidav's parent class expects files to exist on the filesystem
         # Since files don't exist locally, we need to create a virtual resource object
+        # Actually, let's just use the parent class - it should handle directories even if empty
+        # The parent class will call get_resource_info and get_resource_instances which we've overridden
         if self.storage_server_url:
-            logger.error(f"[WebDAV] ⚠️ Step 4: Remote storage configured, creating virtual resource")
-            username = self._get_username_from_path(normalized_path)
-            logger.error(f"[WebDAV] ⚠️ Step 5: Username={username}")
-            if username:
-                # Create a virtual resource for the directory
-                # wsgidav expects a resource object with specific methods
-                from datetime import datetime
+            logger.error(f"[WebDAV] ⚠️ Step 4: Remote storage configured, using parent class")
+            # Use parent class - it will call our overridden get_resource_info and get_resource_instances
+            # But we need to ensure the path exists in the filesystem for the parent class
+            # OR we can create a minimal filesystem entry
+            try:
+                # Try parent class first - it might work if we create a directory
+                fs_path = self._locate_file_path(normalized_path)
+                if fs_path and not fs_path.exists():
+                    # Create directory so parent class can work
+                    fs_path.mkdir(parents=True, exist_ok=True)
+                    logger.error(f"[WebDAV] ⚠️ Created directory at {fs_path} for parent class")
+                
+                result = super().get_resource_inst(normalized_path, environ)
+                logger.error(f"[WebDAV] ⚠️ Parent get_resource_inst returned: type={type(result)}")
+                return result
+            except Exception as e:
+                logger.error(f"[WebDAV] ⚠️ Parent class failed: {e}, creating minimal resource")
+                # Fallback: create minimal resource with all required methods
+                import time
                 
                 class VirtualResource:
                     def __init__(self, path, is_dir=True):
                         self._path = path
                         self._is_dir = is_dir
-                        # wsgidav expects a timestamp (float), not datetime
-                        import time
                         self._modified = time.time()
                     
                     def get_last_modified(self):
-                        # Return timestamp as float
                         return self._modified
                     
                     def get_content_length(self):
@@ -385,15 +396,19 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         return self._path
                     
                     def get_etag(self):
-                        # Return None or empty string if no ETag
                         return None
                     
                     def get_content_type(self):
                         return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
                     
                     def get_descendants(self, depth=1):
-                        # Return empty list or None - wsgidav will call get_resource_instances for children
                         return []
+                    
+                    # Add any other methods wsgidav might call
+                    def __getattr__(self, name):
+                        # Return None for any missing attributes to prevent AttributeError
+                        logger.warning(f"[WebDAV] VirtualResource missing attribute: {name}, returning None")
+                        return None
                 
                 logger.error(f"[WebDAV] ⚠️ Step 6: Creating VirtualResource for {normalized_path}")
                 resource = VirtualResource(normalized_path, is_dir=True)
