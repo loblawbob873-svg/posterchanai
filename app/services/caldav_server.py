@@ -1218,7 +1218,6 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         # For sync-collection, we need to add the sync-token to the response
         # Insert it after the opening multistatus tag
         if sync_collection_elem is not None and current_sync_token_url:
-            import re
             # Add sync-token after multistatus opening tag
             sync_token_xml = f'    <D:sync-token xmlns:D="DAV:">{html.escape(current_sync_token_url)}</D:sync-token>\n'
             xml = xml.replace('<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">\n', 

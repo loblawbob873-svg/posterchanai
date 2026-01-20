@@ -583,6 +583,37 @@ async def webdav_carddav_discovery(request: Request):
     scheme = request.headers.get("X-Forwarded-Proto", "https")
     return RedirectResponse(url=f"{scheme}://{host}/carddav/", status_code=301)
 
+# Handle /webdav/calendar/dav/ paths (some CalDAV clients use this format)
+@app.api_route("/webdav/calendar/dav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCALENDAR", "MKCOL", "MOVE", "COPY", "OPTIONS"])
+async def proxy_webdav_calendar_dav(request: Request, path: str, db: Session = Depends(get_db)):
+    """Proxy /webdav/calendar/dav/... to CalDAV server."""
+    from fastapi.responses import Response
+    import httpx
+    from app.database import safe_query_settings
+    dav_settings = safe_query_settings(db)
+    caldav_port = int(dav_settings.get("caldav_port", "8081"))
+    caldav_url = f"http://127.0.0.1:{caldav_port}/caldav/{path}"
+    if request.url.query:
+        caldav_url += f"?{request.url.query}"
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            headers = dict(request.headers)
+            headers.pop("host", None)
+            response = await client.request(
+                method=request.method,
+                url=caldav_url,
+                headers=headers,
+                content=await request.body(),
+                follow_redirects=False
+            )
+            resp_headers = {k: v for k, v in response.headers.items()
+                          if k.lower() not in ('transfer-encoding', 'connection', 'keep-alive')}
+            return Response(content=response.content, status_code=response.status_code,
+                          headers=resp_headers, media_type=response.headers.get('content-type'))
+    except Exception as e:
+        logging.error(f"[CalDAV Proxy] Error: {e}")
+        return Response(content=f"CalDAV server error: {e}", status_code=502)
+
 @app.api_route("/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCALENDAR", "MKCOL", "MOVE", "COPY", "OPTIONS"])
 async def proxy_caldav(request: Request, path: str, db: Session = Depends(get_db)):
     """Proxy /caldav/... requests to CalDAV server on port 8081."""
