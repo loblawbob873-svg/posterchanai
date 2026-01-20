@@ -87,7 +87,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
         
         parts = normalized_path.split('/')
         if parts and parts[0]:
-            return parts[0]
+            username = parts[0]
+            logger.debug(f"[WebDAV] Extracted username '{username}' from path '{path}' (normalized: '{normalized_path}')")
+            return username
+        logger.debug(f"[WebDAV] Could not extract username from path '{path}' (normalized: '{normalized_path}')")
         return None
     
     def _check_quota(self, username: str, additional_bytes: int = 0) -> tuple[bool, Optional[str]]:
@@ -238,15 +241,19 @@ class QuotaFilesystemProvider(FilesystemProvider):
     def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
         """Override to list files, with support for remote storage proxying."""
         # Strip /webdav prefix if present
+        original_path = path
         normalized_path = path.strip('/')
         if normalized_path.startswith('webdav/'):
             normalized_path = '/' + normalized_path[7:]  # Remove 'webdav/' and restore leading /
         else:
             normalized_path = path
         
+        logger.debug(f"[WebDAV] get_resource_list: original={original_path}, normalized={normalized_path}")
+        
         # If remote storage is configured, proxy the listing request
         if self.storage_server_url:
             username = self._get_username_from_path(normalized_path)
+            logger.debug(f"[WebDAV] Remote storage configured, username={username}, path={normalized_path}")
             if username:
                 # Extract relative path from WebDAV path
                 # Path format: /username/subdir -> subdir
@@ -587,8 +594,8 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
     Args:
         db: Database session
         mount_path: The path where WebDAV is mounted (e.g., "/webdav").
-                    When mounted at /webdav, FastAPI strips this prefix,
-                    so the provider still sees paths like /username/
+                    When mounted at /webdav, FastAPI should strip this prefix,
+                    but WSGI middleware might not, so we handle it in the provider.
     """
     storage = get_storage_service(db)
     
