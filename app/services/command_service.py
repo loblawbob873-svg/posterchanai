@@ -3283,8 +3283,17 @@ Return ONLY valid JSON, no other text.""",
 
                 account_hint = parts[1]
                 uid_part = parts[2]
-                recipient = parts[3]
-                forward_body = parts[4] if len(parts) > 4 else ""
+                # parts[3] contains recipient and optionally body text (due to maxsplit=3 in mail command handler)
+                # Split by first space: first part is recipient, rest is body
+                recipient_and_body = parts[3].strip()
+                if " " in recipient_and_body:
+                    recipient, forward_body = recipient_and_body.split(maxsplit=1)
+                else:
+                    recipient = recipient_and_body
+                    forward_body = ""
+                
+                # Sanitize recipient - remove newlines and other invalid characters for email headers
+                recipient = recipient.replace("\n", " ").replace("\r", "").strip()
 
                 # Parse folder:uid format (e.g., "INBOX.Archive:456")
                 folder = "INBOX"
