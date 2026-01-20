@@ -233,6 +233,8 @@ class WebDAVClient:
                 
                 # Final fallback: if we can list the path and get results, it's definitely a directory
                 # This is the most reliable method when PROPFIND doesn't properly identify directories
+                # NOTE: This is slow (makes an extra PROPFIND request), so we try to avoid it
+                # by using isdir from ls() listing when available
                 if not isdir:
                     try:
                         # Try to list the path - if it succeeds and returns items, it's a directory
@@ -240,7 +242,7 @@ class WebDAVClient:
                         # If listing returns items, it's a directory
                         if test_list and len(test_list) > 0:
                             isdir = True
-                            logger.info(f"[WebDAV Client] ✓ Detected directory via listing fallback for {path} ({len(test_list)} items found)")
+                            logger.debug(f"[WebDAV Client] Detected directory via listing fallback for {path} ({len(test_list)} items found)")
                     except Exception as e:
                         # If listing fails, it might be a file or the path doesn't exist
                         logger.debug(f"[WebDAV Client] Listing fallback failed for {path}: {e}")
@@ -786,49 +788,75 @@ class WebDAVSync:
                         logger.warning(f"Skipping path outside mount point: {file_remote_path} -> {file_local_path}")
                         continue
                     
-                    # Use isdir from listing if available (faster than calling info() for each file)
-                    # Only call info() if listing didn't provide isdir or if we need more details
+                    # Use isdir from listing if available (MUCH faster than calling info() for each file)
+                    # The ls() listing already provides isdir, so we trust it to avoid slow info() calls
                     isdir = is_dir_from_listing
-                    info = None
                     
                     # Only call info() if:
-                    # 1. Listing didn't provide isdir info, OR
-                    # 2. We need to check if it's really a directory (for files that might be directories)
-                    if not is_dir_from_listing or (not is_dir_from_listing and file_info.get('size', 0) == 0):
-                        # Get file info - call info() to get accurate directory detection
-                        # The PROPFIND listing might not include proper resourcetype tags
-                        try:
-                            # Normalize path for info() call
-                            # file_remote_path might be like "verita84@poster.place/chat" or "/verita84@poster.place/chat"
-                            info_path = file_remote_path
-                            if not info_path.startswith('/'):
-                                # Add leading slash if missing
-                                info_path = '/' + info_path
-                            logger.debug(f"Calling info() for {info_path}")
-                            info = self.webdav.info(info_path)
-                            if info:
-                                logger.debug(f"info() returned: isdir={info.get('isdir')}, size={info.get('size')}")
-                                # Use info() result if available
-                                isdir = info.get('isdir', isdir)
-                        except Exception as e:
-                            logger.debug(f"Error getting info for {file_remote_path}: {e}, using listing result")
-                            # Continue with listing result if info() fails
-                            pass
+                    # 1. Listing didn't provide isdir AND size is 0 (might be a directory), OR
+                    # 2. We need mtime for file comparison
+                    info = None
+                    need_info = False
                     
-                    # If we didn't get info and listing says it's a directory, trust the listing
-                    if info is None and is_dir_from_listing:
-                        # Create a minimal info dict from listing data
+                    if isdir:
+                        # For directories, we don't need info() - create minimal info from listing
                         info = {
                             'isdir': True,
                             'size': 0,
-                            'modified': time.time()
+                            'modified': time.time()  # Use current time as fallback
                         }
+                    elif not is_dir_from_listing and file_info.get('size', -1) == 0:
+                        # Size is 0 and not marked as directory - might be a directory, check with info()
+                        need_info = True
+                    else:
+                        # For files, we need mtime to check if download is needed
+                        # But we can use listing data if available to avoid info() call
+                        file_size = file_info.get('size', -1)
+                        if file_local_path.exists():
+                            # File exists locally, we need mtime to compare
+                            # Try to get mtime from listing if available, otherwise call info()
+                            if 'modified' in file_info:
+                                info = {
+                                    'isdir': False,
+                                    'size': file_size,
+                                    'modified': file_info['modified']
+                                }
+                            else:
+                                need_info = True
+                        else:
+                            # File doesn't exist locally, we'll download it anyway
+                            # Use listing data if available
+                            info = {
+                                'isdir': False,
+                                'size': file_size,
+                                'modified': file_info.get('modified', time.time())
+                            }
+                    
+                    # Only call info() if really needed
+                    if need_info:
+                        try:
+                            info_path = file_remote_path
+                            if not info_path.startswith('/'):
+                                info_path = '/' + info_path
+                            logger.debug(f"Calling info() for {info_path} (needed for mtime)")
+                            info = self.webdav.info(info_path)
+                            if info:
+                                isdir = info.get('isdir', isdir)
+                        except Exception as e:
+                            logger.debug(f"Error getting info for {file_remote_path}: {e}, using listing result")
+                            # Create fallback info from listing
+                            if info is None:
+                                info = {
+                                    'isdir': isdir,
+                                    'size': file_info.get('size', 0),
+                                    'modified': time.time()
+                                }
                     
                     if info is None:
                         logger.debug(f"No info available for {file_remote_path}, skipping")
                         continue
                     
-                    logger.debug(f"[WebDAV Sync] {file_remote_path}: isdir={isdir} (from {'info()' if info and 'isdir' in info else 'listing'})")
+                    logger.debug(f"[WebDAV Sync] {file_remote_path}: isdir={isdir} (from {'info()' if need_info else 'listing'})")
                     
                     if isdir:
                         # It's really a directory - create locally and recurse
