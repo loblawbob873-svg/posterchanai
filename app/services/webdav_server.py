@@ -384,13 +384,14 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         import time
                         
                         class VirtualResource:
-                            def __init__(self, path, info_dict, provider):
+                            def __init__(self, path, info_dict, provider, environ=None):
                                 self._path = path
                                 self._info = info_dict
                                 self._is_dir = info_dict.get('is_directory', False)
                                 self._modified = info_dict.get('modified', time.time())
                                 self._size = info_dict.get('size', 0)
                                 self._provider = provider  # Store reference to provider to call get_resource_instances
+                                self._environ = environ  # Store environ for get_descendants
                             
                             def get_last_modified(self):
                                 return float(self._modified) if isinstance(self._modified, (int, float)) else time.time()
@@ -420,7 +421,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             def get_descendants(self, depth=1, add_self=False):
                                 # Get children by calling get_resource_list directly
                                 # wsgidav calls get_descendants on the resource to get children
-                                logger.error(f"[WebDAV] VirtualResource.get_descendants CALLED: path={self._path}, depth={depth}, add_self={add_self}")
+                                logger.debug(f"[WebDAV] VirtualResource.get_descendants CALLED: path={self._path}, depth={depth}, add_self={add_self}")
                                 
                                 # If this is a file (not a directory), return empty list
                                 if not self._is_dir:
@@ -430,15 +431,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 try:
                                     # Call get_resource_list with depth=1 to get immediate children (not depth=0)
                                     # depth=0 would return only self, depth=1 returns children
-                                    children = self._provider.get_resource_list(self._path, depth=1, environ=None)
-                                    logger.error(f"[WebDAV] VirtualResource.get_descendants: get_resource_list returned {len(children) if children else 0} children for {self._path}")
-                                    if children:
-                                        logger.error(f"[WebDAV] VirtualResource.get_descendants: first child type={type(children[0]) if children else None}")
+                                    # Pass environ if available (stored from get_resource_inst)
+                                    children = self._provider.get_resource_list(self._path, depth=1, environ=self._environ)
+                                    logger.debug(f"[WebDAV] VirtualResource.get_descendants: get_resource_list returned {len(children) if children else 0} children for {self._path}")
                                     return children if children else []
                                 except Exception as e:
                                     logger.error(f"[WebDAV] VirtualResource.get_descendants error: {e}", exc_info=True)
-                                    import traceback
-                                    logger.error(f"[WebDAV] VirtualResource.get_descendants traceback: {traceback.format_exc()}")
                                     return []
                             
                             def get_properties(self, propname="allprop"):
@@ -530,7 +528,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 logger.warning(f"[WebDAV] VirtualResource.__getattr__ called for '{name}' - returning None")
                                 return None
                         
-                        result = VirtualResource(normalized_path, info, self)
+                        result = VirtualResource(normalized_path, info, self, environ=environ)
                         logger.error(f"[WebDAV] ⚠️ Created VirtualResource for {normalized_path}")
                         return result
                     else:
