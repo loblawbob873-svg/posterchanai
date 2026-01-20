@@ -226,19 +226,78 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
         """Override to list files, with support for remote storage proxying."""
-        # If remote storage is configured, we need to proxy the listing
-        # But wsgidav's FilesystemProvider doesn't support this natively
-        # We can't easily override this to proxy, so we'll list local files
-        # and the user will need to use local storage or mount remote storage
+        # If remote storage is configured, proxy the listing request
         if self.storage_server_url:
-            logger.debug(f"[WebDAV] Remote storage configured - listing local files only")
-            logger.warning(f"[WebDAV] Files on remote storage server ({self.storage_server_url}) won't be visible via WebDAV")
-            logger.warning(f"[WebDAV] To access remote files via WebDAV, either:")
-            logger.warning(f"[WebDAV]   1. Use local storage (remove storage_server_url setting)")
-            logger.warning(f"[WebDAV]   2. Mount remote storage locally (NFS/SSHFS) and point WebDAV to mount point")
+            username = self._get_username_from_path(path)
+            if username:
+                # Extract relative path from WebDAV path
+                # Path format: /username/subdir -> subdir
+                rel_path = path.lstrip('/')
+                if rel_path.startswith(username + '/'):
+                    rel_path = rel_path[len(username) + 1:]
+                elif rel_path == username:
+                    rel_path = ''
+                
+                # Proxy to storage server
+                try:
+                    return self._proxy_list_files(username, rel_path)
+                except Exception as e:
+                    logger.warning(f"[WebDAV] Failed to proxy list to storage server: {e}, falling back to local")
+                    # Fall through to local listing
         
         # Use parent method to list local files
         return super().get_resource_list(path, depth, environ)
+    
+    def _proxy_list_files(self, username: str, path: str):
+        """Proxy file listing to remote storage server."""
+        import requests
+        
+        url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
+        headers = {}
+        if self.storage_server_token:
+            headers["Authorization"] = f"Bearer {self.storage_server_token}"
+        
+        params = {
+            "username": username,
+            "path": path
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Convert File Manager format to WebDAV format
+            items = data.get('items', [])
+            webdav_resources = []
+            
+            for item in items:
+                item_path = item.get('path', item.get('name', ''))
+                # Build full WebDAV path
+                if path:
+                    full_path = f"/{username}/{path}/{item_path}" if item_path else f"/{username}/{path}"
+                else:
+                    full_path = f"/{username}/{item_path}" if item_path else f"/{username}"
+                
+                # Normalize path (remove double slashes)
+                full_path = full_path.replace('//', '/')
+                
+                # Create WebDAV resource info
+                resource = {
+                    'path': full_path,
+                    'name': item.get('name', item_path),
+                    'iscollection': item.get('is_directory', False),
+                    'size': item.get('size', 0) if not item.get('is_directory', False) else 0,
+                    'modified': item.get('modified', 0),
+                }
+                webdav_resources.append(resource)
+            
+            logger.debug(f"[WebDAV] Proxied list from storage server: {len(webdav_resources)} items for {username}/{path}")
+            return webdav_resources
+            
+        except Exception as e:
+            logger.error(f"[WebDAV] Failed to proxy list to storage server: {e}")
+            raise
     
     def get_resource_info(self, path: str, environ: dict = None):
         """Override to ensure correct resource type detection, with remote storage support."""
@@ -343,6 +402,49 @@ class QuotaFilesystemProvider(FilesystemProvider):
             logger.debug(f"[WebDAV] Failed to get info from storage server: {e}")
         
         return None
+    
+    def read_file_content(self, path: str):
+        """Override to proxy file downloads from remote storage if configured."""
+        # If remote storage is configured, try to proxy the download
+        if self.storage_server_url:
+            username = self._get_username_from_path(path)
+            if username:
+                # Extract relative path
+                rel_path = path.lstrip('/')
+                if rel_path.startswith(username + '/'):
+                    rel_path = rel_path[len(username) + 1:]
+                elif rel_path == username:
+                    rel_path = ''
+                
+                # Try to proxy download
+                try:
+                    content = self._proxy_download_file(username, rel_path)
+                    logger.debug(f"[WebDAV] Proxied file download from storage server: {path}")
+                    return content
+                except Exception as e:
+                    logger.debug(f"[WebDAV] Failed to proxy download: {e}, trying local")
+                    # Fall through to local read
+        
+        # Use parent method to read local file
+        return super().read_file_content(path)
+    
+    def _proxy_download_file(self, username: str, file_path: str) -> bytes:
+        """Proxy file download from remote storage server."""
+        import requests
+        
+        url = f"{self.storage_server_url.rstrip('/')}/api/storage/download-file"
+        headers = {}
+        if self.storage_server_token:
+            headers["Authorization"] = f"Bearer {self.storage_server_token}"
+        
+        params = {
+            'username': username,
+            'file_path': file_path
+        }
+        
+        response = requests.get(url, headers=headers, params=params, timeout=60, stream=True)
+        response.raise_for_status()
+        return response.content
     
     def delete(self, path: str):
         """Override to invalidate cache on delete."""
