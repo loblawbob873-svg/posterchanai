@@ -896,8 +896,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
             path_stripped = '/' + path_stripped[7:]
         else:
             path_stripped = path
-        # Normalize path - remove trailing slash for files
-        normalized_path = path_stripped.rstrip('/')
+        # Normalize path - remove trailing slash and spaces for files
+        normalized_path = path_stripped.rstrip('/ ')
         
         # If remote storage is configured, ALWAYS proxy - never use local filesystem
         if self.storage_server_url:
@@ -910,13 +910,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 elif rel_path == username:
                     rel_path = ''
                 
+                # Normalize rel_path - trim trailing spaces
+                rel_path = rel_path.rstrip(' /')
+                
                 # Get info from storage server - this is the ONLY way when remote storage is configured
                 try:
                     info = self._proxy_get_info(username, rel_path)
                     if info:
                         logger.debug(f"[WebDAV] Got resource info from storage server for {normalized_path}")
                         return info
-                    # If not found, return None (404)
+                    # If not found, log and return None (404)
+                    logger.debug(f"[WebDAV] Resource not found in storage server: {normalized_path} (rel_path: {rel_path})")
                     return None
                 except Exception as e:
                     logger.error(f"[WebDAV] Failed to get info from storage server: {e}")
@@ -959,6 +963,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
         """Get file info - calls remote storage server directly."""
         import requests
         
+        # Normalize path - trim trailing spaces and slashes
+        path = path.rstrip(' /')
+        
         # Call the REMOTE storage server directly (not local API)
         url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
         headers = {}
@@ -979,7 +986,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
         # Get parent directory and filename
         path_parts = path.split('/')
         parent_path = '/'.join(path_parts[:-1]) if len(path_parts) > 1 else ''
-        filename = path_parts[-1]
+        filename = path_parts[-1].rstrip()  # Trim trailing spaces from filename
         
         params = {
             "username": username,
@@ -991,19 +998,42 @@ class QuotaFilesystemProvider(FilesystemProvider):
             response.raise_for_status()
             data = response.json()
             
-            # Find the file in the listing
+            # Find the file in the listing - try exact match first, then trimmed match
             items = data.get('items', [])
+            matched_item = None
+            
+            # First try exact match
             for item in items:
-                if item.get('name') == filename:
-                    # Found it - convert to WebDAV format
-                    full_path = f"/{username}/{path}"
-                    return {
-                        'path': full_path,
-                        'name': item.get('name', filename),
-                        'is_directory': item.get('is_directory', False),
-                        'size': item.get('size', 0) if not item.get('is_directory', False) else 0,
-                        'modified': item.get('modified', 0),
-                    }
+                item_name = item.get('name', '')
+                if item_name == filename:
+                    matched_item = item
+                    break
+            
+            # If no exact match, try trimmed match (handle trailing spaces)
+            if not matched_item:
+                filename_trimmed = filename.rstrip()
+                for item in items:
+                    item_name = item.get('name', '').rstrip()
+                    if item_name == filename_trimmed:
+                        matched_item = item
+                        logger.debug(f"[WebDAV] Matched file with trimmed name: '{item.get('name')}' == '{filename_trimmed}' (original: '{filename}')")
+                        break
+            
+            if matched_item:
+                # Found it - convert to WebDAV format
+                # Use the normalized path (without trailing spaces) for consistency
+                normalized_path = path.rstrip()
+                full_path = f"/{username}/{normalized_path}"
+                return {
+                    'path': full_path,
+                    'name': matched_item.get('name', filename).rstrip(),  # Return trimmed name
+                    'is_directory': matched_item.get('is_directory', False),
+                    'size': matched_item.get('size', 0) if not matched_item.get('is_directory', False) else 0,
+                    'modified': matched_item.get('modified', 0),
+                }
+            else:
+                # File not found - log for debugging
+                logger.debug(f"[WebDAV] File not found in listing: filename='{filename}' (trimmed: '{filename.rstrip()}'), parent_path='{parent_path}', items={[i.get('name') for i in items[:5]]}")
         except Exception as e:
             logger.error(f"[WebDAV] Failed to get info from storage server: {e}", exc_info=True)
         
@@ -1017,7 +1047,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
             path_stripped = '/' + path_stripped[7:]
         else:
             path_stripped = path
-        normalized_path = path_stripped
+        # Normalize path - trim trailing spaces
+        normalized_path = path_stripped.rstrip(' /')
         
         # If remote storage is configured, try to proxy the download
         if self.storage_server_url:
@@ -1029,6 +1060,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     rel_path = rel_path[len(username) + 1:]
                 elif rel_path == username:
                     rel_path = ''
+                
+                # Normalize rel_path - trim trailing spaces
+                rel_path = rel_path.rstrip(' /')
                 
                 # Try to proxy download
                 try:
@@ -1045,6 +1079,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
     def _proxy_download_file(self, username: str, file_path: str) -> bytes:
         """Proxy file download - calls local API which automatically proxies to storage server."""
         import requests
+        
+        # Normalize file_path - trim trailing spaces
+        file_path = file_path.rstrip(' /')
         
         # Call the LOCAL API endpoint - it will automatically proxy to 192.168.0.85
         url = "http://localhost:3051/api/storage/download-file"
