@@ -151,6 +151,17 @@ class WebDAVClient:
                         # Also check if there are any child elements (collection tag)
                         if len(list(resourcetype)) > 0:
                             isdir = True
+                        
+                        # If still not detected, check if we can list it (if it's a directory, listing should work)
+                        if not isdir:
+                            # Try to list the path - if it succeeds, it's likely a directory
+                            try:
+                                test_list = self.ls(path, depth=1)
+                                # If listing returns items, it's a directory
+                                if test_list:
+                                    isdir = True
+                            except:
+                                pass
                 
                 contentlength = prop.find('D:getcontentlength', ns)
                 size = int(contentlength.text) if contentlength is not None and contentlength.text else 0
