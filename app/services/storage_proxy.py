@@ -3,6 +3,7 @@ Storage Proxy Service - Proxy storage requests to remote storage server.
 Similar to torrent proxy, but for file storage operations.
 """
 import logging
+import re
 import httpx
 from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse
@@ -12,6 +13,31 @@ from sqlalchemy.orm import Session
 from app.models import Setting
 
 logger = logging.getLogger(__name__)
+
+
+def sanitize_url_path(path: str) -> str:
+    """Remove emojis and invalid URL characters from path"""
+    if not path:
+        return path
+    # Remove emojis and other non-ASCII characters
+    # Keep only ASCII printable characters, forward slashes, and URL-encoded sequences (%XX)
+    # First, preserve URL-encoded sequences
+    parts = []
+    i = 0
+    while i < len(path):
+        if path[i] == '%' and i + 2 < len(path) and path[i+1:i+3].isalnum():
+            # Preserve URL-encoded sequences
+            parts.append(path[i:i+3])
+            i += 3
+        elif ord(path[i]) < 128 and (path[i].isprintable() or path[i] == '/'):
+            # Keep ASCII printable characters and forward slashes
+            parts.append(path[i])
+            i += 1
+        else:
+            # Skip emojis and other non-ASCII characters
+            i += 1
+    sanitized = ''.join(parts)
+    return sanitized.strip()
 
 
 async def proxy_storage_request(
@@ -60,7 +86,19 @@ async def proxy_storage_request(
     # Forward Authorization header from original request (for API key auth)
     auth_header = request.headers.get("Authorization", "")
     
-    url = f"{base_url.rstrip('/')}{endpoint}"
+    # Sanitize endpoint to remove emojis and invalid characters
+    sanitized_endpoint = sanitize_url_path(endpoint)
+    if not sanitized_endpoint:
+        logger.warning(f"[STORAGE] Invalid endpoint after sanitization (empty result): {endpoint}")
+        raise HTTPException(status_code=400, detail="Invalid endpoint path")
+    if sanitized_endpoint != endpoint:
+        logger.warning(f"[STORAGE] Sanitized endpoint (removed invalid characters): {endpoint} -> {sanitized_endpoint}")
+    
+    # Ensure endpoint starts with / if it's a relative path
+    if not sanitized_endpoint.startswith('/'):
+        sanitized_endpoint = '/' + sanitized_endpoint
+    
+    url = f"{base_url.rstrip('/')}{sanitized_endpoint}"
     headers = {}
     
     # Prefer server token for server-to-server auth
