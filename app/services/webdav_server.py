@@ -390,6 +390,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     
                     def get_content_type(self):
                         return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
+                    
+                    def get_descendants(self, depth=1):
+                        # Return empty list or None - wsgidav will call get_resource_instances for children
+                        return []
                 
                 logger.error(f"[WebDAV] ⚠️ Step 6: Creating VirtualResource for {normalized_path}")
                 resource = VirtualResource(normalized_path, is_dir=True)
@@ -528,6 +532,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     
                     def get_content_type(self):
                         return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
+                    
+                    def get_descendants(self, depth=1):
+                        # Return empty list or None - wsgidav will call get_resource_instances for children
+                        return []
                 
                 resource = SimpleResource(full_path, is_directory, size, modified_ts)
                 webdav_resources.append(resource)
