@@ -399,14 +399,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
                             
                             def get_descendants(self, depth=1, add_self=False):
-                                # Get children by calling get_resource_instances
-                                # This is what wsgidav expects when it calls get_descendants on a resource
+                                # Get children by calling get_resource_list directly
+                                # wsgidav calls get_descendants on the resource to get children
+                                logger.error(f"[WebDAV] VirtualResource.get_descendants CALLED: path={self._path}, depth={depth}, add_self={add_self}")
                                 try:
-                                    children = self._provider.get_resource_instances(self._path, environ=None)
-                                    logger.error(f"[WebDAV] VirtualResource.get_descendants: returning {len(children) if children else 0} children for {self._path}")
+                                    # Call get_resource_list to get the children
+                                    children = self._provider.get_resource_list(self._path, depth=depth, environ=None)
+                                    logger.error(f"[WebDAV] VirtualResource.get_descendants: get_resource_list returned {len(children) if children else 0} children for {self._path}")
+                                    if children:
+                                        logger.error(f"[WebDAV] VirtualResource.get_descendants: first child type={type(children[0]) if children else None}")
                                     return children if children else []
                                 except Exception as e:
                                     logger.error(f"[WebDAV] VirtualResource.get_descendants error: {e}", exc_info=True)
+                                    import traceback
+                                    logger.error(f"[WebDAV] VirtualResource.get_descendants traceback: {traceback.format_exc()}")
                                     return []
                             
                             def __getattr__(self, name):
