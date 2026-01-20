@@ -165,6 +165,13 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
             try:
                 root_items = proxy.list_files("")
                 logger.info(f"[CalDAV] Root items from storage proxy: {len(root_items)} items")
+                # Log first few items for debugging
+                if root_items:
+                    for item in root_items[:10]:
+                        logger.info(f"[CalDAV] Root item: {item.get('name', 'UNKNOWN')} (is_dir={item.get('is_directory', False)})")
+                else:
+                    logger.warning(f"[CalDAV] ⚠️ proxy.list_files(\"\") returned EMPTY list! This is why no events are found!")
+                    logger.warning(f"[CalDAV] Storage URL: {proxy.storage_url if hasattr(proxy, 'storage_url') else 'unknown'}")
             except Exception as e:
                 error_msg = str(e)
                 if "Connection refused" in error_msg or "111" in error_msg:
@@ -174,18 +181,17 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
                     logger.error(f"[CalDAV] Error listing root files: {e}", exc_info=True)
                 return []
             
-            # Debug: log all items found
-            for item in root_items:
-                logger.debug(f"[CalDAV] Root item: {item.get('name', 'UNKNOWN')} (is_dir={item.get('is_directory', False)})")
-            
             calendar_dirs = []
             for item in root_items:
                 if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
                     calendar_dirs.append(item.get('name'))
             
             if not calendar_dirs and not root_items:
-                logger.warning(f"[CalDAV] No files/folders found in caldav storage for user {user.username}!")
-                logger.warning(f"[CalDAV] Check if caldav data exists on storage server at path: caldav/")
+                logger.error(f"[CalDAV] ⚠️ CRITICAL: No files/folders found in caldav storage for user {user.username}!")
+                logger.error(f"[CalDAV] ⚠️ This is why cal week/month shows 0 events!")
+                logger.error(f"[CalDAV] Check if caldav data exists on storage server at path: caldav/")
+                logger.error(f"[CalDAV] Storage URL: {proxy.storage_url if hasattr(proxy, 'storage_url') else 'unknown'}")
+                # Don't return empty - try to continue anyway
             
             # Search all calendar subdirectories
             logger.info(f"[CalDAV] Searching {len(calendar_dirs)} calendar directories: {calendar_dirs}")
