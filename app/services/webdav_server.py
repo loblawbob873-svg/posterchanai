@@ -79,8 +79,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def _get_username_from_path(self, path: str) -> Optional[str]:
         """Extract username from WebDAV path."""
-        # Path format: /username/...
-        parts = path.strip('/').split('/')
+        # Path format: /username/... or /webdav/username/...
+        # Strip /webdav prefix if present (WSGI middleware might not strip it)
+        normalized_path = path.strip('/')
+        if normalized_path.startswith('webdav/'):
+            normalized_path = normalized_path[7:]  # Remove 'webdav/'
+        
+        parts = normalized_path.split('/')
         if parts and parts[0]:
             return parts[0]
         return None
@@ -226,13 +231,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
         """Override to list files, with support for remote storage proxying."""
+        # Strip /webdav prefix if present
+        normalized_path = path.strip('/')
+        if normalized_path.startswith('webdav/'):
+            normalized_path = '/' + normalized_path[7:]  # Remove 'webdav/' and restore leading /
+        else:
+            normalized_path = path
+        
         # If remote storage is configured, proxy the listing request
         if self.storage_server_url:
-            username = self._get_username_from_path(path)
+            username = self._get_username_from_path(normalized_path)
             if username:
                 # Extract relative path from WebDAV path
                 # Path format: /username/subdir -> subdir
-                rel_path = path.lstrip('/')
+                rel_path = normalized_path.lstrip('/')
                 if rel_path.startswith(username + '/'):
                     rel_path = rel_path[len(username) + 1:]
                 elif rel_path == username:
@@ -245,8 +257,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     logger.warning(f"[WebDAV] Failed to proxy list to storage server: {e}, falling back to local")
                     # Fall through to local listing
         
-        # Use parent method to list local files
-        return super().get_resource_list(path, depth, environ)
+        # Use parent method to list local files (with normalized path)
+        return super().get_resource_list(normalized_path, depth, environ)
     
     def _proxy_list_files(self, username: str, path: str):
         """Proxy file listing to remote storage server."""
