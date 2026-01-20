@@ -1408,7 +1408,7 @@ async def handle_delete(path: str, user: User, db: Session) -> Response:
     
     # Delete file using proxy
     success = proxy.delete_file(filepath)
-        if success:
+    if success:
             logger.info(f"[CalDAV] ✓ Deleted event {event_uid} from calendar {cal_name} for user {user.username}")
             
             # Update sync-token state to remove this event UID
