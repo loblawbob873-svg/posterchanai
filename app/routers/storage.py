@@ -688,7 +688,7 @@ async def list_files(
                     # Use stat() to get file info - more reliable than separate calls
                     stat = item.stat()
                     
-                    # Check if it's a directory - use both is_dir() and stat to be sure
+                    # Check if it's a directory - is_dir() is the authoritative check
                     is_dir = item.is_dir()
                     
                     # Double-check: if it's a symlink, resolve it
@@ -700,13 +700,9 @@ async def list_files(
                             # If symlink is broken, use original check
                             pass
                     
-                    # Additional validation: if size > 0, it's definitely a file
-                    # (directories have size 0 or are reported as 4096 on some filesystems)
+                    # Get file size - directories can have non-zero size on some filesystems
+                    # Always trust is_dir() - it's the correct filesystem check
                     file_size = stat.st_size
-                    if file_size > 0 and is_dir:
-                        # This shouldn't happen, but if it does, trust the size
-                        logger.warning(f"Item {item.name} has size {file_size} but is_dir() returns True. Treating as file.")
-                        is_dir = False
                     
                     item_path = str(item.relative_to(user_path))
                     
@@ -1564,7 +1560,7 @@ async def list_files(
                 # Use stat() to get file info - more reliable than separate calls
                 stat = item.stat()
                 
-                # Check if it's a directory - use both is_dir() and stat to be sure
+                # Check if it's a directory - is_dir() is the authoritative check
                 is_dir = item.is_dir()
                 
                 # Double-check: if it's a symlink, resolve it
@@ -1576,13 +1572,9 @@ async def list_files(
                         # If symlink is broken, use original check
                         pass
                 
-                # Additional validation: if size > 0, it's definitely a file
-                # (directories have size 0 or are reported as 4096 on some filesystems)
+                # Get file size - directories can have non-zero size on some filesystems
+                # Always trust is_dir() - it's the correct filesystem check
                 file_size = stat.st_size
-                if file_size > 0 and is_dir:
-                    # This shouldn't happen, but if it does, trust the size
-                    logger.warning(f"Item {item.name} has size {file_size} but is_dir() returns True. Treating as file.")
-                    is_dir = False
                 
                 item_path = str(item.relative_to(user_path))
                 

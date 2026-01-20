@@ -185,24 +185,6 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
             for item in root_items:
                 item_name = item.get('name', '')
                 is_dir = item.get('is_directory', False)
-                size = item.get('size', 0)
-                
-                # Storage server bug: sometimes directories are marked as files (with size > 0)
-                # Verify by trying to list the item - if we can list it, it's a directory
-                if not is_dir:
-                    # Check if it might be a directory: no file extension and reasonable size
-                    has_extension = '.' in item_name and not item_name.startswith('.')
-                    if not has_extension:
-                        # Try to list it to verify it's a directory
-                        try:
-                            test_items = proxy.list_files(item_name)
-                            if test_items is not None:
-                                logger.info(f"[CalDAV] Item '{item_name}' marked as file but can be listed - treating as directory ({len(test_items)} items)")
-                                is_dir = True
-                        except Exception as e:
-                            logger.debug(f"[CalDAV] Item '{item_name}' cannot be listed as directory: {e}")
-                            # Not a directory, skip it
-                            continue
                 
                 if is_dir and not item_name.startswith('.'):
                     calendar_dirs.append(item_name)
