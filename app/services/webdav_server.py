@@ -28,7 +28,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
     """Filesystem provider with quota checking and remote storage support."""
     
     def __init__(self, root_path: Path, db: Session):
-        logger.error(f"[WebDAV] ⚠️ QuotaFilesystemProvider.__init__ called with root_path={root_path}")
+        logger.debug(f"[WebDAV] QuotaFilesystemProvider.__init__ called with root_path={root_path}")
         super().__init__(root_path)
         self.db = db
         self.storage = get_storage_service(db)
@@ -52,7 +52,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
         
         # Log storage path and verify it's correct
         logger.info(f"[WebDAV] QuotaFilesystemProvider initialized with root_path: {root_path}")
-        logger.error(f"[WebDAV] ⚠️ QuotaFilesystemProvider.__init__ completed, self={self}, methods={[m for m in dir(self) if 'get' in m.lower() or 'list' in m.lower()]}")
+        logger.debug(f"[WebDAV] QuotaFilesystemProvider.__init__ completed")
         if root_path.exists():
             try:
                 # Count files to verify this is the right location (only if local storage)
@@ -317,15 +317,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
         # Only use local filesystem if remote storage is NOT configured
         logger.info(f"[WebDAV] Using local filesystem (no remote storage configured)")
         result = super().get_resource_list(normalized_path, depth, environ)
-        logger.error(f"[WebDAV] ⚠️ Parent get_resource_list returned: type={type(result)}, len={len(result) if hasattr(result, '__len__') else 'N/A'}")
-        if result and len(result) > 0:
-            logger.error(f"[WebDAV] ⚠️ First item type: {type(result[0])}, methods: {[m for m in dir(result[0]) if 'get' in m.lower() or 'last' in m.lower()]}")
+        logger.debug(f"[WebDAV] Parent get_resource_list returned: type={type(result)}, len={len(result) if hasattr(result, '__len__') else 'N/A'}")
         return result
     
     def get_resource_instances(self, path: str, environ: dict = None):
         """Override to handle resource instances - wsgidav calls this to get children of a resource."""
         import traceback
-        logger.error(f"[WebDAV] ⚠️ get_resource_instances CALLED: path={path}, environ_keys={list(environ.keys()) if environ else None}")
+        logger.debug(f"[WebDAV] get_resource_instances CALLED: path={path}")
         
         # Strip /webdav prefix if present
         normalized_path = path.strip('/')
@@ -346,10 +344,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_inst(self, path: str, environ: dict = None):
         """Override get_resource_inst - wsgidav calls this for PROPFIND requests."""
-        logger.error(f"[WebDAV] ⚠️ get_resource_inst CALLED: path={path}")
+        logger.debug(f"[WebDAV] get_resource_inst CALLED: path={path}")
         
         # Strip /webdav prefix if present
-        logger.error(f"[WebDAV] ⚠️ Step 1: Normalizing path")
         normalized_path = path.strip('/')
         while normalized_path.startswith('webdav/'):
             normalized_path = normalized_path[7:]
@@ -358,12 +355,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
         else:
             normalized_path = '/'
         
-        logger.error(f"[WebDAV] ⚠️ Step 2: Normalized path={normalized_path}")
-        logger.error(f"[WebDAV] ⚠️ Step 3: storage_server_url={self.storage_server_url}")
+        logger.debug(f"[WebDAV] Normalized path={normalized_path}, storage_server_url={self.storage_server_url}")
         
         # For remote storage, we MUST proxy - never use local filesystem
         if self.storage_server_url:
-            logger.error(f"[WebDAV] ⚠️ Step 4: Remote storage configured, proxying to remote storage")
+            logger.debug(f"[WebDAV] Remote storage configured, proxying to remote storage")
             username = self._get_username_from_path(normalized_path)
             if username:
                 # Extract relative path
@@ -377,7 +373,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 try:
                     info = self._proxy_get_info(username, rel_path)
                     if info:
-                        logger.error(f"[WebDAV] ⚠️ Got info from proxy: is_dir={info.get('is_directory', False)}, path={rel_path}")
+                        logger.debug(f"[WebDAV] Got info from proxy: is_dir={info.get('is_directory', False)}, path={rel_path}")
                         # Create virtual resource based on remote storage info
                         import time
                         
@@ -527,7 +523,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 return None
                         
                         result = VirtualResource(normalized_path, info, self, environ=environ)
-                        logger.error(f"[WebDAV] ⚠️ Created VirtualResource for {normalized_path}")
+                        logger.debug(f"[WebDAV] Created VirtualResource for {normalized_path}")
                         return result
                     else:
                         logger.warning(f"[WebDAV] No info returned from proxy for {username}/{rel_path}")
@@ -605,16 +601,15 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         logger.warning(f"[WebDAV] VirtualResource missing attribute: {name}, returning None")
                         return None
                 
-                logger.error(f"[WebDAV] ⚠️ Step 6: Creating VirtualResource for {normalized_path}")
+                logger.debug(f"[WebDAV] Creating VirtualResource for {normalized_path}")
                 resource = VirtualResource(normalized_path, is_dir=True)
-                logger.error(f"[WebDAV] ⚠️ Step 7: Returning VirtualResource")
                 return resource
         
-        logger.error(f"[WebDAV] ⚠️ Step 8: Using parent class")
+        logger.debug(f"[WebDAV] Using parent class for local filesystem")
         # Use parent class for local filesystem
         try:
             result = super().get_resource_inst(normalized_path, environ)
-            logger.error(f"[WebDAV] ⚠️ Parent get_resource_inst returned: type={type(result)}")
+            logger.debug(f"[WebDAV] Parent get_resource_inst returned: type={type(result)}")
             return result
         except Exception as e:
             logger.error(f"[WebDAV] get_resource_inst error from parent: {e}", exc_info=True)
@@ -622,12 +617,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_filestream(self, path: str, environ: dict = None):
         """Override get_filestream - log when called."""
-        logger.error(f"[WebDAV] ⚠️ get_filestream CALLED: path={path}")
+        logger.debug(f"[WebDAV] get_filestream CALLED: path={path}")
         return super().get_filestream(path, environ)
     
     def get_content(self, path: str, environ: dict = None):
         """Override get_content - log when called."""
-        logger.error(f"[WebDAV] ⚠️ get_content CALLED: path={path}")
+        logger.debug(f"[WebDAV] get_content CALLED: path={path}")
         return super().get_content(path, environ)
     
     def _proxy_list_files(self, username: str, path: str):
