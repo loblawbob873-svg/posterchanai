@@ -486,7 +486,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     if image_data:
                         user_image_path = storage_service.save_image(user.username, conversation_id, image_data, "upload")
                     if file_content:
-                        storage_service.save_file(user.username, conversation_id, file_content)
+                        # Save file content for persistence (non-blocking - chat will work even if this fails)
+                        try:
+                            storage_service.save_file(user.username, conversation_id, file_content)
+                        except Exception as e:
+                            logger.warning(f"[CHAT] Failed to save file content to disk (chat will continue): {e}")
 
                     # Save user message with image path if uploaded
                     user_msg = Message(
