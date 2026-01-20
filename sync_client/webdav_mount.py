@@ -745,26 +745,15 @@ class WebDAVSync:
                         # We're in a subdirectory, check for duplication
                         expected_prefix = f"{self.remote_base}/{path}"
                         duplicated_prefix = f"{expected_prefix}/{path}"
+                        
+                        # Check if path starts with duplicated prefix (e.g., "verita84@poster.place/Joplin/Joplin/")
                         if file_remote_path.startswith(duplicated_prefix + '/'):
-                            # Path is duplicated, fix it by removing the duplicate directory name
+                            # Path is duplicated, fix it by removing one instance of the directory name
                             # file_remote_path = 'verita84@poster.place/Joplin/Joplin/file.md'
                             # We want: 'verita84@poster.place/Joplin/file.md'
-                            # Remove everything from the start up to and including the first occurrence of '/{path}/'
-                            parts = file_remote_path.split('/')
-                            # Find where the duplication starts
-                            base_parts = self.remote_base.split('/')
-                            path_parts = path.split('/')
-                            # Expected structure: [base_parts..., path_parts..., path_parts..., ...]
-                            # We want to remove the duplicate path_parts
-                            if len(parts) > len(base_parts) + len(path_parts):
-                                # Check if there's a duplication
-                                base_end = len(base_parts)
-                                if parts[base_end:base_end+len(path_parts)] == path_parts and \
-                                   parts[base_end+len(path_parts):base_end+2*len(path_parts)] == path_parts:
-                                    # Duplication detected, remove the duplicate
-                                    corrected_parts = base_parts + path_parts + parts[base_end+2*len(path_parts):]
-                                    file_remote_path = '/'.join(corrected_parts)
-                                    logger.info(f"[WebDAV Sync] Fixed duplicated path: {file_info['path']} -> {file_remote_path}")
+                            # Simply replace the duplicated prefix with the expected prefix
+                            file_remote_path = expected_prefix + file_remote_path[len(duplicated_prefix):]
+                            logger.info(f"[WebDAV Sync] Fixed duplicated path: {file_info['path']} -> {file_remote_path}")
                         elif not file_remote_path.startswith(expected_prefix + '/'):
                             # Path doesn't start with expected prefix, might be from wrong directory
                             logger.debug(f"Skipping path outside current directory: {file_remote_path} (expected prefix: {expected_prefix})")
