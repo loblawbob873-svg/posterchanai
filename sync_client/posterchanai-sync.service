@@ -4,11 +4,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=%i
 ExecStart=%h/.local/bin/posterchanai-sync
 Restart=on-failure
 RestartSec=5
 Environment="DISPLAY=:0"
+Environment="WAYLAND_DISPLAY=wayland-1"
+Environment="XDG_SESSION_TYPE=wayland"
 Environment="XAUTHORITY=%h/.Xauthority"
 
 [Install]

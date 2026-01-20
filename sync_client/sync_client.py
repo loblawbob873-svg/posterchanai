@@ -20,9 +20,34 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
 import pystray
 from PIL import Image, ImageDraw, ImageFont
-import tkinter as tk
-from tkinter import scrolledtext, messagebox
-import tkinter.ttk as ttk
+
+# Optional GUI imports - only needed for interactive mode
+try:
+    import tkinter as tk
+    from tkinter import scrolledtext, messagebox
+    import tkinter.ttk as ttk
+    GUI_AVAILABLE = True
+except ImportError:
+    GUI_AVAILABLE = False
+    # Create dummy classes to avoid NameError
+    class tk:
+        class Tk:
+            def __init__(self, *args, **kwargs): pass
+            def withdraw(self): pass
+            def mainloop(self): pass
+        class Toplevel:
+            def __init__(self, *args, **kwargs): pass
+        class END: pass
+        class BOTH: pass
+    class messagebox:
+        @staticmethod
+        def showinfo(*args, **kwargs): logger.info(f"GUI: {args[0] if args else ''}")
+        @staticmethod
+        def showwarning(*args, **kwargs): logger.warning(f"GUI: {args[0] if args else ''}")
+        @staticmethod
+        def showerror(*args, **kwargs): logger.error(f"GUI: {args[0] if args else ''}")
+    scrolledtext = None
+    ttk = None
 
 # Setup logging
 log_dir = Path.home() / ".config" / "posterchanai-sync" / "logs"
@@ -524,6 +549,8 @@ class SyncClient:
         finally:
             self.is_syncing = False
             logger.info("Directory sync complete")
+            # Send desktop notification if available (useful when tray icon doesn't work)
+            send_notification("PosterchanAI Sync", "Directory sync complete", "info")
     
     def queue_sync(self, path: str):
         """Queue a file for syncing"""
@@ -570,8 +597,42 @@ class SyncClient:
         sys.exit(0)
 
 
+def send_notification(title: str, message: str, urgency: str = "normal"):
+    """Send desktop notification using notify-send"""
+    try:
+        import subprocess
+        urgency_map = {"info": "normal", "warning": "normal", "error": "critical", "normal": "normal"}
+        subprocess.run(
+            ["notify-send", "-u", urgency_map.get(urgency, "normal"), title, message],
+            timeout=2,
+            capture_output=True
+        )
+    except:
+        pass  # Silently fail if notify-send is not available
+
+
+def is_headless_mode() -> bool:
+    """Check if we should run in headless mode (no GUI)"""
+    # Check if GUI is available
+    if not GUI_AVAILABLE:
+        return True
+    
+    # Check if DISPLAY or WAYLAND_DISPLAY is set - if so, try GUI mode
+    # (Even systemd services can show GUI if display is available)
+    has_display = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    
+    if not has_display:
+        return True  # No display available, must run headless
+    
+    # If we have a display, try GUI mode even if running as systemd service
+    # (The tray icon will fail gracefully if it can't connect)
+    return False
+
+
 def create_tray_icon(sync_client: SyncClient) -> pystray.Icon:
     """Create system tray icon"""
+    if not GUI_AVAILABLE:
+        raise RuntimeError("Cannot create tray icon: GUI not available")
     # Create icon image (cyberpunk style)
     width = height = 64
     image = Image.new('RGB', (width, height), color='#000000')
@@ -588,8 +649,13 @@ def create_tray_icon(sync_client: SyncClient) -> pystray.Icon:
     
     def show_logs(icon, item):
         """Show log window"""
+        if not GUI_AVAILABLE:
+            logger.info("GUI not available. View logs with: journalctl --user -u posterchanai-sync -f")
+            return
         if sync_client.log_window is None or not sync_client.log_window.winfo_exists():
             sync_client.log_window = create_log_window(sync_client)
+            if sync_client.log_window is None:
+                return
         else:
             sync_client.log_window.lift()
     
@@ -663,8 +729,11 @@ def create_tray_icon(sync_client: SyncClient) -> pystray.Icon:
     return icon
 
 
-def create_log_window(sync_client: SyncClient) -> tk.Toplevel:
+def create_log_window(sync_client: SyncClient):
     """Create log viewer window"""
+    if not GUI_AVAILABLE:
+        logger.info("GUI not available. View logs with: journalctl --user -u posterchanai-sync -f")
+        return None
     window = tk.Toplevel()
     window.title("PosterchanAI Sync - Logs")
     window.geometry("800x600")
@@ -722,20 +791,70 @@ def create_log_window(sync_client: SyncClient) -> tk.Toplevel:
     return window
 
 
+def show_status():
+    """Show sync client status (CLI command)"""
+    try:
+        config = SyncConfig()
+        print("PosterchanAI Sync Client Status")
+        print("=" * 50)
+        print(f"Server URL: {config.config.get('server_url', 'Not set')}")
+        print(f"Sync Directory: {config.config.get('sync_dir', 'Not set')}")
+        print(f"Username: {config.config.get('username', 'Not set (will be fetched)')}")
+        print(f"Auto Sync: {config.config.get('auto_sync', True)}")
+        print(f"Poll Interval: {config.config.get('poll_interval', 30)}s")
+        
+        # Check if service is running
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["systemctl", "--user", "is-active", "posterchanai-sync"],
+                capture_output=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                print("Service Status: Running")
+            else:
+                print("Service Status: Not running")
+        except:
+            print("Service Status: Unknown (systemctl not available)")
+        
+        print("\nView logs: journalctl --user -u posterchanai-sync -f")
+        return True
+    except Exception as e:
+        print(f"Error getting status: {e}", file=sys.stderr)
+        return False
+
+
 def main():
     """Main entry point"""
+    # Handle CLI commands
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--status":
+            show_status()
+            sys.exit(0)
+        elif sys.argv[1] in ["--help", "-h"]:
+            print("PosterchanAI Sync Client")
+            print("\nUsage:")
+            print("  posterchanai-sync              Start the sync client")
+            print("  posterchanai-sync --setup     Run setup wizard")
+            print("  posterchanai-sync --status     Show status information")
+            print("  posterchanai-sync --help       Show this help")
+            sys.exit(0)
+    
     # Check if setup is needed
     try:
         from setup_wizard import check_and_run_setup
         if not check_and_run_setup():
             # Setup was cancelled or failed
             logger.error("Setup cancelled or failed. Cannot start sync client.")
+            logger.error("If running as a service, run 'posterchanai-sync --setup' manually first.")
             sys.exit(1)
     except ImportError:
         # Setup wizard not available, continue with existing config
-        pass
+        logger.warning("Setup wizard not available, continuing with existing config")
     except Exception as e:
         logger.error(f"Error during setup: {e}")
+        logger.error("If running as a service, run 'posterchanai-sync --setup' manually first.")
         sys.exit(1)
     
     config = SyncConfig()
@@ -772,25 +891,64 @@ def main():
     
     threading.Thread(target=periodic_sync, daemon=True).start()
     
-    # Initialize tkinter in main thread (required for GUI)
-    root = tk.Tk()
-    root.withdraw()  # Hide main window
-    
-    # Create and run tray icon (must run in main thread for tkinter compatibility)
-    icon = create_tray_icon(sync_client)
-    
-    # Run tray icon in separate thread, but keep tkinter root alive
-    def run_tray():
-        icon.run()
-    
-    tray_thread = threading.Thread(target=run_tray, daemon=True)
-    tray_thread.start()
-    
-    # Keep main thread alive for tkinter GUI components
-    try:
-        root.mainloop()
-    except KeyboardInterrupt:
-        sync_client.quit()
+    # Check if we should run in headless mode
+    if is_headless_mode():
+        logger.info("Running in headless mode (no GUI available)")
+        logger.info("View logs with: journalctl --user -u posterchanai-sync -f")
+        # Keep running until interrupted
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("Shutting down...")
+            sync_client.quit()
+    else:
+        # Initialize tkinter in main thread (required for GUI)
+        if not GUI_AVAILABLE:
+            logger.warning("GUI requested but tkinter not available. Running in headless mode.")
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                sync_client.quit()
+        else:
+            root = tk.Tk()
+            root.withdraw()  # Hide main window
+            
+            # Create and run tray icon (must run in main thread for tkinter compatibility)
+            try:
+                icon = create_tray_icon(sync_client)
+                
+                # Run tray icon in separate thread, but keep tkinter root alive
+                def run_tray():
+                    try:
+                        logger.info("Starting system tray icon...")
+                        icon.run()
+                    except Exception as e:
+                        logger.warning(f"Tray icon failed to start: {e}")
+                        logger.info("Note: System tray may not be supported on Wayland without StatusNotifierItem.")
+                        logger.info("Continuing in headless mode. Use 'posterchanai-sync --status' for status.")
+                
+                tray_thread = threading.Thread(target=run_tray, daemon=True)
+                tray_thread.start()
+                
+                # Give it a moment to start, then check if it's actually running
+                time.sleep(0.5)
+                if not tray_thread.is_alive():
+                logger.warning("Tray icon thread exited immediately. System tray may not be available.")
+                logger.info("On Wayland, pystray requires StatusNotifierItem support (e.g., waybar with tray support).")
+                logger.info("Desktop notifications will be used as fallback. Use 'posterchanai-sync --status' for status.")
+                send_notification("PosterchanAI Sync", "Running without system tray icon. Use 'posterchanai-sync --status' for status.", "info")
+            except Exception as e:
+                logger.warning(f"Could not create tray icon: {e}")
+                logger.info("Running without system tray. Use 'posterchanai-sync --status' for status.")
+                logger.info("View logs with: journalctl --user -u posterchanai-sync -f")
+            
+            # Keep main thread alive for tkinter GUI components
+            try:
+                root.mainloop()
+            except KeyboardInterrupt:
+                sync_client.quit()
 
 
 if __name__ == "__main__":
