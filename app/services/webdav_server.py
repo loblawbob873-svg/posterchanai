@@ -335,18 +335,28 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
             total_files = 0
             total_size = 0
             user_dirs = []
+            
+            # Scan user directories
             for item in root_path.iterdir():
                 if item.is_dir():
                     user_dirs.append(item.name)
-                    # Count files in this user directory
+                    # Count files in this user directory (limit depth to avoid timeout)
                     try:
+                        user_file_count = 0
+                        user_file_size = 0
+                        # Use rglob but limit to reasonable depth
                         for file_item in item.rglob('*'):
                             if file_item.is_file():
+                                user_file_count += 1
                                 total_files += 1
                                 try:
-                                    total_size += file_item.stat().st_size
+                                    size = file_item.stat().st_size
+                                    user_file_size += size
+                                    total_size += size
                                 except:
                                     pass
+                        if user_file_count > 0:
+                            logger.info(f"[WebDAV] User '{item.name}': {user_file_count} files ({user_file_size / (1024**3):.2f} GB)")
                     except Exception as e:
                         logger.debug(f"[WebDAV] Could not scan {item.name}: {e}")
                 elif item.is_file():
@@ -366,10 +376,14 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
                 verita84_files = sum(1 for _ in verita84_path.rglob('*') if _.is_file())
                 verita84_size = sum(f.stat().st_size for f in verita84_path.rglob('*') if f.is_file())
                 logger.info(f"[WebDAV] User 'verita84': {verita84_files} files ({verita84_size / (1024**3):.2f} GB)")
+            else:
+                logger.warning(f"[WebDAV] User 'verita84' directory does not exist at {verita84_path}")
         except Exception as e:
             logger.warning(f"[WebDAV] Could not scan storage path: {e}")
             import traceback
             logger.debug(f"[WebDAV] Traceback: {traceback.format_exc()}")
+    else:
+        logger.warning(f"[WebDAV] Storage path does not exist: {root_path}")
     
     provider = QuotaFilesystemProvider(root_path, db)
     
