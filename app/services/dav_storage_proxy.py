@@ -127,7 +127,8 @@ class DAVStorageProxy:
         """List files in DAV directory."""
         if not self.use_proxy:
             # No fallback to local storage - storage proxy must be configured
-            logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot list files")
+            # Log at debug level since this is expected when DAV services aren't configured
+            logger.debug(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot list files (this is normal if {self.dav_type} is not enabled)")
             return []
         
         # If same server, use local filesystem
@@ -198,7 +199,8 @@ class DAVStorageProxy:
         """Read file content from storage."""
         if not self.use_proxy:
             # No fallback to local storage - storage proxy must be configured
-            logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot read file: {filepath}")
+            # Log at debug level since this is expected when DAV services aren't configured
+            logger.debug(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot read file: {filepath} (this is normal if {self.dav_type} is not enabled)")
             return None
         
         # If same server, use local filesystem
@@ -247,7 +249,8 @@ class DAVStorageProxy:
         """Write file content to storage."""
         if not self.use_proxy:
             # No fallback to local storage - storage proxy must be configured
-            logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot write file: {filepath}")
+            # Log at debug level since this is expected when DAV services aren't configured
+            logger.debug(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot write file: {filepath} (this is normal if {self.dav_type} is not enabled)")
             return False
         
         # If same server, use local filesystem
@@ -296,7 +299,8 @@ class DAVStorageProxy:
         """Delete file from storage."""
         if not self.use_proxy:
             # No fallback to local storage - storage proxy must be configured
-            logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot delete file: {filepath}")
+            # Log at debug level since this is expected when DAV services aren't configured
+            logger.debug(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot delete file: {filepath} (this is normal if {self.dav_type} is not enabled)")
             return False
         
         # If same server, use local filesystem
@@ -348,7 +352,8 @@ class DAVStorageProxy:
         """Check if file exists."""
         if not self.use_proxy:
             # No fallback to local storage - storage proxy must be configured
-            logger.error(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot check file existence: {filepath}")
+            # Log at debug level since this is expected when DAV services aren't configured
+            logger.debug(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot check file existence: {filepath} (this is normal if {self.dav_type} is not enabled)")
             return False
         
         # If same server, use local filesystem
