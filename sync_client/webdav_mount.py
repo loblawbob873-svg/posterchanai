@@ -476,11 +476,14 @@ class CacheManager:
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_file = CACHE_METADATA
+        self.sync_state_file = self.cache_dir / 'sync_state.json'  # Track files from last sync
         self.metadata = self._load_metadata()
+        self.sync_state = {}  # {remote_path: {'mtime': float, 'size': int, 'hash': str, 'local_path': str}}
         self._lock = threading.Lock()
         self.max_size_bytes = max_size_mb * 1024 * 1024  # Convert MB to bytes
         self.max_age_seconds = max_age_days * 24 * 60 * 60  # Convert days to seconds
         self.cache_directories = cache_directories or []  # Directories to always cache
+        self._load_sync_state()
         logger.info(f"CacheManager initialized: max_size={max_size_mb}MB, max_age={max_age_days}days, cache_dirs={self.cache_directories}")
     
     def _load_metadata(self) -> dict:
@@ -1258,17 +1261,43 @@ class WebDAVSync:
         
         moves = []
         
-        # Build hash map from current remote files
-        current_hashes = {}  # {hash: remote_path}
+        # Build hash map from sync state (files we've seen before)
+        sync_state_hashes = {}  # {hash: remote_path}
+        for remote_path, sync_state in self.cache.sync_state.items():
+            content_hash = sync_state.get('hash')
+            if content_hash:
+                if content_hash not in sync_state_hashes:
+                    sync_state_hashes[content_hash] = []
+                sync_state_hashes[content_hash].append(remote_path)
+        
+        # For each current remote file, check if we can compute its hash
+        # and see if it matches a file from sync state with different path
         for remote_path, file_info in current_remote_files.items():
             if file_info.get('isdir', False):
                 continue
-            # We'd need to download to get hash, so skip for now
-            # In a full implementation, we'd compute hashes during sync
-        
-        # Check sync state for files that might have moved
-        # (files with same hash but different path)
-        # This is a simplified version - full implementation would compute hashes
+            
+            # Check if this file exists locally (we can compute hash)
+            sync_state = self.cache.get_sync_state(remote_path)
+            if not sync_state:
+                # New file - check if it matches a deleted file's hash
+                local_path = self._local_path(remote_path)
+                if local_path.exists() and local_path.is_file():
+                    try:
+                        content = local_path.read_bytes()
+                        content_hash = hashlib.md5(content).hexdigest()
+                        
+                        # Check if this hash matches a file that was in sync state but is now missing
+                        if content_hash in sync_state_hashes:
+                            for old_remote_path in sync_state_hashes[content_hash]:
+                                if old_remote_path != remote_path:
+                                    # Check if old file still exists remotely
+                                    old_sync_state = self.cache.get_sync_state(old_remote_path)
+                                    if old_sync_state and old_remote_path not in current_remote_files:
+                                        # Old file was deleted, new file has same hash - likely a move!
+                                        moves.append((old_remote_path, remote_path))
+                                        logger.info(f"Detected move/rename: {old_remote_path} -> {remote_path} (hash match)")
+                    except Exception as e:
+                        logger.debug(f"Error computing hash for {local_path}: {e}")
         
         return moves
     
@@ -1320,10 +1349,41 @@ class WebDAVSync:
             current_remote_files = {}
             current_remote_paths = set()
         
-        # Step 3: Detect deletions
+        # Step 3: Detect moves/renames (before deletions, as moves might look like delete+create)
+        moves = self.detect_moves(current_remote_files)
+        for old_remote_path, new_remote_path in moves:
+            try:
+                # Use WebDAV MOVE to handle the rename on server
+                self.webdav.mv(old_remote_path, new_remote_path)
+                # Update sync state
+                old_sync_state = self.cache.get_sync_state(old_remote_path)
+                if old_sync_state:
+                    # Move sync state to new path
+                    new_local_path = self._local_path(new_remote_path)
+                    self.cache.update_sync_state(new_remote_path, new_local_path, 
+                                               old_sync_state.get('mtime', time.time()),
+                                               old_sync_state.get('size', 0),
+                                               old_sync_state.get('hash'))
+                    self.cache.remove_from_sync_state(old_remote_path)
+                    # Also move local file if it exists
+                    old_local_path_str = old_sync_state.get('local_path')
+                    if old_local_path_str:
+                        old_local_path = Path(old_local_path_str)
+                        if old_local_path.exists():
+                            new_local_path.parent.mkdir(parents=True, exist_ok=True)
+                            if old_local_path.is_file():
+                                shutil.move(str(old_local_path), str(new_local_path))
+                            elif old_local_path.is_dir():
+                                shutil.move(str(old_local_path), str(new_local_path))
+                            logger.info(f"Moved local file: {old_local_path} -> {new_local_path}")
+                logger.info(f"Handled move/rename: {old_remote_path} -> {new_remote_path}")
+            except Exception as e:
+                logger.warning(f"Error handling move {old_remote_path} -> {new_remote_path}: {e}")
+        
+        # Step 4: Detect deletions (after moves, as moves might have been detected as deletions)
         remote_deletions, local_deletions = self.detect_deletions(current_remote_paths)
         
-        # Step 4: Handle remote deletions (delete local files)
+        # Step 5: Handle remote deletions (delete local files)
         for remote_path in remote_deletions:
             sync_state = self.cache.get_sync_state(remote_path)
             local_path_str = sync_state.get('local_path')
@@ -1340,7 +1400,7 @@ class WebDAVSync:
                 except Exception as e:
                     logger.warning(f"Error deleting local file {local_path}: {e}")
         
-        # Step 5: Handle local deletions (delete remote files)
+        # Step 6: Handle local deletions (delete remote files)
         for local_path in local_deletions:
             remote_path = self._remote_path(local_path)
             try:
@@ -1350,10 +1410,10 @@ class WebDAVSync:
             except Exception as e:
                 logger.warning(f"Error deleting remote file {remote_path}: {e}")
         
-        # Step 6: Sync from remote (with conflict detection)
+        # Step 7: Sync from remote (with conflict detection)
         self.sync_from_remote_with_conflicts(path, current_remote_files)
         
-        # Step 7: Sync local changes to remote
+        # Step 8: Sync local changes to remote
         for local_path in local_changes:
             remote_path = self._remote_path(local_path)
             sync_state = self.cache.get_sync_state(remote_path)
