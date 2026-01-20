@@ -182,9 +182,22 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
                 return []
             
             calendar_dirs = []
+            # Known calendar directory names (even if storage server incorrectly marks them as files)
+            known_calendar_dirs = {'main', 'wwwcanoncityschoolsorg', 'caldav', 'carddav'}
+            
             for item in root_items:
-                if item.get('is_directory', False) and not item.get('name', '').startswith('.'):
-                    calendar_dirs.append(item.get('name'))
+                item_name = item.get('name', '')
+                is_dir = item.get('is_directory', False)
+                
+                # Workaround: Storage server sometimes returns directories as files (with size > 0)
+                # If the name matches a known calendar directory, treat it as a directory
+                if not is_dir and item_name in known_calendar_dirs:
+                    logger.warning(f"[CalDAV] Storage server marked '{item_name}' as file but it's a known calendar directory - treating as directory")
+                    is_dir = True
+                
+                if is_dir and not item_name.startswith('.'):
+                    calendar_dirs.append(item_name)
+                    logger.info(f"[CalDAV] ✓ Found calendar directory: '{item_name}'")
             
             if not calendar_dirs and not root_items:
                 logger.error(f"[CalDAV] ⚠️ CRITICAL: No files/folders found in caldav storage for user {user.username}!")
