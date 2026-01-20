@@ -761,15 +761,20 @@ class WebDAVSync:
                     # The PROPFIND listing might not include proper resourcetype tags
                     try:
                         # Normalize path for info() call
+                        # file_remote_path might be like "verita84@poster.place/chat" or "/verita84@poster.place/chat"
                         info_path = file_remote_path
                         if not info_path.startswith('/'):
                             # Add leading slash if missing
                             info_path = '/' + info_path
+                        logger.debug(f"Calling info() for {info_path}")
                         info = self.webdav.info(info_path)
+                        if info:
+                            logger.debug(f"info() returned: isdir={info.get('isdir')}, size={info.get('size')}")
                     except Exception as e:
                         logger.warning(f"Error getting info for {file_remote_path}: {e}")
                         continue
                     if not info:
+                        logger.warning(f"info() returned None for {file_remote_path}")
                         continue
                     
                     # If listing said it's a directory but info() says it's not, trust info()
