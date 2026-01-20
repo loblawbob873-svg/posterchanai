@@ -3263,11 +3263,14 @@ Return ONLY valid JSON, no other text.""",
 
                 import asyncio
 
+                # Pass attachments if available
                 success = await asyncio.to_thread(
-                    reply_to_message, self.user.id, self.db, account_email, uid, reply_body, folder=folder
+                    reply_to_message, self.user.id, self.db, account_email, uid, reply_body, 
+                    reply_all=False, attachments=attachments, folder=folder
                 )
                 if success:
-                    return {"type": "text", "content": "Reply sent successfully."}
+                    attachment_note = f" with {len(attachments)} attachment(s)" if attachments else ""
+                    return {"type": "text", "content": f"Reply sent successfully{attachment_note}."}
                 else:
                     return {"type": "text", "content": "Failed to send reply."}
 
@@ -3307,11 +3310,14 @@ Return ONLY valid JSON, no other text.""",
 
                 import asyncio
 
+                # Pass attachments if available
                 success = await asyncio.to_thread(
-                    forward_message, self.user.id, self.db, account_email, uid, recipient, forward_body, folder=folder
+                    forward_message, self.user.id, self.db, account_email, uid, recipient, forward_body, 
+                    attachments=attachments, folder=folder
                 )
                 if success:
-                    return {"type": "text", "content": f"Email forwarded to {recipient} successfully."}
+                    attachment_note = f" with {len(attachments)} attachment(s)" if attachments else ""
+                    return {"type": "text", "content": f"Email forwarded to {recipient} successfully{attachment_note}."}
                 else:
                     return {"type": "text", "content": "Failed to forward email."}
 
