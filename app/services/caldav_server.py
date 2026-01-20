@@ -359,22 +359,9 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                 name = item.get('name', '')
                 if name.endswith('.ics'):
                     event_uid = name.replace('.ics', '')
-                    # Calculate MD5 hash for ETag
-                    try:
-                        if subpath:
-                            filepath = f"{subpath}/{name}"
-                        else:
-                            filepath = name
-                        ical_data = proxy.read_file(filepath)
-                        if ical_data:
-                            import hashlib
-                            content_hash = hashlib.md5(ical_data.encode('utf-8')).hexdigest()
-                            etag = content_hash[:16]
-                        else:
-                            etag = "0"
-                    except Exception as e:
-                        logger.debug(f"[CalDAV] Could not calculate MD5 for PROPFIND {event_uid}: {e}")
-                        etag = "0"
+                    # Use mtime for PROPFIND ETag (fast, no file read needed)
+                    # MD5 is only calculated when actually needed (GET, PUT, sync-collection)
+                    etag = str(item.get('modified', item.get('mtime', 0)))
                     
                     items.append({
                         "href": f"{base_url}/{quote(cal_name, safe='')}/{event_uid}.ics",
@@ -400,18 +387,14 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
         
         # Check if file exists using proxy
         if proxy.file_exists(filepath):
-            # Calculate MD5 hash for ETag
-            try:
-                ical_data = proxy.read_file(filepath)
-                if ical_data:
-                    import hashlib
-                    content_hash = hashlib.md5(ical_data.encode('utf-8')).hexdigest()
-                    etag = content_hash[:16]
-                else:
-                    etag = "0"
-            except Exception as e:
-                logger.debug(f"[CalDAV] Could not calculate MD5 for PROPFIND {event_uid}: {e}")
-                etag = "0"
+            # Use mtime for PROPFIND ETag (fast, no file read needed)
+            subpath = "" if cal_name == 'calendar' else cal_name
+            file_items = proxy.list_files(subpath)
+            etag = "0"
+            for item in file_items:
+                if item.get('name') == f"{event_uid}.ics":
+                    etag = str(item.get('modified', item.get('mtime', 0)))
+                    break
             
             items.append({
                 "href": f"{base_url}/{path}",
@@ -647,7 +630,7 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                             event_uid = name.replace('.ics', '')
                             href_path = f"{cal_name}/{event_uid}.ics" if cal_name else f"calendar/{event_uid}.ics"
                             
-                            # Calculate MD5 hash of content for ETag (more reliable than mtime)
+                            # Use MD5 hash for ETag in calendar-query (we already read the file for time filtering)
                             import hashlib
                             content_hash = hashlib.md5(ical_data.encode('utf-8')).hexdigest()
                             etag = content_hash[:16]  # Use first 16 chars for ETag
@@ -849,32 +832,22 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             current_sync_token_hash = hashlib.md5(f"{ctag_data}_sync".encode()).hexdigest()[:16]
             current_sync_token_url = f"http://ai.poster.place/caldav/{quote(user.username, safe='')}/{quote(cal_name, safe='')}/sync-token-{current_sync_token_hash}"
             
-            # Get current event UIDs and their MD5 hashes for change detection
+            # Get current event UIDs and their mtimes for fast change detection
+            # MD5 hashes are only calculated when needed (during actual sync, not during hash collection)
             current_event_uids = set()
-            current_event_hashes = {}  # {uid: md5_hash}
+            current_event_mtimes = {}  # {uid: mtime} for fast change detection
             for item in ics_files:
                 name = item.get('name', '')
                 if name.endswith('.ics'):
                     event_uid = name.replace('.ics', '')
                     current_event_uids.add(event_uid)
-                    
-                    # Read file to calculate MD5 hash for change detection
-                    try:
-                        if subpath:
-                            filepath = f"{subpath}/{name}"
-                        else:
-                            filepath = name
-                        ical_data = proxy.read_file(filepath)
-                        if ical_data:
-                            import hashlib
-                            content_hash = hashlib.md5(ical_data.encode('utf-8')).hexdigest()
-                            current_event_hashes[event_uid] = content_hash
-                    except Exception as e:
-                        logger.debug(f"[CalDAV] Could not calculate hash for {event_uid}: {e}")
+                    # Store mtime for fast comparison (much faster than reading files)
+                    mtime = item.get('modified', item.get('mtime', 0))
+                    current_event_mtimes[event_uid] = mtime
             
             # If old sync-token provided, find deleted and modified events by comparing with stored state
             deleted_event_uids = set()
-            modified_event_uids = set()  # Events that changed (different MD5 hash)
+            modified_event_uids = set()  # Events that changed (different mtime - fast check)
             
             if old_sync_token:
                 # Look up the old sync-token in database
@@ -888,26 +861,27 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                     try:
                         old_event_data = json.loads(old_token_record.event_uids)
                         
-                        # Handle both old format (list of UIDs) and new format (dict with hashes)
+                        # Handle both old format (list of UIDs) and new format (dict with mtime/hash)
                         if isinstance(old_event_data, dict):
-                            # New format: {uid: hash}
+                            # New format: {uid: mtime} or {uid: hash}
                             old_event_uids = set(old_event_data.keys())
-                            old_event_hashes = old_event_data
+                            old_event_mtimes = old_event_data
                         else:
                             # Old format: list of UIDs (backward compatibility)
                             old_event_uids = set(old_event_data)
-                            old_event_hashes = {}
+                            old_event_mtimes = {}
                         
                         # Find deleted events
                         deleted_event_uids = old_event_uids - current_event_uids
                         
-                        # Find modified events (same UID but different MD5 hash)
+                        # Find modified events (same UID but different mtime - fast check without reading files)
                         for uid in old_event_uids & current_event_uids:  # Events in both old and current
-                            old_hash = old_event_hashes.get(uid, "")
-                            current_hash = current_event_hashes.get(uid, "")
-                            if old_hash and current_hash and old_hash != current_hash:
+                            old_mtime = old_event_mtimes.get(uid, 0)
+                            current_mtime = current_event_mtimes.get(uid, 0)
+                            # Compare mtimes (fast) - if different, event was modified
+                            if old_mtime and current_mtime and str(old_mtime) != str(current_mtime):
                                 modified_event_uids.add(uid)
-                                logger.debug(f"[CalDAV] Event {uid} modified: hash changed from {old_hash[:8]}... to {current_hash[:8]}...")
+                                logger.debug(f"[CalDAV] Event {uid} modified: mtime changed from {old_mtime} to {current_mtime}")
                         
                         logger.info(f"[CalDAV] Found {len(deleted_event_uids)} deleted events, {len(modified_event_uids)} modified events since sync-token {old_sync_token[:50]}...")
                         if deleted_event_uids:
@@ -920,25 +894,26 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
                     logger.info(f"[CalDAV] Old sync-token not found in database - doing full sync")
                     # If token not found, do full sync (all current events)
             
-            # Store current sync-token state for future comparisons (with MD5 hashes)
+            # Store current sync-token state for future comparisons (with mtimes for fast change detection)
             # Delete old tokens for this calendar (keep only the latest)
             db.query(CalDAVSyncToken).filter(
                 CalDAVSyncToken.user_id == user.id,
                 CalDAVSyncToken.calendar_name == cal_name
             ).delete()
             
-            # Store new sync-token state with MD5 hashes for change detection
-            # Format: {"uid1": "hash1", "uid2": "hash2", ...}
-            event_hashes_dict = {uid: current_event_hashes.get(uid, "") for uid in current_event_uids}
+            # Store new sync-token state with mtimes for fast change detection
+            # Format: {"uid1": mtime1, "uid2": mtime2, ...}
+            # Using mtime is much faster than MD5 and sufficient for change detection
+            event_mtimes_dict = {uid: current_event_mtimes.get(uid, 0) for uid in current_event_uids}
             new_token_record = CalDAVSyncToken(
                 user_id=user.id,
                 calendar_name=cal_name,
                 sync_token=current_sync_token_url,
-                event_uids=json.dumps(event_hashes_dict)  # Store as dict with hashes
+                event_uids=json.dumps(event_mtimes_dict)  # Store as dict with mtimes
             )
             db.add(new_token_record)
             db.commit()
-            logger.info(f"[CalDAV] Stored sync-token state: {len(current_event_uids)} events with MD5 hashes for token {current_sync_token_url[:50]}...")
+            logger.info(f"[CalDAV] Stored sync-token state: {len(current_event_uids)} events with mtimes for token {current_sync_token_url[:50]}...")
             
             ics_count = 0
             processed_count = 0
