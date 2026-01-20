@@ -364,10 +364,31 @@ class QuotaFilesystemProvider(FilesystemProvider):
             if username:
                 # Extract relative path
                 rel_path = normalized_path.lstrip('/')
+                
+                # Handle various path formats:
+                # /username/path -> path
+                # /webdav/username/path -> path
+                # /calendar/dav/username/path -> path
                 if rel_path.startswith(username + '/'):
                     rel_path = rel_path[len(username) + 1:]
-                elif rel_path == username:
+                elif rel_path.startswith('webdav/' + username + '/'):
+                    rel_path = rel_path[len('webdav/' + username) + 1:]
+                elif rel_path.startswith('calendar/dav/' + username + '/'):
+                    rel_path = rel_path[len('calendar/dav/' + username) + 1:]
+                elif rel_path.startswith('calendar/' + username + '/'):
+                    rel_path = rel_path[len('calendar/' + username) + 1:]
+                elif rel_path == username or rel_path == f'webdav/{username}' or rel_path == f'calendar/dav/{username}' or rel_path == f'calendar/{username}':
                     rel_path = ''
+                else:
+                    # Try to find username in path and extract everything after it
+                    # This handles edge cases where path format is unexpected
+                    username_pos = rel_path.find(username)
+                    if username_pos != -1:
+                        after_username = rel_path[username_pos + len(username):].lstrip('/')
+                        rel_path = after_username
+                    else:
+                        logger.warning(f"[WebDAV] Could not extract relative path from '{normalized_path}' with username '{username}'")
+                        rel_path = ''
                 
                 # Get resource info from remote storage
                 try:
@@ -905,10 +926,26 @@ class QuotaFilesystemProvider(FilesystemProvider):
             if username:
                 # Extract relative path
                 rel_path = normalized_path.lstrip('/')
+                
+                # Handle various path formats (same as in get_resource_inst)
                 if rel_path.startswith(username + '/'):
                     rel_path = rel_path[len(username) + 1:]
-                elif rel_path == username:
+                elif rel_path.startswith('webdav/' + username + '/'):
+                    rel_path = rel_path[len('webdav/' + username) + 1:]
+                elif rel_path.startswith('calendar/dav/' + username + '/'):
+                    rel_path = rel_path[len('calendar/dav/' + username) + 1:]
+                elif rel_path.startswith('calendar/' + username + '/'):
+                    rel_path = rel_path[len('calendar/' + username) + 1:]
+                elif rel_path == username or rel_path == f'webdav/{username}' or rel_path == f'calendar/dav/{username}' or rel_path == f'calendar/{username}':
                     rel_path = ''
+                else:
+                    # Try to find username in path
+                    username_pos = rel_path.find(username)
+                    if username_pos != -1:
+                        after_username = rel_path[username_pos + len(username):].lstrip('/')
+                        rel_path = after_username
+                    else:
+                        rel_path = ''
                 
                 # Normalize rel_path - trim trailing spaces
                 rel_path = rel_path.rstrip(' /')
@@ -1056,10 +1093,26 @@ class QuotaFilesystemProvider(FilesystemProvider):
             if username:
                 # Extract relative path
                 rel_path = normalized_path.lstrip('/')
+                
+                # Handle various path formats (same as in get_resource_inst)
                 if rel_path.startswith(username + '/'):
                     rel_path = rel_path[len(username) + 1:]
-                elif rel_path == username:
+                elif rel_path.startswith('webdav/' + username + '/'):
+                    rel_path = rel_path[len('webdav/' + username) + 1:]
+                elif rel_path.startswith('calendar/dav/' + username + '/'):
+                    rel_path = rel_path[len('calendar/dav/' + username) + 1:]
+                elif rel_path.startswith('calendar/' + username + '/'):
+                    rel_path = rel_path[len('calendar/' + username) + 1:]
+                elif rel_path == username or rel_path == f'webdav/{username}' or rel_path == f'calendar/dav/{username}' or rel_path == f'calendar/{username}':
                     rel_path = ''
+                else:
+                    # Try to find username in path
+                    username_pos = rel_path.find(username)
+                    if username_pos != -1:
+                        after_username = rel_path[username_pos + len(username):].lstrip('/')
+                        rel_path = after_username
+                    else:
+                        rel_path = ''
                 
                 # Normalize rel_path - trim trailing spaces
                 rel_path = rel_path.rstrip(' /')
