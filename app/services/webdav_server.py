@@ -27,6 +27,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
     """Filesystem provider with quota checking and remote storage support."""
     
     def __init__(self, root_path: Path, db: Session):
+        logger.error(f"[WebDAV] ⚠️ QuotaFilesystemProvider.__init__ called with root_path={root_path}")
         super().__init__(root_path)
         self.db = db
         self.storage = get_storage_service(db)
@@ -50,6 +51,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
         
         # Log storage path and verify it's correct
         logger.info(f"[WebDAV] QuotaFilesystemProvider initialized with root_path: {root_path}")
+        logger.error(f"[WebDAV] ⚠️ QuotaFilesystemProvider.__init__ completed, self={self}, methods={[m for m in dir(self) if 'get' in m.lower() or 'list' in m.lower()]}")
         if root_path.exists():
             try:
                 # Count files to verify this is the right location (only if local storage)
@@ -743,6 +745,8 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
         logger.warning(f"[WebDAV] Storage path does not exist: {root_path}")
     
     provider = QuotaFilesystemProvider(root_path, db)
+    logger.error(f"[WebDAV] ⚠️ Created QuotaFilesystemProvider: {provider}, root_path={root_path}")
+    logger.error(f"[WebDAV] ⚠️ Provider type: {type(provider)}, has get_resource_list: {hasattr(provider, 'get_resource_list')}")
     
     # Use simple_dc for authentication - it accepts all users
     # We'll handle authentication at the FastAPI level via middleware
@@ -755,13 +759,15 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
                 "*": True,  # Accept all users (authentication handled by FastAPI)
             }
         },
-        "verbose": 1,
+        "verbose": 3,  # Increase verbosity to see what wsgidav is doing
         "hotfixes": {
             "emulate_win32_lastmod": False,
         },
     }
     
+    logger.error(f"[WebDAV] ⚠️ Creating WsgiDAVApp with provider_mapping: {list(config['provider_mapping'].keys())}")
     app = WsgiDAVApp(config)
+    logger.error(f"[WebDAV] ⚠️ WsgiDAVApp created: {app}")
     return app
 
 
