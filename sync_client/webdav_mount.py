@@ -132,72 +132,102 @@ class WebDAVClient:
             logger.debug(f"PROPFIND failed for {path}: {e}")
             return None
     
-    def ls(self, path: str, depth: int = 1) -> list:
-        """List directory contents
+    def ls(self, path: str, depth: int = 1, retry_attempts: int = 3, retry_delay: int = 2) -> list:
+        """List directory contents with retry logic for network disconnects
         
         Args:
             path: Remote path to list
             depth: Depth of listing (0=self, 1=children, infinity=all descendants)
+            retry_attempts: Number of retry attempts on network failure
+            retry_delay: Initial delay between retries (seconds)
         """
         url = self._url(path)
         if not url.endswith('/'):
             url += '/'
         
-        try:
-            # Use Depth header - '1' for immediate children, 'infinity' for all descendants
-            depth_header = 'infinity' if depth > 1 else str(depth)
-            response = self.session.request('PROPFIND', url, headers={'Depth': depth_header}, timeout=30)
-            response.raise_for_status()
-            
-            # Parse XML
-            root = ET.fromstring(response.content)
-            ns = {'D': 'DAV:'}
-            
-            files = []
-            seen_paths = set()  # Avoid duplicates
-            
-            for response_elem in root.findall('.//D:response', ns):
-                href = response_elem.find('D:href', ns)
-                if href is None:
-                    continue
+        last_error = None
+        for attempt in range(retry_attempts):
+            try:
+                # Use Depth header - '1' for immediate children, 'infinity' for all descendants
+                depth_header = 'infinity' if depth > 1 else str(depth)
+                response = self.session.request('PROPFIND', url, headers={'Depth': depth_header}, timeout=30)
+                response.raise_for_status()
                 
-                file_path = href.text.rstrip('/')
-                # Remove base URL to get relative path
-                if file_path.startswith(self.base_url):
-                    file_path = file_path[len(self.base_url):].lstrip('/')
-                elif file_path.startswith('/'):
-                    # Absolute path - remove leading slash
-                    file_path = file_path.lstrip('/')
+                # Parse XML
+                root = ET.fromstring(response.content)
+                ns = {'D': 'DAV:'}
                 
-                # Skip the directory itself
-                normalized_path = path.rstrip('/').lstrip('/')
-                if file_path == normalized_path or file_path == f'/{normalized_path}':
-                    continue
+                files = []
+                seen_paths = set()  # Avoid duplicates
                 
-                # Avoid duplicates
-                if file_path in seen_paths:
-                    continue
-                seen_paths.add(file_path)
+                for response_elem in root.findall('.//D:response', ns):
+                    href = response_elem.find('D:href', ns)
+                    if href is None:
+                        continue
+                    
+                    file_path = href.text.rstrip('/')
+                    # Remove base URL to get relative path
+                    if file_path.startswith(self.base_url):
+                        file_path = file_path[len(self.base_url):].lstrip('/')
+                    elif file_path.startswith('/'):
+                        # Absolute path - remove leading slash
+                        file_path = file_path.lstrip('/')
+                    
+                    # Skip the directory itself
+                    normalized_path = path.rstrip('/').lstrip('/')
+                    if file_path == normalized_path or file_path == f'/{normalized_path}':
+                        continue
+                    
+                    # Avoid duplicates
+                    if file_path in seen_paths:
+                        continue
+                    seen_paths.add(file_path)
+                    
+                    # Get just the filename for 'name', but keep full path for 'path'
+                    filename = file_path.split('/')[-1]
+                    if filename:
+                        files.append({'name': filename, 'path': file_path})
                 
-                # Get just the filename for 'name', but keep full path for 'path'
-                filename = file_path.split('/')[-1]
-                if filename:
-                    files.append({'name': filename, 'path': file_path})
-            
-            return files
-        except Exception as e:
-            logger.error(f"Error listing {path}: {e}")
-            raise WebDAVError(f"Failed to list directory: {e}")
+                return files
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
+                    requests.exceptions.RequestException) as e:
+                last_error = e
+                if attempt < retry_attempts - 1:
+                    logger.warning(f"List failed (attempt {attempt + 1}/{retry_attempts}): {e}, retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error(f"List failed after {retry_attempts} attempts: {e}")
+            except Exception as e:
+                # Non-network errors, don't retry
+                raise WebDAVError(f"Failed to list directory: {e}")
+        
+        raise WebDAVError(f"Failed to list directory after {retry_attempts} attempts: {last_error}")
     
-    def download(self, path: str) -> bytes:
-        """Download file content"""
+    def download(self, path: str, retry_attempts: int = 3, retry_delay: int = 2) -> bytes:
+        """Download file content with retry logic for network disconnects"""
         url = self._url(path)
-        try:
-            response = self.session.get(url, timeout=30)
-            response.raise_for_status()
-            return response.content
-        except Exception as e:
-            raise WebDAVError(f"Failed to download: {e}")
+        last_error = None
+        
+        for attempt in range(retry_attempts):
+            try:
+                response = self.session.get(url, timeout=30)
+                response.raise_for_status()
+                return response.content
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, 
+                    requests.exceptions.RequestException) as e:
+                last_error = e
+                if attempt < retry_attempts - 1:
+                    logger.warning(f"Download failed (attempt {attempt + 1}/{retry_attempts}): {e}, retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error(f"Download failed after {retry_attempts} attempts: {e}")
+            except Exception as e:
+                # Non-network errors, don't retry
+                raise WebDAVError(f"Failed to download: {e}")
+        
+        raise WebDAVError(f"Failed to download after {retry_attempts} attempts: {last_error}")
     
     def upload(self, path: str, content: bytes):
         """Upload file content"""
@@ -240,14 +270,18 @@ class WebDAVClient:
 
 
 class CacheManager:
-    """Manages offline cache for WebDAV files"""
+    """Manages offline cache for WebDAV files with size limits and directory-level caching"""
     
-    def __init__(self, cache_dir: Path):
+    def __init__(self, cache_dir: Path, max_size_mb: int = 10240, max_age_days: int = 30, cache_directories: list = None):
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_file = CACHE_METADATA
         self.metadata = self._load_metadata()
         self._lock = threading.Lock()
+        self.max_size_bytes = max_size_mb * 1024 * 1024  # Convert MB to bytes
+        self.max_age_seconds = max_age_days * 24 * 60 * 60  # Convert days to seconds
+        self.cache_directories = cache_directories or []  # Directories to always cache
+        logger.info(f"CacheManager initialized: max_size={max_size_mb}MB, max_age={max_age_days}days, cache_dirs={self.cache_directories}")
     
     def _load_metadata(self) -> dict:
         """Load cache metadata"""
@@ -293,9 +327,28 @@ class CacheManager:
             logger.warning(f"Error reading cache for {remote_path}: {e}")
             return None
     
-    def cache_file(self, remote_path: str, content: bytes, mtime: float = None):
-        """Cache a file locally"""
+    def cache_file(self, remote_path: str, content: bytes, mtime: float = None, force: bool = False):
+        """Cache a file locally with size management
+        
+        Args:
+            remote_path: Remote path of the file
+            content: File content to cache
+            mtime: Modification time
+            force: If True, cache even if directory is not in cache_directories
+        """
+        # Check if this directory should be cached
+        if not force and self.cache_directories:
+            path_parts = remote_path.strip('/').split('/')
+            if len(path_parts) > 1:  # Has directory component
+                dir_name = path_parts[0]  # First directory after username
+                if dir_name not in self.cache_directories:
+                    logger.debug(f"Skipping cache for {remote_path} (directory {dir_name} not in cache_directories)")
+                    return
+        
         with self._lock:
+            # Check cache size and evict old files if needed
+            self._enforce_cache_limits(len(content))
+            
             cache_path = self.get_cache_path(remote_path)
             try:
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -308,8 +361,102 @@ class CacheManager:
                     'cached_at': time.time()
                 }
                 self._save_metadata()
+                logger.debug(f"Cached {remote_path} ({len(content)} bytes)")
             except Exception as e:
                 logger.warning(f"Error caching file {remote_path}: {e}")
+    
+    def _enforce_cache_limits(self, new_file_size: int):
+        """Enforce cache size limits by evicting old files"""
+        if self.max_size_bytes <= 0:
+            return  # No size limit
+        
+        # Calculate current cache size
+        current_size = sum(meta.get('size', 0) for meta in self.metadata.values())
+        
+        # If adding this file would exceed limit, evict old files
+        if current_size + new_file_size > self.max_size_bytes:
+            logger.info(f"Cache size limit reached ({current_size / (1024*1024):.1f}MB), evicting old files...")
+            
+            # Sort files by access time (oldest first)
+            files_by_age = []
+            for remote_path, meta in self.metadata.items():
+                # Prioritize files in cache_directories (don't evict them first)
+                is_priority = False
+                if self.cache_directories:
+                    path_parts = remote_path.strip('/').split('/')
+                    if len(path_parts) > 1:
+                        dir_name = path_parts[0]
+                        is_priority = dir_name in self.cache_directories
+                
+                last_access = meta.get('cached_at', 0)
+                files_by_age.append((last_access, is_priority, remote_path, meta.get('size', 0)))
+            
+            # Sort: non-priority first, then by age (oldest first)
+            files_by_age.sort(key=lambda x: (x[1], x[0]))  # False (non-priority) sorts before True
+            
+            # Evict files until we have enough space
+            evicted_size = 0
+            for last_access, is_priority, remote_path, file_size in files_by_age:
+                if current_size + new_file_size - evicted_size <= self.max_size_bytes:
+                    break
+                
+                # Evict this file
+                cache_path = self.get_cache_path(remote_path)
+                try:
+                    if cache_path.exists():
+                        cache_path.unlink()
+                    del self.metadata[remote_path]
+                    evicted_size += file_size
+                    logger.debug(f"Evicted {remote_path} from cache ({file_size} bytes)")
+                except Exception as e:
+                    logger.warning(f"Error evicting {remote_path}: {e}")
+            
+            if evicted_size > 0:
+                self._save_metadata()
+                logger.info(f"Evicted {evicted_size / (1024*1024):.1f}MB from cache")
+    
+    def cleanup_old_cache(self):
+        """Remove files older than max_age_days"""
+        if self.max_age_seconds <= 0:
+            return  # No age limit
+        
+        current_time = time.time()
+        cutoff_time = current_time - self.max_age_seconds
+        
+        with self._lock:
+            to_remove = []
+            for remote_path, meta in self.metadata.items():
+                cached_at = meta.get('cached_at', 0)
+                if cached_at < cutoff_time:
+                    to_remove.append(remote_path)
+            
+            for remote_path in to_remove:
+                cache_path = self.get_cache_path(remote_path)
+                try:
+                    if cache_path.exists():
+                        cache_path.unlink()
+                    del self.metadata[remote_path]
+                except Exception as e:
+                    logger.warning(f"Error removing old cache {remote_path}: {e}")
+            
+            if to_remove:
+                self._save_metadata()
+                logger.info(f"Cleaned up {len(to_remove)} old cache files")
+    
+    def get_cache_size(self) -> int:
+        """Get total cache size in bytes"""
+        return sum(meta.get('size', 0) for meta in self.metadata.values())
+    
+    def should_cache_directory(self, remote_path: str) -> bool:
+        """Check if a directory should be cached based on cache_directories config"""
+        if not self.cache_directories:
+            return True  # Cache everything if no specific directories configured
+        
+        path_parts = remote_path.strip('/').split('/')
+        if path_parts:
+            dir_name = path_parts[0]
+            return dir_name in self.cache_directories
+        return False
     
     def mark_dirty(self, remote_path: str):
         """Mark file as modified (needs sync)"""
@@ -338,13 +485,15 @@ class CacheManager:
 class WebDAVSync:
     """Pure Python WebDAV sync - no FUSE required!"""
     
-    def __init__(self, webdav_client: WebDAVClient, local_dir: Path, remote_base: str, cache: CacheManager = None):
+    def __init__(self, webdav_client: WebDAVClient, local_dir: Path, remote_base: str, cache: CacheManager = None, network_retry_attempts: int = 5, network_retry_delay: int = 5):
         self.webdav = webdav_client
         self.local_dir = Path(local_dir)
         self.remote_base = remote_base.rstrip('/')
         self.cache = cache
         self._lock = threading.Lock()
         self._sync_in_progress = False
+        self.network_retry_attempts = network_retry_attempts
+        self.network_retry_delay = network_retry_delay
     
     def _remote_path(self, local_path: Path) -> str:
         """Convert local path to remote path"""
@@ -390,18 +539,23 @@ class WebDAVSync:
                 remote_path = self.remote_base if not path or path == self.remote_base else path
             logger.debug(f"sync_from_remote called with path='{path}', remote_path='{remote_path}'")
             
-            # List remote directory
+            # List remote directory (with retry logic)
             try:
-                files = self.webdav.ls(remote_path)
+                files = self.webdav.ls(remote_path, depth=1, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
             except Exception as e:
                 # If listing fails, log but try to continue
-                if 'Permission denied' in str(e) and '/verita84' in str(e):
+                error_str = str(e).lower()
+                if 'permission denied' in error_str:
                     logger.debug(f"Permission error during listing (known issue, continuing): {e}")
-                    # Don't return - try to continue with empty list
                     files = []
+                elif 'connection' in error_str or 'timeout' in error_str or 'network' in error_str:
+                    logger.warning(f"Network error listing {remote_path}: {e}")
+                    # If we have cache, try to use cached file list
+                    files = []
+                    if self.cache:
+                        logger.info("Network unavailable, using cache if available")
                 else:
                     logger.warning(f"Error listing {remote_path}: {e}")
-                    # For other errors, also try to continue
                     files = []
             
             for file_info in files:
@@ -523,22 +677,55 @@ class WebDAVSync:
                                 should_download = False
                         
                         if should_download:
+                            # Check cache first
+                            cached_content = None
+                            if self.cache:
+                                cached_content = self.cache.get_cached_content(file_remote_path)
+                                if cached_content:
+                                    logger.debug(f"Using cached content for {file_remote_path}")
+                                    content = cached_content
+                                    # Write cached content to local file
+                                    file_local_path.parent.mkdir(parents=True, exist_ok=True)
+                                    file_local_path.write_bytes(content)
+                                    os.utime(file_local_path, (info['modified'], info['modified']))
+                                    logger.debug(f"Restored from cache: {file_remote_path}")
+                                    continue  # Skip download, already have it
+                            
+                            # Try to download (with retry logic)
                             try:
                                 # Normalize path for download
                                 download_path = file_remote_path
                                 if not download_path.startswith('/'):
                                     download_path = '/' + download_path
-                                content = self.webdav.download(download_path)
+                                content = self.webdav.download(download_path, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
                                 file_local_path.parent.mkdir(parents=True, exist_ok=True)
                                 file_local_path.write_bytes(content)
                                 # Set mtime
                                 os.utime(file_local_path, (info['modified'], info['modified']))
                                 
-                                # Cache it
+                                # Cache it if cache is enabled and directory should be cached
                                 if self.cache:
-                                    self.cache.cache_file(file_remote_path, content, info['modified'])
+                                    should_cache = self.cache.should_cache_directory(file_remote_path) if self.cache.cache_directories else True
+                                    if should_cache:
+                                        self.cache.cache_file(file_remote_path, content, info['modified'], force=True)
+                                    else:
+                                        logger.debug(f"Skipping cache for {file_remote_path} (directory not in cache_directories)")
                                 
                                 logger.debug(f"Downloaded: {file_remote_path}")
+                            except WebDAVError as e:
+                                error_str = str(e).lower()
+                                if 'connection' in error_str or 'timeout' in error_str or 'network' in error_str:
+                                    logger.warning(f"Network error downloading {file_remote_path}: {e}")
+                                    # Use cached content if available
+                                    if cached_content:
+                                        logger.info(f"Using cached content for {file_remote_path} due to network error")
+                                        file_local_path.parent.mkdir(parents=True, exist_ok=True)
+                                        file_local_path.write_bytes(cached_content)
+                                        os.utime(file_local_path, (info['modified'], info['modified']))
+                                    else:
+                                        logger.warning(f"No cached content available for {file_remote_path}, skipping")
+                                else:
+                                    logger.warning(f"Failed to download {file_remote_path}: {e}")
                             except Exception as e:
                                 logger.warning(f"Failed to download {file_remote_path}: {e}")
                 except OSError as e:
@@ -643,7 +830,13 @@ class WebDAVMount:
             "password": "",
             "mount_point": str(Path.home() / "PosterchanAI-Mount"),
             "enable_cache": True,
-            "sync_interval": 30
+            "sync_interval": 30,
+            "cache_max_size_mb": 10240,  # Default 10GB cache
+            "cache_max_age_days": 30,
+            "cache_directories": [],  # List of directories to always cache (e.g., ["documents", "images"])
+            "network_retry_attempts": 5,
+            "network_retry_delay": 5,  # seconds
+            "offline_mode": False  # If True, only use cache, don't try to sync
         }
         
         if CONFIG_FILE.exists():
@@ -698,10 +891,18 @@ class WebDAVMount:
             self.webdav = None
     
     def _setup_cache(self):
-        """Setup cache manager"""
+        """Setup cache manager with configuration"""
         if self.enable_cache:
-            self.cache = CacheManager(CACHE_DIR)
-            logger.info("Offline cache enabled")
+            cache_max_size_mb = self.config.get("cache_max_size_mb", 10240)  # Default 10GB
+            cache_max_age_days = self.config.get("cache_max_age_days", 30)
+            cache_directories = self.config.get("cache_directories", [])
+            self.cache = CacheManager(
+                CACHE_DIR,
+                max_size_mb=cache_max_size_mb,
+                max_age_days=cache_max_age_days,
+                cache_directories=cache_directories
+            )
+            logger.info(f"Offline cache enabled: max_size={cache_max_size_mb}MB, max_age={cache_max_age_days}days, cache_dirs={cache_directories}")
         else:
             self.cache = None
     
@@ -805,15 +1006,32 @@ class WebDAVMount:
         
         logger.info(f"Initializing sync: {self.webdav_url} -> {self.mount_point}")
         
+        # Get network retry settings
+        network_retry_attempts = self.config.get("network_retry_attempts", 5)
+        network_retry_delay = self.config.get("network_retry_delay", 5)
+        
         # Create sync manager
-        self._sync = WebDAVSync(self.webdav, self.mount_point, self.base_path, self.cache)
+        self._sync = WebDAVSync(
+            self.webdav, 
+            self.mount_point, 
+            self.base_path, 
+            self.cache,
+            network_retry_attempts=network_retry_attempts,
+            network_retry_delay=network_retry_delay
+        )
+        
+        # Check if offline mode is enabled
+        offline_mode = self.config.get("offline_mode", False)
         
         # Do initial sync
         network_ok, network_error = self._check_network_connectivity()
-        if network_ok:
+        if network_ok and not offline_mode:
             logger.info("Network available, performing initial sync...")
             try:
                 self._sync.sync_from_remote()
+                # Cleanup old cache after successful sync
+                if self.cache:
+                    self.cache.cleanup_old_cache()
                 # Check if files were actually synced
                 synced_files = list(self.mount_point.rglob('*'))
                 file_count = len([f for f in synced_files if f.is_file()])
@@ -823,8 +1041,11 @@ class WebDAVMount:
                     logger.warning("Initial sync completed but no files found")
             except Exception as e:
                 # Log but don't fail - sync will retry on next interval
-                if 'Permission denied' in str(e) and '/verita84' in str(e):
+                error_str = str(e).lower()
+                if 'permission denied' in error_str:
                     logger.debug(f"Initial sync permission error (known issue, will retry): {e}")
+                elif 'connection' in error_str or 'timeout' in error_str or 'network' in error_str:
+                    logger.warning(f"Network error during initial sync: {e}, will use cache if available")
                 else:
                     logger.warning(f"Initial sync had errors (will retry): {e}")
                 # Still check if any files were synced despite the error
@@ -834,9 +1055,10 @@ class WebDAVMount:
                     logger.info(f"Initial sync attempt complete - {file_count} files synced despite errors")
                 else:
                     logger.info("Initial sync attempt complete (no files synced)")
+        elif offline_mode:
+            logger.info("Offline mode enabled, skipping sync")
         else:
-            logger.warning(f"Network not available: {network_error}")
-            logger.info("Will sync when network becomes available")
+            logger.warning(f"Network not available: {network_error}, using cache if available")
         
         return True
     
@@ -875,16 +1097,24 @@ class WebDAVMount:
                     elif not _online:
                         logger.debug(f"Network offline: {network_error}")
                 
-                # Sync if online and interval has passed
-                if _online and self._sync and (current_time - last_sync >= self.sync_interval):
+                # Sync if online and interval has passed (or offline mode is disabled)
+                offline_mode = self.config.get("offline_mode", False)
+                if not offline_mode and _online and self._sync and (current_time - last_sync >= self.sync_interval):
                     try:
                         # Sync pending changes first
                         self._sync.sync_pending_changes()
                         # Then sync from remote
                         self._sync.sync_from_remote()
+                        # Cleanup old cache periodically
+                        if self.cache and (current_time % 3600 < self.sync_interval):  # Once per hour
+                            self.cache.cleanup_old_cache()
                         last_sync = current_time
                     except Exception as e:
-                        logger.error(f"Error during sync: {e}")
+                        error_str = str(e).lower()
+                        if 'connection' in error_str or 'timeout' in error_str or 'network' in error_str:
+                            logger.warning(f"Network error during sync: {e}, will retry")
+                        else:
+                            logger.error(f"Error during sync: {e}")
                 
                 time.sleep(10)  # Check every 10 seconds
                 
