@@ -159,10 +159,14 @@ class WebDAVClient:
                 
                 # Extract info
                 resourcetype = prop.find('D:resourcetype', ns)
-                isdir = parent_is_dir  # Start with parent_is_dir (set above if child is a directory)
+                # Start with parent_is_dir (set above if child is a directory)
+                # If parent_is_dir is True, the requested path is a directory regardless of resourcetype
+                isdir = parent_is_dir
                 if parent_is_dir:
-                    logger.debug(f"Detected directory via parent_is_dir flag for {path}")
-                if resourcetype is not None:
+                    logger.debug(f"Detected directory via parent_is_dir flag for {path} (child is a directory)")
+                
+                # Only check resourcetype if parent_is_dir is False
+                if not isdir and resourcetype is not None:
                     # Check for collection child element (proper XML structure)
                     collection = resourcetype.find('D:collection', ns)
                     if collection is not None:
