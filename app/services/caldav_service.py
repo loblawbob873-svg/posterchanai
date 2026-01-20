@@ -367,12 +367,26 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                             if ics_count <= 10:  # Log first 10 events for debugging
                                 logger.info(f"[CalDAV] Including event '{summary}': start={event_start.date()}, end={event_end.date()}, range={start_date.date()} to {end_date.date()}")
                         else:
-                            # Event has no end date - include if it starts before or during the range
-                            # Since it has no end date, it's an ongoing event and should be included
-                            # if it started before or at the range end
+                            # Event has no end date - include if it's relevant to the range
+                            # Include if:
+                            # 1. Event starts within the requested date range (always include)
+                            # 2. Event started before range but within 1 year (ongoing/recent event)
+                            # This prevents very old events (years ago) from appearing
                             summary = component.get('summary', 'No Title')
-                            if ics_count <= 10:  # Log first 10 events for debugging
-                                logger.info(f"[CalDAV] Including event '{summary}' (no end): start={event_start.date()}, range={start_date.date()} to {end_date.date()}")
+                            days_before_range = (start_date - event_start).total_seconds() / 86400
+                            
+                            if event_start <= end_date and event_start >= start_date:
+                                # Event starts within the requested range - always include
+                                if ics_count <= 10:
+                                    logger.info(f"[CalDAV] Including event '{summary}' (no end, within range): start={event_start.date()}, range={start_date.date()} to {end_date.date()}")
+                            elif event_start < start_date and 0 <= days_before_range <= 365:
+                                # Event started before range but within 1 year - include it (ongoing/recent)
+                                if ics_count <= 10:
+                                    logger.info(f"[CalDAV] Including ongoing event '{summary}' (no end, recent): start={event_start.date()}, {days_before_range:.0f} days before range")
+                            else:
+                                # Event is too old (more than 1 year before range) - skip it
+                                logger.debug(f"[CalDAV] Skipping old event with no end date '{summary}': start={event_start.date()}, {days_before_range:.0f} days before range start")
+                                continue
                     else:
                         # Recurring event: only skip if it DEFINITELY can't have occurrences
                         # Check for UNTIL or COUNT limits that would exclude this range
