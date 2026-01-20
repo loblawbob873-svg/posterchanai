@@ -841,6 +841,8 @@ async def startup():
                         """Proxy /webdav/caldav/... requests directly to CalDAV server for iOS calendar compatibility."""
                         from fastapi.responses import Response
                         import httpx
+                        import logging
+                        logger = logging.getLogger(__name__)
                         from app.database import safe_query_settings
                         dav_settings = safe_query_settings(db)
                         caldav_port = int(dav_settings.get("caldav_port", "8081"))
@@ -848,17 +850,31 @@ async def startup():
                         if request.url.query:
                             caldav_url += f"?{request.url.query}"
                         
+                        # Log PUT requests for debugging
+                        if request.method == "PUT":
+                            body = await request.body()
+                            logger.info(f"[CalDAV Proxy] PUT request: /webdav/caldav/{path}, body size: {len(body)} bytes, proxying to {caldav_url}")
+                        else:
+                            logger.debug(f"[CalDAV Proxy] {request.method} request: /webdav/caldav/{path} -> {caldav_url}")
+                        
                         # Forward the request to CalDAV server
                         async with httpx.AsyncClient() as client:
                             headers = dict(request.headers)
                             headers.pop("host", None)  # Remove host header
+                            # Re-read body if we already read it for logging
+                            if request.method == "PUT":
+                                body_content = body
+                            else:
+                                body_content = await request.body()
                             response = await client.request(
                                 method=request.method,
                                 url=caldav_url,
                                 headers=headers,
-                                content=await request.body(),
+                                content=body_content,
                                 follow_redirects=False
                             )
+                            if request.method == "PUT":
+                                logger.info(f"[CalDAV Proxy] PUT response: {response.status_code} for /webdav/caldav/{path}")
                             return Response(
                                 content=response.content,
                                 status_code=response.status_code,
