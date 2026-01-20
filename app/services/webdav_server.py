@@ -763,6 +763,46 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     
                     # Make it fully dict-like for directory browser
                     def __getitem__(self, key):
+                        # Allow dict-like access for directory browser
+                        if key == "display_name":
+                            return self.get_display_name()
+                        elif key == "path":
+                            return self._path
+                        elif key == "is_directory":
+                            return self._is_dir
+                        elif key == "is_collection":
+                            return self._is_dir  # Same as is_directory
+                        elif key == "size":
+                            return self._size
+                        elif key == "modified":
+                            return self._modified
+                        elif key == "last_modified":
+                            return self._modified
+                        elif key == "href":
+                            return self.get_href()
+                        else:
+                            raise KeyError(f"'{key}' not found in SimpleResource")
+                    
+                    def __setitem__(self, key, value):
+                        # Allow dict-like assignment for directory browser
+                        # Store in a dict-like storage
+                        if not hasattr(self, '_dict_storage'):
+                            self._dict_storage = {}
+                        self._dict_storage[key] = value
+                    
+                    def get(self, key, default=None):
+                        # Dict-like get() method for directory browser
+                        try:
+                            return self[key]
+                        except KeyError:
+                            return default
+                    
+                    def __contains__(self, key):
+                        # Support 'in' operator
+                        return key in ["display_name", "path", "is_directory", "is_collection", "size", "modified", "last_modified", "href"]
+                    
+                    # Make it fully dict-like for directory browser
+                    def __getitem__(self, key):
                         # Support all keys the directory browser might use
                         from datetime import datetime
                         if key == "display_name":
