@@ -532,20 +532,23 @@ class WebDAVSync:
             # Ensure path doesn't start with / to avoid absolute path issues
             path = path.lstrip('/')
             # Build remote path relative to base_path
+            # remote_base is the user's root directory (e.g., "verita84@poster.place")
+            # For the root, pass empty string to ls() since base_url already includes /webdav
+            # For subdirectories, pass the relative path
             if path:
-                # Path is relative to base_path
-                remote_path = f"{self.remote_base}/{path}" if self.remote_base else path
+                # Path is relative to remote_base
+                ls_path = f"{self.remote_base}/{path}" if self.remote_base else path
             else:
-                # Empty path means root (base_path itself)
-                remote_path = self.remote_base
-            logger.debug(f"sync_from_remote called with path='{path}', remote_path='{remote_path}'")
+                # Empty path means root - pass remote_base to ls()
+                ls_path = self.remote_base if self.remote_base else ""
+            logger.debug(f"sync_from_remote called with path='{path}', ls_path='{ls_path}' (remote_base: '{self.remote_base}')")
             
             # List remote directory (with retry logic)
-            # remote_path is relative to base_url, so pass it directly to ls()
+            # ls_path is relative to base_url, so pass it directly to ls()
             try:
-                # Ensure remote_path doesn't have leading slash (WebDAVClient._url handles it)
-                ls_path = remote_path.lstrip('/')
-                logger.debug(f"Calling ls() with path: '{ls_path}' (remote_base: '{self.remote_base}')")
+                # Ensure ls_path doesn't have leading slash (WebDAVClient._url handles it)
+                ls_path = ls_path.lstrip('/')
+                logger.debug(f"Calling ls() with path: '{ls_path}'")
                 files = self.webdav.ls(ls_path, depth=1, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
             except Exception as e:
                 # If listing fails, log but try to continue
