@@ -183,18 +183,51 @@ class LlamaService:
             logger.info(f"  GPU layers: {gpu_layers} (CPU mode: {self.cpu_mode})")
             logger.info(f"  Batch size: {self.n_batch}, mmap: {self.use_mmap}, mlock: {self.use_mlock}")
 
-            self._model = Llama(
-                model_path=self.model_path,
-                n_ctx=self.num_ctx,
-                n_gpu_layers=gpu_layers,
-                n_threads=self.n_threads,
-                n_threads_batch=self.n_threads,  # Use same threads for batch processing
-                n_batch=self.n_batch,
-                use_mmap=self.use_mmap,
-                use_mlock=self.use_mlock,
-                flash_attn=False,
-                verbose=False,
-            )
+            # Validate context size - warn if very large
+            if self.num_ctx > 8192:
+                logger.warning(f"  WARNING: Large context size ({self.num_ctx}) may cause memory issues")
+                logger.warning(f"  Consider reducing ollama_num_ctx to 4096 or 2048 if you encounter 'Failed to create llama_context' errors")
+            
+            # Check available GPU memory if using GPU
+            if gpu_layers > 0:
+                try:
+                    import subprocess
+                    result = subprocess.run(['nvidia-smi', '--query-gpu=memory.free', '--format=csv,noheader,nounits'], 
+                                          capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        free_memory_mb = int(result.stdout.strip().split('\n')[0])
+                        logger.info(f"  Available GPU memory: {free_memory_mb} MB")
+                        # Rough estimate: context size * 2 bytes per token for KV cache
+                        estimated_memory_mb = (self.num_ctx * 2) // (1024 * 1024)
+                        if estimated_memory_mb > free_memory_mb * 0.8:
+                            logger.warning(f"  WARNING: Context size may require ~{estimated_memory_mb} MB, but only {free_memory_mb} MB available")
+                except Exception:
+                    pass  # nvidia-smi not available or failed, skip check
+
+            try:
+                self._model = Llama(
+                    model_path=self.model_path,
+                    n_ctx=self.num_ctx,
+                    n_gpu_layers=gpu_layers,
+                    n_threads=self.n_threads,
+                    n_threads_batch=self.n_threads,  # Use same threads for batch processing
+                    n_batch=self.n_batch,
+                    use_mmap=self.use_mmap,
+                    use_mlock=self.use_mlock,
+                    flash_attn=False,
+                    verbose=False,
+                )
+            except ValueError as ve:
+                # Catch ValueError specifically for llama_context errors
+                if "llama_context" in str(ve).lower() or "create" in str(ve).lower():
+                    logger.error(f"Failed to create llama context with current settings:")
+                    logger.error(f"  Context size: {self.num_ctx}")
+                    logger.error(f"  GPU layers: {gpu_layers}")
+                    logger.error(f"  Model: {self.model_path}")
+                    logger.error("This usually means the context size is too large for available memory.")
+                    logger.error("Try reducing ollama_num_ctx in admin settings (e.g., 2048 or 4096)")
+                    raise RuntimeError(f"Failed to create llama context: {ve}. Try reducing context size (ollama_num_ctx) in admin settings.")
+                raise
             self._model_path = self.model_path
             logger.info("Model loaded successfully")
 
