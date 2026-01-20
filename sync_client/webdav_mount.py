@@ -409,11 +409,39 @@ class WebDAVClient:
         url = self._url(path)
         last_error = None
         
+        # Ensure path doesn't end with / (that would request a directory listing)
+        if url.endswith('/'):
+            url = url.rstrip('/')
+        
         for attempt in range(retry_attempts):
             try:
-                response = self.session.get(url, timeout=30)
+                # Use GET with explicit headers to ensure we get file content, not directory listing
+                headers = {
+                    'Accept': '*/*',  # Accept any content type
+                    'Depth': '0'  # Don't do PROPFIND
+                }
+                response = self.session.get(url, headers=headers, timeout=30)
                 response.raise_for_status()
-                return response.content
+                
+                # Check if we got HTML/XML (likely a directory listing or error page)
+                content_type = response.headers.get('Content-Type', '').lower()
+                content = response.content
+                
+                # Check if response looks like HTML/XML (directory listing or error)
+                if content.startswith(b'<?xml') or content.startswith(b'<html') or content.startswith(b'<!DOCTYPE'):
+                    # This is likely a directory listing or error page, not file content
+                    logger.warning(f"Download returned HTML/XML instead of file content for {path}")
+                    logger.debug(f"Content-Type: {content_type}, Content preview: {content[:200]}")
+                    raise WebDAVError(f"Server returned HTML/XML instead of file content for {path}. Is this a directory?")
+                
+                # Check Content-Type if available
+                if content_type and ('text/html' in content_type or 'application/xml' in content_type):
+                    # Might be a directory listing
+                    if b'<html' in content[:500] or b'<?xml' in content[:500]:
+                        logger.warning(f"Download returned HTML/XML (Content-Type: {content_type}) for {path}")
+                        raise WebDAVError(f"Server returned HTML/XML instead of file content for {path}. Is this a directory?")
+                
+                return content
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, 
                     requests.exceptions.RequestException) as e:
                 last_error = e
