@@ -113,6 +113,7 @@ class WebDAVClient:
                 # (The server might return a child item, but if it has collection tag, the parent is a directory)
                 parent_is_dir = False
                 if response_elem is None:
+                    logger.debug(f"[WebDAV Client] No direct match for {requested_path}, checking for child items...")
                     for elem in root.findall('.//D:response', ns):
                         href = elem.find('D:href', ns)
                         if href is not None:
@@ -122,6 +123,7 @@ class WebDAVClient:
                             # requested_path is "verita84@poster.place/chat"
                             # So we check if href_path starts with requested_path + "/"
                             if href_path.startswith(requested_path + '/'):
+                                logger.debug(f"[WebDAV Client] Found child item: {href_path}, checking if it's a directory...")
                                 # Check if this item is a directory (collection)
                                 propstat = elem.find('D:propstat', ns)
                                 if propstat is not None:
@@ -134,24 +136,28 @@ class WebDAVClient:
                                             if collection is not None:
                                                 parent_is_dir = True
                                                 response_elem = elem
-                                                logger.debug(f"Detected parent directory: child {href_path} has collection element")
+                                                logger.info(f"[WebDAV Client] ✓ Detected parent directory: child {href_path} has collection element")
                                                 break
                                             # Check resourcetype text (may be HTML-encoded)
                                             resourcetype_text = resourcetype.text
+                                            logger.debug(f"[WebDAV Client] resourcetype.text: {repr(resourcetype_text)}")
                                             if resourcetype_text:
                                                 import html
                                                 decoded = html.unescape(resourcetype_text.strip())
+                                                logger.debug(f"[WebDAV Client] Decoded resourcetype: {repr(decoded)}")
                                                 if 'collection' in decoded.lower() or decoded.strip() == '<D:collection/>':
                                                     # This child is a directory, so the parent (requested path) is also a directory
                                                     parent_is_dir = True
                                                     response_elem = elem  # Use this response for other properties
-                                                    logger.debug(f"Detected parent directory: child {href_path} has collection in resourcetype: {decoded}")
+                                                    logger.info(f"[WebDAV Client] ✓ Detected parent directory: child {href_path} has collection in resourcetype: {decoded}")
                                                     break
                                             # Also check if resourcetype has any child elements
-                                            if len(list(resourcetype)) > 0:
+                                            children_count = len(list(resourcetype))
+                                            logger.debug(f"[WebDAV Client] resourcetype has {children_count} children")
+                                            if children_count > 0:
                                                 parent_is_dir = True
                                                 response_elem = elem
-                                                logger.debug(f"Detected parent directory: child {href_path} has resourcetype children")
+                                                logger.info(f"[WebDAV Client] ✓ Detected parent directory: child {href_path} has {children_count} resourcetype children")
                                                 break
                 
                 # If still no match, use the first response
