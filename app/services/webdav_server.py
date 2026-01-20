@@ -407,8 +407,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 # wsgidav calls get_descendants on the resource to get children
                                 logger.error(f"[WebDAV] VirtualResource.get_descendants CALLED: path={self._path}, depth={depth}, add_self={add_self}")
                                 try:
-                                    # Call get_resource_list to get the children
-                                    children = self._provider.get_resource_list(self._path, depth=depth, environ=None)
+                                    # Call get_resource_list with depth=1 to get immediate children (not depth=0)
+                                    # depth=0 would return only self, depth=1 returns children
+                                    children = self._provider.get_resource_list(self._path, depth=1, environ=None)
                                     logger.error(f"[WebDAV] VirtualResource.get_descendants: get_resource_list returned {len(children) if children else 0} children for {self._path}")
                                     if children:
                                         logger.error(f"[WebDAV] VirtualResource.get_descendants: first child type={type(children[0]) if children else None}")
