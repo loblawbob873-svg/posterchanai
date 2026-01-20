@@ -737,6 +737,21 @@ class WebDAVSync:
             for file_info in files:
                 try:
                     file_remote_path = file_info['path']
+                    
+                    # Fix path duplication bug: if we're syncing a subdirectory and the path is duplicated
+                    # e.g., if path='Joplin' and file_remote_path='verita84@poster.place/Joplin/Joplin/file.md'
+                    # we should correct it to 'verita84@poster.place/Joplin/file.md'
+                    if path:
+                        # We're in a subdirectory, check for duplication
+                        expected_prefix = f"{self.remote_base}/{path}"
+                        duplicated_prefix = f"{expected_prefix}/{path}"
+                        if file_remote_path.startswith(duplicated_prefix + '/'):
+                            # Path is duplicated, fix it
+                            corrected_path = file_remote_path[len(f"{path}/"):]  # Remove the duplicate directory name
+                            if corrected_path.startswith(self.remote_base + '/'):
+                                file_remote_path = corrected_path
+                                logger.debug(f"Fixed duplicated path: {file_info['path']} -> {file_remote_path}")
+                    
                     # Check if this is a directory from the listing (if available)
                     is_dir_from_listing = file_info.get('isdir', False)
                     
