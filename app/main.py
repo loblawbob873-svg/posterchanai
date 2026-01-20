@@ -835,29 +835,65 @@ async def startup():
                             logging.debug(f"[WebDAV Middleware] Stripped path: {original_path} -> {path_info}")
                             return wsgi_app(environ, start_response)
                         return wrapper
-                    # Add route to redirect /webdav/caldav/... to /caldav/... (iOS calendar compatibility)
+                    # Proxy /webdav/caldav/... directly to CalDAV server (cleaner than redirect)
                     @app.api_route("/webdav/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "REPORT", "MKCOL", "MOVE", "COPY", "OPTIONS"])
-                    async def redirect_webdav_caldav(request: Request, path: str):
-                        """Redirect /webdav/caldav/... requests to /caldav/... for iOS calendar compatibility."""
-                        from fastapi.responses import RedirectResponse
-                        # Remove /webdav prefix and redirect to /caldav/
-                        new_path = f"/caldav/{path}"
-                        # Preserve query string if present
+                    async def proxy_webdav_caldav(request: Request, path: str, db: Session = Depends(get_db)):
+                        """Proxy /webdav/caldav/... requests directly to CalDAV server for iOS calendar compatibility."""
+                        from fastapi.responses import Response
+                        import httpx
+                        from app.database import safe_query_settings
+                        dav_settings = safe_query_settings(db)
+                        caldav_port = int(dav_settings.get("caldav_port", "8081"))
+                        caldav_url = f"http://127.0.0.1:{caldav_port}/caldav/{path}"
                         if request.url.query:
-                            new_path += f"?{request.url.query}"
-                        return RedirectResponse(url=new_path, status_code=301)
+                            caldav_url += f"?{request.url.query}"
+                        
+                        # Forward the request to CalDAV server
+                        async with httpx.AsyncClient() as client:
+                            headers = dict(request.headers)
+                            headers.pop("host", None)  # Remove host header
+                            response = await client.request(
+                                method=request.method,
+                                url=caldav_url,
+                                headers=headers,
+                                content=await request.body(),
+                                follow_redirects=False
+                            )
+                            return Response(
+                                content=response.content,
+                                status_code=response.status_code,
+                                headers=dict(response.headers)
+                            )
                     
-                    # Add route to redirect /webdav/carddav/... to /carddav/... (iOS contacts compatibility)
+                    # Proxy /webdav/carddav/... directly to CardDAV server
                     @app.api_route("/webdav/carddav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "REPORT", "MKCOL", "MOVE", "COPY", "OPTIONS"])
-                    async def redirect_webdav_carddav(request: Request, path: str):
-                        """Redirect /webdav/carddav/... requests to /carddav/... for iOS contacts compatibility."""
-                        from fastapi.responses import RedirectResponse
-                        # Remove /webdav prefix and redirect to /carddav/
-                        new_path = f"/carddav/{path}"
-                        # Preserve query string if present
+                    async def proxy_webdav_carddav(request: Request, path: str, db: Session = Depends(get_db)):
+                        """Proxy /webdav/carddav/... requests directly to CardDAV server for iOS contacts compatibility."""
+                        from fastapi.responses import Response
+                        import httpx
+                        from app.database import safe_query_settings
+                        dav_settings = safe_query_settings(db)
+                        carddav_port = int(dav_settings.get("carddav_port", "8082"))
+                        carddav_url = f"http://127.0.0.1:{carddav_port}/carddav/{path}"
                         if request.url.query:
-                            new_path += f"?{request.url.query}"
-                        return RedirectResponse(url=new_path, status_code=301)
+                            carddav_url += f"?{request.url.query}"
+                        
+                        # Forward the request to CardDAV server
+                        async with httpx.AsyncClient() as client:
+                            headers = dict(request.headers)
+                            headers.pop("host", None)  # Remove host header
+                            response = await client.request(
+                                method=request.method,
+                                url=carddav_url,
+                                headers=headers,
+                                content=await request.body(),
+                                follow_redirects=False
+                            )
+                            return Response(
+                                content=response.content,
+                                status_code=response.status_code,
+                                headers=dict(response.headers)
+                            )
                     
                     app.mount("/webdav", wsgi_middleware(strip_webdav_prefix(webdav_app)))
                     logging.info("✅ WebDAV mounted directly into FastAPI on port 443 (via /webdav/)")
