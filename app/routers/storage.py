@@ -150,29 +150,49 @@ async def save_avatar(
 
 @router.post("/save-file")
 async def save_file(
+    request: FastAPIRequest,
     file: UploadFile = File(...),
     username: str = Form(...),
     conversation_id: int = Form(...),
     original_name: str = Form("file.txt"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_optional)
 ):
     """
     Save a text file. Called by client nodes when proxying file uploads.
     Only accessible on storage server node.
-    """
-    # Verify user owns this conversation
-    from app.models import Conversation
-    conversation = db.query(Conversation).filter(
-        Conversation.id == conversation_id,
-        Conversation.user_id == current_user.id
-    ).first()
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
     
-    # Verify username matches
-    if current_user.username != username:
-        raise HTTPException(status_code=403, detail="Access denied")
+    Note: For proxied requests, current_user may be None if using server token auth.
+    In that case, we trust the main server and skip conversation verification.
+    """
+    # Check if this is a server-to-server request
+    # Either current_user is None OR we have a valid storage_server_token
+    is_server_request = current_user is None
+    if not is_server_request:
+        # Check if this is a server token request
+        from app.database import safe_query_settings
+        settings = safe_query_settings(db)
+        storage_server_token = settings.get("storage_server_token", "")
+        if storage_server_token:
+            # Check if the request has the server token
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token:
+                is_server_request = True
+    
+    if not is_server_request:
+        # Verify user owns this conversation (for user requests)
+        from app.models import Conversation
+        conversation = db.query(Conversation).filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id
+        ).first()
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Verify username matches
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    # For server-to-server requests, we skip conversation verification (main server already verified)
     
     # Read file content
     content = await file.read()
