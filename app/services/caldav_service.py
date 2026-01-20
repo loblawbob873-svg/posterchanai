@@ -3301,15 +3301,27 @@ def format_events_for_display(events: List[CalendarEvent], include_description: 
         if cyberpunk:
             # Cyberpunk style event line with time in brackets
             time_bracket = event.start.strftime("%H:%M")
-            # Show calendar name if available and not generic
+            # Show calendar name if available and not generic - ALWAYS show if there are multiple calendars
             calendar_label = ""
-            if event.calendar_name and event.calendar_name not in ("Built-in Calendar", "Calendar"):
+            # Check if we have events from multiple calendars
+            unique_calendars = set(e.calendar_name for e in sorted_events if e.calendar_name)
+            if len(unique_calendars) > 1:
+                # Multiple calendars - always show calendar name to distinguish them
+                if event.calendar_name:
+                    calendar_label = f" `[{event.calendar_name}]`"
+            elif event.calendar_name and event.calendar_name not in ("Built-in Calendar", "Calendar"):
                 calendar_label = f" `[{event.calendar_name}]`"
             line = f"  ⏰ `{time_bracket}` **{event.summary}**{calendar_label}{action_links}"
         else:
-            # Show calendar name if available and not generic
+            # Show calendar name if available and not generic - ALWAYS show if there are multiple calendars
             calendar_label = ""
-            if event.calendar_name and event.calendar_name not in ("Built-in Calendar", "Calendar"):
+            # Check if we have events from multiple calendars
+            unique_calendars = set(e.calendar_name for e in sorted_events if e.calendar_name)
+            if len(unique_calendars) > 1:
+                # Multiple calendars - always show calendar name to distinguish them
+                if event.calendar_name:
+                    calendar_label = f" ({event.calendar_name})"
+            elif event.calendar_name and event.calendar_name not in ("Built-in Calendar", "Calendar"):
                 calendar_label = f" ({event.calendar_name})"
             line = f"- {time_str}: {event.summary}{calendar_label}{action_links}"
 
