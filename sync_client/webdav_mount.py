@@ -789,12 +789,16 @@ class WebDAVSync:
                         continue
                     
                     # Use isdir from listing if available (MUCH faster than calling info() for each file)
-                    # The ls() listing already provides isdir, so we trust it to avoid slow info() calls
+                    # The ls() listing already provides isdir and mtime, so we trust it to avoid slow info() calls
                     isdir = is_dir_from_listing
+                    
+                    # Get mtime from listing if available (ls() includes getlastmodified in PROPFIND response)
+                    listing_mtime = file_info.get('modified', None)
+                    file_size = file_info.get('size', -1)
                     
                     # Only call info() if:
                     # 1. Listing didn't provide isdir AND size is 0 (might be a directory), OR
-                    # 2. We need mtime for file comparison
+                    # 2. We need mtime for file comparison AND listing doesn't have it
                     info = None
                     need_info = False
                     
@@ -803,42 +807,29 @@ class WebDAVSync:
                         info = {
                             'isdir': True,
                             'size': 0,
-                            'modified': time.time()  # Use current time as fallback
+                            'modified': listing_mtime or time.time()
                         }
-                    elif not is_dir_from_listing and file_info.get('size', -1) == 0:
+                    elif not is_dir_from_listing and file_size == 0:
                         # Size is 0 and not marked as directory - might be a directory, check with info()
                         need_info = True
+                    elif file_local_path.exists() and listing_mtime is None:
+                        # File exists locally and we need mtime to compare, but listing doesn't have it
+                        need_info = True
                     else:
-                        # For files, we need mtime to check if download is needed
-                        # But we can use listing data if available to avoid info() call
-                        file_size = file_info.get('size', -1)
-                        if file_local_path.exists():
-                            # File exists locally, we need mtime to compare
-                            # Try to get mtime from listing if available, otherwise call info()
-                            if 'modified' in file_info:
-                                info = {
-                                    'isdir': False,
-                                    'size': file_size,
-                                    'modified': file_info['modified']
-                                }
-                            else:
-                                need_info = True
-                        else:
-                            # File doesn't exist locally, we'll download it anyway
-                            # Use listing data if available
-                            info = {
-                                'isdir': False,
-                                'size': file_size,
-                                'modified': file_info.get('modified', time.time())
-                            }
+                        # We have enough info from listing - use it!
+                        info = {
+                            'isdir': False,
+                            'size': file_size if file_size >= 0 else 0,
+                            'modified': listing_mtime or time.time()
+                        }
                     
-                    # Only call info() if really needed
+                    # Only call info() if really needed (rare case)
                     if need_info:
                         try:
                             info_path = file_remote_path
                             if not info_path.startswith('/'):
                                 info_path = '/' + info_path
-                            logger.debug(f"Calling info() for {info_path} (needed for mtime)")
+                            logger.debug(f"Calling info() for {info_path} (needed)")
                             info = self.webdav.info(info_path)
                             if info:
                                 isdir = info.get('isdir', isdir)
@@ -848,15 +839,15 @@ class WebDAVSync:
                             if info is None:
                                 info = {
                                     'isdir': isdir,
-                                    'size': file_info.get('size', 0),
-                                    'modified': time.time()
+                                    'size': file_size if file_size >= 0 else 0,
+                                    'modified': listing_mtime or time.time()
                                 }
                     
                     if info is None:
                         logger.debug(f"No info available for {file_remote_path}, skipping")
                         continue
                     
-                    logger.debug(f"[WebDAV Sync] {file_remote_path}: isdir={isdir} (from {'info()' if need_info else 'listing'})")
+                    logger.debug(f"[WebDAV Sync] {file_remote_path}: isdir={isdir}, size={info.get('size')}, mtime={info.get('modified')} (from {'info()' if need_info else 'listing'})")
                     
                     if isdir:
                         # It's really a directory - create locally and recurse
