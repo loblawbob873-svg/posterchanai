@@ -256,7 +256,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
         """Override to list files, with support for remote storage proxying."""
         # CRITICAL: This method MUST be called by wsgidav for PROPFIND requests
         # If you don't see "[WebDAV] get_resource_list CALLED" in logs, this method isn't being called!
+        import traceback
         logger.error(f"[WebDAV] ⚠️ get_resource_list CALLED: path={path}, depth={depth}, environ_keys={list(environ.keys()) if environ else None}")
+        logger.error(f"[WebDAV] ⚠️ get_resource_list stack: {''.join(traceback.format_stack()[-5:-1])}")
         
         # Strip /webdav prefix if present (may be added multiple times)
         original_path = path
@@ -304,12 +306,26 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_instances(self, path: str, environ: dict = None):
         """Override to handle resource instances - wsgidav may call this instead of get_resource_list."""
+        import traceback
         logger.error(f"[WebDAV] ⚠️ get_resource_instances CALLED: path={path}, environ_keys={list(environ.keys()) if environ else None}")
+        logger.error(f"[WebDAV] ⚠️ get_resource_instances stack: {''.join(traceback.format_stack()[-5:-1])}")
         # Try get_resource_list first
         try:
             return self.get_resource_list(path, depth=1, environ=environ)
         except Exception as e:
             logger.error(f"[WebDAV] get_resource_instances error: {e}", exc_info=True)
+            raise
+    
+    def get_resource_inst(self, path: str, environ: dict = None):
+        """Override get_resource_inst - wsgidav might call this."""
+        import traceback
+        logger.error(f"[WebDAV] ⚠️ get_resource_inst CALLED: path={path}, environ_keys={list(environ.keys()) if environ else None}")
+        logger.error(f"[WebDAV] ⚠️ get_resource_inst stack: {''.join(traceback.format_stack()[-5:-1])}")
+        # Delegate to get_resource_list
+        try:
+            return self.get_resource_list(path, depth=1, environ=environ)
+        except Exception as e:
+            logger.error(f"[WebDAV] get_resource_inst error: {e}", exc_info=True)
             raise
     
     def get_filestream(self, path: str, environ: dict = None):
