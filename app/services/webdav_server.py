@@ -761,6 +761,58 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             props.append(('displayname', self._path.split('/')[-1] or self._path))
                         return props
                     
+                    # Make it fully dict-like for directory browser
+                    def __getitem__(self, key):
+                        # Support all keys the directory browser might use
+                        from datetime import datetime
+                        if key == "display_name":
+                            return self.get_display_name()
+                        elif key == "href":
+                            return self.get_href()
+                        elif key == "is_collection":
+                            return self.is_collection()
+                        elif key == "is_directory":
+                            return self._is_dir
+                        elif key == "path":
+                            return self._path
+                        elif key == "size":
+                            return self._size if not self._is_dir else 0
+                        elif key == "modified":
+                            return self._modified
+                        elif key == "last_modified":
+                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                        elif key == "str_modified":
+                            return datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+                        elif key == "content_length":
+                            return self._size if not self._is_dir else 0
+                        else:
+                            raise KeyError(f"'{key}' not found in SimpleResource")
+                    
+                    def __setitem__(self, key, value):
+                        # Allow item assignment for directory browser
+                        if key == "str_modified":
+                            # Directory browser sets this, just ignore it
+                            pass
+                        elif key == "display_name":
+                            # Can't really change this, ignore
+                            pass
+                        else:
+                            # For other keys, store in a dict-like storage
+                            if not hasattr(self, '_dict_storage'):
+                                self._dict_storage = {}
+                            self._dict_storage[key] = value
+                    
+                    def get(self, key, default=None):
+                        # Dict-like get() method
+                        try:
+                            return self[key]
+                        except KeyError:
+                            return default
+                    
+                    def __contains__(self, key):
+                        # Support 'in' operator
+                        return key in ["display_name", "href", "is_collection", "is_directory", "path", "size", "modified", "last_modified", "str_modified", "content_length"]
+                    
                     def get_directory_info(self):
                         # Return directory info as dict for dir_browser
                         from datetime import datetime
