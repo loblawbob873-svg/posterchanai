@@ -241,33 +241,67 @@ class LlamaService:
                 except Exception:
                     pass  # nvidia-smi not available or failed, skip check
 
-            try:
-                # Use resolved path for loading
-                logger.info(f"  Attempting to load model from: {resolved_path}")
-                self._model = Llama(
-                    model_path=resolved_path,
-                    n_ctx=self.num_ctx,
-                    n_gpu_layers=gpu_layers,
-                    n_threads=self.n_threads,
-                    n_threads_batch=self.n_threads,  # Use same threads for batch processing
-                    n_batch=self.n_batch,
-                    use_mmap=self.use_mmap,
-                    use_mlock=self.use_mlock,
-                    flash_attn=False,
-                    verbose=False,
-                )
-            except ValueError as ve:
-                # Catch ValueError specifically for llama_context errors
-                error_msg = str(ve)
-                if "llama_context" in error_msg.lower() or "create" in error_msg.lower():
-                    logger.error(f"Failed to create llama context with current settings:")
-                    logger.error(f"  Context size: {self.num_ctx}")
-                    logger.error(f"  GPU layers: {gpu_layers}")
-                    logger.error(f"  Model: {resolved_path}")
-                    logger.error("This usually means the context size is too large for available memory.")
-                    logger.error("Try reducing ollama_num_ctx in admin settings (e.g., 2048 or 4096)")
-                    raise RuntimeError(f"Failed to create llama context: {ve}. Try reducing context size (ollama_num_ctx) in admin settings.")
-                raise
+            # Try loading with automatic context size reduction on failure
+            context_sizes_to_try = [self.num_ctx]
+            # If context size is very large, add smaller fallback sizes
+            if self.num_ctx > 8192:
+                context_sizes_to_try.extend([8192, 4096, 2048])
+            elif self.num_ctx > 4096:
+                context_sizes_to_try.extend([4096, 2048])
+            elif self.num_ctx > 2048:
+                context_sizes_to_try.append(2048)
+            
+            last_error = None
+            for attempt_ctx in context_sizes_to_try:
+                try:
+                    # Use resolved path for loading
+                    if attempt_ctx != self.num_ctx:
+                        logger.warning(f"  Retrying with reduced context size: {attempt_ctx} (original: {self.num_ctx})")
+                    else:
+                        logger.info(f"  Attempting to load model from: {resolved_path}")
+                    
+                    self._model = Llama(
+                        model_path=resolved_path,
+                        n_ctx=attempt_ctx,
+                        n_gpu_layers=gpu_layers,
+                        n_threads=self.n_threads,
+                        n_threads_batch=self.n_threads,  # Use same threads for batch processing
+                        n_batch=self.n_batch,
+                        use_mmap=self.use_mmap,
+                        use_mlock=self.use_mlock,
+                        flash_attn=False,
+                        verbose=False,
+                    )
+                    # Success - update num_ctx if we used a smaller value
+                    if attempt_ctx != self.num_ctx:
+                        logger.warning(f"  Model loaded with reduced context size: {attempt_ctx} (configured: {self.num_ctx})")
+                        logger.warning(f"  Consider updating ollama_num_ctx in admin settings to {attempt_ctx} to avoid this warning")
+                        # Update the instance variable so it uses the working context size
+                        self.num_ctx = attempt_ctx
+                    break  # Success, exit retry loop
+                except ValueError as ve:
+                    # Catch ValueError specifically for llama_context errors
+                    error_msg = str(ve)
+                    if "llama_context" in error_msg.lower() or "create" in error_msg.lower():
+                        last_error = ve
+                        if attempt_ctx == context_sizes_to_try[-1]:
+                            # Last attempt failed
+                            logger.error(f"Failed to create llama context with all attempted sizes:")
+                            logger.error(f"  Tried context sizes: {context_sizes_to_try}")
+                            logger.error(f"  GPU layers: {gpu_layers}")
+                            logger.error(f"  Model: {resolved_path}")
+                            logger.error("This usually means even the minimum context size is too large for available memory.")
+                            logger.error("Try:")
+                            logger.error("  - Reducing GPU layers (llm_gpu_layers) - try 20-30 instead of -1")
+                            logger.error("  - Setting llm_cpu_mode to true to use CPU instead")
+                            logger.error("  - Checking GPU memory: nvidia-smi")
+                            logger.error("  - Reducing batch size (llm_n_batch)")
+                            raise RuntimeError(f"Failed to create llama context even with reduced sizes. Last error: {ve}. Try reducing GPU layers or using CPU mode.")
+                        # Try next smaller context size
+                        continue
+                    else:
+                        # Not a context error, re-raise
+                        raise
             except Exception as e:
                 error_msg = str(e)
                 logger.error(f"Failed to load model: {error_msg}")
