@@ -490,7 +490,33 @@ class StorageService:
 
     def load_image_as_base64(self, image_url: str) -> str | None:
         """Load image from URL path and return as base64. Uses storage proxy if configured."""
-        from urllib.parse import unquote
+        from urllib.parse import unquote, quote
+        import re
+
+        # Sanitize image_url to remove emojis and other non-URL-safe characters
+        def sanitize_url_path(path: str) -> str:
+            """Remove emojis and invalid URL characters from path"""
+            if not path:
+                return path
+            # Remove emojis and other non-ASCII characters
+            # Keep only ASCII printable characters, forward slashes, and URL-encoded sequences (%XX)
+            # First, preserve URL-encoded sequences
+            parts = []
+            i = 0
+            while i < len(path):
+                if path[i] == '%' and i + 2 < len(path) and path[i+1:i+3].isalnum():
+                    # Preserve URL-encoded sequences
+                    parts.append(path[i:i+3])
+                    i += 3
+                elif ord(path[i]) < 128 and (path[i].isprintable() or path[i] == '/'):
+                    # Keep ASCII printable characters and forward slashes
+                    parts.append(path[i])
+                    i += 1
+                else:
+                    # Skip emojis and other non-ASCII characters
+                    i += 1
+            sanitized = ''.join(parts)
+            return sanitized.strip()
 
         # Check if storage server is configured - proxy request if so
         storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
@@ -505,8 +531,29 @@ class StorageService:
                     if storage_token and storage_token.value:
                         headers["Authorization"] = f"Bearer {storage_token.value}"
                     
-                    # Request the file from storage server
-                    file_url = f"{url.rstrip('/')}{image_url}"
+                    # If image_url is already a full URL, use it directly (but still sanitize)
+                    if image_url.startswith(('http://', 'https://')):
+                        # Already a full URL - sanitize and use as-is
+                        sanitized_image_url = sanitize_url_path(image_url)
+                        if not sanitized_image_url or not sanitized_image_url.startswith(('http://', 'https://')):
+                            logger.warning(f"[STORAGE PROXY] Invalid full URL after sanitization: {image_url} -> {sanitized_image_url}")
+                            return None
+                        file_url = sanitized_image_url
+                        if file_url != image_url:
+                            logger.warning(f"[STORAGE PROXY] Sanitized URL changed: {image_url} -> {file_url}")
+                    else:
+                        # Relative path - sanitize and append to storage server URL
+                        sanitized_image_url = sanitize_url_path(image_url)
+                        if not sanitized_image_url:
+                            logger.warning(f"[STORAGE PROXY] Invalid image_url after sanitization (empty result): {image_url}")
+                            return None
+                        if sanitized_image_url != image_url:
+                            logger.warning(f"[STORAGE PROXY] Sanitized image_url (removed invalid characters): {image_url} -> {sanitized_image_url}")
+                        # Ensure the path starts with / if it's a relative path
+                        if not sanitized_image_url.startswith('/'):
+                            sanitized_image_url = '/' + sanitized_image_url
+                        file_url = f"{url.rstrip('/')}{sanitized_image_url}"
+                    
                     logger.info(f"[STORAGE PROXY] Loading image from: {file_url}")
                     
                     with httpx.Client(timeout=30.0) as client:
