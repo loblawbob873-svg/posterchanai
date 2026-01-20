@@ -181,7 +181,9 @@ class WebDAVClient:
                 # If parent_is_dir is True, the requested path is a directory regardless of resourcetype
                 isdir = parent_is_dir
                 if parent_is_dir:
-                    logger.debug(f"Detected directory via parent_is_dir flag for {path} (child is a directory)")
+                    logger.info(f"[WebDAV Client] Detected directory via parent_is_dir flag for {path} (child is a directory)")
+                    # If we detected via parent_is_dir, we can return early - no need to check resourcetype
+                    # But we still need to get size and modified time, so continue
                 
                 # Only check resourcetype if parent_is_dir is False
                 if not isdir and resourcetype is not None:
