@@ -42,8 +42,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 token_setting = db.query(Setting).filter(Setting.key == "storage_server_token").first()
                 if token_setting and token_setting.value:
                     self.storage_server_token = token_setting.value
-                logger.info(f"[WebDAV] Remote storage server configured: {url}")
-                logger.warning(f"[WebDAV] WebDAV will proxy file operations to remote storage server")
+                    logger.info(f"[WebDAV] Remote storage server configured: {url} (with token)")
+                else:
+                    logger.warning(f"[WebDAV] Remote storage server configured: {url} (NO TOKEN - authentication may fail)")
+                logger.info(f"[WebDAV] WebDAV will proxy ALL file operations to remote storage server")
+                logger.info(f"[WebDAV] Local filesystem at {root_path} will NOT be used when remote storage is configured")
         
         # Log storage path and verify it's correct
         logger.info(f"[WebDAV] QuotaFilesystemProvider initialized with root_path: {root_path}")
@@ -258,10 +261,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
         
         logger.debug(f"[WebDAV] get_resource_list: original={original_path}, normalized={normalized_path}")
         
-        # If remote storage is configured, proxy the listing request
+        # If remote storage is configured, ALWAYS proxy - never use local filesystem
         if self.storage_server_url:
             username = self._get_username_from_path(normalized_path)
-            logger.debug(f"[WebDAV] Remote storage configured, username={username}, path={normalized_path}")
+            logger.info(f"[WebDAV] Remote storage configured: {self.storage_server_url}, username={username}, path={normalized_path}")
             if username:
                 # Extract relative path from WebDAV path
                 # Path format: /username/subdir -> subdir
