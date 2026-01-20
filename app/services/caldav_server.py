@@ -996,7 +996,7 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
             logger.info(f"  - Added to response: {added_count}")
             logger.info(f"  - Deleted events reported (404): {deleted_count}")
             logger.info(f"[CalDAV] sync-collection returning {len(items)} items ({added_count} events + {deleted_count} deletions) for calendar '{cal_name}'")
-            logger.info(f"[CalDAV] New sync-token: {new_sync_token_url}")
+            logger.info(f"[CalDAV] New sync-token: {current_sync_token_url}")
             
             # Add sync-token to response by adding it as a special item
             # The sync-token should be in the multistatus response root, not as an item
@@ -1007,12 +1007,10 @@ async def handle_report(path: str, user: User, db: Session, request: StarletteRe
         
         # For sync-collection, we need to add the sync-token to the response
         # Insert it after the opening multistatus tag
-        if sync_collection_elem is not None:
+        if sync_collection_elem is not None and current_sync_token_url:
             import re
-            # Use current_sync_token_url which was computed earlier
-            new_sync_token_url = current_sync_token_url
             # Add sync-token after multistatus opening tag
-            sync_token_xml = f'    <D:sync-token xmlns:D="DAV:">{html.escape(new_sync_token_url)}</D:sync-token>\n'
+            sync_token_xml = f'    <D:sync-token xmlns:D="DAV:">{html.escape(current_sync_token_url)}</D:sync-token>\n'
             xml = xml.replace('<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">\n', 
                             f'<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">\n{sync_token_xml}')
         
