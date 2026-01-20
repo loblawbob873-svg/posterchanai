@@ -372,7 +372,11 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                         if event_start > end_date:
                             # Event starts after the range - skip it
                             summary = component.get('summary', 'No Title')
-                            logger.debug(f"[CalDAV] Skipping event '{summary}' - starts after range: start={event_start.date()}, range end={end_date.date()}")
+                            # Log Test/Test2 events even if they're skipped
+                            if 'test' in summary.lower():
+                                logger.warning(f"[CalDAV] ⚠️ Skipping event '{summary}' - starts after range: start={event_start.date()}, range end={end_date.date()}, UTC start={event_start}, UTC end={end_date}")
+                            else:
+                                logger.debug(f"[CalDAV] Skipping event '{summary}' - starts after range: start={event_start.date()}, range end={end_date.date()}")
                             continue
                         
                         # Second check: if event has an end date, it must end at or after the range start
@@ -381,11 +385,18 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                             if event_end < start_date:
                                 # Event ended before the range - skip it
                                 summary = component.get('summary', 'No Title')
-                                logger.debug(f"[CalDAV] Skipping event '{summary}' - ended before range: end={event_end.date()}, range start={start_date.date()}")
+                                # Log Test/Test2 events even if they're skipped
+                                if 'test' in summary.lower():
+                                    logger.warning(f"[CalDAV] ⚠️ Skipping event '{summary}' - ended before range: end={event_end.date()}, range start={start_date.date()}, UTC end={event_end}, UTC start={start_date}")
+                                else:
+                                    logger.debug(f"[CalDAV] Skipping event '{summary}' - ended before range: end={event_end.date()}, range start={start_date.date()}")
                                 continue
                             # Event overlaps - include it
                             summary = component.get('summary', 'No Title')
-                            if ics_count <= 10:  # Log first 10 events for debugging
+                            # Always log Test/Test2 events for debugging
+                            if 'test' in summary.lower():
+                                logger.info(f"[CalDAV] ✓ Including event '{summary}': start={event_start.date()}, end={event_end.date()}, range={start_date.date()} to {end_date.date()}, UTC start={event_start}, UTC end={event_end}")
+                            elif ics_count <= 10:  # Log first 10 events for debugging
                                 logger.info(f"[CalDAV] Including event '{summary}': start={event_start.date()}, end={event_end.date()}, range={start_date.date()} to {end_date.date()}")
                         else:
                             # Event has no end date - include if it's relevant to the range
