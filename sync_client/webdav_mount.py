@@ -163,17 +163,18 @@ class WebDAVClient:
                                                 if parent_is_dir:
                                                     break
                                             
-                                            # Final check: if resourcetype has any content indicating it's a collection
-                                            # Some servers put the collection tag in the text content as HTML-encoded XML
+                                            # Final check: serialize the resourcetype element and check for collection
+                                            # Some servers put the collection tag as HTML-encoded text or in the XML structure
                                             if not parent_is_dir:
-                                                # Try parsing the entire resourcetype element as XML
-                                                import html
-                                                full_text = ET.tostring(resourcetype, encoding='unicode')
-                                                if 'collection' in full_text.lower():
-                                                    parent_is_dir = True
-                                                    response_elem = elem
-                                                    logger.info(f"[WebDAV Client] ✓ Detected parent directory: child {href_path} has collection in resourcetype XML: {full_text[:100]}")
-                                                    break
+                                                try:
+                                                    full_xml = ET.tostring(resourcetype, encoding='unicode')
+                                                    if 'collection' in full_xml.lower():
+                                                        parent_is_dir = True
+                                                        response_elem = elem
+                                                        logger.info(f"[WebDAV Client] ✓ Detected parent directory: child {href_path} has collection in resourcetype XML")
+                                                        break
+                                                except:
+                                                    pass
                 
                 # If still no match, use the first response
                 if response_elem is None:
