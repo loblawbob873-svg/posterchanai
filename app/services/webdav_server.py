@@ -10,7 +10,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from wsgidav.wsgidav_app import WsgiDAVApp
 from wsgidav.fs_dav_provider import FilesystemProvider
-from wsgidav.dav_provider import DAVProvider, DAVCollection, DAVNonCollection
+from wsgidav.dav_provider import DAVProvider, DAVCollection, DAVNonCollection, _DAVResource
 from cheroot.wsgi import Server as WSGIServer
 
 from app.models import User, Setting
