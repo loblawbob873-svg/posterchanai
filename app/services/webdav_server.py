@@ -537,6 +537,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 """Ensure path is always a string."""
                                 return str(self._path)
 
+                            @path.setter
+                            def path(self, value):
+                                """Ensure path is always stored as a string."""
+                                self._path = str(value[0]) if isinstance(value, list) and len(value) > 0 else str(value)
+
                             def get_last_modified(self):
                                 return float(self._modified) if isinstance(self._modified, (int, float)) else time.time()
                             
@@ -811,6 +816,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def path(self):
                         """Ensure path is always a string."""
                         return str(self._path)
+
+                    @path.setter
+                    def path(self, value):
+                        """Ensure path is always stored as a string."""
+                        self._path = str(value[0]) if isinstance(value, list) and len(value) > 0 else str(value)
 
                     def get_last_modified(self):
                         return self._modified
@@ -1146,6 +1156,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def path(self):
                         """Ensure path is always a string."""
                         return str(self._path)
+
+                    @path.setter
+                    def path(self, value):
+                        """Ensure path is always stored as a string."""
+                        self._path = str(value[0]) if isinstance(value, list) and len(value) > 0 else str(value)
 
                     def get_last_modified(self):
                         # Return timestamp as float (not datetime)
