@@ -85,22 +85,28 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def _get_username_from_path(self, path: str) -> Optional[str]:
         """Extract username from WebDAV path."""
-        # Path format: /username/... or /webdav/username/...
-        # Username can contain @ (e.g., verita84@poster.place)
+        # Path format: /username@domain/... or /webdav/username@domain/...
+        # WebDAV clients (iOS/macOS) often use email format (username@domain) in paths
+        # We need to extract just the username part (before @)
         # Strip /webdav prefix if present (WSGI middleware might not strip it)
         normalized_path = path.strip('/')
         if normalized_path.startswith('webdav/'):
             normalized_path = normalized_path[7:]  # Remove 'webdav/'
-        
-        # Username might contain @, so we need to be careful with splitting
-        # The username is everything before the first /, but it might contain @
+
+        # Extract the first path component (which may be username@domain)
         if '/' in normalized_path:
-            username = normalized_path.split('/', 1)[0]  # Split only on first /
+            username_part = normalized_path.split('/', 1)[0]  # Split only on first /
         else:
-            username = normalized_path
-        
+            username_part = normalized_path
+
+        # Strip email domain if present (e.g., verita84@poster.place -> verita84)
+        if '@' in username_part:
+            username = username_part.split('@')[0]
+        else:
+            username = username_part
+
         if username:
-            logger.debug(f"[WebDAV] Extracted username '{username}' from path '{path}' (normalized: '{normalized_path}')")
+            logger.debug(f"[WebDAV] Extracted username '{username}' from path '{path}' (normalized: '{normalized_path}', part: '{username_part}')")
             return username
         logger.debug(f"[WebDAV] Could not extract username from path '{path}' (normalized: '{normalized_path}')")
         return None
@@ -256,7 +262,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
     def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
         """Override to list files, with support for remote storage proxying."""
         # CRITICAL: This method MUST be called by wsgidav for PROPFIND requests
-        # Log at debug level to reduce noise (change to INFO if debugging is needed)
+        import sys
+        print(f"[WebDAV] get_resource_list CALLED: path={path}, depth={depth}", file=sys.stderr, flush=True)
         logger.debug(f"[WebDAV] get_resource_list CALLED: path={path}, depth={depth}")
         
         # Strip /webdav prefix if present (may be added multiple times)
@@ -343,8 +350,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
             raise
     
     def get_resource_inst(self, path: str, environ: dict = None):
-        """Override get_resource_inst - wsgidav calls this for PROPFIND requests."""
-        logger.debug(f"[WebDAV] get_resource_inst CALLED: path={path}")
+        """Override get_resource_inst - wsgidav calls this for PROPFIND and GET requests."""
+        import sys
+        print(f"[WebDAV] get_resource_inst CALLED: path={path}, storage_url={self.storage_server_url}", file=sys.stderr, flush=True)
+        logger.info(f"[WebDAV] get_resource_inst CALLED: path={path}, storage_url={self.storage_server_url}")
         
         # Strip /webdav prefix if present
         normalized_path = path.strip('/')
@@ -366,29 +375,44 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 rel_path = normalized_path.lstrip('/')
                 
                 # Handle various path formats:
+                # /username@domain/path -> path (email-style WebDAV paths from iOS/macOS)
                 # /username/path -> path
                 # /webdav/username/path -> path
-                # /calendar/dav/username/path -> path
-                if rel_path.startswith(username + '/'):
-                    rel_path = rel_path[len(username) + 1:]
-                elif rel_path.startswith('webdav/' + username + '/'):
-                    rel_path = rel_path[len('webdav/' + username) + 1:]
-                elif rel_path.startswith('calendar/dav/' + username + '/'):
-                    rel_path = rel_path[len('calendar/dav/' + username) + 1:]
-                elif rel_path.startswith('calendar/' + username + '/'):
-                    rel_path = rel_path[len('calendar/' + username) + 1:]
-                elif rel_path == username or rel_path == f'webdav/{username}' or rel_path == f'calendar/dav/{username}' or rel_path == f'calendar/{username}':
-                    rel_path = ''
+                # First, handle email-style usernames by finding the first /
+                first_slash = rel_path.find('/')
+                if first_slash != -1:
+                    # Extract first component and check if it's the username (possibly with @domain)
+                    first_component = rel_path[:first_slash]
+                    # If first component is username or username@domain, strip it
+                    if first_component == username or first_component.split('@')[0] == username:
+                        rel_path = rel_path[first_slash + 1:]
+                    elif rel_path.startswith('webdav/'):
+                        # Handle /webdav/username@domain/path format
+                        after_webdav = rel_path[7:]
+                        next_slash = after_webdav.find('/')
+                        if next_slash != -1:
+                            rel_path = after_webdav[next_slash + 1:]
+                        else:
+                            rel_path = ''
+                    elif rel_path.startswith('calendar/dav/'):
+                        # Handle /calendar/dav/username@domain/path format
+                        after_prefix = rel_path[13:]  # len('calendar/dav/')
+                        next_slash = after_prefix.find('/')
+                        if next_slash != -1:
+                            rel_path = after_prefix[next_slash + 1:]
+                        else:
+                            rel_path = ''
+                    elif rel_path.startswith('calendar/'):
+                        # Handle /calendar/username@domain/path format
+                        after_prefix = rel_path[9:]  # len('calendar/')
+                        next_slash = after_prefix.find('/')
+                        if next_slash != -1:
+                            rel_path = after_prefix[next_slash + 1:]
+                        else:
+                            rel_path = ''
                 else:
-                    # Try to find username in path and extract everything after it
-                    # This handles edge cases where path format is unexpected
-                    username_pos = rel_path.find(username)
-                    if username_pos != -1:
-                        after_username = rel_path[username_pos + len(username):].lstrip('/')
-                        rel_path = after_username
-                    else:
-                        logger.warning(f"[WebDAV] Could not extract relative path from '{normalized_path}' with username '{username}'")
-                        rel_path = ''
+                    # No slash means this is just the username root directory
+                    rel_path = ''
                 
                 # Get resource info from remote storage
                 try:
@@ -414,7 +438,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             def get_content_length(self):
                                 return self._size if not self._is_dir else 0
                             
+                            @property
                             def is_collection(self):
+                                logger.info(f"[WebDAV] VirtualResource.is_collection accessed for {self._path}: returning {self._is_dir}")
                                 return self._is_dir
                             
                             def get_display_name(self):
@@ -440,6 +466,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 that supports read() method.
                                 """
                                 import io
+                                logger.info(f"[WebDAV] VirtualResource.get_content CALLED for {self._path}")
                                 if self._is_dir:
                                     return None
                                 # Extract username and relative path
@@ -455,6 +482,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     rel_path = ''
                                 else:
                                     return None
+                                # Strip email domain from username if present (e.g., verita84@poster.place -> verita84)
+                                if '@' in username:
+                                    username = username.split('@')[0]
                                 try:
                                     content = self._provider._proxy_download_file(username, rel_path)
                                     logger.info(f"[WebDAV] VirtualResource.get_content: downloaded {len(content)} bytes for {rel_path}")
@@ -471,6 +501,21 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             def support_ranges(self):
                                 """Return True to support range requests."""
                                 return False
+
+                            def support_modified(self):
+                                """Return True if get_last_modified() returns a valid value."""
+                                return True
+
+                            def support_etag(self):
+                                """Return True if get_etag() returns a valid value."""
+                                return False
+
+                            def finalize_headers(self, environ, response_headers):
+                                """Called by WsgiDAV to allow the resource to modify response headers.
+
+                                Return the (possibly modified) response headers list.
+                                """
+                                return response_headers
 
                             def get_descendants(self, depth=1, add_self=False):
                                 # Get children by calling get_resource_list directly
@@ -583,7 +628,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 return None
                         
                         result = VirtualResource(normalized_path, info, self, environ=environ)
-                        logger.debug(f"[WebDAV] Created VirtualResource for {normalized_path}")
+                        logger.info(f"[WebDAV] Created VirtualResource for {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}")
                         return result
                     else:
                         logger.warning(f"[WebDAV] No info returned from proxy for {username}/{rel_path}")
@@ -614,10 +659,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     
                     def get_content_length(self):
                         return 0
-                    
+
+                    @property
                     def is_collection(self):
                         return self._is_dir
-                    
+
                     def get_display_name(self):
                         return self._path.split('/')[-1] or self._path
                     
@@ -883,10 +929,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     
                     def get_content_length(self):
                         return self._size if not self._is_dir else 0
-                    
+
+                    @property
                     def is_collection(self):
                         return self._is_dir
-                    
+
                     def get_display_name(self):
                         return self._path.split('/')[-1] or self._path
                     
@@ -923,6 +970,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             username, rel_path = parts[0], ''
                         else:
                             return None
+                        # Strip email domain from username if present
+                        if '@' in username:
+                            username = username.split('@')[0]
                         try:
                             content = self._provider._proxy_download_file(username, rel_path)
                             logger.info(f"[WebDAV] SimpleResource.get_content: downloaded {len(content)} bytes for {rel_path}")
@@ -1061,6 +1111,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_info(self, path: str, environ: dict = None):
         """Override to ensure correct resource type detection, with remote storage support."""
+        import sys
+        print(f"[WebDAV] get_resource_info CALLED: path={path}", file=sys.stderr, flush=True)
         # Strip /webdav prefix if present
         path_stripped = path.strip('/')
         if path_stripped.startswith('webdav/'):
