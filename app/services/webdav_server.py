@@ -24,9 +24,32 @@ _webdav_server: Optional[WSGIServer] = None
 _webdav_thread: Optional[threading.Thread] = None
 
 
+class ResourcePathWrapper:
+    """Wrapper that ensures resource.path always returns a string."""
+    def __init__(self, wrapped_resource):
+        object.__setattr__(self, '_wrapped', wrapped_resource)
+
+    def __getattribute__(self, name):
+        if name == '_wrapped':
+            return object.__getattribute__(self, '_wrapped')
+        wrapped = object.__getattribute__(self, '_wrapped')
+        if name == 'path':
+            path_value = getattr(wrapped, 'path')
+            if isinstance(path_value, list):
+                return str(path_value[0]) if len(path_value) > 0 else ''
+            return str(path_value)
+        return getattr(wrapped, name)
+
+    def __setattr__(self, name, value):
+        if name == '_wrapped':
+            object.__setattr__(self, '_wrapped', value)
+        else:
+            setattr(object.__getattribute__(self, '_wrapped'), name, value)
+
+
 class QuotaFilesystemProvider(FilesystemProvider):
     """Filesystem provider with quota checking and remote storage support."""
-    
+
     def __init__(self, root_path: Path, db: Session):
         logger.debug(f"[WebDAV] QuotaFilesystemProvider.__init__ called with root_path={root_path}")
         super().__init__(root_path)
@@ -436,6 +459,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
         logger.info(f"[WebDAV] Using local filesystem (no remote storage configured)")
         result = super().get_resource_list(normalized_path, depth, environ)
         logger.debug(f"[WebDAV] Parent get_resource_list returned: type={type(result)}, len={len(result) if hasattr(result, '__len__') else 'N/A'}")
+        # IMPORTANT: Wrap all returned resources to ensure path is always a string
+        if result and isinstance(result, list):
+            result = [ResourcePathWrapper(r) if r else None for r in result]
         return result
     
     def get_resource_instances(self, path: str, environ: dict = None):
@@ -824,6 +850,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
             try:
                 result = super().get_resource_inst(normalized_path, environ)
                 logger.error(f"[WebDAV] ⚠️ Parent get_resource_inst returned: type={type(result)}")
+                # IMPORTANT: Wrap the parent's resource to ensure path is always a string
+                if result:
+                    result = ResourcePathWrapper(result)
+                    logger.debug(f"[WebDAV] Wrapped parent resource, path={result.path}, type={type(result.path)}")
                 return result
             except Exception as e:
                 logger.error(f"[WebDAV] ⚠️ Parent class failed: {e}, creating minimal resource")
@@ -980,6 +1010,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
         try:
             result = super().get_resource_inst(normalized_path, environ)
             logger.debug(f"[WebDAV] Parent get_resource_inst returned: type={type(result)}")
+            # IMPORTANT: Wrap the parent's resource to ensure path is always a string
+            if result:
+                result = ResourcePathWrapper(result)
+                logger.debug(f"[WebDAV] Wrapped parent resource, path={result.path}, type={type(result.path)}")
             return result
         except Exception as e:
             logger.error(f"[WebDAV] get_resource_inst error from parent: {e}", exc_info=True)
