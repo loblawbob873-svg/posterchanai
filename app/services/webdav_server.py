@@ -14,6 +14,62 @@ from wsgidav.dav_provider import DAVProvider, DAVCollection, DAVNonCollection, _
 from cheroot.wsgi import Server as WSGIServer
 
 from app.models import User, Setting
+
+# Monkey-patch _DAVResource to ensure path is always a string
+_original_dav_resource_init = _DAVResource.__init__
+
+def _patched_dav_resource_init(self, path, is_collection, environ):
+    """Patched __init__ that ensures path is always a string."""
+    # Convert list to string if needed
+    if isinstance(path, list):
+        logger.warning(f"[WebDAV] ⚠️ _DAVResource.__init__ received path as list: {path}, converting to string")
+        path = str(path[0]) if len(path) > 0 else ''
+    # Ensure it's a string
+    path = str(path)
+    # Call original init
+    _original_dav_resource_init(self, path, is_collection, environ)
+
+# Apply the monkey patch
+_DAVResource.__init__ = _patched_dav_resource_init
+
+# Also monkey-patch get_href to ensure it always returns a string
+_original_get_href = _DAVResource.get_href if hasattr(_DAVResource, 'get_href') else None
+
+def _patched_get_href(self):
+    """Patched get_href that ensures return value is always a string."""
+    # Check if path is a list
+    if hasattr(self, 'path'):
+        path_value = self.path
+        if isinstance(path_value, list):
+            logger.error(f"[WebDAV] ⚠️ Resource.path is a list in get_href: {path_value}, converting to string")
+            result = str(path_value[0]) if len(path_value) > 0 else ''
+        else:
+            result = str(path_value)
+        logger.debug(f"[WebDAV] get_href() returning: {result}, type={type(result)}")
+        return result
+    # Fallback to original if it exists
+    if _original_get_href:
+        result = _original_get_href(self)
+        if isinstance(result, list):
+            logger.error(f"[WebDAV] ⚠️ Original get_href returned list: {result}, converting")
+            result = str(result[0]) if len(result) > 0 else ''
+        return str(result)
+    return "/"
+
+# Apply the patch
+_DAVResource.get_href = _patched_get_href
+
+# Also monkey-patch __setattr__ to prevent path from being set as a list
+_original_setattr = _DAVResource.__setattr__
+
+def _patched_setattr(self, name, value):
+    """Patched __setattr__ that ensures path is never set as a list."""
+    if name == 'path' and isinstance(value, list):
+        logger.error(f"[WebDAV] ⚠️ Attempting to set path as list: {value}, converting to string")
+        value = str(value[0]) if len(value) > 0 else ''
+    _original_setattr(self, name, value)
+
+_DAVResource.__setattr__ = _patched_setattr
 from app.services.storage_service import StorageService, get_storage_service
 from app.auth import verify_password
 
@@ -1192,6 +1248,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                 # Normalize path (remove double slashes)
                 full_path = full_path.replace('//', '/')
+
+                # CRITICAL: Ensure full_path is a string, not a list
+                if isinstance(full_path, list):
+                    logger.error(f"[WebDAV] ⚠️ full_path is a list! Converting to string: {full_path}")
+                    full_path = str(full_path[0]) if len(full_path) > 0 else ''
+                full_path = str(full_path)  # Force conversion to string
                 
                 is_directory = item.get('is_directory', False)
                 size = item.get('size', 0) if not is_directory else 0
