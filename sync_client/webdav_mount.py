@@ -30,18 +30,10 @@ from xml.etree import ElementTree as ET
 class WebDAVError(Exception):
     pass
 
-# Setup logging
-log_dir = Path.home() / ".config" / "posterchanai-sync" / "logs"
-log_dir.mkdir(parents=True, exist_ok=True)
-log_file = log_dir / f"webdav_mount_{datetime.now().strftime('%Y%m%d')}.log"
-
+# Setup logging - stdout only (systemd captures to journal)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
+    format='%(asctime)s [%(levelname)s] %(message)s'
 )
 logger = logging.getLogger(__name__)
 

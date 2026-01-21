@@ -1,10 +1,11 @@
 [Unit]
-Description=PosterchanAI WebDAV Mount Daemon
+Description=PosterchanAI WebDAV Sync Daemon
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/posterchanai-webdav-mount
+WorkingDirectory=SCRIPT_DIR_PLACEHOLDER
+ExecStart=/usr/bin/python3 SCRIPT_DIR_PLACEHOLDER/webdav_mount.py
 Restart=on-failure
 RestartSec=5
 
