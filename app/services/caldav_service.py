@@ -3690,35 +3690,10 @@ def delete_todo_from_calendar(
 
             if success:
                 logger.info(f"Deleted todo {todo_uid} from built-in storage at {todo_filepath}")
-
-                # Update sync-token state (same as events)
-                from app.models import CalDAVSyncToken
-                import json
-
-                if '/' in todo_filepath:
-                    cal_name = todo_filepath.split('/')[0]
-                else:
-                    cal_name = 'calendar'
-
-                sync_tokens = db.query(CalDAVSyncToken).filter(
-                    CalDAVSyncToken.user_id == user_id,
-                    CalDAVSyncToken.calendar_name == cal_name
-                ).all()
-
-                for token_record in sync_tokens:
-                    try:
-                        event_data = json.loads(token_record.event_uids)
-                        if isinstance(event_data, dict) and todo_uid in event_data:
-                            del event_data[todo_uid]
-                            token_record.event_uids = json.dumps(event_data)
-                    except Exception as e:
-                        logger.debug(f"[CalDAV] Error updating sync-token for todo: {e}")
-
-                try:
-                    db.commit()
-                except Exception:
-                    db.rollback()
-
+                # NOTE: Do NOT modify sync-token records here!
+                # The sync-collection mechanism detects deletions by comparing old state (from DB)
+                # with current state (from filesystem). See delete_event_from_calendar for explanation.
+                logger.info(f"[CalDAV] Todo {todo_uid} will be reported as deleted on next sync")
                 return True
             else:
                 logger.warning(f"Todo file not found or failed to delete: {todo_filepath}")
@@ -3807,58 +3782,12 @@ def delete_event_from_calendar(
 
             if success:
                 logger.info(f"[CalDAV] Deleted event {event_uid} from built-in storage at {event_filepath}")
-
-                # Update sync-token state to remove this event UID
-                # This ensures iPhone will detect the deletion on next sync-collection request
-                from app.models import CalDAVSyncToken
-                import json
-
-                # Determine calendar name from filepath
-                if '/' in event_filepath:
-                    cal_name = event_filepath.split('/')[0]
-                else:
-                    cal_name = 'calendar'  # Legacy root
-
-                # Update all sync-token records for this calendar to remove the deleted event UID
-                sync_tokens = db.query(CalDAVSyncToken).filter(
-                    CalDAVSyncToken.user_id == user_id,
-                    CalDAVSyncToken.calendar_name == cal_name
-                ).all()
-
-                updated_count = 0
-                try:
-                    for token_record in sync_tokens:
-                        try:
-                            event_data = json.loads(token_record.event_uids)
-
-                            # Handle both old format (list) and new format (dict)
-                            if isinstance(event_data, dict):
-                                # New format: {uid: mtime}
-                                if event_uid in event_data:
-                                    del event_data[event_uid]
-                                    token_record.event_uids = json.dumps(event_data)
-                                    updated_count += 1
-                                    logger.info(f"[CalDAV] Removed event {event_uid} from sync-token (WebUI delete)")
-                            else:
-                                # Old format: list of UIDs - migrate to dict format
-                                event_uids = set(event_data)
-                                if event_uid in event_uids:
-                                    event_uids.remove(event_uid)
-                                    event_data_dict = {uid: 0 for uid in event_uids}
-                                    token_record.event_uids = json.dumps(event_data_dict)
-                                    updated_count += 1
-                                    logger.info(f"[CalDAV] Removed event {event_uid} from sync-token (WebUI delete, migrated format)")
-                        except Exception as e:
-                            logger.warning(f"[CalDAV] Error updating sync-token {token_record.id}: {e}")
-
-                    if updated_count > 0:
-                        db.commit()
-                        logger.info(f"[CalDAV] Updated {updated_count} sync-token(s) for calendar {cal_name} after WebUI deletion")
-                except Exception as e:
-                    db.rollback()
-                    logger.error(f"[CalDAV] Error updating sync-token state after WebUI deletion: {e}")
-                    # Continue - deletion succeeded, sync-token update failed but will be fixed on next sync
-
+                # NOTE: Do NOT modify sync-token records here!
+                # The sync-collection mechanism works by comparing OLD state (from sync-token in DB)
+                # with CURRENT state (from filesystem). If we remove the event from sync-token records,
+                # both old and current would be the same, and iPhone won't detect the deletion.
+                # The deletion will be detected naturally when iPhone syncs with its old token.
+                logger.info(f"[CalDAV] Event {event_uid} will be reported as deleted on next iPhone sync")
                 return True
             else:
                 logger.warning(f"[CalDAV] Event file not found or failed to delete: {event_filepath}")
