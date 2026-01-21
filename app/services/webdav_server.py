@@ -630,6 +630,40 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     logger.error(f"[WebDAV] VirtualResource.get_descendants error: {e}", exc_info=True)
                                     return []
                             
+                            def get_property_names(self, *, is_allprop):
+                                """Return list of property names in Clark notation."""
+                                return [
+                                    "{{DAV:}}getlastmodified",
+                                    "{{DAV:}}getcontentlength",
+                                    "{{DAV:}}resourcetype",
+                                    "{{DAV:}}displayname",
+                                    "{{DAV:}}getcontenttype",
+                                ]
+
+                            def get_property_value(self, name):
+                                """Return value for a specific property (name in Clark notation)."""
+                                from datetime import datetime
+                                if name == "{{DAV:}}getlastmodified":
+                                    ts = self._modified if hasattr(self, '_modified') else 0
+                                    return datetime.fromtimestamp(ts).strftime('%a, %d %b %Y %H:%M:%S GMT') if ts else ""
+                                elif name == "{{DAV:}}getcontentlength":
+                                    return str(self._size) if not self._is_dir else "0"
+                                elif name == "{{DAV:}}resourcetype":
+                                    from wsgidav.util import etree
+                                    if self._is_dir:
+                                        elem = etree.Element("{{DAV:}}resourcetype")
+                                        etree.SubElement(elem, "{{DAV:}}collection")
+                                        return elem
+                                    return ""
+                                elif name == "{{DAV:}}displayname":
+                                    return self._path.split('/')[-1] if hasattr(self, '_path') else ""
+                                elif name == "{{DAV:}}getcontenttype":
+                                    return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
+                                else:
+                                    from wsgidav.dav_error import HTTP_NOT_FOUND, DAVError
+                                    raise DAVError(HTTP_NOT_FOUND, f"Property {{name}} not found")
+
+
                             def get_properties(self, propname="allprop", name_list=None):
                                 # Return properties as list of (name, value) tuples - wsgidav expects this format
                                 from datetime import datetime
@@ -781,6 +815,40 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                     def get_descendants(self, depth=1, add_self=False):
                         return []
+
+                    def get_property_names(self, *, is_allprop):
+                        """Return list of property names in Clark notation."""
+                        return [
+                            "{{DAV:}}getlastmodified",
+                            "{{DAV:}}getcontentlength",
+                            "{{DAV:}}resourcetype",
+                            "{{DAV:}}displayname",
+                            "{{DAV:}}getcontenttype",
+                        ]
+
+                    def get_property_value(self, name):
+                        """Return value for a specific property (name in Clark notation)."""
+                        from datetime import datetime
+                        if name == "{{DAV:}}getlastmodified":
+                            ts = self._modified if hasattr(self, '_modified') else 0
+                            return datetime.fromtimestamp(ts).strftime('%a, %d %b %Y %H:%M:%S GMT') if ts else ""
+                        elif name == "{{DAV:}}getcontentlength":
+                            return str(self._size) if not self._is_dir else "0"
+                        elif name == "{{DAV:}}resourcetype":
+                            from wsgidav.util import etree
+                            if self._is_dir:
+                                elem = etree.Element("{{DAV:}}resourcetype")
+                                etree.SubElement(elem, "{{DAV:}}collection")
+                                return elem
+                            return ""
+                        elif name == "{{DAV:}}displayname":
+                            return self._path.split('/')[-1] if hasattr(self, '_path') else ""
+                        elif name == "{{DAV:}}getcontenttype":
+                            return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
+                        else:
+                            from wsgidav.dav_error import HTTP_NOT_FOUND, DAVError
+                            raise DAVError(HTTP_NOT_FOUND, f"Property {{name}} not found")
+
 
                     def get_properties(self, propname="allprop", name_list=None):
                         # Return properties as list of (name, value) tuples - wsgidav expects this format
@@ -1090,6 +1158,40 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_descendants(self, depth=1, add_self=False):
                         # Return empty list or None - wsgidav will call get_resource_instances for children
                         return []
+
+                    def get_property_names(self, *, is_allprop):
+                        """Return list of property names in Clark notation."""
+                        return [
+                            "{{DAV:}}getlastmodified",
+                            "{{DAV:}}getcontentlength",
+                            "{{DAV:}}resourcetype",
+                            "{{DAV:}}displayname",
+                            "{{DAV:}}getcontenttype",
+                        ]
+
+                    def get_property_value(self, name):
+                        """Return value for a specific property (name in Clark notation)."""
+                        from datetime import datetime
+                        if name == "{{DAV:}}getlastmodified":
+                            ts = self._modified if hasattr(self, '_modified') else 0
+                            return datetime.fromtimestamp(ts).strftime('%a, %d %b %Y %H:%M:%S GMT') if ts else ""
+                        elif name == "{{DAV:}}getcontentlength":
+                            return str(self._size) if not self._is_dir else "0"
+                        elif name == "{{DAV:}}resourcetype":
+                            from wsgidav.util import etree
+                            if self._is_dir:
+                                elem = etree.Element("{{DAV:}}resourcetype")
+                                etree.SubElement(elem, "{{DAV:}}collection")
+                                return elem
+                            return ""
+                        elif name == "{{DAV:}}displayname":
+                            return self._path.split('/')[-1] if hasattr(self, '_path') else ""
+                        elif name == "{{DAV:}}getcontenttype":
+                            return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
+                        else:
+                            from wsgidav.dav_error import HTTP_NOT_FOUND, DAVError
+                            raise DAVError(HTTP_NOT_FOUND, f"Property {{name}} not found")
+
 
                     def get_properties(self, propname="allprop", name_list=None):
                         # Return properties as list of (name, value) tuples - wsgidav expects this format
