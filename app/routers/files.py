@@ -599,7 +599,21 @@ async def get_all_images(
                             skipped_count += 1
                             skipped_reasons['thumbnails'] = skipped_reasons.get('thumbnails', 0) + 1
                             continue
-                    
+
+                    # Skip files from non-photo folders (Music, Documents, etc.)
+                    try:
+                        relative = item.relative_to(user_path)
+                        # Get first path component (top-level folder)
+                        top_folder = relative.parts[0].lower() if relative.parts else ''
+                        # Exclude common non-photo folders
+                        excluded_folders = {'music', 'documents', 'downloads', 'desktop', 'videos'}
+                        if top_folder in excluded_folders:
+                            skipped_count += 1
+                            skipped_reasons['excluded_folder'] = skipped_reasons.get('excluded_folder', 0) + 1
+                            continue
+                    except (ValueError, IndexError):
+                        pass  # If path calculation fails, include the file
+
                     # Check if file exists and is readable
                     if not item.exists() or not item.is_file():
                         skipped_count += 1
