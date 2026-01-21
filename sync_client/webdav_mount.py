@@ -451,16 +451,21 @@ class WebDAVClient:
                 # Check if we got HTML/XML (likely a directory listing or error page)
                 content_type = response.headers.get('Content-Type', '').lower()
                 content = response.content
-                
+
+                # Get file extension to check if HTML/XML content is expected
+                file_ext = path.split('/')[-1].split('.')[-1].lower() if '.' in path else ''
+                expects_markup = file_ext in ('html', 'htm', 'xhtml', 'xml', 'xbel', 'svg', 'xsl', 'xslt', 'rss', 'atom')
+
                 # Check if response looks like HTML/XML (directory listing or error)
-                if content.startswith(b'<?xml') or content.startswith(b'<html') or content.startswith(b'<!DOCTYPE'):
+                # But allow it for files that SHOULD contain HTML/XML
+                if not expects_markup and (content.startswith(b'<?xml') or content.startswith(b'<html') or content.startswith(b'<!DOCTYPE')):
                     # This is likely a directory listing or error page, not file content
                     logger.warning(f"Download returned HTML/XML instead of file content for {path}")
                     logger.debug(f"Content-Type: {content_type}, Content preview: {content[:200]}")
                     raise WebDAVError(f"Server returned HTML/XML instead of file content for {path}. Is this a directory?")
-                
-                # Check Content-Type if available
-                if content_type and ('text/html' in content_type or 'application/xml' in content_type):
+
+                # Check Content-Type if available (but skip for expected markup files)
+                if not expects_markup and content_type and ('text/html' in content_type or 'application/xml' in content_type):
                     # Might be a directory listing
                     if b'<html' in content[:500] or b'<?xml' in content[:500]:
                         logger.warning(f"Download returned HTML/XML (Content-Type: {content_type}) for {path}")
@@ -1220,12 +1225,13 @@ class WebDAVSync:
                                 logger.debug(f"Downloading file: {download_path} (size: {info.get('size', 'unknown')})")
                                 content = self.webdav.download(download_path, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
                                 
-                                # Validate content - should not be HTML/XML
+                                # Validate content - should not be HTML/XML (unless it's an HTML/XML file)
                                 # For Office files (.xlsx, .docx, etc.), they should start with PK (ZIP header)
                                 file_ext = file_local_path.suffix.lower()
                                 is_office_file = file_ext in ('.xlsx', '.xls', '.docx', '.doc', '.pptx', '.ppt', '.zip', '.jar')
-                                
-                                if content.startswith(b'<?xml') or content.startswith(b'<html') or content.startswith(b'<!DOCTYPE'):
+                                expects_markup = file_ext in ('.html', '.htm', '.xhtml', '.xml', '.xbel', '.svg', '.xsl', '.xslt', '.rss', '.atom')
+
+                                if not expects_markup and (content.startswith(b'<?xml') or content.startswith(b'<html') or content.startswith(b'<!DOCTYPE')):
                                     logger.error(f"Download returned HTML/XML instead of file content for {download_path}")
                                     logger.error(f"Content preview: {content[:500]}")
                                     # If this is an Office file, it's definitely wrong
@@ -1694,8 +1700,10 @@ class WebDAVSync:
                 # Apply bandwidth limiting
                 self._rate_limit_download(len(content))
 
-                # Validate content
-                if content.startswith(b'<?xml') or content.startswith(b'<html') or content.startswith(b'<!DOCTYPE'):
+                # Validate content - allow HTML/XML for files that should contain it
+                file_ext = local_path.suffix.lower()
+                expects_markup = file_ext in ('.html', '.htm', '.xhtml', '.xml', '.xbel', '.svg', '.xsl', '.xslt', '.rss', '.atom')
+                if not expects_markup and (content.startswith(b'<?xml') or content.startswith(b'<html') or content.startswith(b'<!DOCTYPE')):
                     return ('error', remote_path, 'Server returned HTML/XML')
 
                 # Write file
