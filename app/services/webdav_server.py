@@ -535,11 +535,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             
                             def get_content_length(self):
                                 return self._size if not self._is_dir else 0
-                            
-                            @property
-                            def is_collection(self):
-                                return self._is_dir
-                            
+
                             def get_display_name(self):
                                 return self._path.split('/')[-1] or self._path
                             
@@ -793,9 +789,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_content_length(self):
                         return 0
 
-                    @property
-                    def is_collection(self):
-                        return self._is_dir
 
                     def get_display_name(self):
                         return self._path.split('/')[-1] or self._path
@@ -1115,9 +1108,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_content_length(self):
                         return self._size if not self._is_dir else 0
 
-                    @property
-                    def is_collection(self):
-                        return self._is_dir
 
                     def get_display_name(self):
                         return self._path.split('/')[-1] or self._path
@@ -1241,7 +1231,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         elif key == "href":
                             return self.get_href()
                         elif key == "is_collection":
-                            return self.is_collection()
+                            return self.is_collection
                         elif key == "is_directory":
                             return self._is_dir
                         elif key == "path":
