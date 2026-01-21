@@ -81,7 +81,23 @@ def _patched_add_property_response(multistatus_elem, href, prop_list):
     """Patched add_property_response that logs href values."""
     if '005c51179a764e10b61e3a214d38e79d' in str(href):
         logger.error(f"[WebDAV] ⚠️⚠️⚠️ add_property_response called: href={href}, type={type(href)}, is_list={isinstance(href, list)}")
-    return _original_add_property_response(multistatus_elem, href, prop_list)
+    result = _original_add_property_response(multistatus_elem, href, prop_list)
+
+    # Log the actual XML element that was created
+    if '005c51179a764e10b61e3a214d38e79d' in str(href):
+        from wsgidav.util import etree
+        # Find the last response element
+        responses = multistatus_elem.findall('{DAV:}response')
+        if responses:
+            last_response = responses[-1]
+            href_elem = last_response.find('{DAV:}href')
+            if href_elem is not None:
+                logger.error(f"[WebDAV] ⚠️⚠️⚠️ XML href element text: {href_elem.text}, type={type(href_elem.text)}")
+                # Log the full XML of this response
+                xml_str = etree.tostring(last_response, encoding='unicode')
+                logger.error(f"[WebDAV] ⚠️⚠️⚠️ Full response XML: {xml_str[:500]}")
+
+    return result
 
 wsgidav_util.add_property_response = _patched_add_property_response
 
