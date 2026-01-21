@@ -12,6 +12,7 @@ import json
 import time
 import subprocess
 import threading
+import select
 from pathlib import Path
 from datetime import datetime, timedelta
 import shutil
@@ -53,21 +54,12 @@ DARK_BG = "on grey11"
 
 console = Console()
 
-# ASCII Art Banner
-BANNER = """
-[bright_cyan]
- ██████╗  ██████╗ █████╗ ██╗     ██████╗ ██████╗ ███╗   ██╗████████╗██████╗  ██████╗ ██╗
- ██╔══██╗██╔════╝██╔══██╗██║    ██╔════╝██╔═══██╗████╗  ██║╚══██╔══╝██╔══██╗██╔═══██╗██║
- ██████╔╝██║     ███████║██║    ██║     ██║   ██║██╔██╗ ██║   ██║   ██████╔╝██║   ██║██║
- ██╔═══╝ ██║     ██╔══██║██║    ██║     ██║   ██║██║╚██╗██║   ██║   ██╔══██╗██║   ██║██║
- ██║     ╚██████╗██║  ██║██║    ╚██████╗╚██████╔╝██║ ╚████║   ██║   ██║  ██║╚██████╔╝███████╗
- ╚═╝      ╚═════╝╚═╝  ╚═╝╚═╝     ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
-[/bright_cyan]
-[bright_magenta]  ◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤  POSTERCHAN.AI CONTROL CENTER  ◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤[/bright_magenta]
-[dim bright_cyan]                         >>> Neural link established. Welcome, netrunner. <<<[/dim bright_cyan]
-"""
+# ASCII Art Banner - compact version for small terminals
+BANNER = """[bright_cyan]╔═══════════════════════════════════════════════════════╗
+║[/bright_cyan] [bold bright_magenta]◢◤[/bold bright_magenta] [bold bright_cyan]POSTERCHAN.AI CONTROL CENTER[/bold bright_cyan] [bold bright_magenta]◢◤[/bold bright_magenta] [dim]Neural link active[/dim] [bright_cyan]║
+╚═══════════════════════════════════════════════════════╝[/bright_cyan]"""
 
-SMALL_BANNER = """[bright_cyan]╔══ PCAI CONTROL ══╗[/bright_cyan] [bright_magenta]◢◤[/bright_magenta] [dim]Neural link active[/dim]"""
+SMALL_BANNER = """[bright_cyan]◢◤ PCAI CONTROL ◢◤[/bright_cyan] [dim]Online[/dim]"""
 
 
 class ServiceManager:
@@ -229,11 +221,23 @@ class ServiceManager:
         mount_path = Path(self.config.get('mount_point', ''))
         if mount_path.exists():
             try:
+                # Calculate actual sync folder usage (not partition usage)
+                folder_size = 0
+                file_count = 0
+                for f in mount_path.rglob('*'):
+                    if f.is_file():
+                        try:
+                            folder_size += f.stat().st_size
+                            file_count += 1
+                        except (OSError, PermissionError):
+                            pass
+                stats['folder_size'] = folder_size
+                stats['file_count'] = file_count
+
+                # Also get partition info for context
                 total, used, free = shutil.disk_usage(mount_path)
                 stats['disk_total'] = total
-                stats['disk_used'] = used
                 stats['disk_free'] = free
-                stats['file_count'] = sum(1 for _ in mount_path.rglob('*') if _.is_file())
             except:
                 pass
 
@@ -261,53 +265,72 @@ class CyberpunkUI:
             console.print(BANNER)
 
     def create_status_panel(self) -> Panel:
-        """Create service status panel"""
+        """Create compact service status panel with disk usage"""
+        from rich.console import Group
+
+        # Services table - compact
         table = Table(
             show_header=True,
             header_style=f"bold {NEON_CYAN}",
-            box=box.DOUBLE_EDGE,
-            border_style=NEON_MAGENTA,
-            expand=True
+            box=box.SIMPLE,
+            expand=True,
+            padding=(0, 1)
         )
 
-        table.add_column("", style="bold", width=3)
         table.add_column("SERVICE", style=NEON_CYAN)
         table.add_column("STATUS", justify="center")
-        table.add_column("MEMORY", justify="right", style=NEON_YELLOW)
-        table.add_column("UPTIME", justify="right", style=NEON_BLUE)
+        table.add_column("MEM", justify="right", style=NEON_YELLOW, width=6)
 
         for key, svc in self.manager.SERVICES.items():
             status_info = self.manager.get_service_status(key)
             status = status_info.get('status', 'unknown')
 
-            # Status indicator with color
+            # Compact status indicator
             if status == 'running':
-                status_text = Text("● ONLINE", style=f"bold {NEON_GREEN}")
+                status_text = Text("● ON", style=f"bold {NEON_GREEN}")
             elif status == 'stopped':
-                status_text = Text("○ OFFLINE", style="dim white")
+                status_text = Text("○ OFF", style="dim white")
             elif status == 'failed':
-                status_text = Text("✖ FAILED", style=f"bold {NEON_RED}")
-            elif status == 'not_installed':
-                status_text = Text("? NOT FOUND", style="dim yellow")
+                status_text = Text("✖ FAIL", style=f"bold {NEON_RED}")
             else:
-                status_text = Text("? UNKNOWN", style="dim")
+                status_text = Text("? N/A", style="dim")
 
             memory = status_info.get('memory', '-')
-            uptime = status_info.get('uptime', '-')
+            # Shorten service name
+            short_name = "Sync" if key == "sync" else "WebDAV"
 
-            table.add_row(
-                svc['icon'],
-                svc['name'],
-                status_text,
-                memory or '-',
-                uptime or '-'
-            )
+            table.add_row(short_name, status_text, memory or '-')
+
+        # Disk usage - compact single line
+        stats = self.manager.get_sync_stats()
+        disk_text = Text()
+
+        if stats.get('folder_size') is not None:
+            folder_bytes = stats['folder_size']
+            if folder_bytes >= 1024**3:
+                folder_str = f"{folder_bytes / (1024**3):.2f}G"
+            elif folder_bytes >= 1024**2:
+                folder_str = f"{folder_bytes / (1024**2):.0f}M"
+            else:
+                folder_str = f"{folder_bytes / 1024:.0f}K"
+
+            disk_text.append(f"📁 ", style=NEON_MAGENTA)
+            disk_text.append(f"{folder_str}", style=NEON_YELLOW)
+            disk_text.append(f" ({stats.get('file_count', 0):,} files)", style="dim")
+
+            if stats.get('disk_free'):
+                free_gb = stats['disk_free'] / (1024**3)
+                disk_text.append(f"  💾 ", style=NEON_MAGENTA)
+                disk_text.append(f"{free_gb:.0f}G free", style=NEON_GREEN)
+        else:
+            disk_text.append(f"📁 N/A", style="dim")
 
         return Panel(
-            table,
-            title=f"[bold {NEON_CYAN}]◢◤ SYSTEM STATUS ◢◤[/]",
+            Group(table, disk_text),
+            title=f"[{NEON_CYAN}]STATUS[/]",
             border_style=NEON_MAGENTA,
-            box=box.DOUBLE
+            box=box.ROUNDED,
+            padding=(0, 1)
         )
 
     def create_config_panel(self) -> Panel:
@@ -329,20 +352,31 @@ class CyberpunkUI:
         config_text.append(f"  ◈ Chunk Size: ", style=NEON_MAGENTA)
         config_text.append(f"{stats['upload_chunk_size_mb']}MB\n", style=NEON_GREEN)
 
-        if stats.get('disk_total'):
-            total_gb = stats['disk_total'] / (1024**3)
-            used_gb = stats['disk_used'] / (1024**3)
-            free_gb = stats['disk_free'] / (1024**3)
-            pct = (stats['disk_used'] / stats['disk_total']) * 100
+        # Always show sync folder section
+        config_text.append("\n╔══ SYNC FOLDER ══╗\n", style=f"bold {NEON_CYAN}")
+        if stats.get('folder_size') is not None:
+            folder_bytes = stats['folder_size']
+            # Format folder size nicely
+            if folder_bytes >= 1024**3:
+                folder_str = f"{folder_bytes / (1024**3):.2f} GB"
+            elif folder_bytes >= 1024**2:
+                folder_str = f"{folder_bytes / (1024**2):.1f} MB"
+            elif folder_bytes >= 1024:
+                folder_str = f"{folder_bytes / 1024:.1f} KB"
+            else:
+                folder_str = f"{folder_bytes} B"
+            config_text.append(f"  ◈ Size: ", style=NEON_MAGENTA)
+            config_text.append(f"{folder_str}\n", style=NEON_YELLOW)
+            config_text.append(f"  ◈ Files: ", style=NEON_MAGENTA)
+            config_text.append(f"{stats.get('file_count', 0):,}\n", style="white")
+        else:
+            config_text.append(f"  ◈ Size: ", style=NEON_MAGENTA)
+            config_text.append(f"N/A (folder not found)\n", style="dim")
 
-            config_text.append("\n╔══ STORAGE ══╗\n", style=f"bold {NEON_CYAN}")
-            config_text.append(f"  ◈ Used: ", style=NEON_MAGENTA)
-            config_text.append(f"{used_gb:.1f}GB / {total_gb:.1f}GB ({pct:.1f}%)\n", style=NEON_YELLOW)
-            config_text.append(f"  ◈ Free: ", style=NEON_MAGENTA)
-            config_text.append(f"{free_gb:.1f}GB\n", style=NEON_GREEN)
-            if stats.get('file_count'):
-                config_text.append(f"  ◈ Files: ", style=NEON_MAGENTA)
-                config_text.append(f"{stats['file_count']:,}\n", style="white")
+        if stats.get('disk_total'):
+            free_gb = stats['disk_free'] / (1024**3)
+            config_text.append(f"  ◈ Disk Free: ", style=NEON_MAGENTA)
+            config_text.append(f"{free_gb:.1f} GB\n", style=NEON_GREEN)
 
         if stats.get('excluded_folders'):
             config_text.append("\n╔══ EXCLUDED ══╗\n", style=f"bold {NEON_CYAN}")
@@ -359,42 +393,46 @@ class CyberpunkUI:
         )
 
     def create_menu_panel(self) -> Panel:
-        """Create menu panel"""
-        menu_text = Text()
-        menu_text.append("╔══════════════════════════════════════╗\n", style=NEON_MAGENTA)
-        menu_text.append("║      ", style=NEON_MAGENTA)
-        menu_text.append("COMMAND INTERFACE", style=f"bold {NEON_CYAN}")
-        menu_text.append("             ║\n", style=NEON_MAGENTA)
-        menu_text.append("╠══════════════════════════════════════╣\n", style=NEON_MAGENTA)
+        """Create compact menu panel - 2 columns"""
+        # Two-column layout for compactness
+        table = Table(show_header=False, box=None, expand=True, padding=(0, 2))
+        table.add_column("col1")
+        table.add_column("col2")
 
-        commands = [
-            ("1", "Start Sync Service", NEON_GREEN),
-            ("2", "Stop Sync Service", NEON_RED),
-            ("3", "Restart Sync Service", NEON_YELLOW),
-            ("4", "View Sync Logs", NEON_BLUE),
-            ("5", "Start WebDAV Server", NEON_GREEN),
-            ("6", "Stop WebDAV Server", NEON_RED),
-            ("7", "Restart WebDAV Server", NEON_YELLOW),
-            ("8", "View WebDAV Logs", NEON_BLUE),
-            ("e", "Manage Exclusions", NEON_YELLOW),
-            ("r", "Refresh Status", NEON_CYAN),
-            ("c", "Edit Configuration", NEON_MAGENTA),
-            ("q", "Exit / Disconnect", "dim white"),
+        left_cmds = [
+            ("[1]", "Start Sync", NEON_GREEN),
+            ("[2]", "Stop Sync", NEON_RED),
+            ("[3]", "Restart Sync", NEON_YELLOW),
+            ("[4]", "Sync Logs", NEON_BLUE),
+            ("[e]", "Exclusions", NEON_YELLOW),
+            ("[q]", "Quit", "dim"),
+        ]
+        right_cmds = [
+            ("[5]", "Start WebDAV", NEON_GREEN),
+            ("[6]", "Stop WebDAV", NEON_RED),
+            ("[7]", "Restart WebDAV", NEON_YELLOW),
+            ("[8]", "WebDAV Logs", NEON_BLUE),
+            ("[c]", "Config", NEON_MAGENTA),
+            ("[r]", "Refresh", NEON_CYAN),
         ]
 
-        for key, desc, color in commands:
-            menu_text.append("║  ", style=NEON_MAGENTA)
-            menu_text.append(f"[{key}]", style=f"bold {NEON_CYAN}")
-            menu_text.append(f" {desc}", style=color)
-            padding = 35 - len(desc) - len(key)
-            menu_text.append(" " * padding + "║\n", style=NEON_MAGENTA)
+        for (lk, ld, lc), (rk, rd, rc) in zip(left_cmds, right_cmds):
+            left_text = Text()
+            left_text.append(lk, style=f"bold {NEON_CYAN}")
+            left_text.append(f" {ld}", style=lc)
 
-        menu_text.append("╚══════════════════════════════════════╝", style=NEON_MAGENTA)
+            right_text = Text()
+            right_text.append(rk, style=f"bold {NEON_CYAN}")
+            right_text.append(f" {rd}", style=rc)
+
+            table.add_row(left_text, right_text)
 
         return Panel(
-            menu_text,
-            border_style=NEON_CYAN,
-            box=box.MINIMAL
+            table,
+            title=f"[{NEON_CYAN}]COMMANDS[/]",
+            border_style=NEON_MAGENTA,
+            box=box.ROUNDED,
+            padding=(0, 1)
         )
 
     def create_time_panel(self) -> Panel:
@@ -443,30 +481,24 @@ class CyberpunkUI:
         input()
 
     def show_dashboard(self):
-        """Show the main dashboard"""
+        """Show the main dashboard - compact vertical layout"""
         self.clear_screen()
-        self.print_banner()
 
-        # Create layout
-        layout = Layout()
-        layout.split_column(
-            Layout(name="top", size=3),
-            Layout(name="middle"),
-            Layout(name="bottom", size=20)
-        )
+        # Check terminal width for responsive layout
+        term_width = shutil.get_terminal_size().columns
 
-        layout["middle"].split_row(
-            Layout(name="left"),
-            Layout(name="right")
-        )
+        if term_width < 60:
+            # Very small terminal - minimal output
+            self.print_banner(small=True)
+            console.print(self.create_status_panel())
+            console.print(self.create_menu_panel())
+            return
 
-        # Populate layout
-        layout["top"].update(self.create_time_panel())
-        layout["left"].update(self.create_status_panel())
-        layout["right"].update(self.create_config_panel())
-        layout["bottom"].update(self.create_menu_panel())
+        self.print_banner(small=(term_width < 80))
 
-        console.print(layout)
+        # Simple vertical stack - no complex layouts
+        console.print(self.create_status_panel())
+        console.print(self.create_menu_panel())
 
     def execute_command(self, cmd: str) -> bool:
         """Execute a command and return whether to continue"""
@@ -672,17 +704,43 @@ class CyberpunkUI:
                     else:
                         current_exclusions.add(dir_name)
 
+    def get_input_with_timeout(self, timeout: float = 30.0) -> str:
+        """Get user input with timeout, returns empty string on timeout"""
+        # Use select for non-blocking input on Unix systems
+        try:
+            rlist, _, _ = select.select([sys.stdin], [], [], timeout)
+            if rlist:
+                return sys.stdin.readline().strip()
+            return ''  # Timeout - return empty to trigger refresh
+        except (select.error, OSError):
+            # Fallback for systems where select doesn't work on stdin
+            return input()
+
     def run(self):
-        """Main run loop"""
+        """Main run loop with auto-refresh every 30 seconds"""
+        refresh_interval = 30  # seconds
+        last_refresh = time.time()
+
         try:
             while self.running:
                 self.show_dashboard()
 
-                console.print(f"\n[{NEON_MAGENTA}]◢◤[/] [{NEON_CYAN}]Enter command[/] [dim](or 'q' to exit)[/]: ", end="")
+                # Calculate time until next refresh
+                elapsed = time.time() - last_refresh
+                time_until_refresh = max(0.1, refresh_interval - elapsed)
+
+                console.print(f"\n[{NEON_MAGENTA}]◢◤[/] [{NEON_CYAN}]Enter command[/] [dim](auto-refresh in {int(time_until_refresh)}s, 'q' to exit)[/]: ", end="")
+                sys.stdout.flush()
 
                 try:
-                    cmd = input()
-                    self.running = self.execute_command(cmd)
+                    cmd = self.get_input_with_timeout(time_until_refresh)
+
+                    if cmd:  # User entered something
+                        self.running = self.execute_command(cmd)
+
+                    # Update last refresh time
+                    last_refresh = time.time()
+
                 except KeyboardInterrupt:
                     self.running = False
                 except EOFError:

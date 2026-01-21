@@ -61,7 +61,13 @@ class WebDAVClient:
     def _url(self, path: str) -> str:
         """Build full URL from path"""
         path = path.lstrip('/')
-        url = f"{self.base_url}/{path}" if path else self.base_url
+        # URL-encode each path segment to handle special characters like #, ?, &, etc.
+        if path:
+            encoded_segments = [urllib.parse.quote(segment, safe='') for segment in path.split('/')]
+            encoded_path = '/'.join(encoded_segments)
+            url = f"{self.base_url}/{encoded_path}"
+        else:
+            url = self.base_url
         # For directories, ensure URL ends with / for proper PROPFIND handling
         # But don't add / if it's clearly a file (has extension and no trailing slash)
         if not url.endswith('/'):
@@ -119,6 +125,8 @@ class WebDAVClient:
                     href = elem.find('D:href', ns)
                     if href is not None:
                         href_path = href.text.rstrip('/').lstrip('/')
+                        # URL-decode the href (server returns URL-encoded paths)
+                        href_path = urllib.parse.unquote(href_path)
                         # Server returns hrefs with /webdav prefix (SCRIPT_NAME), strip it
                         if href_path.startswith('webdav/'):
                             href_path = href_path[7:]
@@ -136,6 +144,8 @@ class WebDAVClient:
                         href = elem.find('D:href', ns)
                         if href is not None:
                             href_path = href.text.rstrip('/').lstrip('/')
+                            # URL-decode the href (server returns URL-encoded paths)
+                            href_path = urllib.parse.unquote(href_path)
                             # Server returns hrefs with /webdav prefix (SCRIPT_NAME), strip it
                             if href_path.startswith('webdav/'):
                                 href_path = href_path[7:]
