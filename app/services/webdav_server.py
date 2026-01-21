@@ -78,9 +78,18 @@ from wsgidav import util as wsgidav_util
 _original_add_property_response = wsgidav_util.add_property_response
 
 def _patched_add_property_response(multistatus_elem, href, prop_list):
-    """Patched add_property_response that logs href values."""
+    """Patched add_property_response that ensures href is always a string."""
+    # Convert href to string if it's a list
+    if isinstance(href, list):
+        logger.error(f"[WebDAV] ⚠️⚠️⚠️ add_property_response received href as list: {href}, converting to string")
+        href = str(href[0]) if len(href) > 0 else '/'
+
+    # Ensure href is a string
+    href = str(href)
+
     if '005c51179a764e10b61e3a214d38e79d' in str(href):
         logger.error(f"[WebDAV] ⚠️⚠️⚠️ add_property_response called: href={href}, type={type(href)}, is_list={isinstance(href, list)}")
+
     result = _original_add_property_response(multistatus_elem, href, prop_list)
 
     # Log the actual XML element that was created
@@ -90,12 +99,14 @@ def _patched_add_property_response(multistatus_elem, href, prop_list):
         responses = multistatus_elem.findall('{DAV:}response')
         if responses:
             last_response = responses[-1]
-            href_elem = last_response.find('{DAV:}href')
-            if href_elem is not None:
-                logger.error(f"[WebDAV] ⚠️⚠️⚠️ XML href element text: {href_elem.text}, type={type(href_elem.text)}")
-                # Log the full XML of this response
-                xml_str = etree.tostring(last_response, encoding='unicode')
-                logger.error(f"[WebDAV] ⚠️⚠️⚠️ Full response XML: {xml_str[:500]}")
+            # Check for ALL href elements (there should only be one)
+            href_elems = last_response.findall('{DAV:}href')
+            logger.error(f"[WebDAV] ⚠️⚠️⚠️ Found {len(href_elems)} href elements in response")
+            for i, href_elem in enumerate(href_elems):
+                logger.error(f"[WebDAV] ⚠️⚠️⚠️ href[{i}] text: {href_elem.text}, type={type(href_elem.text)}")
+            # Log the full XML of this response
+            xml_str = etree.tostring(last_response, encoding='unicode')
+            logger.error(f"[WebDAV] ⚠️⚠️⚠️ Full response XML: {xml_str[:1500]}")
 
     return result
 
@@ -106,14 +117,87 @@ from wsgidav import request_server
 _original_do_propfind = request_server.RequestServer.do_PROPFIND
 
 def _patched_do_propfind(self, environ, start_response):
-    """Patched PROPFIND to add extra logging."""
-    # Store original child.get_href for logging
-    import types
-    original_method = request_server.RequestServer.do_PROPFIND
-    result = _original_do_propfind(self, environ, start_response)
+    """Patched PROPFIND to intercept and fix the response XML."""
+    # Wrapper to intercept the response
+    captured_status = []
+    captured_headers = []
+    captured_body = []
+
+    def capturing_start_response(status, headers, exc_info=None):
+        captured_status.append(status)
+        captured_headers.append(headers)
+        return capturing_start_response
+
+    # Call original method with capturing wrapper
+    result = _original_do_propfind(self, environ, capturing_start_response)
+
+    # Collect the response body
+    if hasattr(result, '__iter__'):
+        body_parts = []
+        for part in result:
+            body_parts.append(part)
+            captured_body.append(part)
+        body = b''.join(body_parts)
+
+        # Check if this is an XML response we need to fix
+        if b'005c51179a764e10b61e3a214d38e79d' in body:
+            logger.error(f"[WebDAV] ⚠️⚠️⚠️ PROPFIND response contains target file")
+            # Parse and fix the XML
+            from wsgidav.util import etree
+            try:
+                root = etree.fromstring(body)
+                # Find all response elements
+                responses = root.findall('{DAV:}response')
+                fixed = False
+                for response in responses:
+                    # Find all href elements in this response
+                    href_elems = response.findall('{DAV:}href')
+                    if len(href_elems) > 1:
+                        logger.error(f"[WebDAV] ⚠️⚠️⚠️ Found {len(href_elems)} href elements, removing duplicates")
+                        # Keep only the first href, remove the rest
+                        for href_elem in href_elems[1:]:
+                            response.remove(href_elem)
+                        fixed = True
+                    elif len(href_elems) == 1:
+                        # Check if href text looks like a list
+                        href_text = href_elems[0].text
+                        if href_text and (href_text.startswith('[') or ',' in href_text):
+                            logger.error(f"[WebDAV] ⚠️⚠️⚠️ href text looks like a list: {href_text}")
+                            # Try to extract the actual path
+                            if href_text.startswith('['):
+                                # It's a string representation of a list
+                                import ast
+                                try:
+                                    href_list = ast.literal_eval(href_text)
+                                    if isinstance(href_list, list) and len(href_list) > 0:
+                                        href_elems[0].text = str(href_list[0])
+                                        fixed = True
+                                        logger.error(f"[WebDAV] ⚠️⚠️⚠️ Fixed href text to: {href_elems[0].text}")
+                                except:
+                                    pass
+
+                if fixed:
+                    # Re-serialize the XML
+                    body = etree.tostring(root, encoding='utf-8', xml_declaration=True)
+                    logger.error(f"[WebDAV] ⚠️⚠️⚠️ Fixed XML response")
+
+                # Log the final XML
+                logger.error(f"[WebDAV] ⚠️⚠️⚠️ Final response XML: {body[:2000].decode('utf-8', errors='ignore')}")
+            except Exception as e:
+                logger.error(f"[WebDAV] ⚠️⚠️⚠️ Error parsing/fixing XML: {e}")
+
+        # Send the response
+        start_response(captured_status[0] if captured_status else '200 OK',
+                      captured_headers[0] if captured_headers else [])
+        return [body]
+
+    # If not iterable, just pass through
+    start_response(captured_status[0] if captured_status else '200 OK',
+                  captured_headers[0] if captured_headers else [])
     return result
 
-# Don't actually need to patch do_PROPFIND, the add_property_response patch is enough
+# Apply the PROPFIND patch
+request_server.RequestServer.do_PROPFIND = _patched_do_propfind
 from app.services.storage_service import StorageService, get_storage_service
 from app.auth import verify_password
 
