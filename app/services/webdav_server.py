@@ -36,6 +36,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
         self.storage_server_url = None
         self.storage_server_token = None
         storage_setting = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        logger.info(f"[WebDAV] storage_setting query result: {storage_setting}, value={storage_setting.value if storage_setting else 'None'}")
         if storage_setting and storage_setting.value:
             url = storage_setting.value.strip()
             if url.startswith(('http://', 'https://')):
@@ -255,7 +256,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
         """Override to list files, with support for remote storage proxying."""
-        logger.debug(f"[WebDAV] get_resource_list CALLED: path={path}, depth={depth}")
+        logger.info(f"[WebDAV] get_resource_list CALLED: path={path}, depth={depth}, storage_server_url={self.storage_server_url}")
         
         # Strip /webdav prefix if present (may be added multiple times)
         original_path = path
@@ -343,7 +344,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_inst(self, path: str, environ: dict = None):
         """Override get_resource_inst - wsgidav calls this for PROPFIND and GET requests."""
-        logger.debug(f"[WebDAV] get_resource_inst CALLED: path={path}")
+        logger.info(f"[WebDAV] get_resource_inst CALLED: path={path}, storage_server_url={self.storage_server_url}")
         
         # Strip /webdav prefix if present
         normalized_path = path.strip('/')
@@ -1077,13 +1078,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 if depth > 1 and is_directory:
                     try:
                         # Get the relative path for this directory
-                        dir_rel_path = f"{path}/{item_path}".strip('/') if path else item_path
+                        dir_rel_path = f"{path}/{item_name}".strip('/') if path else item_name
                         # Recursively list this directory
                         sub_resources = self._proxy_list_files(username, dir_rel_path, depth=depth)
                         webdav_resources.extend(sub_resources)
                         logger.debug(f"[WebDAV] Recursive list of {dir_rel_path} returned {len(sub_resources)} items")
                     except Exception as e:
-                        logger.warning(f"[WebDAV] Failed to recursively list {item_path}: {e}")
+                        logger.warning(f"[WebDAV] Failed to recursively list {item_name}: {e}")
 
             logger.info(f"[WebDAV] Created {len(webdav_resources)} SimpleResource objects (depth={depth})")
             return webdav_resources
