@@ -434,7 +434,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
 
                             def get_content(self):
-                                """Return file content from remote storage."""
+                                """Return file content as file-like object from remote storage.
+
+                                WsgiDAV expects get_content() to return a file-like object (not bytes)
+                                that supports read() method.
+                                """
+                                import io
                                 if self._is_dir:
                                     return None
                                 # Extract username and relative path
@@ -453,7 +458,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 try:
                                     content = self._provider._proxy_download_file(username, rel_path)
                                     logger.info(f"[WebDAV] VirtualResource.get_content: downloaded {len(content)} bytes for {rel_path}")
-                                    return content
+                                    # Return file-like object, not raw bytes
+                                    return io.BytesIO(content)
                                 except Exception as e:
                                     logger.error(f"[WebDAV] VirtualResource.get_content error: {e}")
                                     return None
@@ -677,13 +683,85 @@ class QuotaFilesystemProvider(FilesystemProvider):
             raise
     
     def get_filestream(self, path: str, environ: dict = None):
-        """Override get_filestream - log when called."""
+        """Override get_filestream to proxy from remote storage if configured.
+
+        WsgiDAV calls this method to get a file-like object for streaming file content.
+        We need to intercept this for remote storage and return content from the storage server.
+        """
+        import io
         logger.debug(f"[WebDAV] get_filestream CALLED: path={path}")
+
+        # Strip /webdav prefix if present
+        normalized_path = path.strip('/')
+        while normalized_path.startswith('webdav/'):
+            normalized_path = normalized_path[7:]
+        if normalized_path:
+            normalized_path = '/' + normalized_path
+        else:
+            normalized_path = '/'
+
+        # If remote storage is configured, proxy the download
+        if self.storage_server_url:
+            username = self._get_username_from_path(normalized_path)
+            if username:
+                # Extract relative path
+                rel_path = normalized_path.lstrip('/')
+                if rel_path.startswith(username + '/'):
+                    rel_path = rel_path[len(username) + 1:]
+                elif rel_path == username:
+                    rel_path = ''
+
+                # Normalize rel_path
+                rel_path = rel_path.rstrip(' /')
+
+                try:
+                    content = self._proxy_download_file(username, rel_path)
+                    logger.info(f"[WebDAV] get_filestream: proxied {len(content)} bytes for {username}/{rel_path}")
+                    return io.BytesIO(content)
+                except Exception as e:
+                    logger.error(f"[WebDAV] get_filestream proxy error: {e}")
+                    raise
+
+        # Fall back to parent for local filesystem
         return super().get_filestream(path, environ)
-    
+
     def get_content(self, path: str, environ: dict = None):
-        """Override get_content - log when called."""
+        """Override get_content to proxy from remote storage if configured."""
+        import io
         logger.debug(f"[WebDAV] get_content CALLED: path={path}")
+
+        # Strip /webdav prefix if present
+        normalized_path = path.strip('/')
+        while normalized_path.startswith('webdav/'):
+            normalized_path = normalized_path[7:]
+        if normalized_path:
+            normalized_path = '/' + normalized_path
+        else:
+            normalized_path = '/'
+
+        # If remote storage is configured, proxy the download
+        if self.storage_server_url:
+            username = self._get_username_from_path(normalized_path)
+            if username:
+                # Extract relative path
+                rel_path = normalized_path.lstrip('/')
+                if rel_path.startswith(username + '/'):
+                    rel_path = rel_path[len(username) + 1:]
+                elif rel_path == username:
+                    rel_path = ''
+
+                # Normalize rel_path
+                rel_path = rel_path.rstrip(' /')
+
+                try:
+                    content = self._proxy_download_file(username, rel_path)
+                    logger.info(f"[WebDAV] get_content: proxied {len(content)} bytes for {username}/{rel_path}")
+                    return io.BytesIO(content)
+                except Exception as e:
+                    logger.error(f"[WebDAV] get_content proxy error: {e}")
+                    raise
+
+        # Fall back to parent for local filesystem
         return super().get_content(path, environ)
     
     def _proxy_list_files(self, username: str, path: str):
@@ -827,7 +905,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
 
                     def get_content(self):
-                        """Return file content from remote storage."""
+                        """Return file content as file-like object from remote storage.
+
+                        WsgiDAV expects get_content() to return a file-like object (not bytes)
+                        that supports read() method.
+                        """
+                        import io
                         if self._is_dir or not self._provider:
                             return None
                         path = self._path.strip('/')
@@ -843,7 +926,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         try:
                             content = self._provider._proxy_download_file(username, rel_path)
                             logger.info(f"[WebDAV] SimpleResource.get_content: downloaded {len(content)} bytes for {rel_path}")
-                            return content
+                            # Return file-like object, not raw bytes
+                            return io.BytesIO(content)
                         except Exception as e:
                             logger.error(f"[WebDAV] SimpleResource.get_content error: {e}")
                             return None
