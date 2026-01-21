@@ -457,18 +457,31 @@ class QuotaFilesystemProvider(FilesystemProvider):
             raise
 
     def _proxy_upload_file(self, username: str, file_path: str, content: bytes):
-        """Proxy file upload - calls local API which automatically proxies to storage server."""
+        """Proxy file upload - calls storage server directly."""
         import requests
-        
-        # Call the LOCAL API endpoint - it will automatically proxy to 192.168.0.85
-        url = "http://localhost:3051/api/storage/upload-file"
+
+        # Call the REMOTE storage server directly (not local API)
+        if not self.storage_server_url:
+            raise Exception("storage_server_url not configured")
+
+        url = f"{self.storage_server_url.rstrip('/')}/api/storage/upload-file"
         headers = {}
         if self.storage_server_token:
             headers["Authorization"] = f"Bearer {self.storage_server_token}"
-        
-        # Determine content type
+
+        logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_upload_file: url={url}, username={username}, file_path={file_path}, size={len(content)}")
+
+        # Split file_path into directory and filename
+        # Storage API expects 'path' to be the directory, and filename comes from the uploaded file
         from pathlib import Path
-        ext = Path(file_path).suffix
+        path_obj = Path(file_path)
+        filename = path_obj.name
+        directory = str(path_obj.parent) if path_obj.parent != Path('.') else ''
+
+        logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_upload_file: directory='{directory}', filename='{filename}'")
+
+        # Determine content type
+        ext = path_obj.suffix
         content_type = 'application/octet-stream'
         if ext == '.txt' or ext == '.md':
             content_type = 'text/plain'
@@ -478,18 +491,22 @@ class QuotaFilesystemProvider(FilesystemProvider):
             content_type = 'image/jpeg'
         elif ext == '.png':
             content_type = 'image/png'
-        
+
         files = {
-            'file': (Path(file_path).name, content, content_type)
+            'file': (filename, content, content_type)
         }
         data = {
             'username': username,
-            'file_path': file_path
+            'path': directory  # Send only the directory path, not the full file path
         }
-        
-        response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+
+        logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_upload_file: Sending POST to {url}")
+        response = requests.post(url, headers=headers, files=files, data=data, timeout=30)
+        logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_upload_file: Response status={response.status_code}")
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_upload_file: Response={result}")
+        return result
     
     def _locate_file_path(self, path: str) -> Optional[Path]:
         """Get the filesystem path for a WebDAV path."""
