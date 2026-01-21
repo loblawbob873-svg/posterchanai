@@ -709,8 +709,22 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 if self._is_dir:
                                     from wsgidav.dav_error import DAVError, HTTP_FORBIDDEN
                                     raise DAVError(HTTP_FORBIDDEN, "Cannot write to a directory")
-                                # Return a BytesIO buffer that we'll write to the storage server in end_write
-                                self._write_buffer = io.BytesIO()
+
+                                # Create a custom buffer that captures content before close()
+                                class CaptureBuffer(io.BytesIO):
+                                    def __init__(self, resource):
+                                        super().__init__()
+                                        self._resource = resource
+                                        self._captured_content = None
+
+                                    def close(self):
+                                        # Capture content before closing
+                                        if not self._captured_content:
+                                            self._captured_content = self.getvalue()
+                                            self._resource._write_content = self._captured_content
+                                        super().close()
+
+                                self._write_buffer = CaptureBuffer(self)
                                 return self._write_buffer
 
                             def end_write(self, *, with_errors):
@@ -719,9 +733,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 if with_errors:
                                     logger.error(f"[WebDAV] Write completed with errors for {self._path}")
                                     return
-                                # Get the written content and proxy it to storage server
-                                if hasattr(self, '_write_buffer'):
-                                    content = self._write_buffer.getvalue()
+                                # Get the captured content (stored by close() in CaptureBuffer)
+                                if hasattr(self, '_write_content'):
+                                    content = self._write_content
                                     logger.debug(f"[WebDAV] Writing {len(content)} bytes to {self._path}")
                                     try:
                                         self._provider.write_file_content(self._path, content)
@@ -731,7 +745,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                         from wsgidav.dav_error import DAVError, HTTP_INTERNAL_ERROR
                                         raise DAVError(HTTP_INTERNAL_ERROR, f"Failed to write file: {e}")
                                     finally:
-                                        delattr(self, '_write_buffer')
+                                        if hasattr(self, '_write_content'):
+                                            delattr(self, '_write_content')
+                                        if hasattr(self, '_write_buffer'):
+                                            delattr(self, '_write_buffer')
+                                else:
+                                    logger.warning(f"[WebDAV] end_write called but no content captured for {self._path}")
 
                             def finalize_headers(self, environ, response_headers):
                                 """Called by WsgiDAV to allow the resource to modify response headers.
@@ -1384,8 +1403,22 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         if self._is_dir:
                             from wsgidav.dav_error import DAVError, HTTP_FORBIDDEN
                             raise DAVError(HTTP_FORBIDDEN, "Cannot write to a directory")
-                        # Return a BytesIO buffer that we'll write to the storage server in end_write
-                        self._write_buffer = io.BytesIO()
+
+                        # Create a custom buffer that captures content before close()
+                        class CaptureBuffer(io.BytesIO):
+                            def __init__(self, resource):
+                                super().__init__()
+                                self._resource = resource
+                                self._captured_content = None
+
+                            def close(self):
+                                # Capture content before closing
+                                if not self._captured_content:
+                                    self._captured_content = self.getvalue()
+                                    self._resource._write_content = self._captured_content
+                                super().close()
+
+                        self._write_buffer = CaptureBuffer(self)
                         return self._write_buffer
 
                     def end_write(self, *, with_errors):
@@ -1394,9 +1427,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         if with_errors:
                             logger.error(f"[WebDAV] Write completed with errors for {self._path}")
                             return
-                        # Get the written content and proxy it to storage server
-                        if hasattr(self, '_write_buffer'):
-                            content = self._write_buffer.getvalue()
+                        # Get the captured content (stored by close() in CaptureBuffer)
+                        if hasattr(self, '_write_content'):
+                            content = self._write_content
                             logger.debug(f"[WebDAV] Writing {len(content)} bytes to {self._path}")
                             try:
                                 if self._provider:
@@ -1411,7 +1444,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 from wsgidav.dav_error import DAVError, HTTP_INTERNAL_ERROR
                                 raise DAVError(HTTP_INTERNAL_ERROR, f"Failed to write file: {e}")
                             finally:
-                                delattr(self, '_write_buffer')
+                                if hasattr(self, '_write_content'):
+                                    delattr(self, '_write_content')
+                                if hasattr(self, '_write_buffer'):
+                                    delattr(self, '_write_buffer')
+                        else:
+                            logger.warning(f"[WebDAV] end_write called but no content captured for {self._path}")
 
                     def get_descendants(self, depth=1, add_self=False, depth_first=False):
                         # Return empty list or None - wsgidav will call get_resource_instances for children
