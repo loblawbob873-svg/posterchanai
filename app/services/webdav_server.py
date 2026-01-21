@@ -280,6 +280,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
         import hashlib
         import re
 
+        logger.info(f"[WebDAV] ⚠️⚠️⚠️ write_file_content called: path={path}, content_size={len(content)}, storage_server_url={self.storage_server_url}")
+
         # Strip /webdav prefix if present
         path_stripped = path.strip('/')
         if path_stripped.startswith('webdav/'):
@@ -288,6 +290,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
             path_stripped = path
         # Normalize path - remove trailing slash if present (files shouldn't have trailing slashes)
         normalized_path = path_stripped.rstrip('/')
+        logger.info(f"[WebDAV] ⚠️⚠️⚠️ write_file_content normalized_path={normalized_path}")
 
         # Handle chunked uploads - store chunks in /tmp
         chunk_match = re.search(r'\.chunk\.(\d+)$', normalized_path)
@@ -308,6 +311,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
             return self._handle_chunked_upload_complete(normalized_path, content)
 
         username = self._get_username_from_path(normalized_path)
+        logger.info(f"[WebDAV] ⚠️⚠️⚠️ write_file_content username={username}")
         if username:
             # If remote storage is configured, ALWAYS proxy - never use local filesystem
             if self.storage_server_url:
@@ -318,12 +322,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 elif rel_path == username:
                     rel_path = ''
 
+                logger.info(f"[WebDAV] ⚠️⚠️⚠️ write_file_content calling _proxy_upload_file: username={username}, rel_path={rel_path}, size={len(content)}")
                 # Proxy upload - this is the ONLY way when remote storage is configured
                 try:
                     self._proxy_upload_file(username, rel_path, content)
                     # Invalidate cache
                     self._invalidate_cache_for_path(username, normalized_path)
-                    logger.debug(f"[WebDAV] Proxied file upload to storage server: {normalized_path} ({len(content)} bytes)")
+                    logger.info(f"[WebDAV] ⚠️⚠️⚠️ write_file_content SUCCESS: Proxied file upload to storage server: {normalized_path} ({len(content)} bytes)")
                     return  # Success, don't write locally
                 except Exception as e:
                     logger.error(f"[WebDAV] Failed to proxy upload to storage server: {e}")
@@ -646,14 +651,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 
                 # Get resource info from remote storage
                 try:
-                    info = self._proxy_get_info(username, rel_path)
-                    logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_get_info returned: info={info}, username={username}, rel_path={rel_path}")
-                    if info:
-                        logger.debug(f"[WebDAV] Got info from proxy: is_dir={info.get('is_directory', False)}, path={rel_path}")
-                        # Create virtual resource based on remote storage info
-                        import time
-                        
-                        class VirtualResource(_DAVResource):
+                    # Define VirtualResource class before using it
+                    import time
+
+                    class VirtualResource(_DAVResource):
                             def __init__(self, path, info_dict, provider, environ=None):
                                 try:
                                     # Ensure path is always a string, never a list
@@ -972,12 +973,38 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 # Gracefully handle any other method calls
                                 logger.info(f"[WebDAV] ⚠️⚠️⚠️ VirtualResource.__getattr__ called for '{name}' on path {self._path} - returning None")
                                 return None
-                        
+
+                    # Now get info from remote storage
+                    info = self._proxy_get_info(username, rel_path)
+                    logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_get_info returned: info={info}, username={username}, rel_path={rel_path}")
+
+                    if info:
+                        logger.debug(f"[WebDAV] Got info from proxy: is_dir={info.get('is_directory', False)}, path={rel_path}")
                         result = VirtualResource(normalized_path, info, self, environ=environ)
                         logger.info(f"[WebDAV] ⚠️⚠️⚠️ Created VirtualResource for {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}, path={result.path}")
                         return result
                     else:
-                        logger.warning(f"[WebDAV] No info returned from proxy for {username}/{rel_path}")
+                        # File doesn't exist yet - this might be a PUT request to create a new file
+                        # Check if this looks like a file path (not a directory)
+                        # Directories usually end with / or are known folders
+                        is_likely_file = '.' in rel_path.split('/')[-1] if rel_path else False
+
+                        if is_likely_file:
+                            # Create a VirtualResource for the non-existent file
+                            # This allows PUT operations to create new files
+                            logger.info(f"[WebDAV] Creating VirtualResource for non-existent file: {normalized_path}")
+                            info = {
+                                'path': normalized_path,
+                                'name': rel_path.split('/')[-1] if rel_path else '',
+                                'is_directory': False,
+                                'size': 0,
+                                'modified': time.time(),
+                            }
+                            result = VirtualResource(normalized_path, info, self, environ=environ)
+                            logger.info(f"[WebDAV] ⚠️⚠️⚠️ Created VirtualResource for new file {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}, path={result.path}")
+                            return result
+                        else:
+                            logger.warning(f"[WebDAV] No info returned from proxy for {username}/{rel_path}")
                 except Exception as e:
                     logger.error(f"[WebDAV] Failed to get info from proxy: {e}", exc_info=True)
                     # Don't fall back to local - raise the error
