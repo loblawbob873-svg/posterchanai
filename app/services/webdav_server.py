@@ -544,17 +544,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                             def get_href(self):
                                 """Return href (URL path) for the resource."""
-                                # Ensure we return a string, not a list
-                                return str(self.path) if hasattr(self, 'path') else str(self._path)
+                                # Always return our stored path as a string
+                                return str(self._path)
 
                             def get_preferred_path(self):
                                 """Return preferred path for this resource."""
-                                if self.path in ("", "/"):
+                                if self._path in ("", "/"):
                                     return "/"
                                 # Append '/' for collections
-                                if self.is_collection and not self.path.endswith("/"):
-                                    return self.path + "/"
-                                return self.path
+                                if self.is_collection and not self._path.endswith("/"):
+                                    return self._path + "/"
+                                return self._path
 
                             def get_etag(self):
                                 return None
@@ -690,12 +690,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                             def get_preferred_path(self):
                                 """Return preferred path for this resource."""
-                                if self.path in ("", "/"):
+                                if self._path in ("", "/"):
                                     return "/"
                                 # Append '/' for collections
-                                if self.is_collection and not self.path.endswith("/"):
-                                    return self.path + "/"
-                                return self.path
+                                if self.is_collection and not self._path.endswith("/"):
+                                    return self._path + "/"
+                                return self._path
 
                             def get_directory_info(self):
                                 # Return dict-like info for directory browser
@@ -813,17 +813,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                     def get_href(self):
                         """Return href (URL path) for the resource."""
-                        # Ensure we return a string, not a list
-                        return str(self.path) if hasattr(self, 'path') else str(self._path)
+                        # Always return our stored path as a string
+                        return str(self._path)
 
                     def get_preferred_path(self):
                         """Return preferred path for this resource."""
-                        if self.path in ("", "/"):
+                        if self._path in ("", "/"):
                             return "/"
                         # Append '/' for collections
-                        if self.is_collection and not self.path.endswith("/"):
-                            return self.path + "/"
-                        return self.path
+                        if self.is_collection and not self._path.endswith("/"):
+                            return self._path + "/"
+                        return self._path
 
                     def get_etag(self):
                         return None
@@ -1142,17 +1142,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                     def get_href(self):
                         """Return href (URL path) for the resource."""
-                        # Ensure we return a string, not a list
-                        return str(self.path) if hasattr(self, 'path') else str(self._path)
+                        # Always return our stored path as a string
+                        return str(self._path)
 
                     def get_preferred_path(self):
                         """Return preferred path for this resource."""
-                        if self.path in ("", "/"):
+                        if self._path in ("", "/"):
                             return "/"
                         # Append '/' for collections
-                        if self.is_collection and not self.path.endswith("/"):
-                            return self.path + "/"
-                        return self.path
+                        if self.is_collection and not self._path.endswith("/"):
+                            return self._path + "/"
+                        return self._path
 
                     def get_etag(self):
                         # Return None or empty string if no ETag
