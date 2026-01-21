@@ -22,7 +22,7 @@ def _patched_dav_resource_init(self, path, is_collection, environ):
     """Patched __init__ that ensures path is always a string."""
     # Convert list to string if needed
     if isinstance(path, list):
-        logger.warning(f"[WebDAV] ⚠️ _DAVResource.__init__ received path as list: {path}, converting to string")
+        logger.error(f"[WebDAV] ⚠️⚠️⚠️ _DAVResource.__init__ received path as list: {path}, converting to string")
         path = str(path[0]) if len(path) > 0 else ''
     # Ensure it's a string
     path = str(path)
@@ -40,16 +40,18 @@ def _patched_get_href(self):
     # Check if path is a list
     if hasattr(self, 'path'):
         path_value = self.path
+        logger.warning(f"[WebDAV] ⚠️⚠️ get_href() called: path_value={path_value}, type={type(path_value)}, is_list={isinstance(path_value, list)}")
         if isinstance(path_value, list):
             logger.error(f"[WebDAV] ⚠️ Resource.path is a list in get_href: {path_value}, converting to string")
             result = str(path_value[0]) if len(path_value) > 0 else ''
         else:
             result = str(path_value)
-        logger.debug(f"[WebDAV] get_href() returning: {result}, type={type(result)}")
+        logger.warning(f"[WebDAV] ⚠️⚠️ get_href() returning: {result}, type={type(result)}")
         return result
     # Fallback to original if it exists
     if _original_get_href:
         result = _original_get_href(self)
+        logger.warning(f"[WebDAV] ⚠️⚠️ get_href() from original: result={result}, type={type(result)}")
         if isinstance(result, list):
             logger.error(f"[WebDAV] ⚠️ Original get_href returned list: {result}, converting")
             result = str(result[0]) if len(result) > 0 else ''
@@ -65,7 +67,7 @@ _original_setattr = _DAVResource.__setattr__
 def _patched_setattr(self, name, value):
     """Patched __setattr__ that ensures path is never set as a list."""
     if name == 'path' and isinstance(value, list):
-        logger.error(f"[WebDAV] ⚠️ Attempting to set path as list: {value}, converting to string")
+        logger.error(f"[WebDAV] ⚠️⚠️⚠️ Attempting to set path as list: {value}, converting to string")
         value = str(value[0]) if len(value) > 0 else ''
     _original_setattr(self, name, value)
 
