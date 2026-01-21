@@ -698,6 +698,90 @@ async def proxy_carddav(request: Request, path: str, db: Session = Depends(get_d
         return Response(content=f"CardDAV server error: {e}", status_code=502)
 
 
+# /webdav/caldav/ and /webdav/carddav/ routes - MUST be defined at top level before WSGI middleware
+# These handle iOS calendar/contacts requests that come via /webdav/ path prefix
+@app.api_route("/webdav/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCALENDAR", "MKCOL", "MOVE", "COPY", "OPTIONS"])
+async def proxy_webdav_caldav(request: Request, path: str, db: Session = Depends(get_db)):
+    """Proxy /webdav/caldav/... requests to CalDAV server for iOS compatibility."""
+    from fastapi.responses import Response
+    import httpx
+    from app.database import safe_query_settings
+    dav_settings = safe_query_settings(db)
+    caldav_port = int(dav_settings.get("caldav_port", "8081"))
+    caldav_url = f"http://127.0.0.1:{caldav_port}/caldav/{path}"
+    if request.url.query:
+        caldav_url += f"?{request.url.query}"
+
+    logging.debug(f"[CalDAV Proxy] {request.method} /webdav/caldav/{path} -> {caldav_url}")
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            headers = dict(request.headers)
+            headers.pop("host", None)
+            body_content = await request.body()
+            response = await client.request(
+                method=request.method,
+                url=caldav_url,
+                headers=headers,
+                content=body_content,
+                follow_redirects=False
+            )
+            resp_headers = {}
+            for k, v in response.headers.items():
+                if k.lower() not in ('transfer-encoding', 'connection', 'keep-alive'):
+                    resp_headers[k] = v
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=resp_headers,
+                media_type=response.headers.get('content-type')
+            )
+    except Exception as e:
+        logging.error(f"[CalDAV Proxy] Error proxying /webdav/caldav/ to CalDAV server: {e}")
+        return Response(content=f"CalDAV server error: {e}", status_code=502)
+
+
+@app.api_route("/webdav/carddav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL", "MOVE", "COPY", "OPTIONS"])
+async def proxy_webdav_carddav(request: Request, path: str, db: Session = Depends(get_db)):
+    """Proxy /webdav/carddav/... requests to CardDAV server for iOS compatibility."""
+    from fastapi.responses import Response
+    import httpx
+    from app.database import safe_query_settings
+    dav_settings = safe_query_settings(db)
+    carddav_port = int(dav_settings.get("carddav_port", "8082"))
+    carddav_url = f"http://127.0.0.1:{carddav_port}/carddav/{path}"
+    if request.url.query:
+        carddav_url += f"?{request.url.query}"
+
+    logging.debug(f"[CardDAV Proxy] {request.method} /webdav/carddav/{path} -> {carddav_url}")
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            headers = dict(request.headers)
+            headers.pop("host", None)
+            body_content = await request.body()
+            response = await client.request(
+                method=request.method,
+                url=carddav_url,
+                headers=headers,
+                content=body_content,
+                follow_redirects=False
+            )
+            resp_headers = {}
+            for k, v in response.headers.items():
+                if k.lower() not in ('transfer-encoding', 'connection', 'keep-alive'):
+                    resp_headers[k] = v
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=resp_headers,
+                media_type=response.headers.get('content-type')
+            )
+    except Exception as e:
+        logging.error(f"[CardDAV Proxy] Error proxying /webdav/carddav/ to CardDAV server: {e}")
+        return Response(content=f"CardDAV server error: {e}", status_code=502)
+
+
 @app.on_event("startup")
 async def startup():
     try:
@@ -958,15 +1042,14 @@ async def startup():
                             path_info = environ.get('PATH_INFO', '')
                             original_path = path_info
 
-                            # CRITICAL: Don't process /webdav/caldav/ or /webdav/carddav/ paths here
-                            # These should be handled by the explicit proxy routes defined above
-                            # Return 404 so FastAPI can try other routes
-                            if path_info.startswith('/caldav') or path_info.startswith('/carddav'):
-                                # This request was already stripped and is for CalDAV/CardDAV
-                                # Return 404 to let FastAPI handle it with the proxy routes
-                                logging.warning(f"[WebDAV Middleware] Rejecting CalDAV/CardDAV path: {path_info}")
+                            # CRITICAL: Check for /webdav/caldav/ or /webdav/carddav/ paths FIRST
+                            # These should NOT go to WsgiDAV - they need FastAPI proxy routes
+                            if path_info.startswith('/webdav/caldav') or path_info.startswith('/webdav/carddav'):
+                                # Don't process - let FastAPI handle with proxy routes
+                                # Return 404 so Starlette falls through to the next route
+                                logging.info(f"[WebDAV Middleware] Skipping CalDAV/CardDAV path for FastAPI: {path_info}")
                                 start_response('404 Not Found', [('Content-Type', 'text/plain')])
-                                return [b'CalDAV/CardDAV requests should use /caldav/ or /carddav/ endpoints directly']
+                                return [b'']
 
                             # Remove all /webdav prefixes
                             while path_info.startswith('/webdav'):
@@ -975,86 +1058,20 @@ async def startup():
                                 path_info = '/'
                             elif not path_info.startswith('/'):
                                 path_info = '/' + path_info
+
+                            # After stripping, also check for caldav/carddav (shouldn't happen but be safe)
+                            if path_info.startswith('/caldav') or path_info.startswith('/carddav'):
+                                logging.warning(f"[WebDAV Middleware] Rejecting CalDAV/CardDAV path: {path_info}")
+                                start_response('404 Not Found', [('Content-Type', 'text/plain')])
+                                return [b'CalDAV/CardDAV requests should use /caldav/ or /carddav/ endpoints directly']
+
                             environ['PATH_INFO'] = path_info
                             logging.debug(f"[WebDAV Middleware] Stripped path: {original_path} -> {path_info}")
                             return wsgi_app(environ, start_response)
                         return wrapper
-                    # Proxy /webdav/caldav/... directly to CalDAV server (cleaner than redirect)
-                    @app.api_route("/webdav/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "REPORT", "MKCOL", "MOVE", "COPY", "OPTIONS"])
-                    async def proxy_webdav_caldav(request: Request, path: str, db: Session = Depends(get_db)):
-                        """Proxy /webdav/caldav/... requests directly to CalDAV server for iOS calendar compatibility."""
-                        from fastapi.responses import Response
-                        import httpx
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        from app.database import safe_query_settings
-                        dav_settings = safe_query_settings(db)
-                        caldav_port = int(dav_settings.get("caldav_port", "8081"))
-                        caldav_url = f"http://127.0.0.1:{caldav_port}/caldav/{path}"
-                        if request.url.query:
-                            caldav_url += f"?{request.url.query}"
-                        
-                        # Log PUT requests for debugging
-                        if request.method == "PUT":
-                            body = await request.body()
-                            logger.info(f"[CalDAV Proxy] PUT request: /webdav/caldav/{path}, body size: {len(body)} bytes, proxying to {caldav_url}")
-                        else:
-                            logger.debug(f"[CalDAV Proxy] {request.method} request: /webdav/caldav/{path} -> {caldav_url}")
-                        
-                        # Forward the request to CalDAV server
-                        async with httpx.AsyncClient() as client:
-                            headers = dict(request.headers)
-                            headers.pop("host", None)  # Remove host header
-                            # Re-read body if we already read it for logging
-                            if request.method == "PUT":
-                                body_content = body
-                            else:
-                                body_content = await request.body()
-                            response = await client.request(
-                                method=request.method,
-                                url=caldav_url,
-                                headers=headers,
-                                content=body_content,
-                                follow_redirects=False
-                            )
-                            if request.method == "PUT":
-                                logger.info(f"[CalDAV Proxy] PUT response: {response.status_code} for /webdav/caldav/{path}")
-                            return Response(
-                                content=response.content,
-                                status_code=response.status_code,
-                                headers=dict(response.headers)
-                            )
-                    
-                    # Proxy /webdav/carddav/... directly to CardDAV server
-                    @app.api_route("/webdav/carddav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "REPORT", "MKCOL", "MOVE", "COPY", "OPTIONS"])
-                    async def proxy_webdav_carddav(request: Request, path: str, db: Session = Depends(get_db)):
-                        """Proxy /webdav/carddav/... requests directly to CardDAV server for iOS contacts compatibility."""
-                        from fastapi.responses import Response
-                        import httpx
-                        from app.database import safe_query_settings
-                        dav_settings = safe_query_settings(db)
-                        carddav_port = int(dav_settings.get("carddav_port", "8082"))
-                        carddav_url = f"http://127.0.0.1:{carddav_port}/carddav/{path}"
-                        if request.url.query:
-                            carddav_url += f"?{request.url.query}"
-                        
-                        # Forward the request to CardDAV server
-                        async with httpx.AsyncClient() as client:
-                            headers = dict(request.headers)
-                            headers.pop("host", None)  # Remove host header
-                            response = await client.request(
-                                method=request.method,
-                                url=carddav_url,
-                                headers=headers,
-                                content=await request.body(),
-                                follow_redirects=False
-                            )
-                            return Response(
-                                content=response.content,
-                                status_code=response.status_code,
-                                headers=dict(response.headers)
-                            )
-                    
+                    # NOTE: /webdav/caldav/ and /webdav/carddav/ routes are now defined at top level
+                    # (before WSGI middleware) to ensure FastAPI handles them first
+
                     app.mount("/webdav", wsgi_middleware(strip_webdav_prefix(webdav_app)))
                     logging.info("✅ WebDAV mounted directly into FastAPI on port 443 (via /webdav/)")
                     logging.info("   No separate port 8080 needed - all traffic goes through 443!")
