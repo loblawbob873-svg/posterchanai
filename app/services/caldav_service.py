@@ -494,17 +494,52 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                             event_duration = None
                             if event_end:
                                 event_duration = event_end - event_start
-                            
+
                             # Build RRULE string from the property
                             rrule_str = rrule_prop.to_ical().decode('utf-8')
-                            
-                            # Create rrule with dtstart
-                            rule = rrulestr(rrule_str, dtstart=event_start)
-                            
-                            # Get occurrences within the date range
-                            # Limit to 500 occurrences to prevent excessive processing time
-                            # This should be enough for monthly/yearly recurring events over reasonable periods
-                            occurrences = list(rule.between(start_date, end_date, inc=True))[:500]
+
+                            logger.info(f"[CalDAV] Processing recurring event '{summary}': DTSTART={event_start}, RRULE={rrule_str}, is_all_day={is_all_day}")
+
+                            # For all-day recurring events, we need to use date-based comparison
+                            # to avoid timezone conversion issues. Convert everything to local timezone
+                            # since all-day events don't have a specific time.
+                            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+
+                            # Convert event_start to UTC for rrule (must be consistent with between() args)
+                            if event_start.tzinfo and event_start.tzinfo != timezone.utc:
+                                event_start_utc = event_start.astimezone(timezone.utc)
+                            else:
+                                event_start_utc = event_start
+
+                            # Create rrule with UTC dtstart for consistency with between() args
+                            rule = rrulestr(rrule_str, dtstart=event_start_utc)
+
+                            # For all-day events, expand the query range to catch events at day boundaries
+                            # A Monday all-day event in local time might be Sunday 17:00 UTC (for UTC-7)
+                            if is_all_day:
+                                # Expand range by 1 day on each side to catch timezone edge cases
+                                from datetime import timedelta
+                                expanded_start = start_date - timedelta(days=1)
+                                expanded_end = end_date + timedelta(days=1)
+                                logger.info(f"[CalDAV] All-day recurring event: expanding query range from {start_date} - {end_date} to {expanded_start} - {expanded_end}")
+                                raw_occurrences = list(rule.between(expanded_start, expanded_end, inc=True))[:500]
+                            else:
+                                raw_occurrences = list(rule.between(start_date, end_date, inc=True))[:500]
+
+                            logger.info(f"[CalDAV] Recurring event '{summary}': found {len(raw_occurrences)} raw occurrences")
+
+                            # Filter occurrences by original date range (for all-day events)
+                            occurrences = []
+                            for occ in raw_occurrences:
+                                occ_date = occ.date() if hasattr(occ, 'date') else occ
+                                # Check if occurrence date falls within original date range
+                                if original_start_date <= occ_date <= original_end_date:
+                                    occurrences.append(occ)
+                                    logger.debug(f"[CalDAV] Occurrence {occ_date} is within range {original_start_date} to {original_end_date}")
+                                else:
+                                    logger.debug(f"[CalDAV] Occurrence {occ_date} is outside range {original_start_date} to {original_end_date}")
+
+                            logger.info(f"[CalDAV] Recurring event '{summary}': {len(occurrences)} occurrences after date filtering (range: {original_start_date} to {original_end_date})")
                             
                             for occurrence_start in occurrences:
                                 occurrence_end = occurrence_start + event_duration if event_duration else None
