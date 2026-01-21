@@ -518,29 +518,27 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         
                         class VirtualResource(_DAVResource):
                             def __init__(self, path, info_dict, provider, environ=None):
+                                # Ensure path is always a string, never a list
+                                path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
+                                # Manually set required attributes without calling super().__init__
+                                # This gives us full control over path
                                 if environ is None:
                                     environ = {"wsgidav.provider": provider} if provider else {}
                                 is_dir = info_dict.get('is_directory', False)
-                                # Ensure path is always a string, never a list
-                                path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
-                                super().__init__(path_str, is_collection=is_dir, environ=environ)
-                                self._path = path_str
-                                self._info = info_dict
-                                self._is_dir = is_dir
-                                self._modified = info_dict.get('modified', time.time())
-                                self._size = info_dict.get('size', 0)
-                                self._provider = provider
-                                self._environ = environ
 
-                            @property
-                            def path(self):
-                                """Ensure path is always a string."""
-                                return str(self._path)
-
-                            @path.setter
-                            def path(self, value):
-                                """Ensure path is always stored as a string."""
-                                self._path = str(value[0]) if isinstance(value, list) and len(value) > 0 else str(value)
+                                # Set attributes directly using object.__setattr__ to avoid any property issues
+                                object.__setattr__(self, 'provider', provider)
+                                object.__setattr__(self, 'path', path_str)
+                                object.__setattr__(self, 'is_collection', is_dir)
+                                object.__setattr__(self, 'environ', environ)
+                                object.__setattr__(self, 'name', path_str.split('/')[-1] if path_str else '')
+                                object.__setattr__(self, '_path', path_str)
+                                object.__setattr__(self, '_info', info_dict)
+                                object.__setattr__(self, '_is_dir', is_dir)
+                                object.__setattr__(self, '_modified', info_dict.get('modified', time.time()))
+                                object.__setattr__(self, '_size', info_dict.get('size', 0))
+                                object.__setattr__(self, '_provider', provider)
+                                object.__setattr__(self, '_environ', environ)
 
                             def get_last_modified(self):
                                 return float(self._modified) if isinstance(self._modified, (int, float)) else time.time()
@@ -803,24 +801,21 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 
                 class VirtualResource(_DAVResource):
                     def __init__(self, path, is_dir=True, environ=None):
-                        if environ is None:
-                            environ = {}
                         # Ensure path is always a string, never a list
                         path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
-                        super().__init__(path_str, is_collection=is_dir, environ=environ)
-                        self._path = path_str
-                        self._is_dir = is_dir
-                        self._modified = time.time()
+                        # Manually set required attributes without calling super().__init__
+                        if environ is None:
+                            environ = {}
 
-                    @property
-                    def path(self):
-                        """Ensure path is always a string."""
-                        return str(self._path)
-
-                    @path.setter
-                    def path(self, value):
-                        """Ensure path is always stored as a string."""
-                        self._path = str(value[0]) if isinstance(value, list) and len(value) > 0 else str(value)
+                        # Set attributes directly using object.__setattr__ to avoid any property issues
+                        object.__setattr__(self, 'provider', environ.get('wsgidav.provider'))
+                        object.__setattr__(self, 'path', path_str)
+                        object.__setattr__(self, 'is_collection', is_dir)
+                        object.__setattr__(self, 'environ', environ)
+                        object.__setattr__(self, 'name', path_str.split('/')[-1] if path_str else '')
+                        object.__setattr__(self, '_path', path_str)
+                        object.__setattr__(self, '_is_dir', is_dir)
+                        object.__setattr__(self, '_modified', time.time())
 
                     def get_last_modified(self):
                         return self._modified
@@ -1139,28 +1134,23 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # Create a simple resource object with all required methods
                 class SimpleResource(_DAVResource):
                     def __init__(self, path, is_dir, size, modified, provider=None, environ=None):
-                        # Initialize parent _DAVResource
-                        if environ is None:
-                            environ = {"wsgidav.provider": provider} if provider else {}
                         # Ensure path is always a string, never a list
                         path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
-                        super().__init__(path_str, is_collection=is_dir, environ=environ)
-                        # Store our custom attributes
-                        self._path = path_str
-                        self._is_dir = is_dir
-                        self._size = size
-                        self._modified = modified
-                        self._provider = provider
+                        # Manually set required attributes without calling super().__init__
+                        if environ is None:
+                            environ = {"wsgidav.provider": provider} if provider else {}
 
-                    @property
-                    def path(self):
-                        """Ensure path is always a string."""
-                        return str(self._path)
-
-                    @path.setter
-                    def path(self, value):
-                        """Ensure path is always stored as a string."""
-                        self._path = str(value[0]) if isinstance(value, list) and len(value) > 0 else str(value)
+                        # Set attributes directly using object.__setattr__ to avoid any property issues
+                        object.__setattr__(self, 'provider', provider)
+                        object.__setattr__(self, 'path', path_str)
+                        object.__setattr__(self, 'is_collection', is_dir)
+                        object.__setattr__(self, 'environ', environ)
+                        object.__setattr__(self, 'name', path_str.split('/')[-1] if path_str else '')
+                        object.__setattr__(self, '_path', path_str)
+                        object.__setattr__(self, '_is_dir', is_dir)
+                        object.__setattr__(self, '_size', size)
+                        object.__setattr__(self, '_modified', modified)
+                        object.__setattr__(self, '_provider', provider)
 
                     def get_last_modified(self):
                         # Return timestamp as float (not datetime)
