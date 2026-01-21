@@ -144,6 +144,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def write_file_content(self, path: str, content: bytes, *, etag: Optional[str] = None):
         """Override to check quota and proxy to remote storage if configured."""
+        import hashlib
+        import re
+
         # Strip /webdav prefix if present
         path_stripped = path.strip('/')
         if path_stripped.startswith('webdav/'):
@@ -152,7 +155,25 @@ class QuotaFilesystemProvider(FilesystemProvider):
             path_stripped = path
         # Normalize path - remove trailing slash if present (files shouldn't have trailing slashes)
         normalized_path = path_stripped.rstrip('/')
-        
+
+        # Handle chunked uploads - store chunks in /tmp
+        chunk_match = re.search(r'\.chunk\.(\d+)$', normalized_path)
+        if chunk_match:
+            # This is a chunk file - store in /tmp
+            chunk_num = chunk_match.group(1)
+            # Create a unique identifier based on the final file path
+            base_path = normalized_path.rsplit('.chunk.', 1)[0]
+            chunk_id = hashlib.md5(base_path.encode()).hexdigest()
+            tmp_chunk_path = Path(f"/tmp/webdav_chunks/{chunk_id}.chunk.{chunk_num}")
+            tmp_chunk_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_chunk_path.write_bytes(content)
+            logger.debug(f"[WebDAV] Stored chunk {chunk_num} in /tmp for {base_path}")
+            return  # Don't write chunk to actual storage
+
+        # Handle chunk metadata - combine chunks and write final file
+        if normalized_path.endswith('.chunkmeta'):
+            return self._handle_chunked_upload_complete(normalized_path, content)
+
         username = self._get_username_from_path(normalized_path)
         if username:
             # If remote storage is configured, ALWAYS proxy - never use local filesystem
@@ -163,7 +184,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     rel_path = rel_path[len(username) + 1:]
                 elif rel_path == username:
                     rel_path = ''
-                
+
                 # Proxy upload - this is the ONLY way when remote storage is configured
                 try:
                     self._proxy_upload_file(username, rel_path, content)
@@ -193,13 +214,110 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     logger.error(f"[WebDAV] Cannot remove non-empty directory at {normalized_path}")
         
         result = super().write_file_content(normalized_path, content, etag=etag)
-        
+
         # Invalidate file cache for parent directory
         if username:
             self._invalidate_cache_for_path(username, normalized_path)
-        
+
         return result
-    
+
+    def _handle_chunked_upload_complete(self, meta_path: str, meta_content: bytes):
+        """Handle chunked upload completion - combine chunks and write final file.
+
+        Meta file format: num_chunks|total_size|md5_hash|final_path
+        Chunks are stored in /tmp/webdav_chunks/{chunk_id}.chunk.{N}
+        """
+        import hashlib
+
+        try:
+            # Parse metadata
+            meta_str = meta_content.decode('utf-8')
+            parts = meta_str.split('|')
+            if len(parts) != 4:
+                raise ValueError(f"Invalid chunk metadata format: {meta_str}")
+
+            num_chunks = int(parts[0])
+            total_size = int(parts[1])
+            expected_hash = parts[2]
+            final_path = parts[3]
+
+            logger.info(f"[WebDAV] Combining {num_chunks} chunks for {final_path} (expected size: {total_size}, MD5: {expected_hash})")
+
+            # Create chunk ID from final path
+            chunk_id = hashlib.md5(final_path.encode()).hexdigest()
+
+            # Combine chunks in /tmp and compute hash while streaming
+            combined_path = Path(f"/tmp/webdav_chunks/{chunk_id}.combined")
+            combined_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Read and combine all chunks, computing hash as we go
+            actual_hash = hashlib.md5()
+            actual_size = 0
+            with open(combined_path, 'wb') as combined:
+                for i in range(num_chunks):
+                    chunk_path = Path(f"/tmp/webdav_chunks/{chunk_id}.chunk.{i}")
+                    if not chunk_path.exists():
+                        raise FileNotFoundError(f"Missing chunk {i} for {final_path}")
+                    # Read chunk in smaller pieces to avoid memory issues
+                    with open(chunk_path, 'rb') as chunk_file:
+                        while True:
+                            data = chunk_file.read(65536)  # 64KB at a time
+                            if not data:
+                                break
+                            combined.write(data)
+                            actual_hash.update(data)
+                            actual_size += len(data)
+                    logger.debug(f"[WebDAV] Combined chunk {i + 1}/{num_chunks} for {final_path}")
+
+            # Verify size and hash
+            if actual_size != total_size:
+                raise ValueError(f"Size mismatch: expected {total_size}, got {actual_size}")
+
+            if actual_hash.hexdigest() != expected_hash:
+                raise ValueError(f"Checksum mismatch: expected {expected_hash}, got {actual_hash.hexdigest()}")
+
+            logger.info(f"[WebDAV] Chunk verification passed for {final_path}")
+
+            # Write the final file
+            username = self._get_username_from_path(final_path)
+            if username and self.storage_server_url:
+                # Extract relative path for proxy upload
+                rel_path = final_path.lstrip('/')
+                if rel_path.startswith(username + '/'):
+                    rel_path = rel_path[len(username) + 1:]
+                elif rel_path == username:
+                    rel_path = ''
+                # Stream from combined file for proxy upload
+                with open(combined_path, 'rb') as f:
+                    combined_data = f.read()
+                self._proxy_upload_file(username, rel_path, combined_data)
+                self._invalidate_cache_for_path(username, final_path)
+            else:
+                # Local storage - stream from combined file
+                with open(combined_path, 'rb') as f:
+                    combined_data = f.read()
+                super().write_file_content(final_path, combined_data)
+                if username:
+                    self._invalidate_cache_for_path(username, final_path)
+
+            logger.info(f"[WebDAV] Chunked upload complete: {final_path} ({actual_size} bytes)")
+
+            # Clean up chunks and combined file
+            for i in range(num_chunks):
+                chunk_path = Path(f"/tmp/webdav_chunks/{chunk_id}.chunk.{i}")
+                try:
+                    chunk_path.unlink()
+                except:
+                    pass
+            try:
+                combined_path.unlink()
+            except:
+                pass
+
+        except Exception as e:
+            logger.error(f"[WebDAV] Failed to complete chunked upload: {e}")
+            raise
+
     def _proxy_upload_file(self, username: str, file_path: str, content: bytes):
         """Proxy file upload - calls local API which automatically proxies to storage server."""
         import requests

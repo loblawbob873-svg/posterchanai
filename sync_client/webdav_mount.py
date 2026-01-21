@@ -500,14 +500,102 @@ class WebDAVClient:
         
         raise WebDAVError(f"Failed to download after {retry_attempts} attempts: {last_error}")
     
-    def upload(self, path: str, content: bytes):
-        """Upload file content"""
-        url = self._url(path)
+    def upload(self, path: str, content: bytes, chunk_size: int = 0):
+        """Upload file content. If chunk_size > 0 and content > chunk_size, upload in chunks."""
+        if chunk_size > 0 and len(content) > chunk_size:
+            self.upload_chunked(path, content, chunk_size)
+        else:
+            url = self._url(path)
+            try:
+                response = self.session.put(url, data=content, timeout=120)
+                response.raise_for_status()
+            except Exception as e:
+                raise WebDAVError(f"Failed to upload: {e}")
+
+    def upload_chunked(self, path: str, content: bytes, chunk_size: int):
+        """Upload file in chunks to avoid Cloudflare/proxy limits.
+
+        Uses temp file approach for WebDAV compatibility:
+        1. Upload chunks as .chunk.N files
+        2. Upload a .chunkmeta file with total info
+        3. Server combines chunks into final file
+
+        Verifies checksum before and after upload for data integrity.
+        """
+        import tempfile
+
+        total_size = len(content)
+        num_chunks = (total_size + chunk_size - 1) // chunk_size
+
+        # Compute checksum BEFORE upload
+        original_hash = hashlib.md5(content).hexdigest()
+        logger.info(f"Uploading {path} in {num_chunks} chunks ({total_size / 1024 / 1024:.1f}MB, MD5: {original_hash})")
+
+        # Write to temp file first to verify integrity before upload
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(content)
+
         try:
-            response = self.session.put(url, data=content, timeout=30)
-            response.raise_for_status()
-        except Exception as e:
-            raise WebDAVError(f"Failed to upload: {e}")
+            # Verify temp file checksum using chunked reading
+            tmp_md5 = hashlib.md5()
+            with open(tmp_path, 'rb') as f:
+                for chunk in iter(lambda: f.read(8192), b''):
+                    tmp_md5.update(chunk)
+            if tmp_md5.hexdigest() != original_hash:
+                raise WebDAVError(f"Checksum mismatch after writing to temp file: {original_hash} != {tmp_md5.hexdigest()}")
+
+            # Upload chunks as separate files
+            uploaded_hash = hashlib.md5()
+            chunk_paths = []
+            with open(tmp_path, 'rb') as f:
+                for i in range(num_chunks):
+                    chunk = f.read(chunk_size)
+                    uploaded_hash.update(chunk)
+
+                    # Upload chunk to temp path
+                    chunk_path = f"{path}.chunk.{i}"
+                    chunk_paths.append(chunk_path)
+                    chunk_url = self._url(chunk_path)
+
+                    try:
+                        response = self.session.put(chunk_url, data=chunk, timeout=120)
+                        response.raise_for_status()
+                        logger.debug(f"Uploaded chunk {i + 1}/{num_chunks} for {path}")
+                    except Exception as e:
+                        # Clean up all uploaded chunks on failure
+                        for cp in chunk_paths:
+                            try:
+                                self.session.delete(self._url(cp), timeout=10)
+                            except:
+                                pass
+                        raise WebDAVError(f"Failed to upload chunk {i + 1}/{num_chunks}: {e}")
+
+            # Verify all chunks were read correctly
+            if uploaded_hash.hexdigest() != original_hash:
+                raise WebDAVError(f"Checksum mismatch after reading chunks: {original_hash} != {uploaded_hash.hexdigest()}")
+
+            # Upload metadata file to trigger server-side combine
+            # Format: num_chunks|total_size|md5_hash|final_path
+            meta_content = f"{num_chunks}|{total_size}|{original_hash}|{path}".encode('utf-8')
+            meta_path = f"{path}.chunkmeta"
+            meta_url = self._url(meta_path)
+
+            try:
+                response = self.session.put(meta_url, data=meta_content, timeout=30)
+                response.raise_for_status()
+                logger.debug(f"Uploaded chunk metadata for {path}")
+            except Exception as e:
+                raise WebDAVError(f"Failed to upload chunk metadata: {e}")
+
+            logger.info(f"Chunked upload complete: {path} (MD5: {original_hash})")
+
+        finally:
+            # Clean up local temp file
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
     
     def mkdir(self, path: str):
         """Create directory"""
@@ -805,7 +893,7 @@ class CacheManager:
 class WebDAVSync:
     """Pure Python WebDAV sync - no FUSE required!"""
 
-    def __init__(self, webdav_client: WebDAVClient, local_dir: Path, remote_base: str, cache: CacheManager = None, network_retry_attempts: int = 5, network_retry_delay: int = 5, conflict_resolution: str = 'last_write_wins', excluded_folders: list = None, max_download_speed: int = 0, max_upload_speed: int = 0, max_workers: int = 8):
+    def __init__(self, webdav_client: WebDAVClient, local_dir: Path, remote_base: str, cache: CacheManager = None, network_retry_attempts: int = 5, network_retry_delay: int = 5, conflict_resolution: str = 'last_write_wins', excluded_folders: list = None, max_download_speed: int = 0, max_upload_speed: int = 0, max_workers: int = 8, upload_chunk_size: int = 0):
         self.webdav = webdav_client
         self.local_dir = Path(local_dir)
         self.remote_base = remote_base.rstrip('/')
@@ -820,6 +908,7 @@ class WebDAVSync:
         self.max_download_speed = max_download_speed
         self.max_upload_speed = max_upload_speed
         self.max_workers = max_workers  # Number of concurrent download threads
+        self.upload_chunk_size = upload_chunk_size  # Chunk size for uploads (bytes, 0 = no chunking)
         self._download_tokens = 0  # For rate limiting
         self._download_token_time = time.time()
         self._rate_limit_lock = threading.Lock()
@@ -829,6 +918,8 @@ class WebDAVSync:
             logger.info(f"Download speed limit: {self.max_download_speed / 1024 / 1024:.1f} MB/s")
         if self.max_upload_speed > 0:
             logger.info(f"Upload speed limit: {self.max_upload_speed / 1024 / 1024:.1f} MB/s")
+        if self.upload_chunk_size > 0:
+            logger.info(f"Upload chunk size: {self.upload_chunk_size / 1024 / 1024:.1f} MB")
     
     def _rate_limit_download(self, bytes_downloaded: int):
         """Apply rate limiting for downloads using token bucket algorithm."""
@@ -1322,11 +1413,11 @@ class WebDAVSync:
     def sync_to_remote(self, local_path: Path):
         """Sync a local file to remote"""
         remote_path = self._remote_path(local_path)
-        
+
         try:
             if local_path.is_file():
                 content = local_path.read_bytes()
-                self.webdav.upload(remote_path, content)
+                self.webdav.upload(remote_path, content, chunk_size=self.upload_chunk_size)
                 # Update cache and sync state
                 local_mtime = local_path.stat().st_mtime
                 if self.cache:
@@ -1358,7 +1449,7 @@ class WebDAVSync:
                 if content is None:
                     continue
                 
-                self.webdav.upload(remote_path, content)
+                self.webdav.upload(remote_path, content, chunk_size=self.upload_chunk_size)
                 self.cache.mark_clean(remote_path)
                 # Update sync state
                 if 'modified_at' in meta:
@@ -1762,9 +1853,21 @@ class WebDAVSync:
             # Check if depth=infinity worked - if we got very few items, server might not support it
             # In that case, we have an incomplete file list and MUST NOT run deletion detection
             have_complete_file_list = len(files) >= 50
-            if not have_complete_file_list:
+
+            # SAFETY CHECK: Compare to sync state size to catch server bugs/partial responses
+            # If server returns significantly fewer files than we have in sync state, something is wrong
+            if self.cache and have_complete_file_list:
+                sync_state_count = len(self.cache.get_all_sync_state_paths())
+                server_file_count = len(files)
+                if sync_state_count > 100 and server_file_count < sync_state_count * 0.5:
+                    # Server returned less than 50% of expected files - likely a bug or partial response
+                    logger.warning(f"Server returned {server_file_count} files but sync state has {sync_state_count} - possible server issue!")
+                    logger.warning("SKIPPING deletion detection - server may have returned incomplete list")
+                    have_complete_file_list = False
+
+            if not have_complete_file_list and len(files) < 50:
                 logger.info(f"depth=infinity returned only {len(files)} items, server may not support it fully")
-                logger.warning("SKIPPING deletion detection - incomplete file list would cause false deletions!")
+                logger.warning("SKIPPING move/deletion detection - incomplete file list would cause false deletions!")
 
             current_remote_files = {f['path']: f for f in files}
             current_remote_paths = set(current_remote_files.keys())
@@ -1775,35 +1878,37 @@ class WebDAVSync:
             have_complete_file_list = False
         
         # Step 3: Detect moves/renames (before deletions, as moves might look like delete+create)
-        moves = self.detect_moves(current_remote_files)
-        for old_remote_path, new_remote_path in moves:
-            try:
-                # Use WebDAV MOVE to handle the rename on server
-                self.webdav.mv(old_remote_path, new_remote_path)
-                # Update sync state
-                old_sync_state = self.cache.get_sync_state(old_remote_path)
-                if old_sync_state:
-                    # Move sync state to new path
-                    new_local_path = self._local_path(new_remote_path)
-                    self.cache.update_sync_state(new_remote_path, new_local_path, 
-                                               old_sync_state.get('mtime', time.time()),
-                                               old_sync_state.get('size', 0),
-                                               old_sync_state.get('hash'))
-                    self.cache.remove_from_sync_state(old_remote_path)
-                    # Also move local file if it exists
-                    old_local_path_str = old_sync_state.get('local_path')
-                    if old_local_path_str:
-                        old_local_path = Path(old_local_path_str)
-                        if old_local_path.exists():
-                            new_local_path.parent.mkdir(parents=True, exist_ok=True)
-                            if old_local_path.is_file():
-                                shutil.move(str(old_local_path), str(new_local_path))
-                            elif old_local_path.is_dir():
-                                shutil.move(str(old_local_path), str(new_local_path))
-                            logger.info(f"Moved local file: {old_local_path} -> {new_local_path}")
-                logger.info(f"Handled move/rename: {old_remote_path} -> {new_remote_path}")
-            except Exception as e:
-                logger.warning(f"Error handling move {old_remote_path} -> {new_remote_path}: {e}")
+        # Only run with complete file list to avoid false move detection
+        if have_complete_file_list:
+            moves = self.detect_moves(current_remote_files)
+            for old_remote_path, new_remote_path in moves:
+                try:
+                    # Use WebDAV MOVE to handle the rename on server
+                    self.webdav.mv(old_remote_path, new_remote_path)
+                    # Update sync state
+                    old_sync_state = self.cache.get_sync_state(old_remote_path)
+                    if old_sync_state:
+                        # Move sync state to new path
+                        new_local_path = self._local_path(new_remote_path)
+                        self.cache.update_sync_state(new_remote_path, new_local_path,
+                                                   old_sync_state.get('mtime', time.time()),
+                                                   old_sync_state.get('size', 0),
+                                                   old_sync_state.get('hash'))
+                        self.cache.remove_from_sync_state(old_remote_path)
+                        # Also move local file if it exists
+                        old_local_path_str = old_sync_state.get('local_path')
+                        if old_local_path_str:
+                            old_local_path = Path(old_local_path_str)
+                            if old_local_path.exists():
+                                new_local_path.parent.mkdir(parents=True, exist_ok=True)
+                                if old_local_path.is_file():
+                                    shutil.move(str(old_local_path), str(new_local_path))
+                                elif old_local_path.is_dir():
+                                    shutil.move(str(old_local_path), str(new_local_path))
+                                logger.info(f"Moved local file: {old_local_path} -> {new_local_path}")
+                    logger.info(f"Handled move/rename: {old_remote_path} -> {new_remote_path}")
+                except Exception as e:
+                    logger.warning(f"Error handling move {old_remote_path} -> {new_remote_path}: {e}")
         
         # Step 4: Detect deletions (after moves, as moves might have been detected as deletions)
         # CRITICAL: Only run deletion detection if we have a complete file list!
@@ -1812,14 +1917,29 @@ class WebDAVSync:
             remote_deletions, local_deletions = self.detect_deletions(current_remote_paths)
 
             # Step 5: Handle remote deletions (delete local files)
+            # SAFETY: Verify checksum before deleting - if local was modified, don't delete
             for remote_path in remote_deletions:
                 sync_state = self.cache.get_sync_state(remote_path)
+                if not sync_state:
+                    continue
                 local_path_str = sync_state.get('local_path')
                 if local_path_str:
                     local_path = Path(local_path_str)
                     try:
                         if local_path.exists():
                             if local_path.is_file():
+                                # Verify checksum - don't delete if local file was modified
+                                expected_hash = sync_state.get('hash')
+                                if expected_hash:
+                                    # Use chunked reading to avoid OOM on large files
+                                    md5 = hashlib.md5()
+                                    with open(local_path, 'rb') as f:
+                                        for chunk in iter(lambda: f.read(8192), b''):
+                                            md5.update(chunk)
+                                    current_hash = md5.hexdigest()
+                                    if current_hash != expected_hash:
+                                        logger.warning(f"NOT deleting {local_path} - local file was modified (hash mismatch)")
+                                        continue
                                 local_path.unlink()
                             elif local_path.is_dir():
                                 shutil.rmtree(local_path)
@@ -1829,9 +1949,19 @@ class WebDAVSync:
                         logger.warning(f"Error deleting local file {local_path}: {e}")
 
             # Step 6: Handle local deletions (delete remote files)
+            # SAFETY: Check if remote was modified since last sync - if so, don't delete
             for local_path in local_deletions:
                 remote_path = self._remote_path(local_path)
                 try:
+                    # Check if remote file was modified since last sync
+                    sync_state = self.cache.get_sync_state(remote_path)
+                    if sync_state and remote_path in current_remote_files:
+                        remote_info = current_remote_files[remote_path]
+                        synced_mtime = sync_state.get('mtime', 0)
+                        remote_mtime = remote_info.get('modified', 0)
+                        if remote_mtime and synced_mtime and remote_mtime > synced_mtime:
+                            logger.warning(f"NOT deleting remote {remote_path} - remote was modified since last sync")
+                            continue
                     self.webdav.delete(remote_path)
                     logger.info(f"Deleted remote file (local was deleted): {remote_path}")
                     self.cache.remove_from_sync_state(remote_path)
@@ -2146,6 +2276,10 @@ class WebDAVMount:
         # Get concurrent download threads (default 8)
         max_workers = self.config.get("max_workers", 8)
 
+        # Get upload chunk size (in MB, convert to bytes, default 10MB, 0 = no chunking)
+        upload_chunk_size_mb = self.config.get("upload_chunk_size_mb", 10)
+        upload_chunk_size = int(upload_chunk_size_mb * 1024 * 1024) if upload_chunk_size_mb > 0 else 0
+
         # Create sync manager
         self._sync = WebDAVSync(
             self.webdav,
@@ -2158,7 +2292,8 @@ class WebDAVMount:
             excluded_folders=excluded_folders,
             max_download_speed=max_download_speed,
             max_upload_speed=max_upload_speed,
-            max_workers=max_workers
+            max_workers=max_workers,
+            upload_chunk_size=upload_chunk_size
         )
         
         # Check if offline mode is enabled

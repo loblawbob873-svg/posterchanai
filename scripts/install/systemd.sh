@@ -443,3 +443,52 @@ TimeoutStartSec=120
 WantedBy=multi-user.target
 EOF
 }
+
+# =============================================================================
+# CLI Control Tool Installation
+# =============================================================================
+
+setup_cli_tool() {
+    print_step "Installing PCAI Control Center CLI"
+
+    local CLI_SCRIPT="$SCRIPT_DIR/sync_client/pcai_control.py"
+    local BIN_DIR="$HOME/.local/bin"
+    local CLI_LINK="$BIN_DIR/pcai"
+
+    # Check if CLI script exists
+    if [ ! -f "$CLI_SCRIPT" ]; then
+        print_warning "CLI control script not found at $CLI_SCRIPT"
+        return
+    fi
+
+    # Create bin directory if needed
+    mkdir -p "$BIN_DIR"
+
+    # Create symlink
+    if [ -L "$CLI_LINK" ] || [ -f "$CLI_LINK" ]; then
+        rm -f "$CLI_LINK"
+    fi
+    ln -s "$CLI_SCRIPT" "$CLI_LINK"
+    chmod +x "$CLI_SCRIPT"
+
+    print_success "Installed CLI tool: pcai"
+
+    # Check if ~/.local/bin is in PATH
+    if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+        print_warning "$BIN_DIR is not in your PATH"
+        echo ""
+        echo "  Add this to your ~/.bashrc or ~/.zshrc:"
+        echo ""
+        echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo ""
+    fi
+
+    # Install rich dependency
+    local PYTHON_BIN="$SCRIPT_DIR/venv/bin/python"
+    [ "$BACKEND" = "intel" ] && PYTHON_BIN="$SCRIPT_DIR/venv-ipex/bin/python"
+    [ -f "$PYTHON_BIN" ] && "$PYTHON_BIN" -m pip install rich -q 2>/dev/null || true
+
+    echo ""
+    echo "  Run 'pcai' to launch the cyberpunk control center!"
+    echo ""
+}
