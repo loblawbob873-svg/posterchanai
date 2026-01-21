@@ -87,7 +87,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
         """Extract username from WebDAV path."""
         # Path format: /username@domain/... or /webdav/username@domain/...
         # WebDAV clients (iOS/macOS) often use email format (username@domain) in paths
-        # We need to extract just the username part (before @)
+        # The storage server expects the FULL email-style username (e.g., verita84@poster.place)
         # Strip /webdav prefix if present (WSGI middleware might not strip it)
         normalized_path = path.strip('/')
         if normalized_path.startswith('webdav/'):
@@ -95,18 +95,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
         # Extract the first path component (which may be username@domain)
         if '/' in normalized_path:
-            username_part = normalized_path.split('/', 1)[0]  # Split only on first /
+            username = normalized_path.split('/', 1)[0]  # Split only on first /
         else:
-            username_part = normalized_path
-
-        # Strip email domain if present (e.g., verita84@poster.place -> verita84)
-        if '@' in username_part:
-            username = username_part.split('@')[0]
-        else:
-            username = username_part
+            username = normalized_path
 
         if username:
-            logger.debug(f"[WebDAV] Extracted username '{username}' from path '{path}' (normalized: '{normalized_path}', part: '{username_part}')")
+            logger.debug(f"[WebDAV] Extracted username '{username}' from path '{path}' (normalized: '{normalized_path}')")
             return username
         logger.debug(f"[WebDAV] Could not extract username from path '{path}' (normalized: '{normalized_path}')")
         return None
@@ -378,40 +372,25 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # /username@domain/path -> path (email-style WebDAV paths from iOS/macOS)
                 # /username/path -> path
                 # /webdav/username/path -> path
-                # First, handle email-style usernames by finding the first /
-                first_slash = rel_path.find('/')
-                if first_slash != -1:
-                    # Extract first component and check if it's the username (possibly with @domain)
-                    first_component = rel_path[:first_slash]
-                    # If first component is username or username@domain, strip it
-                    if first_component == username or first_component.split('@')[0] == username:
-                        rel_path = rel_path[first_slash + 1:]
-                    elif rel_path.startswith('webdav/'):
-                        # Handle /webdav/username@domain/path format
-                        after_webdav = rel_path[7:]
-                        next_slash = after_webdav.find('/')
-                        if next_slash != -1:
-                            rel_path = after_webdav[next_slash + 1:]
-                        else:
-                            rel_path = ''
-                    elif rel_path.startswith('calendar/dav/'):
-                        # Handle /calendar/dav/username@domain/path format
-                        after_prefix = rel_path[13:]  # len('calendar/dav/')
-                        next_slash = after_prefix.find('/')
-                        if next_slash != -1:
-                            rel_path = after_prefix[next_slash + 1:]
-                        else:
-                            rel_path = ''
-                    elif rel_path.startswith('calendar/'):
-                        # Handle /calendar/username@domain/path format
-                        after_prefix = rel_path[9:]  # len('calendar/')
-                        next_slash = after_prefix.find('/')
-                        if next_slash != -1:
-                            rel_path = after_prefix[next_slash + 1:]
-                        else:
-                            rel_path = ''
+                # Since username now includes @domain, we can directly strip it
+                if rel_path.startswith(username + '/'):
+                    rel_path = rel_path[len(username) + 1:]
+                elif rel_path == username:
+                    rel_path = ''
+                elif rel_path.startswith('webdav/' + username + '/'):
+                    rel_path = rel_path[len('webdav/' + username) + 1:]
+                elif rel_path == 'webdav/' + username:
+                    rel_path = ''
+                elif rel_path.startswith('calendar/dav/' + username + '/'):
+                    rel_path = rel_path[len('calendar/dav/' + username) + 1:]
+                elif rel_path == 'calendar/dav/' + username:
+                    rel_path = ''
+                elif rel_path.startswith('calendar/' + username + '/'):
+                    rel_path = rel_path[len('calendar/' + username) + 1:]
+                elif rel_path == 'calendar/' + username:
+                    rel_path = ''
                 else:
-                    # No slash means this is just the username root directory
+                    logger.warning(f"[WebDAV] Could not extract relative path from '{normalized_path}' with username '{username}'")
                     rel_path = ''
                 
                 # Get resource info from remote storage
@@ -470,6 +449,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 if self._is_dir:
                                     return None
                                 # Extract username and relative path
+                                # Storage server expects full email-style username (e.g., verita84@poster.place)
                                 path = self._path.strip('/')
                                 if path.startswith('webdav/'):
                                     path = path[7:]
@@ -482,9 +462,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     rel_path = ''
                                 else:
                                     return None
-                                # Strip email domain from username if present (e.g., verita84@poster.place -> verita84)
-                                if '@' in username:
-                                    username = username.split('@')[0]
                                 try:
                                     content = self._provider._proxy_download_file(username, rel_path)
                                     logger.info(f"[WebDAV] VirtualResource.get_content: downloaded {len(content)} bytes for {rel_path}")
@@ -960,6 +937,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         import io
                         if self._is_dir or not self._provider:
                             return None
+                        # Storage server expects full email-style username (e.g., verita84@poster.place)
                         path = self._path.strip('/')
                         if path.startswith('webdav/'):
                             path = path[7:]
@@ -970,9 +948,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             username, rel_path = parts[0], ''
                         else:
                             return None
-                        # Strip email domain from username if present
-                        if '@' in username:
-                            username = username.split('@')[0]
                         try:
                             content = self._provider._proxy_download_file(username, rel_path)
                             logger.info(f"[WebDAV] SimpleResource.get_content: downloaded {len(content)} bytes for {rel_path}")
@@ -1332,23 +1307,24 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return super().read_file_content(normalized_path)
     
     def _proxy_download_file(self, username: str, file_path: str) -> bytes:
-        """Proxy file download - calls local API which automatically proxies to storage server."""
+        """Proxy file download - calls remote storage server directly."""
         import requests
-        
+
         # Normalize file_path - trim trailing spaces
         file_path = file_path.rstrip(' /')
-        
-        # Call the LOCAL API endpoint - it will automatically proxy to 192.168.0.85
-        url = "http://localhost:3051/api/storage/download-file"
+
+        # Call the REMOTE storage server directly
+        url = f"{self.storage_server_url}/api/storage/view-file"
         headers = {}
         if self.storage_server_token:
             headers["Authorization"] = f"Bearer {self.storage_server_token}"
-        
+
         params = {
             'username': username,
             'file_path': file_path
         }
-        
+
+        logger.info(f"[WebDAV] _proxy_download_file: {url} username={username} file_path={file_path}")
         response = requests.get(url, headers=headers, params=params, timeout=60, stream=True)
         response.raise_for_status()
         return response.content
