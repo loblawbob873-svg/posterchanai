@@ -117,87 +117,13 @@ from wsgidav import request_server
 _original_do_propfind = request_server.RequestServer.do_PROPFIND
 
 def _patched_do_propfind(self, environ, start_response):
-    """Patched PROPFIND to intercept and fix the response XML."""
-    # Wrapper to intercept the response
-    captured_status = []
-    captured_headers = []
-    captured_body = []
-
-    def capturing_start_response(status, headers, exc_info=None):
-        captured_status.append(status)
-        captured_headers.append(headers)
-        return capturing_start_response
-
-    # Call original method with capturing wrapper
-    result = _original_do_propfind(self, environ, capturing_start_response)
-
-    # Collect the response body
-    if hasattr(result, '__iter__'):
-        body_parts = []
-        for part in result:
-            body_parts.append(part)
-            captured_body.append(part)
-        body = b''.join(body_parts)
-
-        # Check if this is an XML response we need to fix
-        if b'005c51179a764e10b61e3a214d38e79d' in body:
-            logger.error(f"[WebDAV] ⚠️⚠️⚠️ PROPFIND response contains target file")
-            # Parse and fix the XML
-            from wsgidav.util import etree
-            try:
-                root = etree.fromstring(body)
-                # Find all response elements
-                responses = root.findall('{DAV:}response')
-                fixed = False
-                for response in responses:
-                    # Find all href elements in this response
-                    href_elems = response.findall('{DAV:}href')
-                    if len(href_elems) > 1:
-                        logger.error(f"[WebDAV] ⚠️⚠️⚠️ Found {len(href_elems)} href elements, removing duplicates")
-                        # Keep only the first href, remove the rest
-                        for href_elem in href_elems[1:]:
-                            response.remove(href_elem)
-                        fixed = True
-                    elif len(href_elems) == 1:
-                        # Check if href text looks like a list
-                        href_text = href_elems[0].text
-                        if href_text and (href_text.startswith('[') or ',' in href_text):
-                            logger.error(f"[WebDAV] ⚠️⚠️⚠️ href text looks like a list: {href_text}")
-                            # Try to extract the actual path
-                            if href_text.startswith('['):
-                                # It's a string representation of a list
-                                import ast
-                                try:
-                                    href_list = ast.literal_eval(href_text)
-                                    if isinstance(href_list, list) and len(href_list) > 0:
-                                        href_elems[0].text = str(href_list[0])
-                                        fixed = True
-                                        logger.error(f"[WebDAV] ⚠️⚠️⚠️ Fixed href text to: {href_elems[0].text}")
-                                except:
-                                    pass
-
-                if fixed:
-                    # Re-serialize the XML
-                    body = etree.tostring(root, encoding='utf-8', xml_declaration=True)
-                    logger.error(f"[WebDAV] ⚠️⚠️⚠️ Fixed XML response")
-
-                # Log the final XML
-                logger.error(f"[WebDAV] ⚠️⚠️⚠️ Final response XML: {body[:2000].decode('utf-8', errors='ignore')}")
-            except Exception as e:
-                logger.error(f"[WebDAV] ⚠️⚠️⚠️ Error parsing/fixing XML: {e}")
-
-        # Send the response
-        start_response(captured_status[0] if captured_status else '200 OK',
-                      captured_headers[0] if captured_headers else [])
-        return [body]
-
-    # If not iterable, just pass through
-    start_response(captured_status[0] if captured_status else '200 OK',
-                  captured_headers[0] if captured_headers else [])
+    """Patched PROPFIND to log the response XML after it's fully generated."""
+    # Just call the original method - don't intercept
+    result = _original_do_propfind(self, environ, start_response)
     return result
 
-# Apply the PROPFIND patch
-request_server.RequestServer.do_PROPFIND = _patched_do_propfind
+# Don't actually patch do_PROPFIND since it breaks the response generation
+# request_server.RequestServer.do_PROPFIND = _patched_do_propfind
 from app.services.storage_service import StorageService, get_storage_service
 from app.auth import verify_password
 
@@ -721,6 +647,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # Get resource info from remote storage
                 try:
                     info = self._proxy_get_info(username, rel_path)
+                    logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_get_info returned: info={info}, username={username}, rel_path={rel_path}")
                     if info:
                         logger.debug(f"[WebDAV] Got info from proxy: is_dir={info.get('is_directory', False)}, path={rel_path}")
                         # Create virtual resource based on remote storage info
@@ -728,27 +655,32 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         
                         class VirtualResource(_DAVResource):
                             def __init__(self, path, info_dict, provider, environ=None):
-                                # Ensure path is always a string, never a list
-                                path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
-                                # Manually set required attributes without calling super().__init__
-                                # This gives us full control over path
-                                if environ is None:
-                                    environ = {"wsgidav.provider": provider} if provider else {}
-                                is_dir = info_dict.get('is_directory', False)
+                                try:
+                                    # Ensure path is always a string, never a list
+                                    path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
+                                    # Manually set required attributes without calling super().__init__
+                                    # This gives us full control over path
+                                    if environ is None:
+                                        environ = {"wsgidav.provider": provider} if provider else {}
+                                    is_dir = info_dict.get('is_directory', False)
 
-                                # Set attributes directly using object.__setattr__ to avoid any property issues
-                                object.__setattr__(self, 'provider', provider)
-                                object.__setattr__(self, 'path', path_str)
-                                object.__setattr__(self, 'is_collection', is_dir)
-                                object.__setattr__(self, 'environ', environ)
-                                object.__setattr__(self, 'name', path_str.split('/')[-1] if path_str else '')
-                                object.__setattr__(self, '_path', path_str)
-                                object.__setattr__(self, '_info', info_dict)
-                                object.__setattr__(self, '_is_dir', is_dir)
-                                object.__setattr__(self, '_modified', info_dict.get('modified', time.time()))
-                                object.__setattr__(self, '_size', info_dict.get('size', 0))
-                                object.__setattr__(self, '_provider', provider)
-                                object.__setattr__(self, '_environ', environ)
+                                    # Set attributes directly using object.__setattr__ to avoid any property issues
+                                    object.__setattr__(self, 'provider', provider)
+                                    object.__setattr__(self, 'path', path_str)
+                                    object.__setattr__(self, 'is_collection', is_dir)
+                                    object.__setattr__(self, 'environ', environ)
+                                    object.__setattr__(self, 'name', path_str.split('/')[-1] if path_str else '')
+                                    object.__setattr__(self, '_path', path_str)
+                                    object.__setattr__(self, '_info', info_dict)
+                                    object.__setattr__(self, '_is_dir', is_dir)
+                                    object.__setattr__(self, '_modified', info_dict.get('modified', time.time()))
+                                    object.__setattr__(self, '_size', info_dict.get('size', 0))
+                                    object.__setattr__(self, '_provider', provider)
+                                    object.__setattr__(self, '_environ', environ)
+                                    logger.info(f"[WebDAV] ⚠️⚠️⚠️ VirtualResource.__init__ completed successfully for {path_str}")
+                                except Exception as e:
+                                    logger.error(f"[WebDAV] ⚠️⚠️⚠️ VirtualResource.__init__ FAILED: {e}", exc_info=True)
+                                    raise
 
                             def get_last_modified(self):
                                 return float(self._modified) if isinstance(self._modified, (int, float)) else time.time()
@@ -765,7 +697,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             def get_href(self):
                                 """Return href (URL path) for the resource."""
                                 # Always return our stored path as a string
-                                return str(self._path)
+                                href = str(self._path)
+                                logger.info(f"[WebDAV] ⚠️⚠️⚠️ VirtualResource.get_href called: returning {href}")
+                                return href
 
                             def get_preferred_path(self):
                                 """Return preferred path for this resource."""
@@ -778,7 +712,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                             def get_etag(self):
                                 return None
-                            
+
                             def get_content_type(self):
                                 return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
 
@@ -922,6 +856,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                             def get_property_value(self, name):
                                 """Return value for a specific property (name in Clark notation)."""
+                                logger.info(f"[WebDAV] ⚠️⚠️⚠️ VirtualResource.get_property_value called: name={name}, path={self._path}")
                                 from datetime import datetime
                                 if name == "{{DAV:}}getlastmodified":
                                     ts = self._modified if hasattr(self, '_modified') else 0
@@ -1035,11 +970,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             
                             def __getattr__(self, name):
                                 # Gracefully handle any other method calls
-                                logger.warning(f"[WebDAV] VirtualResource.__getattr__ called for '{name}' - returning None")
+                                logger.info(f"[WebDAV] ⚠️⚠️⚠️ VirtualResource.__getattr__ called for '{name}' on path {self._path} - returning None")
                                 return None
                         
                         result = VirtualResource(normalized_path, info, self, environ=environ)
-                        logger.debug(f"[WebDAV] Created VirtualResource for {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}")
+                        logger.info(f"[WebDAV] ⚠️⚠️⚠️ Created VirtualResource for {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}, path={result.path}")
                         return result
                     else:
                         logger.warning(f"[WebDAV] No info returned from proxy for {username}/{rel_path}")
@@ -1876,12 +1811,14 @@ class QuotaFilesystemProvider(FilesystemProvider):
             # Find the file in the listing - try exact match first, then trimmed match
             items = data.get('items', [])
             matched_item = None
-            
+            logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_get_info: filename='{filename}', parent_path='{parent_path}', item_count={len(items)}")
+
             # First try exact match
             for item in items:
                 item_name = item.get('name', '')
                 if item_name == filename:
                     matched_item = item
+                    logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_get_info: MATCHED item={item}")
                     break
             
             # If no exact match, try trimmed match (handle trailing spaces)
@@ -1908,7 +1845,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 }
             else:
                 # File not found - log for debugging
-                logger.debug(f"[WebDAV] File not found in listing: filename='{filename}' (trimmed: '{filename.rstrip()}'), parent_path='{parent_path}', items={[i.get('name') for i in items[:5]]}")
+                logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_get_info: File not found in listing: filename='{filename}' (trimmed: '{filename.rstrip()}'), parent_path='{parent_path}', items={[i.get('name') for i in items[:5]]}")
         except Exception as e:
             logger.error(f"[WebDAV] Failed to get info from storage server: {e}", exc_info=True)
         
