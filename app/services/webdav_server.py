@@ -1295,7 +1295,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT') if isinstance(self._modified, (int, float)) else "",
                         }
                 
-                resource = SimpleResource(full_path, is_directory, size, modified_ts, provider=self, environ=environ)
+                resource = SimpleResource(full_path, is_directory, size, modified_ts, provider=self, environ=None)
                 webdav_resources.append(resource)
 
                 # NOTE: Server-side recursive listing disabled - too slow with one API call per directory
