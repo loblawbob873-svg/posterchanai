@@ -983,11 +983,21 @@ async def get_all_images(
                             # Use filename date for sorting
                             modified_time = filename_timestamp
                             logger.info(f"[STORAGE] Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(stat.st_mtime)}, mtime_age={mtime_age_days:.1f}d, filename_age={filename_age_days:.1f}d)")
-                    
+                    else:
+                        # No filename date extracted - check if this is a recently copied file
+                        current_time = time.time()
+                        mtime_age_days = (current_time - modified_time) / 86400
+
+                        # If mtime is very recent (< 7 days) and no filename date, this is likely
+                        # a file copied via rsync with no EXIF data. Push to bottom by using a very old date.
+                        if mtime_age_days < 7:
+                            modified_time = 0.0  # Epoch time - will sort to bottom
+                            logger.info(f"[STORAGE] No filename date for {filename}, recent mtime ({mtime_age_days:.1f}d old) - pushing to bottom")
+
                     # Fallback to current time if both are invalid
                     if modified_time <= 0:
-                        logger.warning(f"Invalid timestamp for {item}: mtime={stat.st_mtime}, ctime={stat.st_ctime}, using current time")
-                        modified_time = time.time()  # Use current time as fallback
+                        logger.warning(f"Invalid timestamp for {item}: mtime={stat.st_mtime}, ctime={stat.st_ctime}, using 0")
+                        modified_time = 0.0  # Push invalid timestamps to bottom
                     
                     from app.services.thumbnail_service import is_image_file, is_video_file
                     

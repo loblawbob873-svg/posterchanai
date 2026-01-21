@@ -742,6 +742,16 @@ async def get_all_images(
                             # Use filename date for sorting
                             modified_time = filename_timestamp
                             logger.info(f"[FILES] Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(stat.st_mtime)}, mtime_age={mtime_age_days:.1f}d, filename_age={filename_age_days:.1f}d)")
+                    else:
+                        # No filename date extracted - check if this is a recently copied file
+                        current_time = time.time()
+                        mtime_age_days = (current_time - modified_time) / 86400
+
+                        # If mtime is very recent (< 7 days) and no filename date, this is likely
+                        # a file copied via rsync with no EXIF data. Push to bottom by using a very old date.
+                        if mtime_age_days < 7:
+                            modified_time = 0.0  # Epoch time - will sort to bottom
+                            logger.info(f"[FILES] No filename date for {filename}, recent mtime ({mtime_age_days:.1f}d old) - pushing to bottom")
                     
                     # Debug: Log if file timestamp seems suspiciously old (more than 1 year old)
                     # This helps identify files that might not have had EXIF restoration applied
