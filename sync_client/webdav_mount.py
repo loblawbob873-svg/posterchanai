@@ -475,8 +475,13 @@ class WebDAVClient:
                         raise WebDAVError(f"Server returned HTML/XML instead of file content for {path}. Is this a directory?")
                 
                 return content
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, 
-                    requests.exceptions.RequestException) as e:
+            except requests.exceptions.HTTPError as e:
+                # HTTP errors (4xx, 5xx) - don't retry, these won't fix themselves
+                status_code = e.response.status_code if e.response is not None else 0
+                logger.warning(f"Download failed with HTTP {status_code} for {path}: {e}")
+                raise WebDAVError(f"HTTP {status_code} error downloading {path}: {e}")
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                # Network errors - retry with backoff
                 last_error = e
                 if attempt < retry_attempts - 1:
                     logger.warning(f"Download failed (attempt {attempt + 1}/{retry_attempts}): {e}, retrying in {retry_delay}s...")
@@ -484,6 +489,14 @@ class WebDAVClient:
                     retry_delay *= 2  # Exponential backoff
                 else:
                     logger.error(f"Download failed after {retry_attempts} attempts: {e}")
+            except requests.exceptions.RequestException as e:
+                # Other request errors - check if it's an HTTP error
+                if hasattr(e, 'response') and e.response is not None:
+                    status_code = e.response.status_code
+                    logger.warning(f"Download failed with HTTP {status_code} for {path}: {e}")
+                    raise WebDAVError(f"HTTP {status_code} error downloading {path}: {e}")
+                # Unknown request error - don't retry
+                raise WebDAVError(f"Failed to download: {e}")
             except Exception as e:
                 # Non-network errors, don't retry
                 raise WebDAVError(f"Failed to download: {e}")

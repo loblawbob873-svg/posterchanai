@@ -77,8 +77,8 @@ mkdir -p "$SERVICE_DIR"
 mkdir -p "$CONFIG_DIR/logs"
 echo -e "${GREEN}✓${NC} Directories created"
 
-# Copy files
-echo -e "${GREEN}[2/6]${NC} Copying files..."
+# Symlink files (so git pull updates are immediately available)
+echo -e "${GREEN}[2/6]${NC} Creating symlinks to source files..."
 if [ ! -f "$SCRIPT_DIR/webdav_mount.py" ]; then
     echo -e "${RED}${BOLD}[ERROR]${NC} webdav_mount.py not found in $SCRIPT_DIR"
     exit 1
@@ -88,14 +88,18 @@ if [ ! -f "$SCRIPT_DIR/requirements.txt" ]; then
     exit 1
 fi
 
-cp "$SCRIPT_DIR/webdav_mount.py" "$INSTALL_DIR/"
+# Remove old copies if they exist (replace with symlinks)
+[ -f "$INSTALL_DIR/webdav_mount.py" ] && [ ! -L "$INSTALL_DIR/webdav_mount.py" ] && rm "$INSTALL_DIR/webdav_mount.py"
+[ -f "$INSTALL_DIR/setup_wizard.py" ] && [ ! -L "$INSTALL_DIR/setup_wizard.py" ] && rm "$INSTALL_DIR/setup_wizard.py"
+[ -f "$INSTALL_DIR/requirements.txt" ] && [ ! -L "$INSTALL_DIR/requirements.txt" ] && rm "$INSTALL_DIR/requirements.txt"
+
+# Create symlinks to source files
+ln -sf "$SCRIPT_DIR/webdav_mount.py" "$INSTALL_DIR/webdav_mount.py"
 if [ -f "$SCRIPT_DIR/setup_wizard.py" ]; then
-    cp "$SCRIPT_DIR/setup_wizard.py" "$INSTALL_DIR/"
-    chmod +x "$INSTALL_DIR/setup_wizard.py"
+    ln -sf "$SCRIPT_DIR/setup_wizard.py" "$INSTALL_DIR/setup_wizard.py"
 fi
-cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
-chmod +x "$INSTALL_DIR/webdav_mount.py"
-echo -e "${GREEN}✓${NC} Files copied"
+ln -sf "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/requirements.txt"
+echo -e "${GREEN}✓${NC} Symlinks created (git pull updates apply automatically)"
 
 # Create virtual environment
 echo -e "${GREEN}[3/6]${NC} Creating Python virtual environment..."
