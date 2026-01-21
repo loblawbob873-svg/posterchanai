@@ -1924,16 +1924,20 @@ Example: `yt https://youtube.com/watch?v=...`""",
                 return {"type": "text", "content": f"## ◈ SCHEDULE - {date_str.upper()} ◈\n\n{events_text}"}
 
             elif subcommand in ("week", ""):
-                # Get this week's events - show next 7 days from today (including today)
+                # Get this week's events - show current calendar week (Monday through Sunday)
+                # This matches iPhone/calendar behavior where "this week" includes past days
                 today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                # week_end should be end of day 7 (23:59:59), not start of day 8 (00:00:00)
-                # This gives us: today, tomorrow, day+2, day+3, day+4, day+5, day+6, day+7 (8 days total)
-                week_end = today + timedelta(days=7, hours=23, minutes=59, seconds=59)
-                
-                logger.info(f"[cal week] Fetching events for user {self.user.id} from {today.date()} to {week_end.date()}")
+                # Calculate Monday of current week (weekday() returns 0 for Monday, 6 for Sunday)
+                days_since_monday = today.weekday()
+                week_start = today - timedelta(days=days_since_monday)
+                # Week ends on Sunday at 23:59:59 (6 days after Monday)
+                week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+                logger.info(f"[cal week] Calendar week: {week_start.date()} (Mon) to {week_end.date()} (Sun)")
+
+                logger.info(f"[cal week] Fetching events for user {self.user.id} from {week_start.date()} to {week_end.date()}")
                 logger.info(f"[cal week] User has {len(calendars)} calendars configured")
-                
-                events = get_all_user_events(self.user.id, today, week_end, self.db)
+
+                events = get_all_user_events(self.user.id, week_start, week_end, self.db)
                 logger.info(f"[cal week] Found {len(events)} events")
                 
                 events_text = format_events_for_display(events, include_description=True, cyberpunk=True)
