@@ -255,9 +255,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
         """Override to list files, with support for remote storage proxying."""
-        # CRITICAL: This method MUST be called by wsgidav for PROPFIND requests
-        import sys
-        print(f"[WebDAV] get_resource_list CALLED: path={path}, depth={depth}", file=sys.stderr, flush=True)
         logger.debug(f"[WebDAV] get_resource_list CALLED: path={path}, depth={depth}")
         
         # Strip /webdav prefix if present (may be added multiple times)
@@ -345,9 +342,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_inst(self, path: str, environ: dict = None):
         """Override get_resource_inst - wsgidav calls this for PROPFIND and GET requests."""
-        import sys
-        print(f"[WebDAV] get_resource_inst CALLED: path={path}, storage_url={self.storage_server_url}", file=sys.stderr, flush=True)
-        logger.info(f"[WebDAV] get_resource_inst CALLED: path={path}, storage_url={self.storage_server_url}")
+        logger.debug(f"[WebDAV] get_resource_inst CALLED: path={path}")
         
         # Strip /webdav prefix if present
         normalized_path = path.strip('/')
@@ -419,7 +414,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             
                             @property
                             def is_collection(self):
-                                logger.info(f"[WebDAV] VirtualResource.is_collection accessed for {self._path}: returning {self._is_dir}")
                                 return self._is_dir
                             
                             def get_display_name(self):
@@ -445,7 +439,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 that supports read() method.
                                 """
                                 import io
-                                logger.info(f"[WebDAV] VirtualResource.get_content CALLED for {self._path}")
                                 if self._is_dir:
                                     return None
                                 # Extract username and relative path
@@ -605,7 +598,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 return None
                         
                         result = VirtualResource(normalized_path, info, self, environ=environ)
-                        logger.info(f"[WebDAV] Created VirtualResource for {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}")
+                        logger.debug(f"[WebDAV] Created VirtualResource for {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}")
                         return result
                     else:
                         logger.warning(f"[WebDAV] No info returned from proxy for {username}/{rel_path}")
@@ -1086,8 +1079,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_info(self, path: str, environ: dict = None):
         """Override to ensure correct resource type detection, with remote storage support."""
-        import sys
-        print(f"[WebDAV] get_resource_info CALLED: path={path}", file=sys.stderr, flush=True)
         # Strip /webdav prefix if present
         path_stripped = path.strip('/')
         if path_stripped.startswith('webdav/'):
@@ -1324,7 +1315,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
             'file_path': file_path
         }
 
-        logger.info(f"[WebDAV] _proxy_download_file: {url} username={username} file_path={file_path}")
+        logger.debug(f"[WebDAV] _proxy_download_file: {url} username={username} file_path={file_path}")
         response = requests.get(url, headers=headers, params=params, timeout=60, stream=True)
         response.raise_for_status()
         return response.content

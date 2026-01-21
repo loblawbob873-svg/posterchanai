@@ -1081,9 +1081,6 @@ async def startup():
                     # Wrap in middleware to strip /webdav prefix from PATH_INFO
                     def strip_webdav_prefix(wsgi_app):
                         def wrapper(environ, start_response):
-                            import sys
-                            print(f"[WebDAV WRAPPER] Received request: {environ.get('REQUEST_METHOD', 'UNKNOWN')} {environ.get('PATH_INFO', '')}", file=sys.stderr, flush=True)
-                            logging.info(f"[WebDAV WRAPPER] Received request: {environ.get('REQUEST_METHOD', 'UNKNOWN')} {environ.get('PATH_INFO', '')}")
                             # Strip /webdav prefix from PATH_INFO if present (handle multiple occurrences)
                             path_info = environ.get('PATH_INFO', '')
                             original_path = path_info
@@ -1112,7 +1109,7 @@ async def startup():
                                 return [b'CalDAV/CardDAV requests should use /caldav/ or /carddav/ endpoints directly']
 
                             environ['PATH_INFO'] = path_info
-                            logging.info(f"[WebDAV Middleware] Forwarding to WsgiDAV: {original_path} -> {path_info}")
+                            logging.debug(f"[WebDAV Middleware] Forwarding to WsgiDAV: {original_path} -> {path_info}")
                             return wsgi_app(environ, start_response)
                         return wrapper
                     # NOTE: /webdav/caldav/ and /webdav/carddav/ routes are now defined at top level

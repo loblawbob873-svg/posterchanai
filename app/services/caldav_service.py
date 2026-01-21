@@ -263,21 +263,33 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
     events = []
     ics_count = 0
     
+    # Preserve original dates for date-based comparisons (before any timezone conversion)
+    # This ensures events on the boundary dates are included correctly
+    original_start_date = start_date.date() if hasattr(start_date, 'date') else start_date
+    original_end_date = end_date.date() if hasattr(end_date, 'date') else end_date
+
     # Ensure dates are timezone-aware for comparison
-    # Convert to UTC for consistent comparison
+    # IMPORTANT: Naive datetimes are assumed to be LOCAL time, not UTC!
+    # This matches how command_service.py passes dates (local midnight to end of week)
     if start_date.tzinfo is None:
-        start_date = start_date.replace(tzinfo=timezone.utc)
+        # Assume naive datetime is in local time, convert to UTC properly
+        local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+        start_date = start_date.replace(tzinfo=local_tz).astimezone(timezone.utc)
+        logger.debug(f"[CalDAV] Converted naive start_date to UTC: {start_date} (original date: {original_start_date})")
     else:
         # Convert to UTC if timezone-aware
         start_date = start_date.astimezone(timezone.utc)
     if end_date.tzinfo is None:
-        end_date = end_date.replace(tzinfo=timezone.utc)
+        # Assume naive datetime is in local time, convert to UTC properly
+        local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+        end_date = end_date.replace(tzinfo=local_tz).astimezone(timezone.utc)
+        logger.debug(f"[CalDAV] Converted naive end_date to UTC: {end_date} (original date: {original_end_date})")
     else:
         # Convert to UTC if timezone-aware
         end_date = end_date.astimezone(timezone.utc)
     
     logger.info(f"[CalDAV] Date range (UTC): {start_date} to {end_date}")
-    logger.info(f"[CalDAV] Date range (local dates): {start_date.date()} to {end_date.date()}")
+    logger.info(f"[CalDAV] Original date range (for date-based filtering): {original_start_date} to {original_end_date}")
     logger.info(f"[CalDAV] Will include all events that overlap with this range (including events that start before range but end during/after, and events with no end date)")
     
     for item in file_items:
@@ -379,25 +391,34 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                         
                         # First check: event must start before or at the range end
                         # BUT: if the event has no end date or ends after range start, include it (ongoing events)
-                        if event_start > end_date:
-                            # Event starts after the range - skip it
+                        # Use both UTC comparison AND date-based comparison for robustness
+                        event_date = event_start.date() if hasattr(event_start, 'date') else event_start
+                        date_in_range = original_start_date <= event_date <= original_end_date
+
+                        if event_start > end_date and not date_in_range:
+                            # Event starts after the range AND date not in range - skip it
                             summary = component.get('summary', 'No Title')
                             # Log Test/Test2 events even if they're skipped
                             if 'test' in summary.lower():
-                                logger.warning(f"[CalDAV] ⚠️ Skipping event '{summary}' - starts after range: start={event_start.date()}, range end={end_date.date()}, UTC start={event_start}, UTC end={end_date}")
+                                logger.warning(f"[CalDAV] ⚠️ Skipping event '{summary}' - starts after range: start={event_start.date()}, range end={end_date.date()}, UTC start={event_start}, UTC end={end_date}, date_in_range={date_in_range}, original_range={original_start_date} to {original_end_date}")
                             else:
                                 logger.debug(f"[CalDAV] Skipping event '{summary}' - starts after range: start={event_start.date()}, range end={end_date.date()}")
                             continue
                         
                         # Second check: if event has an end date, it must end at or after the range start
                         # OR if event has no end date and started within reasonable time, include it
+                        # Also use date-based check for multi-day events
                         if event_end is not None:
-                            if event_end < start_date:
-                                # Event ended before the range - skip it
+                            event_end_date = event_end.date() if hasattr(event_end, 'date') else event_end
+                            # Check if any part of the event overlaps with the date range
+                            date_overlaps = not (event_end_date < original_start_date or event_date > original_end_date)
+
+                            if event_end < start_date and not date_overlaps:
+                                # Event ended before the range AND dates don't overlap - skip it
                                 summary = component.get('summary', 'No Title')
                                 # Log Test/Test2 events even if they're skipped
                                 if 'test' in summary.lower():
-                                    logger.warning(f"[CalDAV] ⚠️ Skipping event '{summary}' - ended before range: end={event_end.date()}, range start={start_date.date()}, UTC end={event_end}, UTC start={start_date}")
+                                    logger.warning(f"[CalDAV] ⚠️ Skipping event '{summary}' - ended before range: end={event_end.date()}, range start={start_date.date()}, UTC end={event_end}, UTC start={start_date}, date_overlaps={date_overlaps}")
                                 else:
                                     logger.debug(f"[CalDAV] Skipping event '{summary}' - ended before range: end={event_end.date()}, range start={start_date.date()}")
                                 continue
@@ -405,22 +426,28 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                             summary = component.get('summary', 'No Title')
                             # Always log Test/Test2 events for debugging
                             if 'test' in summary.lower():
-                                logger.info(f"[CalDAV] ✓ Including event '{summary}': start={event_start.date()}, end={event_end.date()}, range={start_date.date()} to {end_date.date()}, UTC start={event_start}, UTC end={event_end}")
+                                logger.info(f"[CalDAV] ✓ Including event '{summary}': start={event_start.date()}, end={event_end.date()}, range={start_date.date()} to {end_date.date()}, UTC start={event_start}, UTC end={event_end}, date_in_range={date_in_range}, date_overlaps={date_overlaps}")
                             elif ics_count <= 10:  # Log first 10 events for debugging
                                 logger.info(f"[CalDAV] Including event '{summary}': start={event_start.date()}, end={event_end.date()}, range={start_date.date()} to {end_date.date()}")
                         else:
                             # Event has no end date - include if it's relevant to the range
                             # Include if:
-                            # 1. Event starts within the requested date range (always include)
-                            # 2. Event started before range but within 1 year (ongoing/recent event)
+                            # 1. Event date falls within the original date range (most permissive)
+                            # 2. Event starts within the UTC range (precise check)
+                            # 3. Event started before range but within 1 year (ongoing/recent event)
                             # This prevents very old events (years ago) from appearing
                             summary = component.get('summary', 'No Title')
                             days_before_range = (start_date - event_start).total_seconds() / 86400
-                            
-                            if event_start <= end_date and event_start >= start_date:
-                                # Event starts within the requested range - always include
+
+                            # Use original dates for date-based check (more permissive, ensures Monday events included)
+                            if date_in_range:
+                                # Event date is within original date range - always include
                                 if ics_count <= 10:
-                                    logger.info(f"[CalDAV] Including event '{summary}' (no end, within range): start={event_start.date()}, range={start_date.date()} to {end_date.date()}")
+                                    logger.info(f"[CalDAV] Including event '{summary}' (no end, date in range): start={event_start.date()}, range={original_start_date} to {original_end_date}")
+                            elif event_start <= end_date and event_start >= start_date:
+                                # Event starts within the UTC range - include
+                                if ics_count <= 10:
+                                    logger.info(f"[CalDAV] Including event '{summary}' (no end, within UTC range): start={event_start.date()}, range={start_date.date()} to {end_date.date()}")
                             elif event_start < start_date and 0 <= days_before_range <= 365:
                                 # Event started before range but within 1 year - include it (ongoing/recent)
                                 if ics_count <= 10:

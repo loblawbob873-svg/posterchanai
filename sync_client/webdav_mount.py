@@ -127,6 +127,9 @@ class WebDAVClient:
                     href = elem.find('D:href', ns)
                     if href is not None:
                         href_path = href.text.rstrip('/').lstrip('/')
+                        # Server returns hrefs with /webdav prefix (SCRIPT_NAME), strip it
+                        if href_path.startswith('webdav/'):
+                            href_path = href_path[7:]
                         # Check if this response matches our requested path
                         if href_path == requested_path or href_path.endswith('/' + requested_path):
                             response_elem = elem
@@ -141,6 +144,9 @@ class WebDAVClient:
                         href = elem.find('D:href', ns)
                         if href is not None:
                             href_path = href.text.rstrip('/').lstrip('/')
+                            # Server returns hrefs with /webdav prefix (SCRIPT_NAME), strip it
+                            if href_path.startswith('webdav/'):
+                                href_path = href_path[7:]
                             # Check if this response is a child of the requested path
                             # href_path might be like "verita84@poster.place/chat/chat/1"
                             # requested_path is "verita84@poster.place/chat"
@@ -339,8 +345,12 @@ class WebDAVClient:
                     if file_path.startswith(self.base_url):
                         file_path = file_path[len(self.base_url):].lstrip('/')
                     elif file_path.startswith('/'):
-                        # Absolute path - remove leading slash
+                        # Absolute path - remove leading slash and /webdav prefix if present
                         file_path = file_path.lstrip('/')
+                        # Server returns hrefs with /webdav prefix (SCRIPT_NAME), but we need paths relative to /webdav/
+                        # So strip the webdav/ prefix to avoid double /webdav/webdav/ in requests
+                        if file_path.startswith('webdav/'):
+                            file_path = file_path[7:]  # Remove 'webdav/'
                     
                     # Skip the directory itself
                     normalized_path = path.rstrip('/').lstrip('/')
