@@ -698,6 +698,49 @@ async def proxy_carddav(request: Request, path: str, db: Session = Depends(get_d
         return Response(content=f"CardDAV server error: {e}", status_code=502)
 
 
+# /webdav/principals/ route - iOS may request this for CalDAV principal discovery
+@app.api_route("/webdav/principals/{path:path}", methods=["GET", "PROPFIND", "OPTIONS"])
+async def proxy_webdav_principals(request: Request, path: str = "", db: Session = Depends(get_db)):
+    """Proxy /webdav/principals/... to CalDAV server for iOS compatibility."""
+    from fastapi.responses import Response
+    import httpx
+    from app.database import safe_query_settings
+    dav_settings = safe_query_settings(db)
+    caldav_port = int(dav_settings.get("caldav_port", "8081"))
+    # Proxy to CalDAV's principal endpoint
+    caldav_url = f"http://127.0.0.1:{caldav_port}/caldav/{path}" if path else f"http://127.0.0.1:{caldav_port}/caldav/"
+    if request.url.query:
+        caldav_url += f"?{request.url.query}"
+
+    logging.debug(f"[CalDAV Proxy] {request.method} /webdav/principals/{path} -> {caldav_url}")
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            headers = dict(request.headers)
+            headers.pop("host", None)
+            body_content = await request.body()
+            response = await client.request(
+                method=request.method,
+                url=caldav_url,
+                headers=headers,
+                content=body_content,
+                follow_redirects=False
+            )
+            resp_headers = {}
+            for k, v in response.headers.items():
+                if k.lower() not in ('transfer-encoding', 'connection', 'keep-alive'):
+                    resp_headers[k] = v
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=resp_headers,
+                media_type=response.headers.get('content-type')
+            )
+    except Exception as e:
+        logging.error(f"[CalDAV Proxy] Error proxying /webdav/principals/ to CalDAV: {e}")
+        return Response(content=f"CalDAV server error: {e}", status_code=502)
+
+
 # /webdav/caldav/ and /webdav/carddav/ routes - MUST be defined at top level before WSGI middleware
 # These handle iOS calendar/contacts requests that come via /webdav/ path prefix
 @app.api_route("/webdav/caldav/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCALENDAR", "MKCOL", "MOVE", "COPY", "OPTIONS"])
