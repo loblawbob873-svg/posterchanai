@@ -829,6 +829,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_property_value(self, name):
                         """Return value for a specific property (name in Clark notation)."""
                         from datetime import datetime
+                        logger.debug(f"[WebDAV] get_property_value called: name={{name}}, path={{self._path if hasattr(self, '_path') else 'unknown'}}")
                         if name == "{{DAV:}}getlastmodified":
                             ts = self._modified if hasattr(self, '_modified') else 0
                             return datetime.fromtimestamp(ts).strftime('%a, %d %b %Y %H:%M:%S GMT') if ts else ""
@@ -1172,6 +1173,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_property_value(self, name):
                         """Return value for a specific property (name in Clark notation)."""
                         from datetime import datetime
+                        logger.debug(f"[WebDAV] get_property_value called: name={{name}}, path={{self._path if hasattr(self, '_path') else 'unknown'}}")
                         if name == "{{DAV:}}getlastmodified":
                             ts = self._modified if hasattr(self, '_modified') else 0
                             return datetime.fromtimestamp(ts).strftime('%a, %d %b %Y %H:%M:%S GMT') if ts else ""
