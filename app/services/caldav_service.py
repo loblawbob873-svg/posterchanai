@@ -385,7 +385,21 @@ def _get_events_from_calendar_dir(proxy, cal_dir: str, start_date: datetime, end
                     
                     # Check for recurring events (RRULE) - these need special handling
                     rrule_prop = component.get('rrule')
-                    
+
+                    # Debug: log RRULE detection for every event
+                    summary_debug = str(component.get('summary', 'No Title'))
+                    if rrule_prop:
+                        logger.info(f"[CalDAV] Event '{summary_debug}' HAS RRULE: {rrule_prop}")
+                    else:
+                        # Check if RRULE exists in raw component but wasn't parsed
+                        raw_rrule = None
+                        for line in component.to_ical().decode('utf-8').split('\n'):
+                            if line.startswith('RRULE:'):
+                                raw_rrule = line
+                                break
+                        if raw_rrule:
+                            logger.warning(f"[CalDAV] Event '{summary_debug}' has raw RRULE '{raw_rrule}' but component.get('rrule') returned None!")
+
                     # For non-recurring events, check if event overlaps with date range
                     # An event overlaps if: (event_start <= end_date) AND (event_end is None OR event_end >= start_date)
                     # For recurring events, we'll expand them later so only skip if completely impossible
