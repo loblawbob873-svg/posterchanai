@@ -850,7 +850,7 @@ async def get_storage_addresses(
     if webdav_enabled:
         logger.debug(f"WebDAV enabled setting value: '{webdav_enabled.value}' (type: {type(webdav_enabled.value)})")
         if webdav_enabled.value and str(webdav_enabled.value).strip().lower() == "true":
-            webdav_url = build_dav_url(webdav_base_url, webdav_port, "8080", f"/{current_user.username}")
+            webdav_url = build_dav_url(webdav_base_url, webdav_port, "8080", f"/webdav/{current_user.username}")
             logger.debug(f"Built WebDAV URL: {webdav_url}")
         else:
             logger.debug(f"WebDAV not enabled (value: {webdav_enabled.value})")
