@@ -516,15 +516,19 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         # Create virtual resource based on remote storage info
                         import time
                         
-                        class VirtualResource:
+                        class VirtualResource(_DAVResource):
                             def __init__(self, path, info_dict, provider, environ=None):
+                                if environ is None:
+                                    environ = {"wsgidav.provider": provider} if provider else {}
+                                is_dir = info_dict.get('is_directory', False)
+                                super().__init__(path, is_collection=is_dir, environ=environ)
                                 self._path = path
                                 self._info = info_dict
-                                self._is_dir = info_dict.get('is_directory', False)
+                                self._is_dir = is_dir
                                 self._modified = info_dict.get('modified', time.time())
                                 self._size = info_dict.get('size', 0)
-                                self._provider = provider  # Store reference to provider to call get_resource_instances
-                                self._environ = environ  # Store environ for get_descendants
+                                self._provider = provider
+                                self._environ = environ
                             
                             def get_last_modified(self):
                                 return float(self._modified) if isinstance(self._modified, (int, float)) else time.time()
@@ -774,8 +778,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # Fallback: create minimal resource with all required methods
                 import time
                 
-                class VirtualResource:
-                    def __init__(self, path, is_dir=True):
+                class VirtualResource(_DAVResource):
+                    def __init__(self, path, is_dir=True, environ=None):
+                        if environ is None:
+                            environ = {}
+                        super().__init__(path, is_collection=is_dir, environ=environ)
                         self._path = path
                         self._is_dir = is_dir
                         self._modified = time.time()
@@ -876,7 +883,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         return None
                 
                 logger.debug(f"[WebDAV] Creating VirtualResource for {normalized_path}")
-                resource = VirtualResource(normalized_path, is_dir=True)
+                resource = VirtualResource(normalized_path, is_dir=True, environ=environ)
                 return resource
         
         logger.debug(f"[WebDAV] Using parent class for local filesystem")
@@ -1088,8 +1095,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # Let's create a proper resource info object that matches what wsgidav expects
                 
                 # Create a simple resource object with all required methods
-                class SimpleResource:
-                    def __init__(self, path, is_dir, size, modified, provider=None):
+                class SimpleResource(_DAVResource):
+                    def __init__(self, path, is_dir, size, modified, provider=None, environ=None):
+                        # Initialize parent _DAVResource
+                        if environ is None:
+                            environ = {"wsgidav.provider": provider} if provider else {}
+                        super().__init__(path, is_collection=is_dir, environ=environ)
+                        # Store our custom attributes
                         self._path = path
                         self._is_dir = is_dir
                         self._size = size
@@ -1293,7 +1305,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT') if isinstance(self._modified, (int, float)) else "",
                         }
                 
-                resource = SimpleResource(full_path, is_directory, size, modified_ts, provider=self)
+                resource = SimpleResource(full_path, is_directory, size, modified_ts, provider=self, environ=environ)
                 webdav_resources.append(resource)
 
                 # NOTE: Server-side recursive listing disabled - too slow with one API call per directory
