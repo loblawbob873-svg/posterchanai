@@ -620,6 +620,37 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 """Return True if get_etag() returns a valid value."""
                                 return False
 
+                            def begin_write(self, *, content_type=None):
+                                """Open content for writing - return a file-like object."""
+                                import io
+                                logger.debug(f"[WebDAV] VirtualResource.begin_write called for {self._path}")
+                                if self._is_dir:
+                                    from wsgidav.dav_error import DAVError, HTTP_FORBIDDEN
+                                    raise DAVError(HTTP_FORBIDDEN, "Cannot write to a directory")
+                                # Return a BytesIO buffer that we'll write to the storage server in end_write
+                                self._write_buffer = io.BytesIO()
+                                return self._write_buffer
+
+                            def end_write(self, *, with_errors):
+                                """Called after writing is complete."""
+                                logger.debug(f"[WebDAV] VirtualResource.end_write called for {self._path}, with_errors={with_errors}")
+                                if with_errors:
+                                    logger.error(f"[WebDAV] Write completed with errors for {self._path}")
+                                    return
+                                # Get the written content and proxy it to storage server
+                                if hasattr(self, '_write_buffer'):
+                                    content = self._write_buffer.getvalue()
+                                    logger.debug(f"[WebDAV] Writing {len(content)} bytes to {self._path}")
+                                    try:
+                                        self._provider.write_file_content(self._path, content)
+                                        logger.info(f"[WebDAV] Successfully wrote {len(content)} bytes to {self._path}")
+                                    except Exception as e:
+                                        logger.error(f"[WebDAV] Failed to write to {self._path}: {e}", exc_info=True)
+                                        from wsgidav.dav_error import DAVError, HTTP_INTERNAL_ERROR
+                                        raise DAVError(HTTP_INTERNAL_ERROR, f"Failed to write file: {e}")
+                                    finally:
+                                        delattr(self, '_write_buffer')
+
                             def finalize_headers(self, environ, response_headers):
                                 """Called by WsgiDAV to allow the resource to modify response headers.
 
@@ -853,6 +884,27 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_content(self):
                         """Fallback VirtualResource - no content (used for directories)."""
                         return None
+
+                    def begin_write(self, *, content_type=None):
+                        """Open content for writing - return a file-like object."""
+                        import io
+                        logger.debug(f"[WebDAV] VirtualResource(fallback).begin_write called for {self._path}")
+                        if self._is_dir:
+                            from wsgidav.dav_error import DAVError, HTTP_FORBIDDEN
+                            raise DAVError(HTTP_FORBIDDEN, "Cannot write to a directory")
+                        # Return a BytesIO buffer that we'll write to the storage server in end_write
+                        self._write_buffer = io.BytesIO()
+                        return self._write_buffer
+
+                    def end_write(self, *, with_errors):
+                        """Called after writing is complete."""
+                        logger.debug(f"[WebDAV] VirtualResource(fallback).end_write called for {self._path}, with_errors={with_errors}")
+                        if with_errors:
+                            logger.error(f"[WebDAV] Write completed with errors for {self._path}")
+                            return
+                        # This is a fallback resource, likely doesn't have a provider to write to
+                        # Just log and ignore
+                        logger.warning(f"[WebDAV] VirtualResource(fallback) end_write - no provider to write to")
 
                     def support_content_length(self):
                         return False
@@ -1136,6 +1188,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def __init__(self, path, is_dir, size, modified, provider=None, environ=None):
                         # Ensure path is always a string, never a list
                         path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
+                        logger.debug(f"[WebDAV] SimpleResource.__init__: path={path}, path_str={path_str}, type={type(path_str)}")
                         # Manually set required attributes without calling super().__init__
                         if environ is None:
                             environ = {"wsgidav.provider": provider} if provider else {}
@@ -1151,6 +1204,15 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         object.__setattr__(self, '_size', size)
                         object.__setattr__(self, '_modified', modified)
                         object.__setattr__(self, '_provider', provider)
+
+                    def __getattribute__(self, name):
+                        """Override to log and ensure path is always a string."""
+                        if name == 'path':
+                            _path = object.__getattribute__(self, '_path')
+                            result = str(_path)
+                            logger.debug(f"[WebDAV] SimpleResource.__getattribute__('path'): returning {result}, type={type(result)}")
+                            return result
+                        return object.__getattribute__(self, name)
 
                     def get_last_modified(self):
                         # Return timestamp as float (not datetime)
@@ -1218,6 +1280,42 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                     def support_content_length(self):
                         return not self._is_dir
+
+                    def begin_write(self, *, content_type=None):
+                        """Open content for writing - return a file-like object."""
+                        import io
+                        logger.debug(f"[WebDAV] SimpleResource.begin_write called for {self._path}")
+                        if self._is_dir:
+                            from wsgidav.dav_error import DAVError, HTTP_FORBIDDEN
+                            raise DAVError(HTTP_FORBIDDEN, "Cannot write to a directory")
+                        # Return a BytesIO buffer that we'll write to the storage server in end_write
+                        self._write_buffer = io.BytesIO()
+                        return self._write_buffer
+
+                    def end_write(self, *, with_errors):
+                        """Called after writing is complete."""
+                        logger.debug(f"[WebDAV] SimpleResource.end_write called for {self._path}, with_errors={with_errors}")
+                        if with_errors:
+                            logger.error(f"[WebDAV] Write completed with errors for {self._path}")
+                            return
+                        # Get the written content and proxy it to storage server
+                        if hasattr(self, '_write_buffer'):
+                            content = self._write_buffer.getvalue()
+                            logger.debug(f"[WebDAV] Writing {len(content)} bytes to {self._path}")
+                            try:
+                                if self._provider:
+                                    self._provider.write_file_content(self._path, content)
+                                    logger.info(f"[WebDAV] Successfully wrote {len(content)} bytes to {self._path}")
+                                else:
+                                    logger.error(f"[WebDAV] No provider available to write to {self._path}")
+                                    from wsgidav.dav_error import DAVError, HTTP_INTERNAL_ERROR
+                                    raise DAVError(HTTP_INTERNAL_ERROR, "No storage provider available")
+                            except Exception as e:
+                                logger.error(f"[WebDAV] Failed to write to {self._path}: {e}", exc_info=True)
+                                from wsgidav.dav_error import DAVError, HTTP_INTERNAL_ERROR
+                                raise DAVError(HTTP_INTERNAL_ERROR, f"Failed to write file: {e}")
+                            finally:
+                                delattr(self, '_write_buffer')
 
                     def get_descendants(self, depth=1, add_self=False, depth_first=False):
                         # Return empty list or None - wsgidav will call get_resource_instances for children
@@ -1356,7 +1454,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT') if isinstance(self._modified, (int, float)) else "",
                         }
                 
+                logger.debug(f"[WebDAV] Creating SimpleResource: full_path={full_path}, type={type(full_path)}")
                 resource = SimpleResource(full_path, is_directory, size, modified_ts, provider=self, environ=None)
+                logger.debug(f"[WebDAV] Created resource.path={resource.path}, type={type(resource.path)}")
+                logger.debug(f"[WebDAV] Created resource.get_href()={resource.get_href()}, type={type(resource.get_href())}")
                 webdav_resources.append(resource)
 
                 # NOTE: Server-side recursive listing disabled - too slow with one API call per directory
