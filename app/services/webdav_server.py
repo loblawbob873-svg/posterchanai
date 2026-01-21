@@ -630,7 +630,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     logger.error(f"[WebDAV] VirtualResource.get_descendants error: {e}", exc_info=True)
                                     return []
                             
-                            def get_properties(self, propname="allprop"):
+                            def get_properties(self, propname="allprop", name_list=None):
                                 # Return properties as list of (name, value) tuples - wsgidav expects this format
                                 from datetime import datetime
                                 props = []
@@ -782,7 +782,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_descendants(self, depth=1, add_self=False):
                         return []
 
-                    def get_properties(self, propname="allprop"):
+                    def get_properties(self, propname="allprop", name_list=None):
                         # Return properties as list of (name, value) tuples - wsgidav expects this format
                         from datetime import datetime
                         props = []
@@ -1091,7 +1091,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         # Return empty list or None - wsgidav will call get_resource_instances for children
                         return []
 
-                    def get_properties(self, propname="allprop"):
+                    def get_properties(self, propname="allprop", name_list=None):
                         # Return properties as list of (name, value) tuples - wsgidav expects this format
                         from datetime import datetime
                         props = []
