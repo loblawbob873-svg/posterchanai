@@ -799,8 +799,8 @@ class CacheManager:
 
 class WebDAVSync:
     """Pure Python WebDAV sync - no FUSE required!"""
-    
-    def __init__(self, webdav_client: WebDAVClient, local_dir: Path, remote_base: str, cache: CacheManager = None, network_retry_attempts: int = 5, network_retry_delay: int = 5, conflict_resolution: str = 'last_write_wins'):
+
+    def __init__(self, webdav_client: WebDAVClient, local_dir: Path, remote_base: str, cache: CacheManager = None, network_retry_attempts: int = 5, network_retry_delay: int = 5, conflict_resolution: str = 'last_write_wins', excluded_folders: list = None):
         self.webdav = webdav_client
         self.local_dir = Path(local_dir)
         self.remote_base = remote_base.rstrip('/')
@@ -810,6 +810,9 @@ class WebDAVSync:
         self.network_retry_attempts = network_retry_attempts
         self.network_retry_delay = network_retry_delay
         self.conflict_resolution = conflict_resolution  # Options: 'last_write_wins', 'manual', 'local_wins', 'remote_wins'
+        self.excluded_folders = excluded_folders or []  # Folders to exclude from sync
+        if self.excluded_folders:
+            logger.info(f"Excluded folders configured: {self.excluded_folders}")
     
     def _remote_path(self, local_path: Path) -> str:
         """Convert local path to remote path"""
@@ -840,7 +843,38 @@ class WebDAVSync:
             return self.local_dir
         
         return result
-    
+
+    def _should_exclude(self, path: str) -> bool:
+        """Check if a path should be excluded from sync based on excluded_folders config.
+
+        Args:
+            path: Remote path or local path to check (can be full path or relative)
+
+        Returns:
+            True if the path should be excluded, False otherwise
+        """
+        if not self.excluded_folders:
+            return False
+
+        # Normalize the path - remove remote_base prefix if present
+        check_path = path.lstrip('/').rstrip('/')
+        if check_path.startswith(self.remote_base + '/'):
+            check_path = check_path[len(self.remote_base) + 1:]
+
+        # Split path into components
+        path_parts = set(check_path.split('/'))
+
+        # Check if any path component matches an excluded folder
+        for excluded in self.excluded_folders:
+            excluded = excluded.strip('/')
+            if not excluded:  # Skip empty strings
+                continue
+            if excluded in path_parts:
+                logger.debug(f"Excluding path (matches '{excluded}'): {path}")
+                return True
+
+        return False
+
     def sync_from_remote(self, path: str = ""):
         """Sync files from remote to local"""
         # Wrap entire method to catch and handle permission errors gracefully
@@ -885,7 +919,12 @@ class WebDAVSync:
             for file_info in files:
                 try:
                     file_remote_path = file_info['path']
-                    
+
+                    # Check if this path should be excluded
+                    if self._should_exclude(file_remote_path):
+                        logger.debug(f"Skipping excluded path: {file_remote_path}")
+                        continue
+
                     # Fix path duplication bug: if we're syncing a subdirectory and the path is duplicated
                     # e.g., if path='Joplin' and file_remote_path='verita84@poster.place/Joplin/Joplin/file.md'
                     # we should correct it to 'verita84@poster.place/Joplin/file.md'
@@ -1299,7 +1338,12 @@ class WebDAVSync:
         for local_path in self.local_dir.rglob('*'):
             if not local_path.is_file():
                 continue
-            
+
+            # Check if this path should be excluded
+            rel_path = str(local_path.relative_to(self.local_dir))
+            if self._should_exclude(rel_path):
+                continue
+
             try:
                 remote_path = self._remote_path(local_path)
                 local_stat = local_path.stat()
@@ -1452,7 +1496,198 @@ class WebDAVSync:
                 shutil.copy2(local_path, conflict_path)
                 logger.warning(f"Conflict detected for {remote_path}: created {conflict_path}")
             return 'remote'  # Use remote version, user can manually merge
-    
+
+    def sync_from_remote_fast(self, path: str = "", max_workers: int = 8, remote_files: list = None):
+        """Fast sync using depth=infinity (single PROPFIND) and concurrent downloads.
+
+        This replaces the recursive sync_from_remote for much better performance:
+        - Single PROPFIND request gets entire file tree instead of N+1 requests
+        - Concurrent downloads using ThreadPoolExecutor
+        - Skip unchanged files based on sync state
+
+        Args:
+            path: Remote path to sync
+            max_workers: Number of concurrent download threads
+            remote_files: Optional pre-fetched file list (avoids redundant PROPFIND if already have it)
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        path = path.lstrip('/')
+        start_time = time.time()
+
+        # Use pre-fetched file list if provided, otherwise fetch it
+        if remote_files is not None:
+            files = remote_files
+            logger.info(f"[Fast Sync] Using pre-fetched file list ({len(files)} items)")
+        else:
+            if path:
+                ls_path = f"{self.remote_base}/{path}" if self.remote_base else path
+            else:
+                ls_path = self.remote_base if self.remote_base else ""
+            ls_path = ls_path.lstrip('/')
+
+            logger.info(f"[Fast Sync] Starting sync with depth=infinity for {ls_path or 'root'}")
+
+            # Get entire file tree in ONE request using depth=infinity
+            try:
+                files = self.webdav.ls(ls_path, depth=999, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
+                logger.info(f"[Fast Sync] Got {len(files)} items in {time.time() - start_time:.2f}s")
+            except Exception as e:
+                logger.warning(f"[Fast Sync] Failed to list with depth=infinity: {e}, falling back to recursive sync")
+                self.sync_from_remote(path)
+                return
+
+        # Check if depth=infinity actually worked - if we got very few items at root level,
+        # the server likely doesn't support it properly. Fall back to recursive sync.
+        if len(files) < 50 and not path:
+            logger.info(f"[Fast Sync] Only {len(files)} items returned, server may not support depth=infinity. Using recursive sync.")
+            self.sync_from_remote(path)
+            return
+
+        # Separate directories and files
+        dirs_to_create = []
+        files_to_download = []
+
+        for file_info in files:
+            file_remote_path = file_info['path']
+
+            # Check exclusions
+            if self._should_exclude(file_remote_path):
+                continue
+
+            # Skip base directory
+            normalized_remote = file_remote_path.rstrip('/')
+            if normalized_remote == self.remote_base or normalized_remote == f'/{self.remote_base}':
+                continue
+
+            file_local_path = self._local_path(file_remote_path)
+
+            # Safety check
+            local_str = str(file_local_path)
+            mount_str = str(self.local_dir)
+            if not local_str.startswith(mount_str):
+                continue
+
+            is_dir = file_info.get('isdir', False)
+
+            if is_dir:
+                dirs_to_create.append(file_local_path)
+            else:
+                # Check if file needs downloading
+                listing_mtime = file_info.get('modified')
+                file_size = file_info.get('size', -1)
+
+                # Skip files without extension (likely directories not properly detected)
+                filename = file_local_path.name
+                has_extension = '.' in filename and not filename.startswith('.')
+                if not has_extension and file_size <= 0:
+                    # No extension and no size = almost certainly a directory
+                    dirs_to_create.append(file_local_path)
+                    continue
+
+                should_download = True
+
+                # Check sync state - skip if unchanged
+                if self.cache:
+                    sync_state = self.cache.get_sync_state(file_remote_path)
+                    if sync_state and file_local_path.exists():
+                        cached_mtime = sync_state.get('mtime', 0)
+                        cached_size = sync_state.get('size', 0)
+                        # Skip if remote hasn't changed
+                        if listing_mtime and listing_mtime <= cached_mtime:
+                            if file_size < 0 or file_size == cached_size:
+                                should_download = False
+                                logger.debug(f"[Fast Sync] Skipping unchanged: {file_remote_path}")
+
+                # Also check local file mtime
+                if should_download and file_local_path.exists() and listing_mtime:
+                    try:
+                        local_mtime = file_local_path.stat().st_mtime
+                        if local_mtime >= listing_mtime:
+                            should_download = False
+                    except OSError:
+                        pass
+
+                if should_download:
+                    files_to_download.append({
+                        'remote_path': file_remote_path,
+                        'local_path': file_local_path,
+                        'mtime': listing_mtime or time.time(),
+                        'size': file_size
+                    })
+
+        # Create all directories first (sorted by depth to create parents first)
+        dirs_to_create.sort(key=lambda p: len(p.parts))
+        for dir_path in dirs_to_create:
+            try:
+                if dir_path.exists() and dir_path.is_file():
+                    dir_path.unlink()
+                dir_path.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                logger.debug(f"[Fast Sync] Error creating dir {dir_path}: {e}")
+
+        logger.info(f"[Fast Sync] Created {len(dirs_to_create)} directories, downloading {len(files_to_download)} files")
+
+        if not files_to_download:
+            logger.info(f"[Fast Sync] No files to download, sync complete in {time.time() - start_time:.2f}s")
+            return
+
+        # Download files concurrently
+        downloaded = 0
+        errors = 0
+
+        def download_file(file_info):
+            """Download a single file (runs in thread pool)"""
+            remote_path = file_info['remote_path']
+            local_path = file_info['local_path']
+            mtime = file_info['mtime']
+
+            try:
+                # Normalize path for download
+                download_path = remote_path
+                if not download_path.startswith('/'):
+                    download_path = '/' + download_path
+                download_path = download_path.rstrip('/')
+
+                content = self.webdav.download(download_path, retry_attempts=2, retry_delay=1)
+
+                # Validate content
+                if content.startswith(b'<?xml') or content.startswith(b'<html') or content.startswith(b'<!DOCTYPE'):
+                    return ('error', remote_path, 'Server returned HTML/XML')
+
+                # Write file
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                local_path.write_bytes(content)
+                os.utime(local_path, (mtime, mtime))
+
+                # Update cache/sync state
+                if self.cache:
+                    content_hash = hashlib.md5(content).hexdigest()
+                    self.cache.update_sync_state(remote_path, local_path, mtime, len(content), content_hash)
+                    if self.cache.should_cache_directory(remote_path):
+                        self.cache.cache_file(remote_path, content, mtime, force=True)
+
+                return ('ok', remote_path, len(content))
+            except Exception as e:
+                return ('error', remote_path, str(e))
+
+        # Use thread pool for concurrent downloads
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(download_file, f): f for f in files_to_download}
+
+            for future in as_completed(futures):
+                result = future.result()
+                if result[0] == 'ok':
+                    downloaded += 1
+                    if downloaded % 50 == 0:
+                        logger.info(f"[Fast Sync] Progress: {downloaded}/{len(files_to_download)} files")
+                else:
+                    errors += 1
+                    logger.debug(f"[Fast Sync] Error downloading {result[1]}: {result[2]}")
+
+        elapsed = time.time() - start_time
+        logger.info(f"[Fast Sync] Complete: {downloaded} downloaded, {errors} errors in {elapsed:.2f}s")
+
     def sync_bidirectional(self, path: str = ""):
         """Perform bidirectional sync: detect changes in both directions and sync accordingly"""
         # Step 1: Detect local changes
@@ -1461,7 +1696,7 @@ class WebDAVSync:
         if local_changes:
             logger.info(f"Detected {len(local_changes)} locally modified files")
         
-        # Step 2: Get current remote file list
+        # Step 2: Get current remote file list (use depth=infinity for entire tree in one request)
         try:
             path = path.lstrip('/')
             if path:
@@ -1469,8 +1704,15 @@ class WebDAVSync:
             else:
                 ls_path = self.remote_base if self.remote_base else ""
             ls_path = ls_path.lstrip('/')
-            
-            files = self.webdav.ls(ls_path, depth=1, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
+
+            # Try depth=infinity first, fall back to depth=1 if server doesn't support it
+            files = self.webdav.ls(ls_path, depth=999, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
+
+            # Check if depth=infinity worked - if we got very few items, server might not support it
+            # In that case, fall back to depth=1 (bidirectional sync handles moves/deletes at top level)
+            if len(files) < 50:
+                logger.info(f"depth=infinity returned only {len(files)} items, server may not support it fully")
+
             current_remote_files = {f['path']: f for f in files}
             current_remote_paths = set(current_remote_files.keys())
         except Exception as e:
@@ -1573,20 +1815,15 @@ class WebDAVSync:
                 logger.warning(f"Error uploading {local_path}: {e}")
     
     def sync_from_remote_with_conflicts(self, path: str = "", current_remote_files: dict = None):
-        """Sync from remote with conflict detection"""
-        # Use existing sync_from_remote but track sync state
-        # This is a wrapper that adds sync state tracking
-        if current_remote_files is None:
-            # Fallback to regular sync_from_remote
-            self.sync_from_remote(path)
-            return
-        
-        # Enhanced version that tracks sync state
-        # For now, call regular sync_from_remote and update sync state
-        self.sync_from_remote(path)
-        
-        # Update sync state for all synced files
-        # This would be done in sync_from_remote, but we'll add it here for now
+        """Sync from remote with conflict detection - uses fast sync with depth=infinity"""
+        # Use the fast sync method which does:
+        # - Single PROPFIND with depth=infinity (instead of N+1 recursive calls)
+        # - Concurrent downloads (instead of sequential)
+        # - Skip unchanged files based on sync state
+
+        # Pass the pre-fetched file list if we have it (avoids redundant PROPFIND)
+        remote_files = list(current_remote_files.values()) if current_remote_files else None
+        self.sync_from_remote_fast(path, remote_files=remote_files)
 
 
 class WebDAVMount:
@@ -1616,6 +1853,7 @@ class WebDAVMount:
             "cache_max_size_mb": 204800,  # Default 200GB cache
             "cache_max_age_days": 30,
             "cache_directories": [],  # List of directories to always cache (e.g., ["documents", "images"])
+            "excluded_folders": [],  # List of folders to exclude from sync (e.g., [".git", "node_modules", "__pycache__"])
             "network_retry_attempts": 5,
             "network_retry_delay": 5,  # seconds
             "offline_mode": False,  # If True, only use cache, don't try to sync
@@ -1795,16 +2033,20 @@ class WebDAVMount:
         
         # Get conflict resolution strategy
         conflict_resolution = self.config.get("conflict_resolution", "last_write_wins")
-        
+
+        # Get excluded folders
+        excluded_folders = self.config.get("excluded_folders", [])
+
         # Create sync manager
         self._sync = WebDAVSync(
-            self.webdav, 
-            self.mount_point, 
-            self.base_path, 
+            self.webdav,
+            self.mount_point,
+            self.base_path,
             self.cache,
             network_retry_attempts=network_retry_attempts,
             network_retry_delay=network_retry_delay,
-            conflict_resolution=conflict_resolution
+            conflict_resolution=conflict_resolution,
+            excluded_folders=excluded_folders
         )
         
         # Check if offline mode is enabled

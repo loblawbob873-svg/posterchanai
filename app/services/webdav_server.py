@@ -297,9 +297,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     # Continue to try listing - might be a directory
                 
                 # Proxy to storage server - this is the ONLY way when remote storage is configured
+                # Pass depth to support Depth: infinity PROPFIND requests
                 try:
-                    result = self._proxy_list_files(username, rel_path)
-                    logger.info(f"[WebDAV] Proxied list returned {len(result)} items for {username}/{rel_path}")
+                    result = self._proxy_list_files(username, rel_path, depth=depth)
+                    logger.info(f"[WebDAV] Proxied list returned {len(result)} items for {username}/{rel_path} (depth={depth})")
                     if len(result) == 0:
                         logger.warning(f"[WebDAV] Proxy returned 0 items - check if storage_server_url ({self.storage_server_url}) is correct")
                     return result
@@ -490,19 +491,21 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             def get_descendants(self, depth=1, add_self=False):
                                 # Get children by calling get_resource_list directly
                                 # wsgidav calls get_descendants on the resource to get children
+                                # IMPORTANT: Pass the actual depth to support Depth: infinity requests
                                 logger.debug(f"[WebDAV] VirtualResource.get_descendants CALLED: path={self._path}, depth={depth}, add_self={add_self}")
-                                
+
                                 # If this is a file (not a directory), return empty list
                                 if not self._is_dir:
                                     logger.debug(f"[WebDAV] VirtualResource.get_descendants: {self._path} is a file, returning empty list")
                                     return []
-                                
+
                                 try:
-                                    # Call get_resource_list with depth=1 to get immediate children (not depth=0)
-                                    # depth=0 would return only self, depth=1 returns children
-                                    # Pass environ if available (stored from get_resource_inst)
-                                    children = self._provider.get_resource_list(self._path, depth=1, environ=self._environ)
-                                    logger.debug(f"[WebDAV] VirtualResource.get_descendants: get_resource_list returned {len(children) if children else 0} children for {self._path}")
+                                    # Pass the actual depth to get_resource_list
+                                    # depth=1 returns immediate children, depth>1 returns all descendants recursively
+                                    # Convert "infinity" depth to a large number (wsgidav may pass -1 or string)
+                                    effective_depth = depth if isinstance(depth, int) and depth > 0 else 999
+                                    children = self._provider.get_resource_list(self._path, depth=effective_depth, environ=self._environ)
+                                    logger.debug(f"[WebDAV] VirtualResource.get_descendants: get_resource_list returned {len(children) if children else 0} children for {self._path} (depth={effective_depth})")
                                     return children if children else []
                                 except Exception as e:
                                     logger.error(f"[WebDAV] VirtualResource.get_descendants error: {e}", exc_info=True)
@@ -780,28 +783,34 @@ class QuotaFilesystemProvider(FilesystemProvider):
         # Fall back to parent for local filesystem
         return super().get_content(path, environ)
     
-    def _proxy_list_files(self, username: str, path: str):
-        """Proxy file listing - uses the same proxying mechanism as files router."""
+    def _proxy_list_files(self, username: str, path: str, depth: int = 1):
+        """Proxy file listing - uses the same proxying mechanism as files router.
+
+        Args:
+            username: User's username
+            path: Path to list
+            depth: Listing depth (1=immediate children, >1=recursive/infinity)
+        """
         import requests
-        
+
         # Use the same proxying logic as /api/files/list
         # Call storage_server_url/api/storage/list-files with server token
         if not self.storage_server_url:
             raise Exception("storage_server_url not configured")
-        
+
         url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
         headers = {}
         if self.storage_server_token:
             headers["Authorization"] = f"Bearer {self.storage_server_token}"
         else:
             logger.warning(f"[WebDAV] No storage_server_token configured - authentication may fail")
-        
+
         params = {
             "username": username,
             "path": path
         }
-        
-        logger.info(f"[WebDAV] Proxying to storage server: {url} for username={username}, path={path}")
+
+        logger.info(f"[WebDAV] Proxying to storage server: {url} for username={username}, path={path}, depth={depth}")
         logger.info(f"[WebDAV] Using token: {'Yes' if self.storage_server_token else 'No'}")
         try:
             # Add retry logic for connection errors
@@ -1057,10 +1066,22 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 
                 resource = SimpleResource(full_path, is_directory, size, modified_ts, provider=self)
                 webdav_resources.append(resource)
-            
-            logger.info(f"[WebDAV] Created {len(webdav_resources)} SimpleResource objects from {len(items)} storage items")
+
+                # If depth > 1 (infinity) and this is a directory, recursively list it
+                if depth > 1 and is_directory:
+                    try:
+                        # Get the relative path for this directory
+                        dir_rel_path = f"{path}/{item_path}".strip('/') if path else item_path
+                        # Recursively list this directory
+                        sub_resources = self._proxy_list_files(username, dir_rel_path, depth=depth)
+                        webdav_resources.extend(sub_resources)
+                        logger.debug(f"[WebDAV] Recursive list of {dir_rel_path} returned {len(sub_resources)} items")
+                    except Exception as e:
+                        logger.warning(f"[WebDAV] Failed to recursively list {item_path}: {e}")
+
+            logger.info(f"[WebDAV] Created {len(webdav_resources)} SimpleResource objects (depth={depth})")
             return webdav_resources
-            
+
             logger.info(f"[WebDAV] Proxied list from storage server: {len(webdav_resources)} items for {username}/{path}")
             if len(webdav_resources) == 0:
                 logger.warning(f"[WebDAV] Proxy returned 0 items - this might indicate an issue with the storage server or path")
