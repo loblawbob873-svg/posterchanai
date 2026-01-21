@@ -150,11 +150,12 @@ def test_directory_access(directory: str, recursive: bool = True, db: Session = 
                         # Count audio files (storage proxy returns 'items' not 'files')
                         track_count = 0
                         storage_items = data.get('items', data.get('files', []))
+                        audio_exts_lower = {ext.lower() for ext in AUDIO_EXTENSIONS}
                         for item in storage_items:
                             # Storage proxy uses 'is_directory' not 'type'
                             if not item.get('is_directory', True) or item.get('type') == 'file':
                                 ext = Path(item['name']).suffix.lower()
-                                if ext in AUDIO_EXTENSIONS:
+                                if ext in audio_exts_lower:
                                     track_count += 1
                         
                         logger.info(f"[MUSIC TEST PROXY] Found {track_count} tracks")
@@ -187,9 +188,9 @@ def test_directory_access(directory: str, recursive: bool = True, db: Session = 
         track_count = 0
         if recursive:
             for root, dirs, files in os.walk(directory):
-                track_count += sum(1 for f in files if Path(f).suffix in AUDIO_EXTENSIONS)
+                track_count += sum(1 for f in files if Path(f).suffix.lower() in {ext.lower() for ext in AUDIO_EXTENSIONS})
         else:
-            track_count = sum(1 for f in path.iterdir() if f.is_file() and f.suffix in AUDIO_EXTENSIONS)
+            track_count = sum(1 for f in path.iterdir() if f.is_file() and f.suffix.lower() in {ext.lower() for ext in AUDIO_EXTENSIONS})
         
         return {
             "success": True,
@@ -257,7 +258,8 @@ def scan_music_directory(directory: str, recursive: bool = True, subfolder: str 
                                     # Check if it's an audio file
                                     name = item['name']
                                     ext = Path(name).suffix.lower()
-                                    if ext in AUDIO_EXTENSIONS:
+                                    audio_exts_lower = {e.lower() for e in AUDIO_EXTENSIONS}
+                                    if ext in audio_exts_lower:
                                         # Use the full path from storage server (includes directory)
                                         full_path = item.get('path', name)
                                         items.append({
@@ -295,18 +297,19 @@ def scan_music_directory(directory: str, recursive: bool = True, subfolder: str 
             
             if item.is_dir():
                 # Count music files in subdirectory
+                audio_exts_lower = {ext.lower() for ext in AUDIO_EXTENSIONS}
                 if recursive:
-                    file_count = sum(1 for f in item.rglob('*') if f.is_file() and f.suffix in AUDIO_EXTENSIONS)
+                    file_count = sum(1 for f in item.rglob('*') if f.is_file() and f.suffix.lower() in audio_exts_lower)
                 else:
-                    file_count = sum(1 for f in item.iterdir() if f.is_file() and f.suffix in AUDIO_EXTENSIONS)
-                
+                    file_count = sum(1 for f in item.iterdir() if f.is_file() and f.suffix.lower() in audio_exts_lower)
+
                 items.append({
                     'type': 'folder',
                     'name': item.name,
                     'path': str(item.relative_to(base_path)),
                     'track_count': file_count
                 })
-            elif item.is_file() and item.suffix in AUDIO_EXTENSIONS:
+            elif item.is_file() and item.suffix.lower() in {ext.lower() for ext in AUDIO_EXTENSIONS}:
                 # Get file metadata
                 try:
                     size = item.stat().st_size
