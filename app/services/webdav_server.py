@@ -521,15 +521,22 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 if environ is None:
                                     environ = {"wsgidav.provider": provider} if provider else {}
                                 is_dir = info_dict.get('is_directory', False)
-                                super().__init__(path, is_collection=is_dir, environ=environ)
-                                self._path = path
+                                # Ensure path is always a string, never a list
+                                path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
+                                super().__init__(path_str, is_collection=is_dir, environ=environ)
+                                self._path = path_str
                                 self._info = info_dict
                                 self._is_dir = is_dir
                                 self._modified = info_dict.get('modified', time.time())
                                 self._size = info_dict.get('size', 0)
                                 self._provider = provider
                                 self._environ = environ
-                            
+
+                            @property
+                            def path(self):
+                                """Ensure path is always a string."""
+                                return str(self._path)
+
                             def get_last_modified(self):
                                 return float(self._modified) if isinstance(self._modified, (int, float)) else time.time()
                             
@@ -793,11 +800,18 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def __init__(self, path, is_dir=True, environ=None):
                         if environ is None:
                             environ = {}
-                        super().__init__(path, is_collection=is_dir, environ=environ)
-                        self._path = path
+                        # Ensure path is always a string, never a list
+                        path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
+                        super().__init__(path_str, is_collection=is_dir, environ=environ)
+                        self._path = path_str
                         self._is_dir = is_dir
                         self._modified = time.time()
-                    
+
+                    @property
+                    def path(self):
+                        """Ensure path is always a string."""
+                        return str(self._path)
+
                     def get_last_modified(self):
                         return self._modified
                     
@@ -1118,14 +1132,21 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         # Initialize parent _DAVResource
                         if environ is None:
                             environ = {"wsgidav.provider": provider} if provider else {}
-                        super().__init__(path, is_collection=is_dir, environ=environ)
+                        # Ensure path is always a string, never a list
+                        path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
+                        super().__init__(path_str, is_collection=is_dir, environ=environ)
                         # Store our custom attributes
-                        self._path = path
+                        self._path = path_str
                         self._is_dir = is_dir
                         self._size = size
                         self._modified = modified
                         self._provider = provider
-                    
+
+                    @property
+                    def path(self):
+                        """Ensure path is always a string."""
+                        return str(self._path)
+
                     def get_last_modified(self):
                         # Return timestamp as float (not datetime)
                         return float(self._modified) if isinstance(self._modified, (int, float)) else time.time()
