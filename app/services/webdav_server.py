@@ -1305,7 +1305,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def __init__(self, path, is_dir, size, modified, provider=None, environ=None):
                         # Ensure path is always a string, never a list
                         path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
-                        logger.debug(f"[WebDAV] SimpleResource.__init__: path={path}, path_str={path_str}, type={type(path_str)}")
+                        if '005c51179a764e10b61e3a214d38e79d' in str(path):
+                            logger.error(f"[WebDAV] ⚠️⚠️⚠️ SimpleResource.__init__: path={path}, path_str={path_str}, type(path)={type(path)}, type(path_str)={type(path_str)}")
                         # Manually set required attributes without calling super().__init__
                         if environ is None:
                             environ = {"wsgidav.provider": provider} if provider else {}
@@ -1327,7 +1328,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         if name == 'path':
                             _path = object.__getattribute__(self, '_path')
                             result = str(_path)
-                            logger.debug(f"[WebDAV] SimpleResource.__getattribute__('path'): returning {result}, type={type(result)}")
+                            logger.error(f"[WebDAV] ⚠️⚠️ SimpleResource.__getattribute__('path'): returning {result}, type={type(result)}")
                             return result
                         return object.__getattribute__(self, name)
 
