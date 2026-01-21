@@ -541,11 +541,21 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             
                             def get_ref_url(self):
                                 return self._path
-                            
+
                             def get_href(self):
-                                # Return href (URL path) for the resource
-                                return self._path
-                            
+                                """Return href (URL path) for the resource."""
+                                # Ensure we return a string, not a list
+                                return str(self.path) if hasattr(self, 'path') else str(self._path)
+
+                            def get_preferred_path(self):
+                                """Return preferred path for this resource."""
+                                if self.path in ("", "/"):
+                                    return "/"
+                                # Append '/' for collections
+                                if self.is_collection and not self.path.endswith("/"):
+                                    return self.path + "/"
+                                return self.path
+
                             def get_etag(self):
                                 return None
                             
@@ -607,11 +617,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 """
                                 return response_headers
 
-                            def get_descendants(self, depth=1, add_self=False):
+                            def get_descendants(self, depth=1, add_self=False, depth_first=False):
                                 # Get children by calling get_resource_list directly
                                 # wsgidav calls get_descendants on the resource to get children
                                 # IMPORTANT: Pass the actual depth to support Depth: infinity requests
-                                logger.debug(f"[WebDAV] VirtualResource.get_descendants CALLED: path={self._path}, depth={depth}, add_self={add_self}")
+                                logger.debug(f"[WebDAV] VirtualResource.get_descendants CALLED: path={self._path}, depth={depth}, add_self={add_self}, depth_first={depth_first}")
 
                                 # If this is a file (not a directory), return empty list
                                 if not self._is_dir:
@@ -677,11 +687,16 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 if propname == "allprop" or "displayname" in str(propname):
                                     props.append(('displayname', self._path.split('/')[-1] or self._path))
                                 return props
-                            
-                            def get_href(self):
-                                # Return the href (path) for this resource
-                                return self._path
-                            
+
+                            def get_preferred_path(self):
+                                """Return preferred path for this resource."""
+                                if self.path in ("", "/"):
+                                    return "/"
+                                # Append '/' for collections
+                                if self.is_collection and not self.path.endswith("/"):
+                                    return self.path + "/"
+                                return self.path
+
                             def get_directory_info(self):
                                 # Return dict-like info for directory browser
                                 from datetime import datetime
@@ -792,17 +807,27 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                     def get_display_name(self):
                         return self._path.split('/')[-1] or self._path
-                    
+
                     def get_ref_url(self):
                         return self._path
-                    
+
                     def get_href(self):
-                        # Return href (URL path) for the resource
-                        return self._path
-                    
+                        """Return href (URL path) for the resource."""
+                        # Ensure we return a string, not a list
+                        return str(self.path) if hasattr(self, 'path') else str(self._path)
+
+                    def get_preferred_path(self):
+                        """Return preferred path for this resource."""
+                        if self.path in ("", "/"):
+                            return "/"
+                        # Append '/' for collections
+                        if self.is_collection and not self.path.endswith("/"):
+                            return self.path + "/"
+                        return self.path
+
                     def get_etag(self):
                         return None
-                    
+
                     def get_content_type(self):
                         return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
 
@@ -813,7 +838,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def support_content_length(self):
                         return False
 
-                    def get_descendants(self, depth=1, add_self=False):
+                    def get_descendants(self, depth=1, add_self=False, depth_first=False):
                         return []
 
                     def get_property_names(self, *, is_allprop):
@@ -1111,18 +1136,28 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                     def get_display_name(self):
                         return self._path.split('/')[-1] or self._path
-                    
+
                     def get_ref_url(self):
                         return self._path
-                    
+
                     def get_href(self):
-                        # Return href (URL path) for the resource
-                        return self._path
-                    
+                        """Return href (URL path) for the resource."""
+                        # Ensure we return a string, not a list
+                        return str(self.path) if hasattr(self, 'path') else str(self._path)
+
+                    def get_preferred_path(self):
+                        """Return preferred path for this resource."""
+                        if self.path in ("", "/"):
+                            return "/"
+                        # Append '/' for collections
+                        if self.is_collection and not self.path.endswith("/"):
+                            return self.path + "/"
+                        return self.path
+
                     def get_etag(self):
                         # Return None or empty string if no ETag
                         return None
-                    
+
                     def get_content_type(self):
                         return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
 
@@ -1158,7 +1193,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def support_content_length(self):
                         return not self._is_dir
 
-                    def get_descendants(self, depth=1, add_self=False):
+                    def get_descendants(self, depth=1, add_self=False, depth_first=False):
                         # Return empty list or None - wsgidav will call get_resource_instances for children
                         return []
 
