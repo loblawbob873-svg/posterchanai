@@ -1116,13 +1116,12 @@ class WebDAVSync:
                                     logger.warning(f"Skipping download - {file_remote_path} is a directory, not a file")
                                     continue
 
-                                # Heuristic: if size is 0 or unknown AND filename has no extension,
-                                # it's likely a directory that wasn't properly detected
+                                # Heuristic: if filename has no extension, it's likely a directory
+                                # that wasn't properly detected. Directories don't have extensions.
                                 filename = file_local_path.name
                                 has_extension = '.' in filename and not filename.startswith('.')
-                                file_size_check = info.get('size', -1)
-                                if (file_size_check <= 0) and not has_extension:
-                                    logger.info(f"Skipping likely directory (no extension, size={file_size_check}): {file_remote_path}")
+                                if not has_extension:
+                                    logger.info(f"Skipping likely directory (no extension): {file_remote_path}")
                                     # Try to create as directory instead
                                     try:
                                         file_local_path.mkdir(parents=True, exist_ok=True)
