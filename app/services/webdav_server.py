@@ -72,6 +72,32 @@ def _patched_setattr(self, name, value):
     _original_setattr(self, name, value)
 
 _DAVResource.__setattr__ = _patched_setattr
+
+# Monkey-patch add_property_response to log href values
+from wsgidav import util as wsgidav_util
+_original_add_property_response = wsgidav_util.add_property_response
+
+def _patched_add_property_response(multistatus_elem, href, prop_list):
+    """Patched add_property_response that logs href values."""
+    if '005c51179a764e10b61e3a214d38e79d' in str(href):
+        logger.error(f"[WebDAV] ⚠️⚠️⚠️ add_property_response called: href={href}, type={type(href)}, is_list={isinstance(href, list)}")
+    return _original_add_property_response(multistatus_elem, href, prop_list)
+
+wsgidav_util.add_property_response = _patched_add_property_response
+
+# Also patch the request_server module to intercept get_href calls
+from wsgidav import request_server
+_original_do_propfind = request_server.RequestServer.do_PROPFIND
+
+def _patched_do_propfind(self, environ, start_response):
+    """Patched PROPFIND to add extra logging."""
+    # Store original child.get_href for logging
+    import types
+    original_method = request_server.RequestServer.do_PROPFIND
+    result = _original_do_propfind(self, environ, start_response)
+    return result
+
+# Don't actually need to patch do_PROPFIND, the add_property_response patch is enough
 from app.services.storage_service import StorageService, get_storage_service
 from app.auth import verify_password
 
