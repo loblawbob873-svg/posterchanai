@@ -875,37 +875,73 @@ async def get_all_images(
                     modified_time = stat.st_mtime if stat.st_mtime > 0 else (stat.st_ctime if stat.st_ctime > 0 else time.time())
                     
                     # Try to extract date from filename if modification time seems wrong
-                    # Common patterns: YYYYMMDD, YYYYMMDD_HHMMSS, etc.
+                    # Common patterns: YYYYMMDD, YYYYMMDD_HHMMSS, YY-MM-DD HH-MM-SS, etc.
                     filename = item.name
                     import re
-                    match = re.search(r'(\d{4})(\d{2})(\d{2})(?:[_-](\d{2})(\d{2})(\d{2}))?', filename)
-                    if match:
-                        year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
-                        hour, minute, second = 0, 0, 0
-                        if match.group(4):  # Has time component
-                            hour, minute, second = int(match.group(4)), int(match.group(5)), int(match.group(6))
-                        try:
-                            from datetime import datetime
-                            filename_date = datetime(year, month, day, hour, minute, second)
-                            filename_timestamp = filename_date.timestamp()
-                            
-                            # If filename date is significantly older than modification time (more than 30 days difference),
-                            # OR if mtime is very recent but filename suggests old date,
-                            # use filename date instead. This handles cases where files were copied but have old photo dates.
-                            current_time = time.time()
-                            mtime_age_days = (current_time - modified_time) / 86400
-                            filename_age_days = (current_time - filename_timestamp) / 86400
-                            
-                            mtime_is_recent = mtime_age_days < 7  # Modified within last week
-                            filename_is_old = filename_age_days > 30  # Filename suggests date older than 30 days
-                            
-                            if filename_age_days > (mtime_age_days + 30) or (mtime_is_recent and filename_is_old):
-                                # Filename suggests much older date than modification time
-                                # Use filename date for sorting
-                                modified_time = filename_timestamp
-                                logger.info(f"[STORAGE] Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(stat.st_mtime)}, mtime_age={mtime_age_days:.1f}d, filename_age={filename_age_days:.1f}d)")
-                        except (ValueError, OverflowError):
-                            pass  # Invalid date, use mtime
+                    from datetime import datetime
+
+                    # Try multiple date patterns (4-digit year first, then 2-digit year)
+                    patterns = [
+                        # YYYYMMDD_HHMMSS or YYYYMMDD-HHMMSS (e.g., 20250910_172438, IMG_20250910_172438)
+                        r'(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})',
+                        # YYYYMMDD (e.g., 20250910, IMG_20250910)
+                        r'(\d{4})(\d{2})(\d{2})',
+                        # YY-MM-DD HH-MM-SS or YY-MM-DD HH:MM:SS (e.g., 25-09-10 17-24-38)
+                        r'(\d{2})[-./ ](\d{2})[-./ ](\d{2})[\s_-]+(\d{2})[-.:](\d{2})[-.:](\d{2})',
+                        # YY-MM-DD (e.g., 25-09-10)
+                        r'(\d{2})[-./ ](\d{2})[-./ ](\d{2})',
+                        # YYYY-MM-DD HH:MM:SS or YYYY-MM-DD HH-MM-SS (e.g., 2025-09-10 17:24:38)
+                        r'(\d{4})[-./ ](\d{2})[-./ ](\d{2})[\s_-]+(\d{2})[-.:](\d{2})[-.:](\d{2})',
+                        # YYYY-MM-DD (e.g., 2025-09-10)
+                        r'(\d{4})[-./ ](\d{2})[-./ ](\d{2})',
+                    ]
+
+                    filename_date = None
+                    for pattern in patterns:
+                        match = re.search(pattern, filename)
+                        if match:
+                            try:
+                                groups = match.groups()
+                                year = int(groups[0])
+                                month = int(groups[1])
+                                day = int(groups[2])
+
+                                # Convert 2-digit year to 4-digit (assume 20xx for years 00-99)
+                                if year < 100:
+                                    year += 2000
+
+                                # Extract time if available
+                                hour, minute, second = 0, 0, 0
+                                if len(groups) >= 6:
+                                    hour = int(groups[3])
+                                    minute = int(groups[4])
+                                    second = int(groups[5])
+
+                                # Validate date
+                                if 1 <= month <= 12 and 1 <= day <= 31 and 0 <= hour < 24 and 0 <= minute < 60 and 0 <= second < 60:
+                                    filename_date = datetime(year, month, day, hour, minute, second)
+                                    break  # Found valid date, stop searching
+                            except (ValueError, OverflowError):
+                                continue  # Try next pattern
+
+                    if filename_date:
+                        filename_timestamp = filename_date.timestamp()
+
+                        # If filename date is significantly older than modification time (more than 30 days difference),
+                        # OR if mtime is very recent but filename suggests old date,
+                        # use filename date instead. This handles cases where files were copied but have old photo dates.
+                        current_time = time.time()
+                        mtime_age_days = (current_time - modified_time) / 86400
+                        filename_age_days = (current_time - filename_timestamp) / 86400
+
+                        mtime_is_recent = mtime_age_days < 7  # Modified within last week
+                        filename_is_old = filename_age_days > 30  # Filename suggests date older than 30 days
+
+                        if filename_age_days > (mtime_age_days + 30) or (mtime_is_recent and filename_is_old):
+                            # Filename suggests much older date than modification time
+                            # Use filename date for sorting
+                            modified_time = filename_timestamp
+                            logger.info(f"[STORAGE] Using filename date for {filename}: {filename_date} (mtime was {datetime.fromtimestamp(stat.st_mtime)}, mtime_age={mtime_age_days:.1f}d, filename_age={filename_age_days:.1f}d)")
                     
                     # Fallback to current time if both are invalid
                     if modified_time <= 0:
