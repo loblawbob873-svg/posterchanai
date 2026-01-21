@@ -1074,17 +1074,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 resource = SimpleResource(full_path, is_directory, size, modified_ts, provider=self)
                 webdav_resources.append(resource)
 
-                # If depth > 1 (infinity) and this is a directory, recursively list it
-                if depth > 1 and is_directory:
-                    try:
-                        # Get the relative path for this directory
-                        dir_rel_path = f"{path}/{item_name}".strip('/') if path else item_name
-                        # Recursively list this directory
-                        sub_resources = self._proxy_list_files(username, dir_rel_path, depth=depth)
-                        webdav_resources.extend(sub_resources)
-                        logger.debug(f"[WebDAV] Recursive list of {dir_rel_path} returned {len(sub_resources)} items")
-                    except Exception as e:
-                        logger.warning(f"[WebDAV] Failed to recursively list {item_name}: {e}")
+                # NOTE: Server-side recursive listing disabled - too slow with one API call per directory
+                # The sync client handles recursive listing more efficiently
+                # if depth > 1 and is_directory:
+                #     ... recursive listing code ...
 
             logger.info(f"[WebDAV] Created {len(webdav_resources)} SimpleResource objects (depth={depth})")
             return webdav_resources
