@@ -15,6 +15,25 @@ from cheroot.wsgi import Server as WSGIServer
 
 from app.models import User, Setting
 
+# Register DAV namespace with 'D' prefix instead of 'ns0' for Joplin compatibility
+# This must be done before any XML generation
+try:
+    from xml.etree import ElementTree as ET
+    ET.register_namespace('D', 'DAV:')
+    # Also register as default namespace
+    ET.register_namespace('', 'DAV:')
+except Exception:
+    pass
+
+# Also try to register with wsgidav's etree if it uses lxml
+try:
+    from wsgidav.util import etree
+    if hasattr(etree, 'register_namespace'):
+        etree.register_namespace('D', 'DAV:')
+        etree.register_namespace('', 'DAV:')
+except Exception:
+    pass
+
 # Monkey-patch _DAVResource to ensure path is always a string
 _original_dav_resource_init = _DAVResource.__init__
 
@@ -117,13 +136,80 @@ from wsgidav import request_server
 _original_do_propfind = request_server.RequestServer.do_PROPFIND
 
 def _patched_do_propfind(self, environ, start_response):
-    """Patched PROPFIND to log the response XML after it's fully generated."""
-    # Just call the original method - don't intercept
+    """Patched PROPFIND to handle VirtualResource Depth:0 requests."""
+    # Call the original method
     result = _original_do_propfind(self, environ, start_response)
+
+    # Check if response is empty multistatus (which happens for VirtualResource Depth:0)
+    # If so, try to generate a proper response
+    if hasattr(result, '__iter__'):
+        body_parts = list(result)
+        if body_parts:
+            body = b''.join(body_parts)
+            # Check if it's an empty multistatus
+            if b'<D:multistatus xmlns:D="DAV:"/>' in body or b'<D:multistatus xmlns:D="DAV:" />' in body:
+                # Try to generate a proper response by getting the resource
+                try:
+                    from wsgidav import util
+                    path = environ.get("PATH_INFO", "")
+                    depth = environ.get("HTTP_DEPTH", "0")
+
+                    # Only handle Depth:0 for now
+                    if depth == "0":
+                        provider = environ.get("wsgidav.provider")
+                        if provider:
+                            resource = provider.get_resource_inst(path, environ)
+                            if resource and not resource.is_collection:
+                                # Generate PROPFIND response manually
+                                from wsgidav.util import etree
+                                from datetime import datetime
+
+                                root = etree.Element("{DAV:}multistatus")
+                                response_elem = etree.SubElement(root, "{DAV:}response")
+
+                                href_elem = etree.SubElement(response_elem, "{DAV:}href")
+                                href_elem.text = resource.get_href() if hasattr(resource, 'get_href') else path
+
+                                propstat = etree.SubElement(response_elem, "{DAV:}propstat")
+                                prop = etree.SubElement(propstat, "{DAV:}prop")
+
+                                # Add properties
+                                if hasattr(resource, 'get_last_modified'):
+                                    lm = etree.SubElement(prop, "getlastmodified")
+                                    ts = resource.get_last_modified()
+                                    lm.text = datetime.fromtimestamp(ts).strftime('%a, %d %b %Y %H:%M:%S GMT') if ts else ""
+
+                                if hasattr(resource, 'get_content_length'):
+                                    cl = etree.SubElement(prop, "getcontentlength")
+                                    cl.text = str(resource.get_content_length())
+
+                                rt = etree.SubElement(prop, "resourcetype")
+                                # Leave empty for files
+
+                                if hasattr(resource, 'get_display_name'):
+                                    dn = etree.SubElement(prop, "displayname")
+                                    dn.text = resource.get_display_name()
+
+                                status = etree.SubElement(propstat, "{DAV:}status")
+                                status.text = "HTTP/1.1 200 OK"
+
+                                # Generate XML
+                                body = b'<?xml version=\'1.0\' encoding=\'UTF-8\'?>\n' + etree.tostring(root, encoding='utf-8')
+
+                                # Update Content-Length header
+                                headers = [('Content-Length', str(len(body))), ('Content-Type', 'application/xml; charset=utf-8')]
+                                start_response('207 Multi-Status', headers)
+                                return [body]
+                except Exception as e:
+                    logger.error(f"[WebDAV] Error generating PROPFIND response: {e}", exc_info=True)
+
+            # Return original response
+            return [body]
+
     return result
 
-# Don't actually patch do_PROPFIND since it breaks the response generation
-# request_server.RequestServer.do_PROPFIND = _patched_do_propfind
+# Apply the PROPFIND patch
+request_server.RequestServer.do_PROPFIND = _patched_do_propfind
 from app.services.storage_service import StorageService, get_storage_service
 from app.auth import verify_password
 
@@ -280,8 +366,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
         import hashlib
         import re
 
-        logger.info(f"[WebDAV] ⚠️⚠️⚠️ write_file_content called: path={path}, content_size={len(content)}, storage_server_url={self.storage_server_url}")
-
         # Strip /webdav prefix if present
         path_stripped = path.strip('/')
         if path_stripped.startswith('webdav/'):
@@ -290,7 +374,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
             path_stripped = path
         # Normalize path - remove trailing slash if present (files shouldn't have trailing slashes)
         normalized_path = path_stripped.rstrip('/')
-        logger.info(f"[WebDAV] ⚠️⚠️⚠️ write_file_content normalized_path={normalized_path}")
 
         # Handle chunked uploads - store chunks in /tmp
         chunk_match = re.search(r'\.chunk\.(\d+)$', normalized_path)
@@ -311,7 +394,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
             return self._handle_chunked_upload_complete(normalized_path, content)
 
         username = self._get_username_from_path(normalized_path)
-        logger.info(f"[WebDAV] ⚠️⚠️⚠️ write_file_content username={username}")
         if username:
             # If remote storage is configured, ALWAYS proxy - never use local filesystem
             if self.storage_server_url:
@@ -322,13 +404,15 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 elif rel_path == username:
                     rel_path = ''
 
-                logger.info(f"[WebDAV] ⚠️⚠️⚠️ write_file_content calling _proxy_upload_file: username={username}, rel_path={rel_path}, size={len(content)}")
                 # Proxy upload - this is the ONLY way when remote storage is configured
                 try:
+                    # Ensure parent directories exist before uploading
+                    self._ensure_parent_directories_exist(username, rel_path)
+
                     self._proxy_upload_file(username, rel_path, content)
                     # Invalidate cache
                     self._invalidate_cache_for_path(username, normalized_path)
-                    logger.info(f"[WebDAV] ⚠️⚠️⚠️ write_file_content SUCCESS: Proxied file upload to storage server: {normalized_path} ({len(content)} bytes)")
+                    logger.debug(f"[WebDAV] Proxied file upload to storage server: {normalized_path} ({len(content)} bytes)")
                     return  # Success, don't write locally
                 except Exception as e:
                     logger.error(f"[WebDAV] Failed to proxy upload to storage server: {e}")
@@ -425,6 +509,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     rel_path = rel_path[len(username) + 1:]
                 elif rel_path == username:
                     rel_path = ''
+                # Ensure parent directories exist before uploading
+                self._ensure_parent_directories_exist(username, rel_path)
                 # Stream from combined file for proxy upload
                 with open(combined_path, 'rb') as f:
                     combined_data = f.read()
@@ -456,6 +542,79 @@ class QuotaFilesystemProvider(FilesystemProvider):
             logger.error(f"[WebDAV] Failed to complete chunked upload: {e}")
             raise
 
+    def _proxy_create_directory(self, username: str, directory_path: str):
+        """Create a directory on the remote storage server."""
+        import requests
+
+        if not self.storage_server_url:
+            raise Exception("storage_server_url not configured")
+
+        url = f"{self.storage_server_url.rstrip('/')}/api/storage/mkdir"
+        headers = {}
+        if self.storage_server_token:
+            headers["Authorization"] = f"Bearer {self.storage_server_token}"
+
+        data = {
+            'username': username,
+            'path': directory_path
+        }
+
+        try:
+            response = requests.post(url, headers=headers, data=data, timeout=30)
+            # 400 with "Directory already exists" is OK - we just want to ensure it exists
+            if response.status_code == 400 and "already exists" in response.text:
+                logger.debug(f"[WebDAV] Directory already exists: {directory_path}")
+                return
+            response.raise_for_status()
+            logger.info(f"[WebDAV] Created directory: {directory_path}")
+        except Exception as e:
+            logger.error(f"[WebDAV] Failed to create directory {directory_path}: {e}")
+            raise
+
+    def _ensure_parent_directories_exist(self, username: str, file_path: str):
+        """Ensure all parent directories exist, creating them recursively if needed."""
+        from pathlib import Path
+
+        path_obj = Path(file_path)
+        parent = path_obj.parent
+
+        # If parent is '.' (current directory), no need to create anything
+        if parent == Path('.'):
+            return
+
+        # Get all parent directories from root to immediate parent
+        parts = str(parent).split('/')
+        current_path = ''
+
+        for part in parts:
+            if not part:  # Skip empty parts
+                continue
+
+            # Build path incrementally (e.g., "Joplin", "Joplin/.resource")
+            current_path = f"{current_path}/{part}" if current_path else part
+
+            # Check if this directory exists
+            try:
+                info = self._proxy_get_info(username, current_path)
+                if info and info.get('is_directory'):
+                    logger.debug(f"[WebDAV] Directory exists: {current_path}")
+                    continue  # Directory exists, move to next level
+                elif info and not info.get('is_directory'):
+                    # A file exists with this name - this is a problem
+                    logger.error(f"[WebDAV] Cannot create directory {current_path} - a file exists with this name")
+                    raise Exception(f"Cannot create directory {current_path} - a file exists with this name")
+            except Exception:
+                # Directory doesn't exist or error checking - assume it doesn't exist
+                pass
+
+            # Directory doesn't exist - create it
+            try:
+                logger.info(f"[WebDAV] Creating parent directory: {current_path}")
+                self._proxy_create_directory(username, current_path)
+            except Exception as e:
+                logger.error(f"[WebDAV] Failed to create parent directory {current_path}: {e}")
+                raise
+
     def _proxy_upload_file(self, username: str, file_path: str, content: bytes):
         """Proxy file upload - calls storage server directly."""
         import requests
@@ -469,16 +628,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
         if self.storage_server_token:
             headers["Authorization"] = f"Bearer {self.storage_server_token}"
 
-        logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_upload_file: url={url}, username={username}, file_path={file_path}, size={len(content)}")
-
         # Split file_path into directory and filename
         # Storage API expects 'path' to be the directory, and filename comes from the uploaded file
         from pathlib import Path
         path_obj = Path(file_path)
         filename = path_obj.name
         directory = str(path_obj.parent) if path_obj.parent != Path('.') else ''
-
-        logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_upload_file: directory='{directory}', filename='{filename}'")
 
         # Determine content type
         ext = path_obj.suffix
@@ -500,13 +655,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
             'path': directory  # Send only the directory path, not the full file path
         }
 
-        logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_upload_file: Sending POST to {url}")
         response = requests.post(url, headers=headers, files=files, data=data, timeout=30)
-        logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_upload_file: Response status={response.status_code}")
         response.raise_for_status()
-        result = response.json()
-        logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_upload_file: Response={result}")
-        return result
+        return response.json()
     
     def _locate_file_path(self, path: str) -> Optional[Path]:
         """Get the filesystem path for a WebDAV path."""
