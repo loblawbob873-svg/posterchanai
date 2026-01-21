@@ -1760,9 +1760,11 @@ class WebDAVSync:
             files = self.webdav.ls(ls_path, depth=999, retry_attempts=self.network_retry_attempts, retry_delay=self.network_retry_delay)
 
             # Check if depth=infinity worked - if we got very few items, server might not support it
-            # In that case, fall back to depth=1 (bidirectional sync handles moves/deletes at top level)
-            if len(files) < 50:
+            # In that case, we have an incomplete file list and MUST NOT run deletion detection
+            have_complete_file_list = len(files) >= 50
+            if not have_complete_file_list:
                 logger.info(f"depth=infinity returned only {len(files)} items, server may not support it fully")
+                logger.warning("SKIPPING deletion detection - incomplete file list would cause false deletions!")
 
             current_remote_files = {f['path']: f for f in files}
             current_remote_paths = set(current_remote_files.keys())
@@ -1770,6 +1772,7 @@ class WebDAVSync:
             logger.warning(f"Error listing remote files: {e}")
             current_remote_files = {}
             current_remote_paths = set()
+            have_complete_file_list = False
         
         # Step 3: Detect moves/renames (before deletions, as moves might look like delete+create)
         moves = self.detect_moves(current_remote_files)
@@ -1803,34 +1806,39 @@ class WebDAVSync:
                 logger.warning(f"Error handling move {old_remote_path} -> {new_remote_path}: {e}")
         
         # Step 4: Detect deletions (after moves, as moves might have been detected as deletions)
-        remote_deletions, local_deletions = self.detect_deletions(current_remote_paths)
-        
-        # Step 5: Handle remote deletions (delete local files)
-        for remote_path in remote_deletions:
-            sync_state = self.cache.get_sync_state(remote_path)
-            local_path_str = sync_state.get('local_path')
-            if local_path_str:
-                local_path = Path(local_path_str)
+        # CRITICAL: Only run deletion detection if we have a complete file list!
+        # Otherwise, files not in the incomplete list would be incorrectly deleted.
+        if have_complete_file_list:
+            remote_deletions, local_deletions = self.detect_deletions(current_remote_paths)
+
+            # Step 5: Handle remote deletions (delete local files)
+            for remote_path in remote_deletions:
+                sync_state = self.cache.get_sync_state(remote_path)
+                local_path_str = sync_state.get('local_path')
+                if local_path_str:
+                    local_path = Path(local_path_str)
+                    try:
+                        if local_path.exists():
+                            if local_path.is_file():
+                                local_path.unlink()
+                            elif local_path.is_dir():
+                                shutil.rmtree(local_path)
+                            logger.info(f"Deleted local file (remote was deleted): {local_path}")
+                        self.cache.remove_from_sync_state(remote_path)
+                    except Exception as e:
+                        logger.warning(f"Error deleting local file {local_path}: {e}")
+
+            # Step 6: Handle local deletions (delete remote files)
+            for local_path in local_deletions:
+                remote_path = self._remote_path(local_path)
                 try:
-                    if local_path.exists():
-                        if local_path.is_file():
-                            local_path.unlink()
-                        elif local_path.is_dir():
-                            shutil.rmtree(local_path)
-                        logger.info(f"Deleted local file (remote was deleted): {local_path}")
+                    self.webdav.delete(remote_path)
+                    logger.info(f"Deleted remote file (local was deleted): {remote_path}")
                     self.cache.remove_from_sync_state(remote_path)
                 except Exception as e:
-                    logger.warning(f"Error deleting local file {local_path}: {e}")
-        
-        # Step 6: Handle local deletions (delete remote files)
-        for local_path in local_deletions:
-            remote_path = self._remote_path(local_path)
-            try:
-                self.webdav.delete(remote_path)
-                logger.info(f"Deleted remote file (local was deleted): {remote_path}")
-                self.cache.remove_from_sync_state(remote_path)
-            except Exception as e:
-                logger.warning(f"Error deleting remote file {remote_path}: {e}")
+                    logger.warning(f"Error deleting remote file {remote_path}: {e}")
+        else:
+            logger.debug("Deletion detection skipped - file list is incomplete")
         
         # Step 7: Sync from remote (with conflict detection)
         self.sync_from_remote_with_conflicts(path, current_remote_files)
