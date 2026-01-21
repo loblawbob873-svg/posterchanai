@@ -800,7 +800,7 @@ class CacheManager:
 class WebDAVSync:
     """Pure Python WebDAV sync - no FUSE required!"""
 
-    def __init__(self, webdav_client: WebDAVClient, local_dir: Path, remote_base: str, cache: CacheManager = None, network_retry_attempts: int = 5, network_retry_delay: int = 5, conflict_resolution: str = 'last_write_wins', excluded_folders: list = None):
+    def __init__(self, webdav_client: WebDAVClient, local_dir: Path, remote_base: str, cache: CacheManager = None, network_retry_attempts: int = 5, network_retry_delay: int = 5, conflict_resolution: str = 'last_write_wins', excluded_folders: list = None, max_download_speed: int = 0, max_upload_speed: int = 0, max_workers: int = 8):
         self.webdav = webdav_client
         self.local_dir = Path(local_dir)
         self.remote_base = remote_base.rstrip('/')
@@ -811,9 +811,45 @@ class WebDAVSync:
         self.network_retry_delay = network_retry_delay
         self.conflict_resolution = conflict_resolution  # Options: 'last_write_wins', 'manual', 'local_wins', 'remote_wins'
         self.excluded_folders = excluded_folders or []  # Folders to exclude from sync
+        # Bandwidth limiting (bytes per second, 0 = unlimited)
+        self.max_download_speed = max_download_speed
+        self.max_upload_speed = max_upload_speed
+        self.max_workers = max_workers  # Number of concurrent download threads
+        self._download_tokens = 0  # For rate limiting
+        self._download_token_time = time.time()
+        self._rate_limit_lock = threading.Lock()
         if self.excluded_folders:
             logger.info(f"Excluded folders configured: {self.excluded_folders}")
+        if self.max_download_speed > 0:
+            logger.info(f"Download speed limit: {self.max_download_speed / 1024 / 1024:.1f} MB/s")
+        if self.max_upload_speed > 0:
+            logger.info(f"Upload speed limit: {self.max_upload_speed / 1024 / 1024:.1f} MB/s")
     
+    def _rate_limit_download(self, bytes_downloaded: int):
+        """Apply rate limiting for downloads using token bucket algorithm."""
+        if self.max_download_speed <= 0:
+            return  # No limit
+
+        with self._rate_limit_lock:
+            now = time.time()
+            elapsed = now - self._download_token_time
+
+            # Refill tokens based on elapsed time
+            self._download_tokens += elapsed * self.max_download_speed
+            self._download_token_time = now
+
+            # Cap tokens at max (1 second worth of bandwidth)
+            if self._download_tokens > self.max_download_speed:
+                self._download_tokens = self.max_download_speed
+
+            # If we don't have enough tokens, sleep
+            if bytes_downloaded > self._download_tokens:
+                sleep_time = (bytes_downloaded - self._download_tokens) / self.max_download_speed
+                time.sleep(sleep_time)
+                self._download_tokens = 0
+            else:
+                self._download_tokens -= bytes_downloaded
+
     def _remote_path(self, local_path: Path) -> str:
         """Convert local path to remote path"""
         rel_path = local_path.relative_to(self.local_dir)
@@ -1497,7 +1533,7 @@ class WebDAVSync:
                 logger.warning(f"Conflict detected for {remote_path}: created {conflict_path}")
             return 'remote'  # Use remote version, user can manually merge
 
-    def sync_from_remote_fast(self, path: str = "", max_workers: int = 8, remote_files: list = None):
+    def sync_from_remote_fast(self, path: str = "", max_workers: int = None, remote_files: list = None):
         """Fast sync using depth=infinity (single PROPFIND) and concurrent downloads.
 
         This replaces the recursive sync_from_remote for much better performance:
@@ -1511,6 +1547,10 @@ class WebDAVSync:
             remote_files: Optional pre-fetched file list (avoids redundant PROPFIND if already have it)
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        # Use configured max_workers if not specified
+        if max_workers is None:
+            max_workers = self.max_workers
 
         path = path.lstrip('/')
         start_time = time.time()
@@ -1650,6 +1690,9 @@ class WebDAVSync:
                 download_path = download_path.rstrip('/')
 
                 content = self.webdav.download(download_path, retry_attempts=2, retry_delay=1)
+
+                # Apply bandwidth limiting
+                self._rate_limit_download(len(content))
 
                 # Validate content
                 if content.startswith(b'<?xml') or content.startswith(b'<html') or content.startswith(b'<!DOCTYPE'):
@@ -1931,6 +1974,47 @@ class WebDAVMount:
         """Check if mount point exists and is accessible"""
         return self.mount_point.exists() and self.mount_point.is_dir()
     
+    def _cleanup_excluded_folders(self, excluded_folders: list):
+        """Delete any excluded folders that may have been synced previously.
+
+        This runs on startup to clean up folders that were added to excluded_folders
+        after they were already synced. Only deletes folders that exist and are directories.
+        """
+        import shutil
+
+        if not excluded_folders:
+            return
+
+        logger.info(f"Checking for excluded folders to clean up: {excluded_folders}")
+
+        for folder in excluded_folders:
+            folder_path = self.mount_point / folder
+            if folder_path.exists() and folder_path.is_dir():
+                # Safety checks:
+                # 1. Must be inside mount point
+                try:
+                    folder_path.resolve().relative_to(self.mount_point.resolve())
+                except ValueError:
+                    logger.warning(f"Excluded folder {folder} is outside mount point, skipping")
+                    continue
+
+                # 2. Must not be the mount point itself
+                if folder_path.resolve() == self.mount_point.resolve():
+                    logger.warning(f"Excluded folder {folder} is the mount point itself, skipping")
+                    continue
+
+                # 3. Must be a direct child or nested folder, not root
+                if not folder or folder in ('.', '..', '/'):
+                    logger.warning(f"Invalid excluded folder name: {folder}, skipping")
+                    continue
+
+                try:
+                    logger.info(f"Deleting excluded folder: {folder_path}")
+                    shutil.rmtree(folder_path)
+                    logger.info(f"Successfully deleted excluded folder: {folder}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete excluded folder {folder}: {e}")
+
     def _check_network_connectivity(self) -> Tuple[bool, str]:
         """Check if network is available and WebDAV server is reachable"""
         network_interface_up = False
@@ -2037,6 +2121,15 @@ class WebDAVMount:
         # Get excluded folders
         excluded_folders = self.config.get("excluded_folders", [])
 
+        # Get bandwidth settings (in MB/s, convert to bytes/s, 0 = unlimited)
+        max_download_speed_mb = self.config.get("max_download_speed_mb", 0)
+        max_upload_speed_mb = self.config.get("max_upload_speed_mb", 0)
+        max_download_speed = int(max_download_speed_mb * 1024 * 1024) if max_download_speed_mb > 0 else 0
+        max_upload_speed = int(max_upload_speed_mb * 1024 * 1024) if max_upload_speed_mb > 0 else 0
+
+        # Get concurrent download threads (default 8)
+        max_workers = self.config.get("max_workers", 8)
+
         # Create sync manager
         self._sync = WebDAVSync(
             self.webdav,
@@ -2046,12 +2139,19 @@ class WebDAVMount:
             network_retry_attempts=network_retry_attempts,
             network_retry_delay=network_retry_delay,
             conflict_resolution=conflict_resolution,
-            excluded_folders=excluded_folders
+            excluded_folders=excluded_folders,
+            max_download_speed=max_download_speed,
+            max_upload_speed=max_upload_speed,
+            max_workers=max_workers
         )
         
         # Check if offline mode is enabled
         offline_mode = self.config.get("offline_mode", False)
-        
+
+        # Clean up any excluded folders that may have been synced previously
+        if excluded_folders:
+            self._cleanup_excluded_folders(excluded_folders)
+
         # Do initial sync
         network_ok, network_error = self._check_network_connectivity()
         if network_ok and not offline_mode:

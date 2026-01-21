@@ -857,15 +857,21 @@ class QuotaFilesystemProvider(FilesystemProvider):
             import time
             
             webdav_resources = []
-            
+
             for item in items:
-                item_path = item.get('path', item.get('name', ''))
-                # Build full WebDAV path
+                # Use 'name' for the filename, not 'path' (which may include parent directories)
+                item_name = item.get('name', '')
+                if not item_name:
+                    # Fallback to extracting name from path
+                    item_path = item.get('path', '')
+                    item_name = item_path.split('/')[-1] if item_path else ''
+
+                # Build full WebDAV path: /username/path/item_name
                 if path:
-                    full_path = f"/{username}/{path}/{item_path}" if item_path else f"/{username}/{path}"
+                    full_path = f"/{username}/{path}/{item_name}" if item_name else f"/{username}/{path}"
                 else:
-                    full_path = f"/{username}/{item_path}" if item_path else f"/{username}"
-                
+                    full_path = f"/{username}/{item_name}" if item_name else f"/{username}"
+
                 # Normalize path (remove double slashes)
                 full_path = full_path.replace('//', '/')
                 
