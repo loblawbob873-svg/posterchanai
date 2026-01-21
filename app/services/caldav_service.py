@@ -78,7 +78,7 @@ def _find_event_filepath(proxy, event_uid: str) -> Optional[str]:
 # Timeout for CalDAV operations (in seconds)
 CALDAV_TIMEOUT = 15  # Reduced from 30 to prevent long hangs
 CALDAV_OPERATION_TIMEOUT = 10  # Timeout for individual operations
-CALDAV_BUILTIN_TIMEOUT = 60  # Longer timeout for built-in calendar operations (processes many files)
+CALDAV_BUILTIN_TIMEOUT = 180  # Increased from 60 to 180s for large calendars (834+ files)
 
 # Thread pool for running blocking CalDAV operations with timeout
 _caldav_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="caldav_worker")
@@ -198,13 +198,17 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
                 # Don't return empty - try to continue anyway
             
             # Search all calendar subdirectories
+            import time as time_module
+            total_start_time = time_module.time()
             logger.info(f"[CalDAV] Searching {len(calendar_dirs)} calendar directories: {calendar_dirs}")
             if calendar_dirs:
                 for cal_dir in calendar_dirs:
+                    dir_start_time = time_module.time()
                     logger.info(f"[CalDAV] Processing calendar directory: {cal_dir}")
                     try:
                         cal_events = _get_events_from_calendar_dir(proxy, cal_dir, start_date, end_date, cal_dir)
-                        logger.info(f"[CalDAV] Found {len(cal_events)} events in calendar directory '{cal_dir}'")
+                        dir_elapsed = time_module.time() - dir_start_time
+                        logger.info(f"[CalDAV] Found {len(cal_events)} events in calendar directory '{cal_dir}' (took {dir_elapsed:.1f}s)")
                         if cal_events:
                             all_events.extend(cal_events)
                             # Log sample events for debugging
@@ -223,7 +227,8 @@ def _get_events_from_builtin(user_id: int, start_date: datetime, end_date: datet
             except Exception as e:
                 logger.error(f"[CalDAV] Error checking root for legacy events: {e}", exc_info=True)
         
-        logger.info(f"[CalDAV] Total events found in _get_events_from_builtin: {len(all_events)}")
+        total_elapsed = time_module.time() - total_start_time
+        logger.info(f"[CalDAV] Total events found in _get_events_from_builtin: {len(all_events)} (total time: {total_elapsed:.1f}s)")
         if all_events:
             logger.info(f"[CalDAV] Sample events being returned:")
             for i, event in enumerate(all_events[:5]):
