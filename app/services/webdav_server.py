@@ -432,7 +432,40 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             
                             def get_content_type(self):
                                 return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
-                            
+
+                            def get_content(self):
+                                """Return file content from remote storage."""
+                                if self._is_dir:
+                                    return None
+                                # Extract username and relative path
+                                path = self._path.strip('/')
+                                if path.startswith('webdav/'):
+                                    path = path[7:]
+                                parts = path.split('/', 1)
+                                if len(parts) >= 2:
+                                    username = parts[0]
+                                    rel_path = parts[1]
+                                elif len(parts) == 1:
+                                    username = parts[0]
+                                    rel_path = ''
+                                else:
+                                    return None
+                                try:
+                                    content = self._provider._proxy_download_file(username, rel_path)
+                                    logger.info(f"[WebDAV] VirtualResource.get_content: downloaded {len(content)} bytes for {rel_path}")
+                                    return content
+                                except Exception as e:
+                                    logger.error(f"[WebDAV] VirtualResource.get_content error: {e}")
+                                    return None
+
+                            def support_content_length(self):
+                                """Return True if get_content_length() returns valid value."""
+                                return not self._is_dir
+
+                            def support_ranges(self):
+                                """Return True to support range requests."""
+                                return False
+
                             def get_descendants(self, depth=1, add_self=False):
                                 # Get children by calling get_resource_list directly
                                 # wsgidav calls get_descendants on the resource to get children
@@ -594,10 +627,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     
                     def get_content_type(self):
                         return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
-                    
+
+                    def get_content(self):
+                        """Fallback VirtualResource - no content (used for directories)."""
+                        return None
+
+                    def support_content_length(self):
+                        return False
+
                     def get_descendants(self, depth=1, add_self=False):
                         return []
-                    
+
                     def get_properties(self, propname="allprop"):
                         # Return properties as list of (name, value) tuples - wsgidav expects this format
                         from datetime import datetime
@@ -611,11 +651,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         if propname == "allprop" or "displayname" in str(propname):
                             props.append(('displayname', self._path.split('/')[-1] or self._path))
                         return props
-                    
+
                     def get_directory_info(self):
                         # Return directory info for dir_browser - return empty list
                         return []
-                    
+
                     # Add any other methods wsgidav might call
                     def __getattr__(self, name):
                         # Return None for any missing attributes to prevent AttributeError
@@ -752,11 +792,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 
                 # Create a simple resource object with all required methods
                 class SimpleResource:
-                    def __init__(self, path, is_dir, size, modified):
+                    def __init__(self, path, is_dir, size, modified, provider=None):
                         self._path = path
                         self._is_dir = is_dir
                         self._size = size
                         self._modified = modified
+                        self._provider = provider
                     
                     def get_last_modified(self):
                         # Return timestamp as float (not datetime)
@@ -784,11 +825,36 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     
                     def get_content_type(self):
                         return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
-                    
+
+                    def get_content(self):
+                        """Return file content from remote storage."""
+                        if self._is_dir or not self._provider:
+                            return None
+                        path = self._path.strip('/')
+                        if path.startswith('webdav/'):
+                            path = path[7:]
+                        parts = path.split('/', 1)
+                        if len(parts) >= 2:
+                            username, rel_path = parts[0], parts[1]
+                        elif len(parts) == 1:
+                            username, rel_path = parts[0], ''
+                        else:
+                            return None
+                        try:
+                            content = self._provider._proxy_download_file(username, rel_path)
+                            logger.info(f"[WebDAV] SimpleResource.get_content: downloaded {len(content)} bytes for {rel_path}")
+                            return content
+                        except Exception as e:
+                            logger.error(f"[WebDAV] SimpleResource.get_content error: {e}")
+                            return None
+
+                    def support_content_length(self):
+                        return not self._is_dir
+
                     def get_descendants(self, depth=1, add_self=False):
                         # Return empty list or None - wsgidav will call get_resource_instances for children
                         return []
-                    
+
                     def get_properties(self, propname="allprop"):
                         # Return properties as list of (name, value) tuples - wsgidav expects this format
                         from datetime import datetime
@@ -887,7 +953,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             "last_modified": datetime.fromtimestamp(self._modified).strftime('%a, %d %b %Y %H:%M:%S GMT') if isinstance(self._modified, (int, float)) else "",
                         }
                 
-                resource = SimpleResource(full_path, is_directory, size, modified_ts)
+                resource = SimpleResource(full_path, is_directory, size, modified_ts, provider=self)
                 webdav_resources.append(resource)
             
             logger.info(f"[WebDAV] Created {len(webdav_resources)} SimpleResource objects from {len(items)} storage items")
