@@ -601,16 +601,43 @@ async def get_all_images(
                             continue
 
                     # Skip files from non-photo folders (Music, Documents, etc.)
+                    # Also skip files not in year-based photo folders (Pictures/YYYY/)
                     try:
                         relative = item.relative_to(user_path)
+                        parts = relative.parts
+
                         # Get first path component (top-level folder)
-                        top_folder = relative.parts[0].lower() if relative.parts else ''
+                        top_folder = parts[0].lower() if parts else ''
+
                         # Exclude common non-photo folders
                         excluded_folders = {'music', 'documents', 'downloads', 'desktop', 'videos'}
                         if top_folder in excluded_folders:
                             skipped_count += 1
                             skipped_reasons['excluded_folder'] = skipped_reasons.get('excluded_folder', 0) + 1
                             continue
+
+                        # For Pictures folder, only include files from year subfolders (2020, 2021, etc.)
+                        # This excludes Pictures/Social Media, Pictures/Videos, Pictures/sparrow, etc.
+                        if top_folder == 'pictures' and len(parts) >= 2:
+                            second_folder = parts[1]
+                            # Check if second folder is a 4-digit year (2000-2099)
+                            if not (second_folder.isdigit() and len(second_folder) == 4 and 2000 <= int(second_folder) <= 2099):
+                                skipped_count += 1
+                                skipped_reasons['non_year_folder'] = skipped_reasons.get('non_year_folder', 0) + 1
+                                continue
+
+                        # Skip files in root of Pictures (not in any subfolder)
+                        if top_folder == 'pictures' and len(parts) < 2:
+                            skipped_count += 1
+                            skipped_reasons['pictures_root'] = skipped_reasons.get('pictures_root', 0) + 1
+                            continue
+
+                        # Skip root-level files (not in any folder)
+                        if len(parts) < 1 or (len(parts) == 1 and parts[0] == item.name):
+                            skipped_count += 1
+                            skipped_reasons['root_level'] = skipped_reasons.get('root_level', 0) + 1
+                            continue
+
                     except (ValueError, IndexError):
                         pass  # If path calculation fails, include the file
 
