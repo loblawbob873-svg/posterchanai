@@ -1842,6 +1842,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                 # Normalize path (remove double slashes)
                 full_path = full_path.replace('//', '/')
+                
+                # CRITICAL: Remove any duplicate username patterns that might have been introduced
+                # Handle cases like: /username/username/path -> /username/path
+                import re
+                username_pattern = re.escape(username) + r'/'
+                # Remove duplicate username/username/ pattern
+                full_path = re.sub(r'^/' + username_pattern + username_pattern, f'/{username}/', full_path)
 
                 # CRITICAL: Ensure full_path is a string, not a list
                 if isinstance(full_path, list):
@@ -1884,6 +1891,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def __init__(self, path, is_dir, size, modified, provider=None, environ=None):
                         # Ensure path is always a string, never a list
                         path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
+                        
+                        # CRITICAL: Remove duplicate username patterns from path
+                        # Handle cases like: /username/webdav/username/path or /username/username/path
+                        import re
+                        # Extract username from path if possible (first component after /)
+                        path_parts = path_str.strip('/').split('/')
+                        if len(path_parts) > 0 and '@' in path_parts[0]:
+                            username = path_parts[0]
+                            username_pattern = re.escape(username) + r'/'
+                            # Remove duplicate username/username/ or username/webdav/username/ patterns
+                            path_str = re.sub(r'^/' + username_pattern + r'(webdav/)?' + username_pattern, f'/{username}/', path_str)
                         
                         # CRITICAL: Directories MUST have trailing slashes for WebDAV compliance
                         # Many clients (like Flacbox) require this to recognize directories
