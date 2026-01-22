@@ -1876,7 +1876,8 @@ async def create_share(
 
         # Check file exists - support both local and remote storage
         file_exists = False
-        if storage.is_remote:
+        storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        if storage_server_url and storage_server_url.value and storage_server_url.value.strip():
             # For remote storage, trust that the file exists if path validation passed
             # (remote listing is expensive, share creation will fail on access if file doesn't exist)
             file_exists = True
