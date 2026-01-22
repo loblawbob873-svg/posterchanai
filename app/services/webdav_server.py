@@ -1520,7 +1520,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
         params = {
             "username": username,
-            "path": path
+            "path": path,
+            "depth": depth
         }
 
         logger.info(f"[WebDAV] Proxying to storage server: {url} for username={username}, path={path}, depth={depth}")

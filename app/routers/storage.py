@@ -1595,12 +1595,15 @@ async def delete_file(
 async def list_files(
     username: str = Query(..., description="Username"),
     path: str = Query("", description="Directory path relative to user root"),
+    depth: int = Query(1, description="Listing depth: 1=immediate children, >1=recursive"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_optional)
 ):
     """
     List files and directories. Called by client nodes when proxying file listings.
     Only accessible on storage server node.
+    depth=1: immediate children only (default)
+    depth>1: recursive listing of all descendants
     """
     # Check if this is a server-to-server request
     from app.models import Setting
@@ -1642,41 +1645,89 @@ async def list_files(
     # List directory
     def _list_sync():
         items = []
-        for item in sorted(target_path.iterdir()):
-            try:
-                # Use stat() to get file info - more reliable than separate calls
-                stat = item.stat()
-                
-                # Check if it's a directory - is_dir() is the authoritative check
-                is_dir = item.is_dir()
-                
-                # Double-check: if it's a symlink, resolve it
-                if item.is_symlink():
+
+        if depth == 1:
+            # Immediate children only
+            for item in sorted(target_path.iterdir()):
+                try:
+                    # Use stat() to get file info - more reliable than separate calls
+                    stat = item.stat()
+
+                    # Check if it's a directory - is_dir() is the authoritative check
+                    is_dir = item.is_dir()
+
+                    # Double-check: if it's a symlink, resolve it
+                    if item.is_symlink():
+                        try:
+                            resolved = item.resolve()
+                            is_dir = resolved.is_dir()
+                        except Exception:
+                            # If symlink is broken, use original check
+                            pass
+
+                    # Get file size - directories can have non-zero size on some filesystems
+                    # Always trust is_dir() - it's the correct filesystem check
+                    file_size = stat.st_size
+
+                    item_path = str(item.relative_to(user_path))
+
+                    item_info = {
+                        "name": item.name,
+                        "path": item_path,
+                        "is_directory": is_dir,
+                        "size": file_size if not is_dir else 0,
+                        "modified": stat.st_mtime,
+                        "is_external": False,
+                    }
+                    items.append(item_info)
+                except Exception as e:
+                    logger.warning(f"Error reading item {item}: {e}")
+                    continue
+        else:
+            # Recursive listing for depth > 1
+            for root, dirs, files in os.walk(target_path):
+                root_path = Path(root)
+
+                # Add directories
+                for dir_name in sorted(dirs):
                     try:
-                        resolved = item.resolve()
-                        is_dir = resolved.is_dir()
-                    except Exception:
-                        # If symlink is broken, use original check
-                        pass
-                
-                # Get file size - directories can have non-zero size on some filesystems
-                # Always trust is_dir() - it's the correct filesystem check
-                file_size = stat.st_size
-                
-                item_path = str(item.relative_to(user_path))
-                
-                item_info = {
-                    "name": item.name,
-                    "path": item_path,
-                    "is_directory": is_dir,
-                    "size": file_size if not is_dir else 0,
-                    "modified": stat.st_mtime,
-                    "is_external": False,
-                }
-                items.append(item_info)
-            except Exception as e:
-                logger.warning(f"Error reading item {item}: {e}")
-                continue
+                        dir_item = root_path / dir_name
+                        stat = dir_item.stat()
+                        item_path = str(dir_item.relative_to(user_path))
+
+                        item_info = {
+                            "name": dir_name,
+                            "path": item_path,
+                            "is_directory": True,
+                            "size": 0,
+                            "modified": stat.st_mtime,
+                            "is_external": False,
+                        }
+                        items.append(item_info)
+                    except Exception as e:
+                        logger.warning(f"Error reading directory {dir_name}: {e}")
+                        continue
+
+                # Add files
+                for file_name in sorted(files):
+                    try:
+                        file_item = root_path / file_name
+                        stat = file_item.stat()
+                        item_path = str(file_item.relative_to(user_path))
+
+                        item_info = {
+                            "name": file_name,
+                            "path": item_path,
+                            "is_directory": False,
+                            "size": stat.st_size,
+                            "modified": stat.st_mtime,
+                            "is_external": False,
+                        }
+                        items.append(item_info)
+                    except Exception as e:
+                        logger.warning(f"Error reading file {file_name}: {e}")
+                        continue
+
         return items
     
     items = await asyncio.to_thread(_list_sync)
