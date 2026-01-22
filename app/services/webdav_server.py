@@ -238,11 +238,27 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
             href_elem = response.find("{DAV:}href")
             if href_elem is not None and href_elem.text:
                 href_text = href_elem.text
+                # CRITICAL: Remove any duplicate username patterns that might have been introduced
+                # Handle cases like: /username/webdav/username/path
+                import re
+                if href_text and '@' in href_text:
+                    path_parts = href_text.strip('/').split('/')
+                    if len(path_parts) > 1 and '@' in path_parts[0]:
+                        username = path_parts[0]
+                        # Check for duplicate username pattern
+                        username_pattern = re.escape(username)
+                        # Remove patterns like /username/webdav/username/ or /username/username/
+                        href_text = re.sub(r'^/' + username_pattern + r'/(webdav/)?' + username_pattern + r'/', f'/{username}/', href_text)
+                
                 # Only fix hrefs that don't already have /webdav/ prefix
                 # And that start with /username@domain/ (our user paths)
                 if not href_text.startswith(script_name) and href_text.startswith('/') and '@' in href_text.split('/')[1] if len(href_text.split('/')) > 1 else False:
                     # Prepend /webdav/ to the href
                     href_elem.text = script_name.rstrip('/') + href_text
+                    hrefs_fixed += 1
+                elif href_text != href_elem.text:
+                    # Update href if we cleaned up duplicates
+                    href_elem.text = href_text
                     hrefs_fixed += 1
             
             # CRITICAL: Ensure all property elements are properly namespaced with D: prefix
