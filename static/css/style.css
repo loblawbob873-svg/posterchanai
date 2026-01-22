@@ -2802,7 +2802,7 @@ fieldset legend {
 
 .file-result-header {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 12px;
     margin-bottom: 12px;
 }
@@ -2834,6 +2834,7 @@ fieldset legend {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    justify-content: center;
 }
 
 .file-name {
