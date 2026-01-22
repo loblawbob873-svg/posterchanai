@@ -2284,7 +2284,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         elif name == "{DAV:}displayname":
                             return self._path.split('/')[-1] if hasattr(self, '_path') else ""
                         elif name == "{DAV:}getcontenttype":
-                            return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
+                            # Use get_content_type() method which has proper MIME type detection
+                            return self.get_content_type()
                         else:
                             from wsgidav.dav_error import HTTP_NOT_FOUND, DAVError
                             raise DAVError(HTTP_NOT_FOUND, f"Property {prop_name} not found")
@@ -2312,6 +2313,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 props.append(('resourcetype', elem))
                         if propname == "allprop" or "displayname" in str(propname):
                             props.append(('displayname', self._path.split('/')[-1] or self._path))
+                        if propname == "allprop" or "getcontenttype" in str(propname):
+                            # Use get_content_type() method which has proper MIME type detection
+                            props.append(('getcontenttype', self.get_content_type()))
                         return props
                     
                     def get_directory_info(self):
