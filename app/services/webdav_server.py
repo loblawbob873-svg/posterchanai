@@ -341,6 +341,26 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                         status_elem.text = "HTTP/1.1 200 OK"
                         props_fixed += 1
                     
+                    # CRITICAL: Ensure resourcetype is present for all resources
+                    # Files should have empty resourcetype, directories should have <D:collection/>
+                    resourcetype_elem = prop.find("{DAV:}resourcetype")
+                    if resourcetype_elem is None:
+                        # Check if this is a file or directory by looking at href
+                        href_elem = response.find("{DAV:}href")
+                        is_collection = False
+                        if href_elem is not None and href_elem.text:
+                            # Directories end with /, files don't
+                            is_collection = href_elem.text.endswith('/')
+                        
+                        # Add resourcetype element
+                        resourcetype_elem = etree.SubElement(prop, "{DAV:}resourcetype")
+                        if is_collection:
+                            # Add collection child element for directories
+                            etree.SubElement(resourcetype_elem, "{DAV:}collection")
+                        # For files, leave resourcetype empty (no children)
+                        props_fixed += 1
+                        logger.debug(f"[WebDAV] Added resourcetype element: is_collection={is_collection}, href={href_elem.text if href_elem is not None else 'unknown'}")
+                    
                     # OPTIMIZATION: For large listings, skip expensive property namespace fixing
                     # Most properties should already be correctly namespaced from get_property_value
                     # Only fix properties for smaller responses or first batch
@@ -2749,9 +2769,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 # Log for directories to help debug Flacbox issues
                                 logger.info(f"[WebDAV] Returning resourcetype with collection for directory: {self._path}, is_collection={self.is_collection()}")
                                 return elem
-                            # For files, return None instead of empty element - some clients (like Flacbox) prefer this
-                            # Empty element might confuse clients that expect either collection or nothing
-                            return None
+                            # CRITICAL: For files, return empty resourcetype element (not None)
+                            # Flacbox requires resourcetype to be present (even if empty) to distinguish files from directories
+                            # Empty element (no children) indicates this is a file, not a collection
+                            elem = etree.Element("{DAV:}resourcetype")
+                            # Empty element (no children) indicates this is a file, not a collection
+                            return elem
                         elif name == "{DAV:}displayname":
                             return self._path.split('/')[-1] if hasattr(self, '_path') else ""
                         elif name == "{DAV:}getcontenttype":
