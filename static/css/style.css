@@ -2740,6 +2740,7 @@ fieldset legend {
     border-radius: 8px;
     padding: 16px;
     margin-bottom: 12px;
+    position: relative;
 }
 
 .file-result-item:hover {
@@ -2816,6 +2817,11 @@ fieldset legend {
     border-top: 1px solid #2a2a3e !important;
     opacity: 1 !important;
     visibility: visible !important;
+    position: static !important;
+    top: auto !important;
+    right: auto !important;
+    left: auto !important;
+    bottom: auto !important;
 }
 
 .file-action-btn,
@@ -2833,6 +2839,12 @@ fieldset legend {
     gap: 6px !important;
     opacity: 1 !important;
     visibility: visible !important;
+    position: static !important;
+    top: auto !important;
+    right: auto !important;
+    left: auto !important;
+    bottom: auto !important;
+    float: none !important;
 }
 
 .file-action-btn:hover,
