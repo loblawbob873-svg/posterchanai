@@ -503,6 +503,12 @@ wsgidav_util2.send_multi_status_response = _patched_send_multi_status_response
 # Also patch the request_server module to intercept get_href calls
 from wsgidav import request_server
 _original_do_propfind = request_server.RequestServer.do_PROPFIND
+# Try to get do_GET, but it might not exist
+_original_do_get = None
+try:
+    _original_do_get = request_server.RequestServer.do_GET
+except AttributeError:
+    _original_do_get = None
 
 def _patched_do_propfind(self, environ, start_response):
     """Patched PROPFIND - let wsgidav handle everything, rely on get_href() to return correct paths."""
@@ -600,8 +606,10 @@ def _patched_do_get(self, environ, start_response):
         from wsgidav.dav_error import DAVError, HTTP_NOT_IMPLEMENTED
         raise DAVError(HTTP_NOT_IMPLEMENTED, "GET method not implemented")
 
-if _original_do_get:
+# Only patch do_GET if it exists
+if _original_do_get is not None:
     request_server.RequestServer.do_GET = _patched_do_get
+    logger.info("[WebDAV] ✅ Patched RequestServer.do_GET for Content-Type header fixing")
 else:
     logger.warning("[WebDAV] RequestServer.do_GET not found - cannot patch GET handler for Content-Type logging")
 from app.services.storage_service import StorageService, get_storage_service
