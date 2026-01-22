@@ -219,20 +219,30 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
     xml_bytes = etree.tostring(multistatus_elem, encoding='utf-8')
     xml_str = xml_bytes.decode('utf-8')
 
-    # Check for .resource in the XML
+    # Check for .resource in the XML (Joplin resource files)
     if '.resource' in xml_str:
-        logger.error(f"[WebDAV] ⚠️  XML Response contains .resource:")
-        # Find all response elements for .resource
+        # Count total .resource files in response
+        resource_count = 0
+        resource_responses = []
         for response in multistatus_elem.findall("{DAV:}response"):
             href_elem = response.find("{DAV:}href")
-            if href_elem is not None and '.resource' in href_elem.text:
+            if href_elem is not None and href_elem.text and '.resource' in href_elem.text:
+                resource_count += 1
                 # Count href elements in this response
                 href_count = len(response.findall("{DAV:}href"))
-                logger.error(f"[WebDAV]   Response href: {href_elem.text}, href_count={href_count}")
+                resource_responses.append((href_elem.text, href_count))
+                # Only log as error if there are multiple href elements (actual problem)
                 if href_count > 1:
-                    logger.error(f"[WebDAV]   ⚠️  MULTIPLE HREF ELEMENTS FOUND IN SAME RESPONSE!")
+                    logger.error(f"[WebDAV] ⚠️  MULTIPLE HREF ELEMENTS in .resource response: {href_elem.text}, count={href_count}")
                     for i, h in enumerate(response.findall("{DAV:}href")):
                         logger.error(f"[WebDAV]     href[{i}]: {h.text}")
+        
+        # Log summary at debug level (not error - this is normal for Joplin)
+        if resource_count > 0:
+            logger.debug(f"[WebDAV] XML Response contains {resource_count} .resource file(s) (normal for Joplin)")
+            # Only log details if there were issues
+            if any(count > 1 for _, count in resource_responses):
+                logger.warning(f"[WebDAV] Some .resource responses have multiple href elements - this may cause Joplin sync errors")
 
     return _original_send_multi_status_response(environ, start_response, multistatus_elem)
 
@@ -1056,7 +1066,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 # The HTTP layer will handle URL encoding when needed
                                 # href = href.replace('@', '%40')  # REMOVED - causes Joplin sync errors
                                 
-                                logger.info(f"[WebDAV] VirtualResource.get_href returning: {href} (script_name={script_name})")
+                                # Changed to debug to avoid logging every single file in large directories (e.g., 1900+ songs)
+                                logger.debug(f"[WebDAV] VirtualResource.get_href returning: {href} (script_name={script_name})")
                                 return href
 
                             def get_preferred_path(self):
@@ -1508,7 +1519,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         # The HTTP layer will handle URL encoding when needed
                         # href = href.replace('@', '%40')  # REMOVED - causes Joplin sync errors
                         
-                        logger.info(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name})")
+                        # Changed to debug to avoid logging every single file in large directories (e.g., 1900+ songs)
+                        logger.debug(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name})")
                         return href
 
                     def get_preferred_path(self):
@@ -1807,10 +1819,14 @@ class QuotaFilesystemProvider(FilesystemProvider):
             start_time = time.time()
 
             for idx, item in enumerate(items):
-                # Log progress for large listings
-                if len(items) > 100 and idx > 0 and idx % 100 == 0:
+                # Log progress for large listings (every 500 items for very large dirs, every 100 for medium)
+                if len(items) > 1000 and idx > 0 and idx % 500 == 0:
                     elapsed = time.time() - start_time
-                    logger.info(f"[WebDAV] Processing items: {idx}/{len(items)} ({elapsed:.1f}s elapsed)")
+                    rate = idx / elapsed if elapsed > 0 else 0
+                    logger.info(f"[WebDAV] Processing items: {idx}/{len(items)} ({elapsed:.1f}s elapsed, ~{rate:.1f} items/sec)")
+                elif len(items) > 100 and idx > 0 and idx % 100 == 0:
+                    elapsed = time.time() - start_time
+                    logger.debug(f"[WebDAV] Processing items: {idx}/{len(items)} ({elapsed:.1f}s elapsed)")
                 # Use 'name' for the filename, not 'path' (which may include parent directories)
                 item_name = item.get('name', '')
                 if not item_name:
@@ -1946,7 +1962,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         # The HTTP layer will handle URL encoding when needed
                         # href = href.replace('@', '%40')  # REMOVED - causes Joplin sync errors
                         
-                        logger.info(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name})")
+                        # Changed to debug to avoid logging every single file in large directories (e.g., 1900+ songs)
+                        logger.debug(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name})")
                         return href
 
                     def get_preferred_path(self):
