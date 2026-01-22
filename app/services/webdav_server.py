@@ -2296,34 +2296,40 @@ class QuotaFilesystemProvider(FilesystemProvider):
             # Use resource.path directly instead of calling get_href() to avoid duplicate href calculations
             seen_paths = set()
             unique_resources = []
+            duplicate_count = 0
             for res in webdav_resources:
                 res_path = str(res.path) if hasattr(res, 'path') else str(res)
                 if res_path not in seen_paths:
                     seen_paths.add(res_path)
                     unique_resources.append(res)
                 else:
+                    duplicate_count += 1
                     logger.warning(f"[WebDAV] ⚠️  Removed duplicate resource: {res_path}")
 
-            if len(unique_resources) < len(webdav_resources):
-                logger.error(f"[WebDAV] ⚠️  CRITICAL: Removed {len(webdav_resources) - len(unique_resources)} duplicate resources!")
+            if duplicate_count > 0:
+                logger.error(f"[WebDAV] ⚠️  CRITICAL: Removed {duplicate_count} duplicate resources! ({len(webdav_resources)} -> {len(unique_resources)})")
 
             elapsed_final = time.time() - start_time
             if elapsed_final > 10:
                 logger.warning(f"[WebDAV] Slow directory listing: took {elapsed_final:.2f}s for {len(unique_resources)} items - consider using depth=1 for large directories")
+            
+            # Log summary for debugging Flacbox issues
+            dir_count = sum(1 for r in unique_resources if hasattr(r, '_is_dir') and r._is_dir)
+            file_count = len(unique_resources) - dir_count
+            logger.info(f"[WebDAV] Returning {len(unique_resources)} unique resources: {dir_count} directories, {file_count} files (duplicates removed: {duplicate_count})")
+            
+            # Sample first few hrefs for debugging Flacbox issues
+            if unique_resources:
+                sample_hrefs = []
+                for res in unique_resources[:5]:
+                    try:
+                        href = res.get_href() if hasattr(res, 'get_href') else str(res.path)
+                        sample_hrefs.append(href)
+                    except:
+                        sample_hrefs.append(str(res.path) if hasattr(res, 'path') else 'unknown')
+                logger.debug(f"[WebDAV] Sample hrefs (first 5): {sample_hrefs}")
 
             return unique_resources
-
-            logger.info(f"[WebDAV] Proxied list from storage server: {len(webdav_resources)} items for {username}/{path}")
-            if len(webdav_resources) == 0:
-                logger.warning(f"[WebDAV] Proxy returned 0 items - this might indicate an issue with the storage server or path")
-            
-            # Debug: log what we're returning
-            logger.debug(f"[WebDAV]  Returning {len(webdav_resources)} resources, types: {[type(r).__name__ for r in webdav_resources[:3]]}")
-            if webdav_resources:
-                first = webdav_resources[0]
-                logger.debug(f"[WebDAV]  First resource: type={type(first)}, has get_last_modified={hasattr(first, 'get_last_modified')}, dir={[m for m in dir(first) if 'get' in m.lower() or 'last' in m.lower()][:10]}")
-            
-            return webdav_resources
             
         except Exception as e:
             logger.error(f"[WebDAV] Failed to proxy list to storage server: {e}", exc_info=True)
