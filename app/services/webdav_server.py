@@ -2152,7 +2152,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 # CRITICAL: Return proper XML element for collection - Flacbox requires this
                                 elem = etree.Element("{DAV:}resourcetype")
                                 etree.SubElement(elem, "{DAV:}collection")
-                                logger.debug(f"[WebDAV] Returning resourcetype element for directory: {self._path}")
+                                # Log for directories to help debug Flacbox issues
+                                logger.info(f"[WebDAV] Returning resourcetype with collection for directory: {self._path}, is_collection={self.is_collection()}")
                                 return elem
                             # For files, return empty element (not empty string)
                             elem = etree.Element("{DAV:}resourcetype")
@@ -2175,11 +2176,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         if propname == "allprop" or "getcontentlength" in str(propname):
                             props.append(('getcontentlength', str(self._size) if not self._is_dir else "0"))
                         if propname == "allprop" or "resourcetype" in str(propname):
-                            # Return proper XML string for resourcetype
+                            # CRITICAL: Return proper XML element for resourcetype (not string)
+                            # wsgidav expects XML elements for resourcetype in get_properties
+                            from wsgidav.util import etree
                             if self._is_dir:
-                                props.append(('resourcetype', '<D:collection/>'))
+                                elem = etree.Element("{DAV:}resourcetype")
+                                etree.SubElement(elem, "{DAV:}collection")
+                                props.append(('resourcetype', elem))
+                                logger.debug(f"[WebDAV] get_properties: Added resourcetype element for directory: {self._path}")
                             else:
-                                props.append(('resourcetype', ''))
+                                elem = etree.Element("{DAV:}resourcetype")
+                                props.append(('resourcetype', elem))
                         if propname == "allprop" or "displayname" in str(propname):
                             props.append(('displayname', self._path.split('/')[-1] or self._path))
                         return props
