@@ -250,18 +250,21 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                         status_elem.text = "HTTP/1.1 200 OK"
                         props_fixed += 1
                     
-                    # Recreate unprefixed property elements with D: prefix for Flacbox
-                    # ElementTree doesn't allow changing tags, so we need to recreate them
+                    # Recreate unprefixed property elements with DAV namespace for Flacbox
+                    # ElementTree requires namespace URI, not prefix - but we need to ensure
+                    # the XML output uses D: prefix. We'll use {DAV:} namespace and let
+                    # the serializer handle the prefix based on xmlns declarations.
                     elements_to_replace = []
                     for elem in prop:
-                        # Check if element is unprefixed (no namespace, no D: prefix)
-                        if not elem.tag.startswith('{') and not elem.tag.startswith('D:'):
+                        # Check if element is unprefixed (no namespace URI)
+                        if not elem.tag.startswith('{'):
                             elements_to_replace.append((elem, elem.tag, elem.text, list(elem)))
                     
-                    # Replace unprefixed elements with D: prefixed versions
+                    # Replace unprefixed elements with namespaced versions
                     for old_elem, tag, text, children in elements_to_replace:
-                        # Create new element with D: prefix
-                        new_elem = etree.Element(f"D:{tag}")
+                        # Create new element with DAV namespace URI
+                        # The xmlns:D="DAV:" declaration on <D:prop> will make serializer use D: prefix
+                        new_elem = etree.Element(f"{{DAV:}}{tag}")
                         if text:
                             new_elem.text = text
                         # Copy children
