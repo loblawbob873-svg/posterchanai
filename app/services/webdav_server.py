@@ -2102,17 +2102,25 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             href = href + '/'
                             logger.debug(f"[WebDAV] Added trailing slash to directory href: {href}")
 
-                        # CRITICAL: Do NOT prepend /webdav/ here - wsgidav does this automatically via SCRIPT_NAME
-                        # wsgidav will prepend SCRIPT_NAME (/webdav) to the href we return
-                        # So we return paths like /verita84@poster.place/Music/ and wsgidav makes it /webdav/verita84@poster.place/Music/
+                        # CRITICAL: For Flacbox compatibility, ensure href includes /webdav/ prefix
+                        # WSGiDAV should prepend SCRIPT_NAME, but some clients (like Flacbox) may need it explicitly
+                        # Check if href already has /webdav/ prefix
+                        if not href.startswith('/webdav/'):
+                            script_name = self.environ.get('SCRIPT_NAME', '/webdav') if hasattr(self, 'environ') and self.environ else '/webdav'
+                            # Prepend script_name if it's not already there
+                            if script_name and not href.startswith(script_name):
+                                href = script_name.rstrip('/') + href
                         
                         # CRITICAL: Do NOT URL-encode @ symbol - Joplin expects @ in hrefs to match base URL
                         # The HTTP layer will handle URL encoding when needed
                         # href = href.replace('@', '%40')  # REMOVED - causes Joplin sync errors
                         
-                        script_name = self.environ.get('SCRIPT_NAME', '') if hasattr(self, 'environ') and self.environ else ''
-                        # Changed to debug to avoid logging every single file in large directories (e.g., 1900+ songs)
-                        logger.debug(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name}, wsgidav will prepend it)")
+                        script_name_check = self.environ.get('SCRIPT_NAME', '') if hasattr(self, 'environ') and self.environ else ''
+                        # Log hrefs for audio files to debug Flacbox playback issues
+                        if any(ext in href.lower() for ext in ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac']):
+                            logger.info(f"[WebDAV] SimpleResource.get_href: Audio file href={href} (script_name was: {script_name_check})")
+                        else:
+                            logger.debug(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name_check})")
                         return href
 
                     def get_preferred_path(self):
