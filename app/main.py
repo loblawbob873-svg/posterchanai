@@ -1109,6 +1109,26 @@ async def startup():
                                 start_response('404 Not Found', [('Content-Type', 'text/plain')])
                                 return [b'CalDAV/CardDAV requests should use /caldav/ or /carddav/ endpoints directly']
 
+                            # CRITICAL: Normalize duplicate username patterns BEFORE URL decoding
+                            # Flacbox may send paths like /webdav/username/webdav/username/path
+                            # We need to remove these duplicates so get_resource_inst can handle them correctly
+                            import re
+                            # Extract username from path if present (format: /webdav/username@domain/...)
+                            username_match = re.search(r'/webdav/([^/]+@[^/]+)', path_info)
+                            if username_match:
+                                username = username_match.group(1)
+                                username_pattern = re.escape(username)
+                                # Remove duplicate /webdav/username/webdav/username/ pattern
+                                pattern = r'/webdav/' + username_pattern + r'/webdav/' + username_pattern + r'/'
+                                if re.search(pattern, path_info):
+                                    path_info = re.sub(pattern, f'/webdav/{username}/', path_info)
+                                    logging.debug(f"[WebDAV Middleware] Fixed duplicate username pattern: {path_info}")
+                                # Also handle username/username/ pattern (if /webdav/ was stripped)
+                                pattern2 = r'^/' + username_pattern + r'/' + username_pattern + r'/'
+                                if re.search(pattern2, path_info):
+                                    path_info = re.sub(pattern2, f'/{username}/', path_info)
+                                    logging.debug(f"[WebDAV Middleware] Fixed duplicate username pattern (no webdav): {path_info}")
+                            
                             # CRITICAL: URL decode the path - WSGiDAV expects decoded paths
                             # FastAPI/Starlette may pass URL-encoded paths that need decoding
                             import urllib.parse
