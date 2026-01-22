@@ -16,6 +16,9 @@ from cheroot.wsgi import Server as WSGIServer
 
 from app.models import User, Setting
 
+# Initialize logger first, before monkey patches that use it
+logger = logging.getLogger(__name__)
+
 # Register DAV namespace with 'd' prefix (lowercase) for Joplin compatibility
 # Joplin's XML parser expects lowercase 'd:' namespace prefix
 try:
@@ -56,26 +59,46 @@ _DAVResource.__init__ = _patched_dav_resource_init
 _original_get_href = _DAVResource.get_href if hasattr(_DAVResource, 'get_href') else None
 
 def _patched_get_href(self):
-    """Patched get_href that ensures return value is always a string."""
-    # Check if path is a list
+    """Patched get_href that ensures return value is always a string and includes /webdav/ prefix."""
+    # First, check if this class has its own get_href implementation (not inherited)
+    # If so, call it directly to avoid infinite recursion
+    if type(self).get_href != _DAVResource.get_href if hasattr(_DAVResource, 'get_href') else None:
+        # This class has overridden get_href, so call it
+        method = type(self).get_href
+        if method and method != _patched_get_href:
+            try:
+                result = method(self)
+                # Ensure result is a string
+                if isinstance(result, list):
+                    result = str(result[0]) if len(result) > 0 else ''
+                result = str(result)
+                # Ensure /webdav/ prefix is included if SCRIPT_NAME is set
+                if hasattr(self, 'environ') and self.environ:
+                    script_name = self.environ.get('SCRIPT_NAME', '')
+                    if script_name and not result.startswith(script_name) and not result.startswith('/webdav/'):
+                        result = script_name + result
+                return result
+            except Exception as e:
+                logger.error(f"[WebDAV] Error calling custom get_href: {e}")
+    
+    # Fallback: use path directly
     if hasattr(self, 'path'):
         path_value = self.path
-        logger.warning(f"[WebDAV] ⚠️⚠️ get_href() called: path_value={path_value}, type={type(path_value)}, is_list={isinstance(path_value, list)}")
         if isinstance(path_value, list):
             logger.debug(f"[WebDAV]  Resource.path is a list in get_href: {path_value}, converting to string")
             result = str(path_value[0]) if len(path_value) > 0 else ''
         else:
             result = str(path_value)
-        logger.warning(f"[WebDAV] ⚠️⚠️ get_href() returning: {result}, type={type(result)}")
+        
+        # Ensure /webdav/ prefix is included if SCRIPT_NAME is set
+        if hasattr(self, 'environ') and self.environ:
+            script_name = self.environ.get('SCRIPT_NAME', '')
+            if script_name and not result.startswith(script_name) and not result.startswith('/webdav/'):
+                result = script_name + result
+        
         return result
-    # Fallback to original if it exists
-    if _original_get_href:
-        result = _original_get_href(self)
-        logger.warning(f"[WebDAV] ⚠️⚠️ get_href() from original: result={result}, type={type(result)}")
-        if isinstance(result, list):
-            logger.debug(f"[WebDAV]  Original get_href returned list: {result}, converting")
-            result = str(result[0]) if len(result) > 0 else ''
-        return str(result)
+    
+    # Final fallback
     return "/"
 
 # Apply the patch
@@ -98,20 +121,122 @@ from wsgidav import util as wsgidav_util
 _original_add_property_response = wsgidav_util.add_property_response
 
 def _patched_add_property_response(multistatus_elem, href, prop_list):
-    """Patched add_property_response that ensures href is always a string."""
+    """Patched add_property_response that ensures href is always a string and removes duplicates."""
     # Convert href to string if it's a list
     if isinstance(href, list):
-        logger.warning(f"[WebDAV] href was list: {href}, using first element")
+        logger.error(f"[WebDAV] ⚠️  CRITICAL: href was list: {href}, using first element")
         href = str(href[0]) if len(href) > 0 else '/'
 
-    # Ensure href is a string
+    # Ensure href is a string and not a string representation of a list
     href = str(href)
 
+    # Extra check: if href looks like a string representation of a list, extract the actual path
+    if href.startswith('[') and href.endswith(']'):
+        logger.error(f"[WebDAV] ⚠️  CRITICAL: href is string representation of list: {href}")
+        try:
+            import ast
+            href_list = ast.literal_eval(href)
+            if isinstance(href_list, list) and len(href_list) > 0:
+                href = str(href_list[0])
+                logger.error(f"[WebDAV] Extracted href from string list: {href}")
+        except Exception as e:
+            logger.error(f"[WebDAV] Failed to parse href as list: {e}")
+            # Fallback: strip brackets manually
+            href = href.strip('[]').strip("'\"")
+
+    # CRITICAL FIX: Check if this href already exists in any response element
+    # to prevent duplicate <d:href> elements which cause JSON parsers to create arrays
+    from wsgidav.util import etree
+    
+    # Normalize href for comparison (remove trailing slashes, ensure consistent format)
+    normalized_href = str(href).rstrip('/')
+    if not normalized_href.startswith('/'):
+        normalized_href = '/' + normalized_href
+    
+    # Check all existing responses for duplicate hrefs
+    for response_elem in multistatus_elem.findall("{DAV:}response"):
+        existing_href_elem = response_elem.find("{DAV:}href")
+        if existing_href_elem is not None and existing_href_elem.text:
+            existing_href = str(existing_href_elem.text).rstrip('/')
+            if not existing_href.startswith('/'):
+                existing_href = '/' + existing_href
+            if existing_href == normalized_href:
+                logger.warning(f"[WebDAV] Duplicate response detected for href: {href} - skipping creation")
+                return response_elem  # Return existing response instead of creating duplicate
+
+    # Call original but then check if it accidentally added duplicate href elements
     result = _original_add_property_response(multistatus_elem, href, prop_list)
+
+    # CRITICAL: After adding, check if the created response has multiple href elements
+    if result is not None:
+        href_elements = result.findall("{DAV:}href")
+        if len(href_elements) > 1:
+            logger.error(f"[WebDAV] ⚠️  CRITICAL: Response has {len(href_elements)} href elements! Removing duplicates.")
+            # Keep only the first href element
+            for href_elem in href_elements[1:]:
+                result.remove(href_elem)
+        
+        # Also check if this response was added multiple times to the multistatus
+        # (same href in different response elements)
+        all_responses = multistatus_elem.findall("{DAV:}response")
+        href_count = 0
+        for resp in all_responses:
+            resp_href_elem = resp.find("{DAV:}href")
+            if resp_href_elem is not None and resp_href_elem.text:
+                resp_href = str(resp_href_elem.text).rstrip('/')
+                if not resp_href.startswith('/'):
+                    resp_href = '/' + resp_href
+                if resp_href == normalized_href:
+                    href_count += 1
+        
+        if href_count > 1:
+            logger.error(f"[WebDAV] ⚠️  CRITICAL: Found {href_count} response elements with same href: {href} - removing duplicates")
+            # Remove all but the first occurrence
+            removed = 0
+            for resp in all_responses:
+                if removed >= href_count - 1:
+                    break
+                resp_href_elem = resp.find("{DAV:}href")
+                if resp_href_elem is not None and resp_href_elem.text:
+                    resp_href = str(resp_href_elem.text).rstrip('/')
+                    if not resp_href.startswith('/'):
+                        resp_href = '/' + resp_href
+                    if resp_href == normalized_href:
+                        multistatus_elem.remove(resp)
+                        removed += 1
 
     return result
 
 wsgidav_util.add_property_response = _patched_add_property_response
+
+# Patch send_multi_status_response to log the actual XML being sent
+from wsgidav import util as wsgidav_util2
+_original_send_multi_status_response = wsgidav_util2.send_multi_status_response
+
+def _patched_send_multi_status_response(environ, start_response, multistatus_elem):
+    """Log the actual XML being sent to debug Joplin issues."""
+    from wsgidav.util import etree
+    xml_bytes = etree.tostring(multistatus_elem, encoding='utf-8')
+    xml_str = xml_bytes.decode('utf-8')
+
+    # Check for .resource in the XML
+    if '.resource' in xml_str:
+        logger.error(f"[WebDAV] ⚠️  XML Response contains .resource:")
+        # Find all response elements for .resource
+        for response in multistatus_elem.findall("{DAV:}response"):
+            href_elem = response.find("{DAV:}href")
+            if href_elem is not None and '.resource' in href_elem.text:
+                # Count href elements in this response
+                href_count = len(response.findall("{DAV:}href"))
+                logger.error(f"[WebDAV]   Response href: {href_elem.text}, href_count={href_count}")
+                if href_count > 1:
+                    logger.error(f"[WebDAV]   ⚠️  MULTIPLE HREF ELEMENTS FOUND IN SAME RESPONSE!")
+                    for i, h in enumerate(response.findall("{DAV:}href")):
+                        logger.error(f"[WebDAV]     href[{i}]: {h.text}")
+
+    return _original_send_multi_status_response(environ, start_response, multistatus_elem)
+
+wsgidav_util2.send_multi_status_response = _patched_send_multi_status_response
 
 # Also patch the request_server module to intercept get_href calls
 from wsgidav import request_server
@@ -147,8 +272,6 @@ def _patched_do_propfind(self, environ, start_response):
 request_server.RequestServer.do_PROPFIND = _patched_do_propfind
 from app.services.storage_service import StorageService, get_storage_service
 from app.auth import verify_password
-
-logger = logging.getLogger(__name__)
 
 # Global server instance
 _webdav_server: Optional[WSGIServer] = None
@@ -654,12 +777,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
         # Remove all /webdav/ prefixes (in case it's duplicated)
         while normalized_path.startswith('webdav/'):
             normalized_path = normalized_path[7:]  # Remove 'webdav/'
+
+        # CRITICAL FIX: Remove embedded /webdav/username/ duplication
+        # Example: /user@domain/webdav/user@domain/path -> /user@domain/path
+        import re
+        # Match pattern: /username/webdav/username/ and replace with /username/
+        # This handles cases where the client duplicates the path
+        normalized_path = re.sub(r'^([^/]+)/webdav/\1/', r'\1/', normalized_path)
+
         # Restore leading / if we have a path
         if normalized_path:
             normalized_path = '/' + normalized_path
         else:
             normalized_path = '/'
-        
+
         logger.info(f"[WebDAV] get_resource_list: original={original_path}, normalized={normalized_path}, depth={depth}")
         logger.info(f"[WebDAV] storage_server_url={self.storage_server_url}, storage_server_token={'Yes' if self.storage_server_token else 'No'}")
         
@@ -698,8 +829,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 
                 # Proxy to storage server - this is the ONLY way when remote storage is configured
                 # Pass depth to support Depth: infinity PROPFIND requests
+                # CRITICAL: Pass environ so resources can get SCRIPT_NAME for href generation
                 try:
-                    result = self._proxy_list_files(username, rel_path, depth=depth)
+                    result = self._proxy_list_files(username, rel_path, depth=depth, environ=environ)
                     logger.info(f"[WebDAV] Proxied list returned {len(result)} items for {username}/{rel_path} (depth={depth})")
                     if len(result) == 0:
                         logger.warning(f"[WebDAV] Proxy returned 0 items - check if storage_server_url ({self.storage_server_url}) is correct")
@@ -827,6 +959,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                         environ = {"wsgidav.provider": provider} if provider else {}
                                     is_dir = info_dict.get('is_directory', False)
 
+                                    # CRITICAL: Directories MUST have trailing slashes for WebDAV compliance
+                                    # Many clients (like Flacbox) require this to recognize directories
+                                    if is_dir and path_str and not path_str.endswith('/'):
+                                        path_str = path_str + '/'
+                                        logger.debug(f"[WebDAV] Added trailing slash to directory path in VirtualResource.__init__: {path_str}")
+
                                     # Set attributes directly using object.__setattr__ to avoid any property issues
                                     object.__setattr__(self, 'provider', provider)
                                     object.__setattr__(self, 'path', path_str)
@@ -863,16 +1001,33 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                             def get_href(self):
                                 """Return href (URL path) for the resource."""
-                                # Return full path including /webdav/ prefix for Joplin compatibility
-                                # The stored path already includes the username but not /webdav/
-                                from urllib.parse import quote
-                                href = str(self._path)
-                                # Add /webdav/ prefix if not already present
-                                if not href.startswith('/webdav/'):
+                                # CRITICAL: Extract string from list if _path is somehow a list
+                                if isinstance(self._path, list):
+                                    logger.error(f"[WebDAV] ⚠️  CRITICAL: VirtualResource._path is a list: {self._path}")
+                                    href = str(self._path[0]) if len(self._path) > 0 else '/'
+                                else:
+                                    href = str(self._path)
+
+                                # CRITICAL: Directories MUST end with trailing slash for WebDAV compliance
+                                # Many clients (like Flacbox) require this to recognize directories
+                                if self.is_collection and not href.endswith('/'):
+                                    href = href + '/'
+                                    logger.debug(f"[WebDAV] Added trailing slash to directory href: {href}")
+
+                                # CRITICAL: Ensure href includes /webdav/ prefix for Joplin compatibility
+                                # Joplin expects hrefs to match the base URL format: /webdav/username@domain/...
+                                script_name = self._environ.get('SCRIPT_NAME', '') if hasattr(self, '_environ') and self._environ else ''
+                                if script_name and not href.startswith(script_name):
+                                    href = script_name + href
+                                elif not href.startswith('/webdav/') and script_name == '/webdav':
+                                    # Fallback: prepend /webdav if SCRIPT_NAME is set but href doesn't have it
                                     href = '/webdav' + href
-                                # URL-encode @ symbol for Joplin compatibility
-                                href = href.replace('@', '%40')
-                                logger.debug(f"[WebDAV] VirtualResource.get_href called: returning {href}")
+
+                                # CRITICAL: Do NOT URL-encode @ symbol - Joplin expects @ in hrefs to match base URL
+                                # The HTTP layer will handle URL encoding when needed
+                                # href = href.replace('@', '%40')  # REMOVED - causes Joplin sync errors
+                                
+                                logger.info(f"[WebDAV] VirtualResource.get_href returning: {href} (script_name={script_name})")
                                 return href
 
                             def get_preferred_path(self):
@@ -1258,6 +1413,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def __init__(self, path, is_dir=True, environ=None):
                         # Ensure path is always a string, never a list
                         path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
+                        
+                        # CRITICAL: Directories MUST have trailing slashes for WebDAV compliance
+                        # Many clients (like Flacbox) require this to recognize directories
+                        if is_dir and path_str and not path_str.endswith('/'):
+                            path_str = path_str + '/'
+                            logger.debug(f"[WebDAV] Added trailing slash to directory path in fallback VirtualResource.__init__: {path_str}")
+                        
                         # Manually set required attributes without calling super().__init__
                         if environ is None:
                             environ = {}
@@ -1291,13 +1453,33 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                     def get_href(self):
                         """Return href (URL path) for the resource."""
-                        # Return full path including /webdav/ prefix for Joplin compatibility
-                        href = str(self._path)
-                        # Add /webdav/ prefix if not already present
-                        if not href.startswith('/webdav/'):
+                        # CRITICAL: Extract string from list if _path is somehow a list
+                        if isinstance(self._path, list):
+                            logger.error(f"[WebDAV] ⚠️  CRITICAL: Resource._path is a list: {self._path}")
+                            href = str(self._path[0]) if len(self._path) > 0 else '/'
+                        else:
+                            href = str(self._path)
+
+                        # CRITICAL: Directories MUST end with trailing slash for WebDAV compliance
+                        # Many clients (like Flacbox) require this to recognize directories
+                        if self.is_collection and not href.endswith('/'):
+                            href = href + '/'
+                            logger.debug(f"[WebDAV] Added trailing slash to directory href: {href}")
+
+                        # CRITICAL: Ensure href includes /webdav/ prefix for Joplin compatibility
+                        # Joplin expects hrefs to match the base URL format: /webdav/username@domain/...
+                        script_name = self.environ.get('SCRIPT_NAME', '') if hasattr(self, 'environ') and self.environ else ''
+                        if script_name and not href.startswith(script_name):
+                            href = script_name + href
+                        elif not href.startswith('/webdav/') and script_name == '/webdav':
+                            # Fallback: prepend /webdav if SCRIPT_NAME is set but href doesn't have it
                             href = '/webdav' + href
-                        # URL-encode @ symbol for Joplin compatibility
-                        href = href.replace('@', '%40')
+
+                        # CRITICAL: Do NOT URL-encode @ symbol - Joplin expects @ in hrefs to match base URL
+                        # The HTTP layer will handle URL encoding when needed
+                        # href = href.replace('@', '%40')  # REMOVED - causes Joplin sync errors
+                        
+                        logger.info(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name})")
                         return href
 
                     def get_preferred_path(self):
@@ -1505,13 +1687,14 @@ class QuotaFilesystemProvider(FilesystemProvider):
         # Fall back to parent for local filesystem
         return super().get_content(path, environ)
     
-    def _proxy_list_files(self, username: str, path: str, depth: int = 1):
+    def _proxy_list_files(self, username: str, path: str, depth: int = 1, environ: dict = None):
         """Proxy file listing - uses the same proxying mechanism as files router.
 
         Args:
             username: User's username
             path: Path to list
             depth: Listing depth (1=immediate children, >1=recursive/infinity)
+            environ: WSGI environ dict (used to get SCRIPT_NAME for href generation)
         """
         import requests
 
@@ -1605,6 +1788,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 full_path = str(full_path)  # Force conversion to string
                 
                 is_directory = item.get('is_directory', False)
+                
+                # CRITICAL: Directories MUST end with trailing slash for WebDAV compliance
+                # Many clients (like Flacbox) require this to recognize directories
+                if is_directory and not full_path.endswith('/'):
+                    full_path = full_path + '/'
+                    logger.debug(f"[WebDAV] Added trailing slash to directory path: {full_path}")
                 size = item.get('size', 0) if not is_directory else 0
                 modified = item.get('modified', 0)
                 
@@ -1633,6 +1822,14 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def __init__(self, path, is_dir, size, modified, provider=None, environ=None):
                         # Ensure path is always a string, never a list
                         path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
+                        
+                        # CRITICAL: Directories MUST have trailing slashes for WebDAV compliance
+                        # Many clients (like Flacbox) require this to recognize directories
+                        # Note: full_path already has trailing slash if is_directory, but ensure it here too
+                        if is_dir and path_str and not path_str.endswith('/'):
+                            path_str = path_str + '/'
+                            logger.debug(f"[WebDAV] Added trailing slash to directory path in SimpleResource.__init__: {path_str}")
+                        
                         # Manually set required attributes without calling super().__init__
                         if environ is None:
                             environ = {"wsgidav.provider": provider} if provider else {}
@@ -1677,13 +1874,33 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                     def get_href(self):
                         """Return href (URL path) for the resource."""
-                        # Return full path including /webdav/ prefix for Joplin compatibility
-                        href = str(self._path)
-                        # Add /webdav/ prefix if not already present
-                        if not href.startswith('/webdav/'):
+                        # CRITICAL: Extract string from list if _path is somehow a list
+                        if isinstance(self._path, list):
+                            logger.error(f"[WebDAV] ⚠️  CRITICAL: Resource._path is a list: {self._path}")
+                            href = str(self._path[0]) if len(self._path) > 0 else '/'
+                        else:
+                            href = str(self._path)
+
+                        # CRITICAL: Directories MUST end with trailing slash for WebDAV compliance
+                        # Many clients (like Flacbox) require this to recognize directories
+                        if self.is_collection and not href.endswith('/'):
+                            href = href + '/'
+                            logger.debug(f"[WebDAV] Added trailing slash to directory href: {href}")
+
+                        # CRITICAL: Ensure href includes /webdav/ prefix for Joplin compatibility
+                        # Joplin expects hrefs to match the base URL format: /webdav/username@domain/...
+                        script_name = self.environ.get('SCRIPT_NAME', '') if hasattr(self, 'environ') and self.environ else ''
+                        if script_name and not href.startswith(script_name):
+                            href = script_name + href
+                        elif not href.startswith('/webdav/') and script_name == '/webdav':
+                            # Fallback: prepend /webdav if SCRIPT_NAME is set but href doesn't have it
                             href = '/webdav' + href
-                        # URL-encode @ symbol for Joplin compatibility
-                        href = href.replace('@', '%40')
+
+                        # CRITICAL: Do NOT URL-encode @ symbol - Joplin expects @ in hrefs to match base URL
+                        # The HTTP layer will handle URL encoding when needed
+                        # href = href.replace('@', '%40')  # REMOVED - causes Joplin sync errors
+                        
+                        logger.info(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name})")
                         return href
 
                     def get_preferred_path(self):
@@ -1929,9 +2146,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         }
                 
                 logger.debug(f"[WebDAV] Creating SimpleResource: full_path={full_path}, type={type(full_path)}")
-                resource = SimpleResource(full_path, is_directory, size, modified_ts, provider=self, environ=None)
-                logger.debug(f"[WebDAV] Created resource.path={resource.path}, type={type(resource.path)}")
-                logger.debug(f"[WebDAV] Created resource.get_href()={resource.get_href()}, type={type(resource.get_href())}")
+                resource = SimpleResource(full_path, is_directory, size, modified_ts, provider=self, environ=environ)
+                logger.debug(f"[WebDAV] Created resource.path={resource.path}, type={type(resource.path)}, script_name={environ.get('SCRIPT_NAME', '') if environ else 'NO_ENVIRON'}")
+                # Note: Don't call get_href() here - it will be called by wsgidav when building response
                 webdav_resources.append(resource)
 
                 # NOTE: Server-side recursive listing disabled - too slow with one API call per directory
@@ -1940,7 +2157,23 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 #     ... recursive listing code ...
 
             logger.info(f"[WebDAV] Created {len(webdav_resources)} SimpleResource objects (depth={depth})")
-            return webdav_resources
+
+            # Deduplicate resources by path to prevent multiple <d:href> elements for same resource
+            # Use resource.path directly instead of calling get_href() to avoid duplicate href calculations
+            seen_paths = set()
+            unique_resources = []
+            for res in webdav_resources:
+                res_path = str(res.path) if hasattr(res, 'path') else str(res)
+                if res_path not in seen_paths:
+                    seen_paths.add(res_path)
+                    unique_resources.append(res)
+                else:
+                    logger.warning(f"[WebDAV] ⚠️  Removed duplicate resource: {res_path}")
+
+            if len(unique_resources) < len(webdav_resources):
+                logger.error(f"[WebDAV] ⚠️  CRITICAL: Removed {len(webdav_resources) - len(unique_resources)} duplicate resources!")
+
+            return unique_resources
 
             logger.info(f"[WebDAV] Proxied list from storage server: {len(webdav_resources)} items for {username}/{path}")
             if len(webdav_resources) == 0:
@@ -2061,6 +2294,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
             path = path[len(f'webdav/{username}/'):]
             logger.debug(f"[WebDAV] _proxy_get_info: removed duplicate webdav/{username}/, path={path}")
 
+        # If path equals username, treat as root directory
+        if path == username:
+            path = ''
+            logger.debug(f"[WebDAV] _proxy_get_info: path equals username, treating as root directory")
+
         # For root directory (empty path), return directory info
         if not path:
             # Root directory always exists - return directory info
@@ -2102,10 +2340,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
             if self.storage_server_token:
                 headers["Authorization"] = f"Bearer {self.storage_server_token}"
 
+            # Ensure path is explicitly empty string (not None) for root directory
             params = {
                 "username": username,
-                "path": parent_path
+                "path": parent_path if parent_path else ""
             }
+            
+            logger.debug(f"[WebDAV] _proxy_get_info: calling storage API with username={username}, path='{params['path']}' (parent_path was '{parent_path}')")
 
             try:
                 response = requests.get(url, headers=headers, params=params, timeout=30)

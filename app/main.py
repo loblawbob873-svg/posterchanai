@@ -1108,8 +1108,11 @@ async def startup():
                                 start_response('404 Not Found', [('Content-Type', 'text/plain')])
                                 return [b'CalDAV/CardDAV requests should use /caldav/ or /carddav/ endpoints directly']
 
+                            # CRITICAL: Set SCRIPT_NAME so WsgiDAV knows it's mounted at /webdav
+                            # This allows WsgiDAV to generate correct hrefs that include /webdav prefix
                             environ['PATH_INFO'] = path_info
-                            logging.debug(f"[WebDAV Middleware] Forwarding to WsgiDAV: {original_path} -> {path_info}")
+                            environ['SCRIPT_NAME'] = '/webdav'
+                            logging.debug(f"[WebDAV Middleware] Forwarding to WsgiDAV: {original_path} -> {path_info} (SCRIPT_NAME=/webdav)")
                             return wsgi_app(environ, start_response)
                         return wrapper
                     # NOTE: /webdav/caldav/ and /webdav/carddav/ routes are now defined at top level
