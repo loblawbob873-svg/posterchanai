@@ -251,25 +251,39 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                         # Remove patterns like /username/webdav/username/ or /username/username/
                         href_text = re.sub(r'^/' + username_pattern + r'/(webdav/)?' + username_pattern + r'/', f'/{username}/', href_text)
                 
-                # CRITICAL: Flacbox is constructing duplicate paths like /webdav/username/webdav/username/...
-                # This suggests Flacbox is treating hrefs as relative to its base URL
-                # If Flacbox connected to /webdav/verita84@poster.place/, it might expect relative hrefs
-                # Try removing /webdav/ prefix and making hrefs relative to /webdav/
-                # So /webdav/verita84@poster.place/Music/... becomes /verita84@poster.place/Music/...
+                # CRITICAL: Ensure hrefs are properly formatted as absolute paths
+                # WebDAV spec requires absolute paths or URIs in hrefs
+                # All hrefs should start with /webdav/ prefix for consistency
                 
-                # Remove /webdav/ prefix if present to make hrefs relative to base
-                if href_text.startswith(script_name):
-                    # Make relative by removing /webdav/ prefix
-                    relative_href = href_text[len(script_name):].lstrip('/')
-                    new_href = '/' + relative_href if relative_href else '/'
-                    href_elem.text = new_href
-                    hrefs_fixed += 1
-                    if hrefs_fixed <= 3:  # Log first few for debugging
-                        logger.info(f"[WebDAV] 🔧 Removed /webdav/ prefix: '{href_text}' -> '{new_href}'")
-                elif href_text != original_href:
-                    # Update href if we cleaned up duplicates
+                # First, ensure href starts with / (absolute path)
+                if not href_text.startswith('/'):
+                    href_text = '/' + href_text
+                
+                # Remove duplicate username patterns (e.g., /username/webdav/username/ -> /username/)
+                # This handles cases where paths got duplicated during processing
+                if href_text and '@' in href_text:
+                    path_parts = href_text.strip('/').split('/')
+                    if len(path_parts) > 1 and '@' in path_parts[0]:
+                        username = path_parts[0]
+                        username_pattern = re.escape(username)
+                        # Remove patterns like /username/webdav/username/ or /username/username/
+                        href_text = re.sub(r'^/' + username_pattern + r'/(webdav/)?' + username_pattern + r'/', f'/{username}/', href_text)
+                
+                # Ensure href has /webdav/ prefix if it's a user path (contains @)
+                # This ensures consistency - all user resource hrefs include /webdav/
+                if '@' in href_text and not href_text.startswith(script_name):
+                    # Check if it's a user path (starts with /username@domain/)
+                    path_parts = href_text.strip('/').split('/')
+                    if len(path_parts) > 0 and '@' in path_parts[0]:
+                        # Prepend /webdav/ to make it absolute
+                        href_text = script_name.rstrip('/') + href_text
+                        hrefs_fixed += 1
+                
+                # Update href if it changed
+                if href_text != original_href:
                     href_elem.text = href_text
-                    hrefs_fixed += 1
+                    if hrefs_fixed <= 3:  # Log first few for debugging
+                        logger.info(f"[WebDAV] 🔧 Fixed href: '{original_href}' -> '{href_text}'")
             
             # CRITICAL: Ensure all property elements are properly namespaced with D: prefix
             # Flacbox requires explicitly prefixed elements (D:getcontenttype, not just getcontenttype)
@@ -1227,7 +1241,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 else:
                                     href = str(self._path)
 
-                                # CRITICAL: Remove any /webdav/ prefix - wsgidav will prepend SCRIPT_NAME automatically
+                                # CRITICAL: Remove any existing /webdav/ prefix to normalize
                                 if href.startswith('/webdav/'):
                                     href = href[7:]  # Remove '/webdav/'
                                 elif href.startswith('/webdav'):
@@ -1248,16 +1262,23 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     href = href + '/'
                                     logger.debug(f"[WebDAV] Added trailing slash to directory href: {href}")
 
-                                # CRITICAL: Do NOT prepend /webdav/ here - wsgidav does this automatically via SCRIPT_NAME
-                                # wsgidav will prepend SCRIPT_NAME (/webdav) to the href we return
+                                # CRITICAL: WSGiDAV is NOT reliably prepending SCRIPT_NAME to hrefs in XML responses
+                                # We must include /webdav/ prefix explicitly to ensure consistent absolute paths
+                                script_name = self._environ.get('SCRIPT_NAME', '/webdav') if hasattr(self, '_environ') and self._environ else '/webdav'
+                                if script_name and not href.startswith(script_name):
+                                    # Ensure href starts with / (absolute path)
+                                    if not href.startswith('/'):
+                                        href = '/' + href
+                                    # Prepend /webdav/ to make it absolute
+                                    href = script_name.rstrip('/') + href
                                 
                                 # CRITICAL: Do NOT URL-encode @ symbol - Joplin expects @ in hrefs to match base URL
                                 # The HTTP layer will handle URL encoding when needed
                                 # href = href.replace('@', '%40')  # REMOVED - causes Joplin sync errors
                                 
-                                script_name = self._environ.get('SCRIPT_NAME', '') if hasattr(self, '_environ') and self._environ else ''
+                                script_name_check = self._environ.get('SCRIPT_NAME', '') if hasattr(self, '_environ') and self._environ else ''
                                 # Changed to debug to avoid logging every single file in large directories (e.g., 1900+ songs)
-                                logger.debug(f"[WebDAV] VirtualResource.get_href returning: {href} (script_name={script_name}, wsgidav will prepend it)")
+                                logger.debug(f"[WebDAV] VirtualResource.get_href returning: {href} (script_name={script_name_check})")
                                 return href
 
                             def get_preferred_path(self):
@@ -1716,8 +1737,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         else:
                             href = str(self._path)
 
-                        # CRITICAL: Remove any /webdav/ prefix - wsgidav will prepend SCRIPT_NAME automatically
-                        # If we include /webdav/ here, wsgidav might prepend it again, causing duplicates
+                        # CRITICAL: Remove any existing /webdav/ prefix to normalize
                         if href.startswith('/webdav/'):
                             href = href[7:]  # Remove '/webdav/'
                         elif href.startswith('/webdav'):
@@ -1739,17 +1759,23 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             href = href + '/'
                             logger.debug(f"[WebDAV] Added trailing slash to directory href: {href}")
 
-                        # CRITICAL: Do NOT prepend /webdav/ here - wsgidav does this automatically via SCRIPT_NAME
-                        # wsgidav will prepend SCRIPT_NAME (/webdav) to the href we return
-                        # So we return paths like /verita84@poster.place/Music/ and wsgidav makes it /webdav/verita84@poster.place/Music/
+                        # CRITICAL: WSGiDAV is NOT reliably prepending SCRIPT_NAME to hrefs in XML responses
+                        # We must include /webdav/ prefix explicitly to ensure consistent absolute paths
+                        script_name = self.environ.get('SCRIPT_NAME', '/webdav') if hasattr(self, 'environ') and self.environ else '/webdav'
+                        if script_name and not href.startswith(script_name):
+                            # Ensure href starts with / (absolute path)
+                            if not href.startswith('/'):
+                                href = '/' + href
+                            # Prepend /webdav/ to make it absolute
+                            href = script_name.rstrip('/') + href
                         
                         # CRITICAL: Do NOT URL-encode @ symbol - Joplin expects @ in hrefs to match base URL
                         # The HTTP layer will handle URL encoding when needed
                         # href = href.replace('@', '%40')  # REMOVED - causes Joplin sync errors
                         
-                        script_name = self.environ.get('SCRIPT_NAME', '') if hasattr(self, 'environ') and self.environ else ''
+                        script_name_check = self.environ.get('SCRIPT_NAME', '') if hasattr(self, 'environ') and self.environ else ''
                         # Changed to debug to avoid logging every single file in large directories (e.g., 1900+ songs)
-                        logger.debug(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name}, wsgidav will prepend it)")
+                        logger.debug(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name_check})")
                         return href
 
                     def get_preferred_path(self):
