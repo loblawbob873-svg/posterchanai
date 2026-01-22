@@ -3256,43 +3256,42 @@ class ChatHandler {
     }
 
     async shareFile(filePath, fileName) {
-        // Use file manager's share modal if available, otherwise create share directly
-        if (window.fileManager && typeof window.fileManager.shareFile === 'function') {
+        // Check if fileShareModal exists (file manager page)
+        const modal = document.getElementById('fileShareModal');
+        if (modal && window.fileManager && typeof window.fileManager.shareFile === 'function') {
             window.fileManager.shareFile(filePath, fileName);
-        } else {
-            // Fallback: create share directly
-            try {
-                const response = await csrfFetch('/api/files/share', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ file_path: filePath })
-                });
-                if (!response.ok) {
-                    throw new Error('Failed to create share');
-                }
-                const data = await response.json();
-                const shareUrl = window.location.origin + data.share_url;
-                
-                // Copy to clipboard
-                await navigator.clipboard.writeText(shareUrl);
-                this.showToast(`Share URL copied to clipboard: ${shareUrl}`);
-            } catch (error) {
-                console.error('Error sharing file:', error);
-                this.showToast('Error sharing file', 'error');
+            return;
+        }
+
+        // Create share directly for chat interface (no modal available)
+        try {
+            const response = await csrfFetch('/api/files/share', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_path: filePath })
+            });
+            if (!response.ok) {
+                throw new Error('Failed to create share');
             }
+            const data = await response.json();
+            const shareUrl = window.location.origin + data.share_url;
+
+            // Copy to clipboard
+            await navigator.clipboard.writeText(shareUrl);
+            this.showToast(`Public share URL copied to clipboard!\n${shareUrl}`, 'success');
+        } catch (error) {
+            console.error('Error sharing file:', error);
+            this.showToast('Error creating share link: ' + error.message, 'error');
         }
     }
 
     async emailFile(filePath, fileName, apiUrl = null) {
         // Use chat command to email file via AI
         const input = document.getElementById('message-input');
-        if (input) {
+        if (input && this.sendMessage) {
             input.value = `email ${fileName}`;
-            // Trigger send
-            const sendButton = document.querySelector('.send-btn');
-            if (sendButton) {
-                sendButton.click();
-            }
+            // Directly call sendMessage instead of clicking button (works better on mobile)
+            await this.sendMessage();
             return;
         }
 
