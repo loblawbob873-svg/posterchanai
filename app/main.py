@@ -1084,6 +1084,7 @@ async def startup():
                             # Strip /webdav prefix from PATH_INFO if present (handle multiple occurrences)
                             path_info = environ.get('PATH_INFO', '')
                             original_path = path_info
+                            request_method = environ.get('REQUEST_METHOD', 'UNKNOWN')
 
                             # CRITICAL: Check for /webdav/caldav/ or /webdav/carddav/ paths FIRST
                             # These should NOT go to WsgiDAV - they need FastAPI proxy routes
@@ -1122,7 +1123,7 @@ async def startup():
                                         decoded_parts.append('')
                                 decoded_path = '/'.join(decoded_parts)
                                 if decoded_path != path_info:
-                                    logging.info(f"[WebDAV Middleware] URL decoded path: '{path_info}' -> '{decoded_path}'")
+                                    logging.info(f"[WebDAV Middleware] {request_method} URL decoded path: '{path_info}' -> '{decoded_path}'")
                                     path_info = decoded_path
                             except Exception as e:
                                 logging.warning(f"[WebDAV Middleware] Failed to URL decode path {path_info}: {e}")
@@ -1131,13 +1132,15 @@ async def startup():
                             # This allows WsgiDAV to generate correct hrefs that include /webdav prefix
                             environ['PATH_INFO'] = path_info
                             environ['SCRIPT_NAME'] = '/webdav'
-                            request_method = environ.get('REQUEST_METHOD', 'UNKNOWN')
                             logging.info(f"[WebDAV Middleware] {request_method} {original_path} -> {path_info} (SCRIPT_NAME=/webdav)")
                             return wsgi_app(environ, start_response)
                         return wrapper
                     # NOTE: /webdav/caldav/ and /webdav/carddav/ routes are now defined at top level
                     # (before WSGI middleware) to ensure FastAPI handles them first
-
+                    
+                    # CRITICAL: Mount WebDAV - this should handle ALL requests under /webdav/
+                    # including GET, PROPFIND, PUT, DELETE, etc.
+                    # The mount is processed AFTER specific routes, so /webdav/caldav/ routes take precedence
                     app.mount("/webdav", wsgi_middleware(strip_webdav_prefix(webdav_app)))
                     logging.info("✅ WebDAV mounted directly into FastAPI on port 443 (via /webdav/)")
                     logging.info("   No separate port 8080 needed - all traffic goes through 443!")

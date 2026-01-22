@@ -389,6 +389,18 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                 if len(audio_hrefs_in_xml) >= 5:  # Log first 5
                     break
     
+    # CRITICAL: Always log audio file hrefs to see what Flacbox receives
+    if audio_hrefs_in_xml:
+        # Check if hrefs are absolute (start with /webdav/)
+        absolute_count = sum(1 for h in audio_hrefs_in_xml if h.startswith('/webdav/'))
+        relative_count = len(audio_hrefs_in_xml) - absolute_count
+        logger.info(f"[WebDAV] 🎵 Audio file hrefs in FINAL XML (total responses={total_responses}, audio files={audio_count}): {audio_hrefs_in_xml[:5]}")
+        if relative_count > 0:
+            logger.error(f"[WebDAV] ⚠️ CRITICAL: {relative_count}/{len(audio_hrefs_in_xml)} audio hrefs are NOT absolute (missing /webdav/ prefix)! Flacbox cannot play these!")
+            logger.error(f"[WebDAV] ⚠️ Problematic hrefs: {[h for h in audio_hrefs_in_xml if not h.startswith('/webdav/')][:3]}")
+        else:
+            logger.info(f"[WebDAV] ✅ All audio hrefs are absolute (start with /webdav/)")
+    
     if audio_hrefs_in_xml and total_responses <= 100:
         # Log a sample of the actual XML for one audio file to debug (only for smaller responses)
         try:
@@ -446,7 +458,6 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     break
         except Exception as e:
             logger.error(f"[WebDAV] Error logging audio file XML details: {e}", exc_info=True)
-        logger.info(f"[WebDAV] ⚠️  Audio file hrefs in FINAL XML response (what Flacbox sees, total responses={total_responses}, audio files found={audio_count}): {audio_hrefs_in_xml}")
     elif total_responses > 0:
         # Log a sample of hrefs to see what's actually in the response
         sample_hrefs = []
@@ -1156,12 +1167,19 @@ class QuotaFilesystemProvider(FilesystemProvider):
         
         # CRITICAL: Remove ALL /webdav/ prefixes first (middleware already stripped it)
         # But handle cases where it wasn't stripped or got duplicated
+        # Also handle /webdav/webdav/ patterns in the middle
         while normalized_path.startswith('webdav/'):
             normalized_path = normalized_path[7:]
+        # Remove /webdav/webdav/ patterns anywhere in the path
+        while '/webdav/webdav/' in normalized_path:
+            normalized_path = normalized_path.replace('/webdav/webdav/', '/webdav/')
+        while 'webdav/webdav/' in normalized_path:
+            normalized_path = normalized_path.replace('webdav/webdav/', 'webdav/')
         
         # CRITICAL: Handle duplicate username patterns
         # Pattern: username/webdav/username/path -> username/path
         # Pattern: username/username/path -> username/path
+        # Pattern: username/webdav/webdav/username/path -> username/path
         if '@' in normalized_path:
             # Find username pattern (e.g., "verita84@poster.place")
             username_match = re.search(r'([^/]+@[^/]+)', normalized_path)
@@ -1169,23 +1187,23 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 username = username_match.group(1)
                 username_pattern = re.escape(username)
                 
-                # Remove duplicate patterns:
-                # 1. username/webdav/username/ -> username/
-                normalized_path = re.sub(
-                    r'^' + username_pattern + r'/webdav/' + username_pattern + r'/',
-                    username + '/',
-                    normalized_path
-                )
-                # 2. username/username/ -> username/
-                normalized_path = re.sub(
-                    r'^' + username_pattern + r'/' + username_pattern + r'/',
-                    username + '/',
-                    normalized_path
-                )
-        
-        # Remove any remaining duplicate /webdav/ patterns
-        while '/webdav/webdav/' in normalized_path:
-            normalized_path = normalized_path.replace('/webdav/webdav/', '/webdav/')
+                # Remove duplicate patterns in order (most specific first):
+                # Use re.sub directly - it will only replace if pattern matches
+                # 1. username/webdav/webdav/username/ -> username/
+                pattern1 = r'^' + username_pattern + r'/webdav/webdav/' + username_pattern + r'/'
+                if re.search(pattern1, normalized_path):
+                    normalized_path = re.sub(pattern1, username + '/', normalized_path)
+                    logger.warning(f"[WebDAV] Removed username/webdav/webdav/username/ pattern: '{original_path}' -> '{normalized_path}'")
+                # 2. username/webdav/username/ -> username/
+                pattern2 = r'^' + username_pattern + r'/webdav/' + username_pattern + r'/'
+                if re.search(pattern2, normalized_path):
+                    normalized_path = re.sub(pattern2, username + '/', normalized_path)
+                    logger.warning(f"[WebDAV] Removed username/webdav/username/ pattern: '{original_path}' -> '{normalized_path}'")
+                # 3. username/username/ -> username/
+                pattern3 = r'^' + username_pattern + r'/' + username_pattern + r'/'
+                if re.search(pattern3, normalized_path):
+                    normalized_path = re.sub(pattern3, username + '/', normalized_path)
+                    logger.warning(f"[WebDAV] Removed username/username/ pattern: '{original_path}' -> '{normalized_path}'")
         
         # Ensure path starts with /
         if normalized_path:
@@ -1207,38 +1225,39 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 rel_path = normalized_path.lstrip('/')
                 logger.debug(f"[WebDAV] get_resource_inst: after lstrip, rel_path={rel_path}, username={username}")
 
-                # CRITICAL: Remove duplicate username patterns first
-                # Handle cases like: username/username/path -> username/path
-                # or: username@domain/username@domain/path -> username@domain/path
+                # CRITICAL: Remove ALL duplicate patterns aggressively
                 import re
-                # Check if path starts with username/username/ pattern
-                username_prefix = username + '/'
-                if rel_path.startswith(username_prefix + username_prefix):
-                    # Remove the first occurrence
-                    rel_path = rel_path[len(username) + 1:]
-                    logger.warning(f"[WebDAV] Removed duplicate username pattern, new rel_path={rel_path}")
-                elif rel_path.startswith(username_prefix + username + '/'):
-                    # Handle case where there's a duplicate but with different separator
-                    rel_path = rel_path[len(username) + 1:]
-                    logger.warning(f"[WebDAV] Removed duplicate username pattern (variant), new rel_path={rel_path}")
-
-                # Handle various path formats:
-                # /username@domain/path -> path (email-style WebDAV paths from iOS/macOS)
-                # /username/path -> path
-                # /webdav/username/path -> path
-                # Since username now includes @domain, we can directly strip it
-                if rel_path.startswith(username + '/'):
-                    rel_path = rel_path[len(username) + 1:]
-                    logger.debug(f"[WebDAV] get_resource_inst: matched username/, rel_path={rel_path}")
+                username_pattern = re.escape(username)
+                
+                # Remove duplicate patterns in order:
+                # 1. webdav/username/webdav/username/ -> username/
+                if rel_path.startswith('webdav/' + username + '/webdav/' + username + '/'):
+                    rel_path = rel_path[len('webdav/' + username + '/webdav/' + username + '/'):]
+                    logger.warning(f"[WebDAV] Removed webdav/username/webdav/username/ pattern, new rel_path={rel_path}")
+                # 2. username/webdav/username/ -> username/
+                elif rel_path.startswith(username + '/webdav/' + username + '/'):
+                    rel_path = rel_path[len(username + '/webdav/' + username + '/'):]
+                    logger.warning(f"[WebDAV] Removed username/webdav/username/ pattern, new rel_path={rel_path}")
+                # 3. username/username/ -> (empty, then add back username/)
+                elif rel_path.startswith(username + '/' + username + '/'):
+                    rel_path = rel_path[len(username + '/' + username + '/'):]
+                    logger.warning(f"[WebDAV] Removed username/username/ pattern, new rel_path={rel_path}")
+                # 4. webdav/username/ -> (remove webdav/)
+                elif rel_path.startswith('webdav/' + username + '/'):
+                    rel_path = rel_path[len('webdav/' + username + '/'):]
+                    logger.debug(f"[WebDAV] Removed webdav/username/ prefix, new rel_path={rel_path}")
+                # 5. username/ -> (remove username/)
+                elif rel_path.startswith(username + '/'):
+                    rel_path = rel_path[len(username + '/'):]
+                    logger.debug(f"[WebDAV] Removed username/ prefix, new rel_path={rel_path}")
+                # 6. Just username -> empty
                 elif rel_path == username:
                     rel_path = ''
-                    logger.debug(f"[WebDAV] get_resource_inst: matched username exactly, rel_path={rel_path}")
-                elif rel_path.startswith('webdav/' + username + '/'):
-                    rel_path = rel_path[len('webdav/' + username) + 1:]
-                    logger.debug(f"[WebDAV] get_resource_inst: matched webdav/username/, rel_path={rel_path}")
+                    logger.debug(f"[WebDAV] Path was just username, set to empty")
+                # 7. webdav/username -> empty
                 elif rel_path == 'webdav/' + username:
                     rel_path = ''
-                    logger.debug(f"[WebDAV] get_resource_inst: matched webdav/username exactly, rel_path={rel_path}")
+                    logger.debug(f"[WebDAV] Path was webdav/username, set to empty")
                 elif rel_path.startswith('calendar/dav/' + username + '/'):
                     rel_path = rel_path[len('calendar/dav/' + username) + 1:]
                     logger.debug(f"[WebDAV] get_resource_inst: matched calendar/dav/username/, rel_path={rel_path}")
