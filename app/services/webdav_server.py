@@ -59,7 +59,7 @@ _DAVResource.__init__ = _patched_dav_resource_init
 _original_get_href = _DAVResource.get_href if hasattr(_DAVResource, 'get_href') else None
 
 def _patched_get_href(self):
-    """Patched get_href that ensures return value is always a string and includes /webdav/ prefix."""
+    """Patched get_href that ensures return value is always a string. wsgidav handles SCRIPT_NAME prefix."""
     # First, check if this class has its own get_href implementation (not inherited)
     # If so, call it directly to avoid infinite recursion
     if type(self).get_href != _DAVResource.get_href if hasattr(_DAVResource, 'get_href') else None:
@@ -72,11 +72,8 @@ def _patched_get_href(self):
                 if isinstance(result, list):
                     result = str(result[0]) if len(result) > 0 else ''
                 result = str(result)
-                # Ensure /webdav/ prefix is included if SCRIPT_NAME is set
-                if hasattr(self, 'environ') and self.environ:
-                    script_name = self.environ.get('SCRIPT_NAME', '')
-                    if script_name and not result.startswith(script_name) and not result.startswith('/webdav/'):
-                        result = script_name + result
+                # CRITICAL: Do NOT prepend /webdav/ here - wsgidav does this automatically via SCRIPT_NAME
+                # The custom get_href methods should return paths without /webdav/ prefix
                 return result
             except Exception as e:
                 logger.error(f"[WebDAV] Error calling custom get_href: {e}")
@@ -90,11 +87,8 @@ def _patched_get_href(self):
         else:
             result = str(path_value)
         
-        # Ensure /webdav/ prefix is included if SCRIPT_NAME is set
-        if hasattr(self, 'environ') and self.environ:
-            script_name = self.environ.get('SCRIPT_NAME', '')
-            if script_name and not result.startswith(script_name) and not result.startswith('/webdav/'):
-                result = script_name + result
+        # CRITICAL: Do NOT prepend /webdav/ here - wsgidav does this automatically via SCRIPT_NAME
+        # wsgidav will prepend SCRIPT_NAME to the href we return
         
         return result
     
@@ -1047,27 +1041,37 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 else:
                                     href = str(self._path)
 
+                                # CRITICAL: Remove any /webdav/ prefix - wsgidav will prepend SCRIPT_NAME automatically
+                                if href.startswith('/webdav/'):
+                                    href = href[7:]  # Remove '/webdav/'
+                                elif href.startswith('/webdav'):
+                                    href = href[7:]  # Remove '/webdav'
+                                
+                                # CRITICAL: Remove duplicate username patterns from href
+                                import re
+                                path_parts = href.strip('/').split('/')
+                                if len(path_parts) > 0 and '@' in path_parts[0]:
+                                    username = path_parts[0]
+                                    username_pattern = re.escape(username) + r'/'
+                                    # Remove duplicate username/username/ or username/webdav/username/ patterns
+                                    href = re.sub(r'^/' + username_pattern + r'(webdav/)?' + username_pattern, f'/{username}/', href)
+                                
                                 # CRITICAL: Directories MUST end with trailing slash for WebDAV compliance
                                 # Many clients (like Flacbox) require this to recognize directories
                                 if self.is_collection and not href.endswith('/'):
                                     href = href + '/'
                                     logger.debug(f"[WebDAV] Added trailing slash to directory href: {href}")
 
-                                # CRITICAL: Ensure href includes /webdav/ prefix for Joplin compatibility
-                                # Joplin expects hrefs to match the base URL format: /webdav/username@domain/...
-                                script_name = self._environ.get('SCRIPT_NAME', '') if hasattr(self, '_environ') and self._environ else ''
-                                if script_name and not href.startswith(script_name):
-                                    href = script_name + href
-                                elif not href.startswith('/webdav/') and script_name == '/webdav':
-                                    # Fallback: prepend /webdav if SCRIPT_NAME is set but href doesn't have it
-                                    href = '/webdav' + href
-
+                                # CRITICAL: Do NOT prepend /webdav/ here - wsgidav does this automatically via SCRIPT_NAME
+                                # wsgidav will prepend SCRIPT_NAME (/webdav) to the href we return
+                                
                                 # CRITICAL: Do NOT URL-encode @ symbol - Joplin expects @ in hrefs to match base URL
                                 # The HTTP layer will handle URL encoding when needed
                                 # href = href.replace('@', '%40')  # REMOVED - causes Joplin sync errors
                                 
+                                script_name = self._environ.get('SCRIPT_NAME', '') if hasattr(self, '_environ') and self._environ else ''
                                 # Changed to debug to avoid logging every single file in large directories (e.g., 1900+ songs)
-                                logger.debug(f"[WebDAV] VirtualResource.get_href returning: {href} (script_name={script_name})")
+                                logger.debug(f"[WebDAV] VirtualResource.get_href returning: {href} (script_name={script_name}, wsgidav will prepend it)")
                                 return href
 
                             def get_preferred_path(self):
@@ -1500,27 +1504,40 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         else:
                             href = str(self._path)
 
+                        # CRITICAL: Remove any /webdav/ prefix - wsgidav will prepend SCRIPT_NAME automatically
+                        # If we include /webdav/ here, wsgidav might prepend it again, causing duplicates
+                        if href.startswith('/webdav/'):
+                            href = href[7:]  # Remove '/webdav/'
+                        elif href.startswith('/webdav'):
+                            href = href[7:]  # Remove '/webdav'
+                        
+                        # CRITICAL: Remove duplicate username patterns from href
+                        # Handle cases like: /username/username/path or /username/webdav/username/path
+                        import re
+                        path_parts = href.strip('/').split('/')
+                        if len(path_parts) > 0 and '@' in path_parts[0]:
+                            username = path_parts[0]
+                            username_pattern = re.escape(username) + r'/'
+                            # Remove duplicate username/username/ or username/webdav/username/ patterns
+                            href = re.sub(r'^/' + username_pattern + r'(webdav/)?' + username_pattern, f'/{username}/', href)
+                        
                         # CRITICAL: Directories MUST end with trailing slash for WebDAV compliance
                         # Many clients (like Flacbox) require this to recognize directories
                         if self.is_collection and not href.endswith('/'):
                             href = href + '/'
                             logger.debug(f"[WebDAV] Added trailing slash to directory href: {href}")
 
-                        # CRITICAL: Ensure href includes /webdav/ prefix for Joplin compatibility
-                        # Joplin expects hrefs to match the base URL format: /webdav/username@domain/...
-                        script_name = self.environ.get('SCRIPT_NAME', '') if hasattr(self, 'environ') and self.environ else ''
-                        if script_name and not href.startswith(script_name):
-                            href = script_name + href
-                        elif not href.startswith('/webdav/') and script_name == '/webdav':
-                            # Fallback: prepend /webdav if SCRIPT_NAME is set but href doesn't have it
-                            href = '/webdav' + href
-
+                        # CRITICAL: Do NOT prepend /webdav/ here - wsgidav does this automatically via SCRIPT_NAME
+                        # wsgidav will prepend SCRIPT_NAME (/webdav) to the href we return
+                        # So we return paths like /verita84@poster.place/Music/ and wsgidav makes it /webdav/verita84@poster.place/Music/
+                        
                         # CRITICAL: Do NOT URL-encode @ symbol - Joplin expects @ in hrefs to match base URL
                         # The HTTP layer will handle URL encoding when needed
                         # href = href.replace('@', '%40')  # REMOVED - causes Joplin sync errors
                         
+                        script_name = self.environ.get('SCRIPT_NAME', '') if hasattr(self, 'environ') and self.environ else ''
                         # Changed to debug to avoid logging every single file in large directories (e.g., 1900+ songs)
-                        logger.debug(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name})")
+                        logger.debug(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name}, wsgidav will prepend it)")
                         return href
 
                     def get_preferred_path(self):
@@ -1964,27 +1981,40 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         else:
                             href = str(self._path)
 
+                        # CRITICAL: Remove any /webdav/ prefix - wsgidav will prepend SCRIPT_NAME automatically
+                        # If we include /webdav/ here, wsgidav might prepend it again, causing duplicates
+                        if href.startswith('/webdav/'):
+                            href = href[7:]  # Remove '/webdav/'
+                        elif href.startswith('/webdav'):
+                            href = href[7:]  # Remove '/webdav'
+                        
+                        # CRITICAL: Remove duplicate username patterns from href
+                        # Handle cases like: /username/username/path or /username/webdav/username/path
+                        import re
+                        path_parts = href.strip('/').split('/')
+                        if len(path_parts) > 0 and '@' in path_parts[0]:
+                            username = path_parts[0]
+                            username_pattern = re.escape(username) + r'/'
+                            # Remove duplicate username/username/ or username/webdav/username/ patterns
+                            href = re.sub(r'^/' + username_pattern + r'(webdav/)?' + username_pattern, f'/{username}/', href)
+                        
                         # CRITICAL: Directories MUST end with trailing slash for WebDAV compliance
                         # Many clients (like Flacbox) require this to recognize directories
                         if self.is_collection and not href.endswith('/'):
                             href = href + '/'
                             logger.debug(f"[WebDAV] Added trailing slash to directory href: {href}")
 
-                        # CRITICAL: Ensure href includes /webdav/ prefix for Joplin compatibility
-                        # Joplin expects hrefs to match the base URL format: /webdav/username@domain/...
-                        script_name = self.environ.get('SCRIPT_NAME', '') if hasattr(self, 'environ') and self.environ else ''
-                        if script_name and not href.startswith(script_name):
-                            href = script_name + href
-                        elif not href.startswith('/webdav/') and script_name == '/webdav':
-                            # Fallback: prepend /webdav if SCRIPT_NAME is set but href doesn't have it
-                            href = '/webdav' + href
-
+                        # CRITICAL: Do NOT prepend /webdav/ here - wsgidav does this automatically via SCRIPT_NAME
+                        # wsgidav will prepend SCRIPT_NAME (/webdav) to the href we return
+                        # So we return paths like /verita84@poster.place/Music/ and wsgidav makes it /webdav/verita84@poster.place/Music/
+                        
                         # CRITICAL: Do NOT URL-encode @ symbol - Joplin expects @ in hrefs to match base URL
                         # The HTTP layer will handle URL encoding when needed
                         # href = href.replace('@', '%40')  # REMOVED - causes Joplin sync errors
                         
+                        script_name = self.environ.get('SCRIPT_NAME', '') if hasattr(self, 'environ') and self.environ else ''
                         # Changed to debug to avoid logging every single file in large directories (e.g., 1900+ songs)
-                        logger.debug(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name})")
+                        logger.debug(f"[WebDAV] Resource.get_href returning: {href} (script_name={script_name}, wsgidav will prepend it)")
                         return href
 
                     def get_preferred_path(self):
