@@ -286,30 +286,45 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     # Check if it's a relative path (no leading /, like "Music/song.mp3")
                     is_relative = not href_text.startswith('/')
                     
+                    # Log first few hrefs for debugging (especially audio files)
+                    is_audio = any(ext in href_text.lower() for ext in ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac'])
+                    if (hrefs_fixed < 3 or is_audio) and not is_large_response:
+                        logger.debug(f"[WebDAV] Processing href: '{href_text}' (is_relative={is_relative}, username={username}, script_name={script_name})")
+                    
                     if is_relative:
                         # Relative path like "Music/song.mp3" - add /webdav/username/ prefix
                         if username:
                             href_text = f"{script_name}/{username}/{href_text}"
                             needs_fixing = True
+                            if is_audio or hrefs_fixed < 3:
+                                logger.info(f"[WebDAV] 🔧 Detected relative href, fixing: '{original_href}' -> '{href_text}' (username={username})")
                         else:
                             # Fallback: just add /webdav/
                             href_text = f"{script_name}/{href_text}"
                             needs_fixing = True
+                            if is_audio or hrefs_fixed < 3:
+                                logger.warning(f"[WebDAV] ⚠️  Relative href but no username extracted from REQUEST_URI: '{original_href}' -> '{href_text}'")
                     # Check if it's absolute but missing /webdav/ (like "/username@domain/Music/song.mp3")
                     elif href_text.startswith('/') and '@' in href_text:
                         # Has username but missing /webdav/ - add it
                         href_text = script_name.rstrip('/') + href_text
                         needs_fixing = True
+                        if is_audio or hrefs_fixed < 3:
+                            logger.info(f"[WebDAV] 🔧 Absolute href missing /webdav/, fixing: '{original_href}' -> '{href_text}'")
                     # Check if it's absolute without username (like "/Music/song.mp3")
                     elif href_text.startswith('/') and '@' not in href_text:
                         # Absolute path without username - add /webdav/username/
                         if username:
                             href_text = f"{script_name}/{username}{href_text}"
                             needs_fixing = True
+                            if is_audio or hrefs_fixed < 3:
+                                logger.info(f"[WebDAV] 🔧 Absolute href without username, fixing: '{original_href}' -> '{href_text}' (username={username})")
                         else:
                             # Fallback: just add /webdav/
                             href_text = script_name.rstrip('/') + href_text
                             needs_fixing = True
+                            if is_audio or hrefs_fixed < 3:
+                                logger.warning(f"[WebDAV] ⚠️  Absolute href without username and no username in REQUEST_URI: '{original_href}' -> '{href_text}'")
                 
                 # Update href if it changed (skip logging for large responses to reduce overhead)
                 if needs_fixing and href_text != original_href:
