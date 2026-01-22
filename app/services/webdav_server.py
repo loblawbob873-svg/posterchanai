@@ -757,7 +757,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
             if username:
                 # Extract relative path
                 rel_path = normalized_path.lstrip('/')
-                
+                logger.debug(f"[WebDAV] get_resource_inst: after lstrip, rel_path={rel_path}, username={username}")
+
                 # Handle various path formats:
                 # /username@domain/path -> path (email-style WebDAV paths from iOS/macOS)
                 # /username/path -> path
@@ -765,23 +766,41 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # Since username now includes @domain, we can directly strip it
                 if rel_path.startswith(username + '/'):
                     rel_path = rel_path[len(username) + 1:]
+                    logger.debug(f"[WebDAV] get_resource_inst: matched username/, rel_path={rel_path}")
                 elif rel_path == username:
                     rel_path = ''
+                    logger.debug(f"[WebDAV] get_resource_inst: matched username exactly, rel_path={rel_path}")
                 elif rel_path.startswith('webdav/' + username + '/'):
                     rel_path = rel_path[len('webdav/' + username) + 1:]
+                    logger.debug(f"[WebDAV] get_resource_inst: matched webdav/username/, rel_path={rel_path}")
                 elif rel_path == 'webdav/' + username:
                     rel_path = ''
+                    logger.debug(f"[WebDAV] get_resource_inst: matched webdav/username exactly, rel_path={rel_path}")
                 elif rel_path.startswith('calendar/dav/' + username + '/'):
                     rel_path = rel_path[len('calendar/dav/' + username) + 1:]
+                    logger.debug(f"[WebDAV] get_resource_inst: matched calendar/dav/username/, rel_path={rel_path}")
                 elif rel_path == 'calendar/dav/' + username:
                     rel_path = ''
+                    logger.debug(f"[WebDAV] get_resource_inst: matched calendar/dav/username exactly, rel_path={rel_path}")
                 elif rel_path.startswith('calendar/' + username + '/'):
                     rel_path = rel_path[len('calendar/' + username) + 1:]
+                    logger.debug(f"[WebDAV] get_resource_inst: matched calendar/username/, rel_path={rel_path}")
                 elif rel_path == 'calendar/' + username:
                     rel_path = ''
+                    logger.debug(f"[WebDAV] get_resource_inst: matched calendar/username exactly, rel_path={rel_path}")
                 else:
-                    logger.warning(f"[WebDAV] Could not extract relative path from '{normalized_path}' with username '{username}'")
-                    rel_path = ''
+                    logger.warning(f"[WebDAV] Could not extract relative path from '{normalized_path}' (rel_path='{rel_path}') with username '{username}'")
+                    # Try to normalize by removing any webdav/username prefix that might still be there
+                    if '/webdav/' + username in rel_path:
+                        # Handle cases like "username/webdav/username/file.jpg"
+                        parts = rel_path.split('/webdav/' + username + '/')
+                        if len(parts) > 1:
+                            rel_path = parts[-1]  # Take the part after the duplicate
+                            logger.warning(f"[WebDAV] Removed duplicate /webdav/username/, new rel_path={rel_path}")
+                        else:
+                            rel_path = ''
+                    else:
+                        rel_path = ''
                 
                 # Get resource info from remote storage
                 try:
