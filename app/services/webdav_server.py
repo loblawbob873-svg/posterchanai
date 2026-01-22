@@ -2043,6 +2043,15 @@ class QuotaFilesystemProvider(FilesystemProvider):
         # Normalize path - trim trailing spaces and slashes
         path = path.rstrip(' /')
 
+        # Remove duplicate webdav/username prefix if present
+        # Example: "webdav/user@domain" -> ""
+        if path == f'webdav/{username}':
+            path = ''
+            logger.debug(f"[WebDAV] _proxy_get_info: removed duplicate webdav/{username}, path is now empty")
+        elif path.startswith(f'webdav/{username}/'):
+            path = path[len(f'webdav/{username}/'):]
+            logger.debug(f"[WebDAV] _proxy_get_info: removed duplicate webdav/{username}/, path={path}")
+
         # For root directory (empty path), return directory info
         if not path:
             # Root directory always exists - return directory info
