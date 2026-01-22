@@ -404,7 +404,8 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
     # CRITICAL: Always log XML for audio files, especially for individual file PROPFIND (depth=0)
     # This is critical for debugging why Flacbox isn't making GET requests
     # For individual file requests (total_responses=1), always log the full XML
-    if audio_hrefs_in_xml and (total_responses <= 5 or total_responses == 1):
+    # Also log for small directory listings (<= 10 items) to see structure
+    if audio_hrefs_in_xml and (total_responses <= 10 or total_responses == 1):
         # Log a sample of the actual XML for one audio file to debug
         try:
             for response in all_responses:
