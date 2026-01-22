@@ -389,6 +389,11 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                 if len(audio_hrefs_in_xml) >= 5:  # Log first 5
                     break
     
+    # CRITICAL: For individual file PROPFIND (total_responses=1), always log the XML
+    # This is essential to see what Flacbox receives
+    if total_responses == 1 and audio_hrefs_in_xml:
+        logger.warning(f"[WebDAV] 🔍 Individual file PROPFIND detected: total_responses=1, audio_file={audio_hrefs_in_xml[0]}")
+    
     # CRITICAL: Always log audio file hrefs to see what Flacbox receives
     if audio_hrefs_in_xml:
         # Check if hrefs are absolute (start with /webdav/)
@@ -405,7 +410,9 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
     # This is critical for debugging why Flacbox isn't making GET requests
     # For individual file requests (total_responses=1), always log the full XML
     # Also log for small directory listings (<= 10 items) to see structure
-    if audio_hrefs_in_xml and (total_responses <= 10 or total_responses == 1):
+    # CRITICAL: Always log for individual file PROPFIND (depth=0) to see what Flacbox receives
+    # Log XML for any audio file PROPFIND response, regardless of total_responses count
+    if audio_hrefs_in_xml:
         # Log a sample of the actual XML for one audio file to debug
         try:
             for response in all_responses:
