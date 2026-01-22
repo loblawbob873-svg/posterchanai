@@ -62,7 +62,7 @@ def _patched_get_href(self):
         path_value = self.path
         logger.warning(f"[WebDAV] ⚠️⚠️ get_href() called: path_value={path_value}, type={type(path_value)}, is_list={isinstance(path_value, list)}")
         if isinstance(path_value, list):
-            logger.error(f"[WebDAV] ⚠️ Resource.path is a list in get_href: {path_value}, converting to string")
+            logger.debug(f"[WebDAV]  Resource.path is a list in get_href: {path_value}, converting to string")
             result = str(path_value[0]) if len(path_value) > 0 else ''
         else:
             result = str(path_value)
@@ -73,7 +73,7 @@ def _patched_get_href(self):
         result = _original_get_href(self)
         logger.warning(f"[WebDAV] ⚠️⚠️ get_href() from original: result={result}, type={type(result)}")
         if isinstance(result, list):
-            logger.error(f"[WebDAV] ⚠️ Original get_href returned list: {result}, converting")
+            logger.debug(f"[WebDAV]  Original get_href returned list: {result}, converting")
             result = str(result[0]) if len(result) > 0 else ''
         return str(result)
     return "/"
@@ -1190,14 +1190,14 @@ class QuotaFilesystemProvider(FilesystemProvider):
             logger.warning(f"[WebDAV] Could not extract username from path {normalized_path}, trying parent class")
             try:
                 result = super().get_resource_inst(normalized_path, environ)
-                logger.error(f"[WebDAV] ⚠️ Parent get_resource_inst returned: type={type(result)}")
+                logger.debug(f"[WebDAV]  Parent get_resource_inst returned: type={type(result)}")
                 # IMPORTANT: Wrap the parent's resource to ensure path is always a string
                 if result:
                     result = ResourcePathWrapper(result)
                     logger.debug(f"[WebDAV] Wrapped parent resource, path={result.path}, type={type(result.path)}")
                 return result
             except Exception as e:
-                logger.error(f"[WebDAV] ⚠️ Parent class failed: {e}, creating minimal resource")
+                logger.debug(f"[WebDAV]  Parent class failed: {e}, creating minimal resource")
                 # Fallback: create minimal resource with all required methods
                 import time
                 
@@ -1546,7 +1546,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                 # CRITICAL: Ensure full_path is a string, not a list
                 if isinstance(full_path, list):
-                    logger.error(f"[WebDAV] ⚠️ full_path is a list! Converting to string: {full_path}")
+                    logger.debug(f"[WebDAV]  full_path is a list! Converting to string: {full_path}")
                     full_path = str(full_path[0]) if len(full_path) > 0 else ''
                 full_path = str(full_path)  # Force conversion to string
                 
@@ -1579,8 +1579,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def __init__(self, path, is_dir, size, modified, provider=None, environ=None):
                         # Ensure path is always a string, never a list
                         path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
-                        if '005c51179a764e10b61e3a214d38e79d' in str(path):
-                            logger.error(f"[WebDAV] SimpleResource.__init__: path={path}, path_str={path_str}, type(path)={type(path)}, type(path_str)={type(path_str)}")
                         # Manually set required attributes without calling super().__init__
                         if environ is None:
                             environ = {"wsgidav.provider": provider} if provider else {}
@@ -1895,10 +1893,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 logger.warning(f"[WebDAV] Proxy returned 0 items - this might indicate an issue with the storage server or path")
             
             # Debug: log what we're returning
-            logger.error(f"[WebDAV] ⚠️ Returning {len(webdav_resources)} resources, types: {[type(r).__name__ for r in webdav_resources[:3]]}")
+            logger.debug(f"[WebDAV]  Returning {len(webdav_resources)} resources, types: {[type(r).__name__ for r in webdav_resources[:3]]}")
             if webdav_resources:
                 first = webdav_resources[0]
-                logger.error(f"[WebDAV] ⚠️ First resource: type={type(first)}, has get_last_modified={hasattr(first, 'get_last_modified')}, dir={[m for m in dir(first) if 'get' in m.lower() or 'last' in m.lower()][:10]}")
+                logger.debug(f"[WebDAV]  First resource: type={type(first)}, has get_last_modified={hasattr(first, 'get_last_modified')}, dir={[m for m in dir(first) if 'get' in m.lower() or 'last' in m.lower()][:10]}")
             
             return webdav_resources
             
@@ -2371,8 +2369,8 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
         logger.warning(f"[WebDAV] Storage path does not exist: {root_path}")
     
     provider = QuotaFilesystemProvider(root_path, db)
-    logger.error(f"[WebDAV] ⚠️ Created QuotaFilesystemProvider: {provider}, root_path={root_path}")
-    logger.error(f"[WebDAV] ⚠️ Provider type: {type(provider)}, has get_resource_list: {hasattr(provider, 'get_resource_list')}")
+    logger.debug(f"[WebDAV]  Created QuotaFilesystemProvider: {provider}, root_path={root_path}")
+    logger.debug(f"[WebDAV]  Provider type: {type(provider)}, has get_resource_list: {hasattr(provider, 'get_resource_list')}")
     
     # Use simple_dc for authentication - it accepts all users
     # We'll handle authentication at the FastAPI level via middleware
@@ -2402,9 +2400,9 @@ def create_webdav_app(db: Session, mount_path: str = "/") -> WsgiDAVApp:
         },
     }
     
-    logger.error(f"[WebDAV] ⚠️ Creating WsgiDAVApp with provider_mapping: {list(config['provider_mapping'].keys())}")
+    logger.debug(f"[WebDAV]  Creating WsgiDAVApp with provider_mapping: {list(config['provider_mapping'].keys())}")
     app = WsgiDAVApp(config)
-    logger.error(f"[WebDAV] ⚠️ WsgiDAVApp created: {app}")
+    logger.debug(f"[WebDAV]  WsgiDAVApp created: {app}")
     return app
 
 
