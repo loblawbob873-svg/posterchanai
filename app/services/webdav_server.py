@@ -532,6 +532,45 @@ def _patched_do_propfind(self, environ, start_response):
 
 # Apply the PROPFIND patch
 request_server.RequestServer.do_PROPFIND = _patched_do_propfind
+
+# Monkey-patch do_GET to ensure Content-Type headers are set correctly for audio files
+def _patched_do_get(self, environ, start_response):
+    """Patched do_GET to ensure Content-Type headers are correct for audio files."""
+    # Get the resource first
+    path = environ.get('PATH_INFO', '')
+    resource = self._davProvider.get_resource_inst(path, environ)
+    
+    # Capture response headers to log Content-Type
+    captured_headers = []
+    def capturing_start_response(status, headers):
+        captured_headers.append((status, headers))
+        # Log Content-Type for audio files
+        content_type_header = None
+        for header_name, header_value in headers:
+            if header_name.lower() == 'content-type':
+                content_type_header = header_value
+                break
+        
+        if content_type_header:
+            if content_type_header.startswith('audio/'):
+                logger.info(f"[WebDAV] 🎵 GET response for audio file: path={path}, status={status}, content-type={content_type_header}")
+            elif 'application/octet-stream' in content_type_header and any(ext in path.lower() for ext in ['.mp3', '.m4a', '.flac']):
+                logger.error(f"[WebDAV] ⚠️ CRITICAL: GET response has wrong Content-Type for audio file: path={path}, content-type={content_type_header} (should be audio/mpeg or audio/mp4)")
+        
+        return start_response(status, headers)
+    
+    # Call original do_GET
+    if _original_do_get:
+        return _original_do_get(self, environ, capturing_start_response)
+    else:
+        # Fallback if do_GET doesn't exist
+        from wsgidav.dav_error import DAVError, HTTP_NOT_IMPLEMENTED
+        raise DAVError(HTTP_NOT_IMPLEMENTED, "GET method not implemented")
+
+if _original_do_get:
+    request_server.RequestServer.do_GET = _patched_do_get
+else:
+    logger.warning("[WebDAV] RequestServer.do_GET not found - cannot patch GET handler for Content-Type logging")
 from app.services.storage_service import StorageService, get_storage_service
 from app.auth import verify_password
 
