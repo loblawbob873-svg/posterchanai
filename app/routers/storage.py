@@ -1627,19 +1627,22 @@ async def list_files(
     
     storage = StorageService(db)
     user_path = storage.get_user_path(username)
-    
+    logger.info(f"[Storage API] user_path={user_path}")
+
     # Handle path
     target_path = user_path
     if path:
         try:
             safe_path = Path(*[_sanitize_path_component(p) for p in path.split('/') if p])
             target_path = user_path / safe_path
+            logger.info(f"[Storage API] target_path={target_path}, exists={target_path.exists()}")
             if not _validate_path_within_base(target_path, user_path):
                 raise HTTPException(status_code=403, detail="Access denied")
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
-    
+
     if not target_path.exists():
+        logger.warning(f"[Storage API] Path not found: {target_path}")
         raise HTTPException(status_code=404, detail="Path not found")
     if not target_path.is_dir():
         raise HTTPException(status_code=400, detail="Path is not a directory")
