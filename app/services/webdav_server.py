@@ -401,8 +401,11 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
         else:
             logger.info(f"[WebDAV] ✅ All audio hrefs are absolute (start with /webdav/)")
     
-    if audio_hrefs_in_xml and total_responses <= 100:
-        # Log a sample of the actual XML for one audio file to debug (only for smaller responses)
+    # CRITICAL: Always log XML for audio files, especially for individual file PROPFIND (depth=0)
+    # This is critical for debugging why Flacbox isn't making GET requests
+    # For individual file requests (total_responses=1), always log the full XML
+    if audio_hrefs_in_xml and (total_responses <= 5 or total_responses == 1):
+        # Log a sample of the actual XML for one audio file to debug
         try:
             for response in all_responses:
                 href_elem = response.find("{DAV:}href")
@@ -1624,7 +1627,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 elif name == "{{DAV:}}displayname":
                                     return self._path.split('/')[-1] if hasattr(self, '_path') else ""
                                 elif name == "{{DAV:}}getcontenttype":
-                                    return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
+                                    if self._is_dir:
+                                        return 'httpd/unix-directory'
+                                    # CRITICAL: Use get_content_type() to return proper MIME types for audio files
+                                    # Flacbox needs correct MIME types (audio/mpeg, audio/mp4, etc.) to recognize playable files
+                                    return self.get_content_type()
                                 else:
                                     from wsgidav.dav_error import HTTP_NOT_FOUND, DAVError
                                     raise DAVError(HTTP_NOT_FOUND, f"Property {{name}} not found")
@@ -1992,7 +1999,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         elif name == "{{DAV:}}displayname":
                             return self._path.split('/')[-1] if hasattr(self, '_path') else ""
                         elif name == "{{DAV:}}getcontenttype":
-                            return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
+                            if self._is_dir:
+                                return 'httpd/unix-directory'
+                            # CRITICAL: Use get_content_type() to return proper MIME types for audio files
+                            # Flacbox needs correct MIME types (audio/mpeg, audio/mp4, etc.) to recognize playable files
+                            return self.get_content_type()
                         else:
                             from wsgidav.dav_error import HTTP_NOT_FOUND, DAVError
                             raise DAVError(HTTP_NOT_FOUND, f"Property {{name}} not found")
