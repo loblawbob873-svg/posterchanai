@@ -16,12 +16,12 @@ from cheroot.wsgi import Server as WSGIServer
 
 from app.models import User, Setting
 
-# Register DAV namespace with 'D' prefix instead of 'ns0' for Joplin compatibility
-# This must be done before any XML generation
+# Register DAV namespace with 'd' prefix (lowercase) for Joplin compatibility
+# Joplin's XML parser expects lowercase 'd:' namespace prefix
 try:
     from xml.etree import ElementTree as ET
-    ET.register_namespace('D', 'DAV:')
-    # Also register as default namespace
+    ET.register_namespace('d', 'DAV:')
+    # Also register default namespace
     ET.register_namespace('', 'DAV:')
 except Exception:
     pass
@@ -30,7 +30,7 @@ except Exception:
 try:
     from wsgidav.util import etree
     if hasattr(etree, 'register_namespace'):
-        etree.register_namespace('D', 'DAV:')
+        etree.register_namespace('d', 'DAV:')
         etree.register_namespace('', 'DAV:')
 except Exception:
     pass
