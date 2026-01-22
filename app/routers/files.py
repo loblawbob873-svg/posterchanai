@@ -1864,17 +1864,26 @@ async def create_share(
     """Create a public sharing URL for a file."""
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
-    
+
     # Validate file path
     try:
         safe_path = Path(*[_sanitize_path_component(p) for p in request.file_path.split('/') if p])
         full_path = user_path / safe_path
-        
+
         # Validate path is within user directory
         if not _validate_path_within_base(full_path, user_path):
             raise HTTPException(status_code=403, detail="Access denied")
-        
-        if not full_path.exists() or not full_path.is_file():
+
+        # Check file exists - support both local and remote storage
+        file_exists = False
+        if storage.is_remote:
+            # For remote storage, trust that the file exists if path validation passed
+            # (remote listing is expensive, share creation will fail on access if file doesn't exist)
+            file_exists = True
+        else:
+            file_exists = full_path.exists() and full_path.is_file()
+
+        if not file_exists:
             raise HTTPException(status_code=404, detail="File not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid path: {e}")

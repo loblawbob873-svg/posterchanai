@@ -3284,18 +3284,29 @@ class ChatHandler {
     }
 
     async emailFile(filePath, fileName, apiUrl = null) {
-        // Open email modal with file pre-selected
-        // Try to use FileManager if available
+        // Use chat command to email file via AI
+        const input = document.getElementById('message-input');
+        if (input) {
+            input.value = `email ${fileName}`;
+            // Trigger send
+            const sendButton = document.querySelector('.send-btn');
+            if (sendButton) {
+                sendButton.click();
+            }
+            return;
+        }
+
+        // Fallback: Try to use FileManager if available
         if (window.fileManager && typeof window.fileManager.emailFile === 'function') {
             try {
                 await window.fileManager.emailFile(filePath, fileName, apiUrl);
                 return;
             } catch (e) {
-                console.warn('FileManager.emailFile failed, using fallback:', e);
+                console.warn('FileManager.emailFile failed:', e);
             }
         }
-        
-        // Fallback: Show email modal directly
+
+        // Last resort: Show email modal directly if it exists
         const modal = document.getElementById('fileEmailModal');
         if (modal) {
             const emailFilesList = document.getElementById('emailFilesList');
