@@ -251,7 +251,7 @@ def _patched_do_propfind(self, environ, start_response):
     path = environ.get("PATH_INFO", "")
     depth = environ.get("HTTP_DEPTH", "1")  # Default depth is 1
 
-    logger.info(f"[WebDAV] PROPFIND: path={path}, depth={depth}")
+    logger.debug(f"[WebDAV] PROPFIND: path={path}, depth={depth}")
 
     # Capture the response to log it
     captured_response = []
@@ -335,7 +335,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
         # Initialize cache for directory listings to improve performance
         # Cache format: {(username, path): (timestamp, items_list)}
         self._dir_cache: Dict[Tuple[str, str], Tuple[float, list]] = {}
-        self._cache_ttl = 5.0  # Cache directory listings for 5 seconds
+        self._cache_ttl = 30.0  # Cache directory listings for 30 seconds (increased for better performance)
         self._cache_lock = threading.Lock()
 
         # Log storage path and verify it's correct
@@ -773,7 +773,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_list(self, path: str, depth: int = 1, environ: dict = None):
         """Override to list files, with support for remote storage proxying."""
-        logger.info(f"[WebDAV] get_resource_list CALLED: path={path}, depth={depth}, storage_server_url={self.storage_server_url}")
+        logger.debug(f"[WebDAV] get_resource_list CALLED: path={path}, depth={depth}, storage_server_url={self.storage_server_url}")
         
         # Strip /webdav prefix if present (may be added multiple times)
         original_path = path
@@ -795,13 +795,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
         else:
             normalized_path = '/'
 
-        logger.info(f"[WebDAV] get_resource_list: original={original_path}, normalized={normalized_path}, depth={depth}")
-        logger.info(f"[WebDAV] storage_server_url={self.storage_server_url}, storage_server_token={'Yes' if self.storage_server_token else 'No'}")
+        logger.debug(f"[WebDAV] get_resource_list: original={original_path}, normalized={normalized_path}, depth={depth}")
         
         # If remote storage is configured, ALWAYS proxy - never use local filesystem
         if self.storage_server_url:
             username = self._get_username_from_path(normalized_path)
-            logger.info(f"[WebDAV] Remote storage configured: {self.storage_server_url}, username={username}, path={normalized_path}")
+            logger.debug(f"[WebDAV] Remote storage configured: {self.storage_server_url}, username={username}, path={normalized_path}")
             if username:
                 # Extract relative path from WebDAV path
                 # Path format: /username/subdir -> subdir
@@ -896,7 +895,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_inst(self, path: str, environ: dict = None):
         """Override get_resource_inst - wsgidav calls this for PROPFIND and GET requests."""
-        logger.info(f"[WebDAV] get_resource_inst CALLED: path={path}, storage_server_url={self.storage_server_url}")
+        logger.debug(f"[WebDAV] get_resource_inst CALLED: path={path}, storage_server_url={self.storage_server_url}")
         
         # Strip /webdav prefix if present
         normalized_path = path.strip('/')
@@ -1755,38 +1754,61 @@ class QuotaFilesystemProvider(FilesystemProvider):
             environ: WSGI environ dict (used to get SCRIPT_NAME for href generation)
         """
         import requests
+        import time
 
         # Use the same proxying logic as /api/files/list
         # Call storage_server_url/api/storage/list-files with server token
         if not self.storage_server_url:
             raise Exception("storage_server_url not configured")
 
-        url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
-        headers = {}
-        if self.storage_server_token:
-            headers["Authorization"] = f"Bearer {self.storage_server_token}"
+        # Check cache first (only for depth=1 to avoid caching huge recursive listings)
+        cache_key = (username, path, depth)
+        current_time = time.time()
+        cached_items = None
+        
+        if depth == 1:  # Only cache immediate children listings
+            with self._cache_lock:
+                if cache_key in self._dir_cache:
+                    cache_time, cached_items = self._dir_cache[cache_key]
+                    if current_time - cache_time < self._cache_ttl:
+                        logger.debug(f"[WebDAV] Cache hit for {username}/{path} (depth={depth})")
+                        # Continue to process cached items into SimpleResource objects
+                        items = cached_items
+                    else:
+                        # Cache expired
+                        items = None
+                        del self._dir_cache[cache_key]
+                else:
+                    items = None
         else:
-            logger.warning(f"[WebDAV] No storage_server_token configured - authentication may fail")
+            items = None
 
-        params = {
-            "username": username,
-            "path": path,
-            "depth": depth
-        }
+        # If not in cache, fetch from storage server
+        if items is None:
+            url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
+            headers = {}
+            if self.storage_server_token:
+                headers["Authorization"] = f"Bearer {self.storage_server_token}"
+            else:
+                logger.warning(f"[WebDAV] No storage_server_token configured - authentication may fail")
 
-        # CRITICAL: Increase timeout for deep listings (depth > 1) which can take longer
-        # Large Music directories with depth=infinity can take 60+ seconds
-        # Use longer timeout for recursive listings, shorter for immediate children
-        if isinstance(depth, str) and depth.lower() in ('infinity', 'inf'):
-            timeout = 120  # 2 minutes for infinity depth
-        elif isinstance(depth, int) and depth > 1:
-            timeout = 90  # 90 seconds for recursive listings
-        else:
-            timeout = 30  # 30 seconds for immediate children (depth=1)
+            params = {
+                "username": username,
+                "path": path,
+                "depth": depth
+            }
 
-        logger.info(f"[WebDAV] Proxying to storage server: {url} for username={username}, path={path}, depth={depth}, timeout={timeout}s")
-        logger.info(f"[WebDAV] Using token: {'Yes' if self.storage_server_token else 'No'}")
-        try:
+            # CRITICAL: Increase timeout for deep listings (depth > 1) which can take longer
+            # Large Music directories with depth=infinity can take 60+ seconds
+            # Use longer timeout for recursive listings, shorter for immediate children
+            if isinstance(depth, str) and depth.lower() in ('infinity', 'inf'):
+                timeout = 120  # 2 minutes for infinity depth
+            elif isinstance(depth, int) and depth > 1:
+                timeout = 90  # 90 seconds for recursive listings
+            else:
+                timeout = 30  # 30 seconds for immediate children (depth=1)
+
+            logger.debug(f"[WebDAV] Proxying to storage server: {url} for username={username}, path={path}, depth={depth}, timeout={timeout}s")
             # Add retry logic for connection errors
             max_retries = 3
             retry_delay = 2
@@ -1795,7 +1817,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
             for attempt in range(max_retries):
                 try:
                     response = requests.get(url, headers=headers, params=params, timeout=timeout)
-                    logger.info(f"[WebDAV] Storage server response: status={response.status_code}, content_length={len(response.content)}")
+                    logger.debug(f"[WebDAV] Storage server response: status={response.status_code}, content_length={len(response.content)}")
                     
                     if response.status_code != 200:
                         logger.error(f"[WebDAV] Storage server error: {response.status_code} - {response.text[:200]}")
@@ -1820,11 +1842,23 @@ class QuotaFilesystemProvider(FilesystemProvider):
             
             # Convert File Manager format to WebDAV format
             items = data.get('items', [])
-            logger.info(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path} (depth={depth})")
             if len(items) == 0:
-                logger.warning(f"[WebDAV] Storage server returned 0 items - check if files exist on storage server")
+                logger.debug(f"[WebDAV] Storage server returned 0 items for {username}/{path} (depth={depth})")
             elif len(items) > 1000:
-                logger.warning(f"[WebDAV] Large directory listing: {len(items)} items - this may take a while to process")
+                logger.info(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path} (depth={depth}) - large listing")
+            else:
+                logger.debug(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path} (depth={depth})")
+            
+            # Cache the result if depth=1 (immediate children only)
+            if depth == 1:
+                with self._cache_lock:
+                    self._dir_cache[cache_key] = (current_time, items)
+                    # Clean up old cache entries (keep cache size reasonable)
+                    if len(self._dir_cache) > 100:
+                        # Remove oldest entries
+                        sorted_keys = sorted(self._dir_cache.keys(), key=lambda k: self._dir_cache[k][0])
+                        for old_key in sorted_keys[:20]:
+                            del self._dir_cache[old_key]
             
             # wsgidav expects a list of ResourceInfo objects, not dictionaries
             # We need to create virtual filesystem entries and use the parent class to create proper resources
