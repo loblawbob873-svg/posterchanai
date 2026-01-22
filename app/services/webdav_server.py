@@ -1091,7 +1091,32 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 return None
 
                             def get_content_type(self):
-                                return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
+                                """Return proper MIME type for the resource."""
+                                if self._is_dir:
+                                    return 'httpd/unix-directory'
+                                
+                                # Get file extension from path
+                                path_str = str(self._path) if hasattr(self, '_path') else ''
+                                if '.' in path_str:
+                                    ext = path_str.rsplit('.', 1)[-1].lower()
+                                    # Common audio MIME types
+                                    audio_mime_types = {
+                                        'mp3': 'audio/mpeg',
+                                        'm4a': 'audio/mp4',
+                                        'm4b': 'audio/mp4',
+                                        'aac': 'audio/aac',
+                                        'flac': 'audio/flac',
+                                        'ogg': 'audio/ogg',
+                                        'oga': 'audio/ogg',
+                                        'wav': 'audio/wav',
+                                        'wma': 'audio/x-ms-wma',
+                                        'opus': 'audio/opus',
+                                    }
+                                    if ext in audio_mime_types:
+                                        return audio_mime_types[ext]
+                                
+                                # Default to octet-stream for unknown types
+                                return 'application/octet-stream'
 
                             def get_content(self):
                                 """Return file content as file-like object from remote storage.
@@ -1558,7 +1583,32 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         return None
 
                     def get_content_type(self):
-                        return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
+                        """Return proper MIME type for the resource."""
+                        if self._is_dir:
+                            return 'httpd/unix-directory'
+                        
+                        # Get file extension from path
+                        path_str = str(self._path) if hasattr(self, '_path') else ''
+                        if '.' in path_str:
+                            ext = path_str.rsplit('.', 1)[-1].lower()
+                            # Common audio MIME types
+                            audio_mime_types = {
+                                'mp3': 'audio/mpeg',
+                                'm4a': 'audio/mp4',
+                                'm4b': 'audio/mp4',
+                                'aac': 'audio/aac',
+                                'flac': 'audio/flac',
+                                'ogg': 'audio/ogg',
+                                'oga': 'audio/ogg',
+                                'wav': 'audio/wav',
+                                'wma': 'audio/x-ms-wma',
+                                'opus': 'audio/opus',
+                            }
+                            if ext in audio_mime_types:
+                                return audio_mime_types[ext]
+                        
+                        # Default to octet-stream for unknown types
+                        return 'application/octet-stream'
 
                     def get_content(self):
                         """Fallback VirtualResource - no content (used for directories)."""
@@ -2079,7 +2129,32 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         return None
 
                     def get_content_type(self):
-                        return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
+                        """Return proper MIME type for the resource."""
+                        if self._is_dir:
+                            return 'httpd/unix-directory'
+                        
+                        # Get file extension from path
+                        path_str = str(self._path)
+                        if '.' in path_str:
+                            ext = path_str.rsplit('.', 1)[-1].lower()
+                            # Common audio MIME types
+                            audio_mime_types = {
+                                'mp3': 'audio/mpeg',
+                                'm4a': 'audio/mp4',
+                                'm4b': 'audio/mp4',
+                                'aac': 'audio/aac',
+                                'flac': 'audio/flac',
+                                'ogg': 'audio/ogg',
+                                'oga': 'audio/ogg',
+                                'wav': 'audio/wav',
+                                'wma': 'audio/x-ms-wma',
+                                'opus': 'audio/opus',
+                            }
+                            if ext in audio_mime_types:
+                                return audio_mime_types[ext]
+                        
+                        # Default to octet-stream for unknown types
+                        return 'application/octet-stream'
 
                     def get_content(self):
                         """Return file content as file-like object from remote storage.
