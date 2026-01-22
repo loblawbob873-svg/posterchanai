@@ -2533,12 +2533,12 @@ class ChatHandler {
                             </div>
                         </div>
                         <div class="file-actions">
-                            <button class="file-action-btn" data-action="open" data-path="${escapedPath}" data-name="${escapedName}" title="Open">👁️ Open</button>
-                            <button class="file-action-btn" data-action="download" data-path="${escapedPath}" data-name="${escapedName}" title="Download">⬇️ Download</button>
-                            <button class="file-action-btn" data-action="preview" data-path="${escapedPath}" data-name="${escapedName}" title="Preview URL (Quick Share)">🔍 Preview URL</button>
-                            <button class="file-action-btn" data-action="share" data-path="${escapedPath}" data-name="${escapedName}" title="Share Public URL">🔗 Share</button>
-                            <button class="file-action-btn" data-action="email" data-path="${escapedPath}" data-name="${escapedName}" title="Email">✉️ Email</button>
-                            <button class="file-action-btn file-action-delete" data-action="delete" data-path="${escapedPath}" data-name="${escapedName}" title="Delete">🗑️ Delete</button>
+                            <button class="file-action-btn" data-action="open" data-path="${escapedPath}" data-name="${escapedName}" title="Open">👁️</button>
+                            <button class="file-action-btn" data-action="download" data-path="${escapedPath}" data-name="${escapedName}" title="Download">⬇️</button>
+                            <button class="file-action-btn" data-action="preview" data-path="${escapedPath}" data-name="${escapedName}" title="Preview URL (Quick Share)">🔍</button>
+                            <button class="file-action-btn" data-action="share" data-path="${escapedPath}" data-name="${escapedName}" title="Share Public URL">🔗</button>
+                            <button class="file-action-btn" data-action="email" data-path="${escapedPath}" data-name="${escapedName}" title="Email">✉️</button>
+                            <button class="file-action-btn file-action-delete" data-action="delete" data-path="${escapedPath}" data-name="${escapedName}" title="Delete">🗑️</button>
                         </div>
                     </div>`;
                 }
