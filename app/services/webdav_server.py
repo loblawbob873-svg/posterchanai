@@ -869,14 +869,16 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 that supports read() method.
                                 """
                                 import io
-                                from wsgidav.dav_error import DAVError, HTTP_INTERNAL_ERROR
+                                from wsgidav.dav_error import DAVError, HTTP_INTERNAL_ERROR, HTTP_NOT_FOUND
                                 if self._is_dir:
                                     return None
                                 # Extract username and relative path
                                 # Storage server expects full email-style username (e.g., verita84@poster.place)
                                 path = self._path.strip('/')
+                                logger.debug(f"[WebDAV] VirtualResource.get_content: self._path={self._path}, stripped path={path}")
                                 if path.startswith('webdav/'):
                                     path = path[7:]
+                                    logger.debug(f"[WebDAV] VirtualResource.get_content: after removing webdav/ prefix: {path}")
                                 parts = path.split('/', 1)
                                 if len(parts) >= 2:
                                     username = parts[0]
@@ -886,13 +888,18 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     rel_path = ''
                                 else:
                                     return None
+                                logger.info(f"[WebDAV] VirtualResource.get_content: username={username}, rel_path={rel_path}")
                                 try:
                                     content = self._provider._proxy_download_file(username, rel_path)
                                     logger.info(f"[WebDAV] VirtualResource.get_content: downloaded {len(content)} bytes for {rel_path}")
                                     # Return file-like object, not raw bytes
                                     return io.BytesIO(content)
                                 except Exception as e:
+                                    error_str = str(e)
                                     logger.error(f"[WebDAV] VirtualResource.get_content error: {e}")
+                                    # Return 404 for not found errors, 500 for others
+                                    if "404" in error_str or "Not Found" in error_str:
+                                        raise DAVError(HTTP_NOT_FOUND, f"File not found: {rel_path}")
                                     # Raise DAVError instead of returning None to avoid AttributeError on close()
                                     raise DAVError(HTTP_INTERNAL_ERROR, f"Failed to retrieve file content: {e}")
 
