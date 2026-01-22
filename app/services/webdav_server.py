@@ -982,7 +982,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # Get resource info from remote storage
                 try:
                     # Define VirtualResource class before using it
-                    # time is already imported at module level
+                    # Ensure time module is accessible for nested class (closure needs it in function scope)
+                    _ = time  # Reference time in function scope
 
                     class VirtualResource(_DAVResource):
                             def __init__(self, path, info_dict, provider, environ=None):
@@ -1454,7 +1455,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
             except Exception as e:
                 logger.debug(f"[WebDAV]  Parent class failed: {e}, creating minimal resource")
                 # Fallback: create minimal resource with all required methods
-                import time
+                # Ensure time module is accessible for nested class (closure needs it in function scope)
+                _ = time  # Reference time in function scope
                 
                 class VirtualResource(_DAVResource):
                     def __init__(self, path, is_dir=True, environ=None):
@@ -1758,7 +1760,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
             environ: WSGI environ dict (used to get SCRIPT_NAME for href generation)
         """
         import requests
-        # time is already imported at module level
+        # Ensure time module is accessible for nested SimpleResource class
+        # (needed for closure to capture module-level import)
+        _ = time  # Reference time in function scope so nested class can access it
 
         # Use the same proxying logic as /api/files/list
         # Call storage_server_url/api/storage/list-files with server token
@@ -1928,7 +1932,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 modified = item.get('modified', 0)
                 
                 # Convert modified timestamp - wsgidav expects timestamp (float), not datetime
-                import time
+                # time is already imported at module level and accessible via closure
                 if isinstance(modified, (int, float)):
                     modified_ts = float(modified)
                 else:
