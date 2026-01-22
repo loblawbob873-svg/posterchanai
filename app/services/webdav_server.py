@@ -269,18 +269,22 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     if len(uri_parts) >= 2 and uri_parts[0] == 'webdav' and '@' in uri_parts[1]:
                         username = uri_parts[1]
                 
-                # Check if href is already absolute with /webdav/ prefix - if so, skip fixing
+                # CRITICAL: Flacbox expects relative hrefs when connected to /webdav/username@domain/
+                # If href is absolute with /webdav/username@domain/, make it relative by removing that prefix
                 if href_text.startswith(script_name):
-                    # Already has /webdav/ prefix - check for duplicate username patterns
-                    if href_text and '@' in href_text:
-                        path_parts = href_text.strip('/').split('/')
-                        if len(path_parts) > 2 and '@' in path_parts[1]:
-                            # Check for duplicate username (e.g., /webdav/username/webdav/username/)
-                            username_in_path = path_parts[1]
-                            if len(path_parts) > 3 and path_parts[2] == 'webdav' and '@' in path_parts[3] and path_parts[3] == username_in_path:
-                                # Remove duplicate: /webdav/username/webdav/username/ -> /webdav/username/
-                                href_text = f"{script_name}/{username_in_path}/{'/'.join(path_parts[4:])}"
-                                needs_fixing = True
+                    # Extract path after /webdav/username@domain/
+                    remaining = href_text[len(script_name):].strip('/')
+                    if remaining and '@' in remaining.split('/')[0]:
+                        # Split into username and path
+                        parts = remaining.split('/', 1)
+                        if len(parts) > 1:
+                            # Make it relative: remove /webdav/username@domain/ prefix
+                            href_text = parts[1]  # Keep only the path after username
+                            needs_fixing = True
+                        elif remaining and '@' in remaining:
+                            # Just username, no path - make it empty or root
+                            href_text = ''
+                            needs_fixing = True
                 else:
                     # Href doesn't have /webdav/ prefix - needs fixing
                     # Check if it's a relative path (no leading /, like "Music/song.mp3")
