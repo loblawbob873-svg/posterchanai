@@ -2325,10 +2325,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return result
     
     def _invalidate_cache_for_path(self, username: str, path: str):
-        """Invalidate file cache for a given path."""
+        """Invalidate file cache and directory listing cache for a given path."""
         try:
             from app.routers.files import get_file_cache
-            
+
             # Extract parent directory path relative to user root
             # Path format: /username/subdir/file.txt -> subdir
             # WebDAV paths are absolute, so we need to extract relative path
@@ -2345,16 +2345,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 parent_path = '/'.join(parent_parts) if parent_parts else ""
             else:
                 parent_path = ""
-            
+
             # Normalize path (remove trailing slashes)
             parent_path = parent_path.strip('/')
-            
-            # Get cache and invalidate parent directory and root
+
+            # Invalidate the file cache (from app.routers.files)
             cache = get_file_cache(self.db)
             if parent_path:
                 cache.invalidate(f"{username}:{parent_path}")
             cache.invalidate(f"{username}:")  # Also invalidate root to be safe
-            logger.debug(f"[WebDAV] Invalidated cache for {username}:{parent_path}")
+
+            # Also invalidate the directory listing cache
+            self._invalidate_cache(username, parent_path)
+
+            logger.debug(f"[WebDAV] Invalidated all caches for {username}:{parent_path}")
         except Exception as e:
             logger.warning(f"[WebDAV] Failed to invalidate cache: {e}")
 
