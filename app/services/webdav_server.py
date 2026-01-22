@@ -218,6 +218,11 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
     """Log the actual XML being sent to debug Joplin issues and fix hrefs for Flacbox."""
     from wsgidav.util import etree
     
+    # Count total responses in multistatus
+    all_responses = multistatus_elem.findall("{DAV:}response")
+    total_responses = len(all_responses)
+    logger.info(f"[WebDAV] 📊 Multistatus XML contains {total_responses} response elements")
+    
     # Ensure multistatus root has proper namespace declaration
     # Some clients (like Flacbox) may require explicit xmlns:D declaration
     if multistatus_elem.tag == "{DAV:}multistatus":
@@ -1128,32 +1133,35 @@ class QuotaFilesystemProvider(FilesystemProvider):
         # First, normalize the path string
         normalized_path = path.strip('/')
         
-        # Remove duplicate /webdav/ patterns (e.g., webdav/webdav/ -> webdav/)
-        while '/webdav/webdav/' in normalized_path:
-            normalized_path = normalized_path.replace('/webdav/webdav/', '/webdav/')
-        
-        # Remove duplicate username patterns (e.g., username/webdav/username/ -> username/)
-        # This handles cases where the client constructs paths incorrectly
+        # CRITICAL: Handle duplicate patterns like /username/webdav/username/ or /webdav/username/webdav/username/
         if '@' in normalized_path:
             # Find username pattern (e.g., "verita84@poster.place")
             username_match = re.search(r'([^/]+@[^/]+)', normalized_path)
             if username_match:
                 username = username_match.group(1)
                 username_pattern = re.escape(username)
-                # Remove patterns like: username/webdav/username/ or username/username/
-                normalized_path = re.sub(
-                    r'^' + username_pattern + r'/(webdav/)?' + username_pattern + r'/',
-                    username + '/',
-                    normalized_path
-                )
-                # Also handle if it's in the middle: /webdav/username/webdav/username/
+                
+                # Remove duplicate /webdav/username/webdav/username/ pattern
+                # This handles: /webdav/verita84@poster.place/webdav/verita84@poster.place/Music/
                 normalized_path = re.sub(
                     r'/webdav/' + username_pattern + r'/webdav/' + username_pattern + r'/',
                     '/webdav/' + username + '/',
                     normalized_path
                 )
+                
+                # Remove duplicate username/webdav/username/ pattern (if /webdav/ was already stripped)
+                normalized_path = re.sub(
+                    r'^' + username_pattern + r'/(webdav/)?' + username_pattern + r'/',
+                    username + '/',
+                    normalized_path
+                )
+        
+        # Remove duplicate /webdav/ patterns (e.g., webdav/webdav/ -> webdav/)
+        while '/webdav/webdav/' in normalized_path:
+            normalized_path = normalized_path.replace('/webdav/webdav/', '/webdav/')
         
         # Strip /webdav prefix if present (after duplicate cleanup)
+        # WSGiDAV expects paths without /webdav/ prefix
         while normalized_path.startswith('webdav/'):
             normalized_path = normalized_path[7:]
         if normalized_path:
@@ -1991,7 +1999,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
         We need to intercept this for remote storage and return content from the storage server.
         """
         import io
-        logger.debug(f"[WebDAV] get_filestream CALLED: path={path}")
+        logger.info(f"[WebDAV] 🎵 get_filestream CALLED for audio playback: path={path}")
 
         # Strip /webdav prefix if present
         normalized_path = path.strip('/')
@@ -2030,7 +2038,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
     def get_content(self, path: str, environ: dict = None):
         """Override get_content to proxy from remote storage if configured."""
         import io
-        logger.debug(f"[WebDAV] get_content CALLED: path={path}")
+        logger.info(f"[WebDAV] 🎵 get_content CALLED for audio playback: path={path}")
 
         # Strip /webdav prefix if present
         normalized_path = path.strip('/')
