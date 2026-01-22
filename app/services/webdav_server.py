@@ -137,144 +137,14 @@ from wsgidav import request_server
 _original_do_propfind = request_server.RequestServer.do_PROPFIND
 
 def _patched_do_propfind(self, environ, start_response):
-    """Patched PROPFIND to handle Depth:0 requests correctly - only return the resource itself, not children."""
+    """Patched PROPFIND - let wsgidav handle everything, rely on get_href() to return correct paths."""
     path = environ.get("PATH_INFO", "")
     depth = environ.get("HTTP_DEPTH", "1")  # Default depth is 1
 
     logger.info(f"[WebDAV] PROPFIND: path={path}, depth={depth}")
 
-    # For Depth:0 requests, manually generate response to avoid including children
-    if depth == "0":
-        try:
-            from wsgidav.util import etree
-            from datetime import datetime
-
-            provider = environ.get("wsgidav.provider")
-            if provider:
-                resource = provider.get_resource_inst(path, environ)
-                if resource:
-                    # Generate PROPFIND response for just this resource
-                    root = etree.Element("{DAV:}multistatus")
-                    response_elem = etree.SubElement(root, "{DAV:}response")
-
-                    href_elem = etree.SubElement(response_elem, "{DAV:}href")
-                    # Use the original request path (which includes /webdav/) instead of resource.get_href()
-                    # to ensure href matches the client's base URL
-                    from urllib.parse import quote
-                    href_path = path.replace('@', '%40')  # URL-encode @ symbol
-                    href_elem.text = href_path
-
-                    propstat = etree.SubElement(response_elem, "{DAV:}propstat")
-                    prop = etree.SubElement(propstat, "{DAV:}prop")
-
-                    # Add properties - use {DAV:} namespace for all property elements
-                    if hasattr(resource, 'get_last_modified'):
-                        lm = etree.SubElement(prop, "{DAV:}getlastmodified")
-                        ts = resource.get_last_modified()
-                        lm.text = datetime.fromtimestamp(ts).strftime('%a, %d %b %Y %H:%M:%S GMT') if ts else ""
-
-                    if hasattr(resource, 'get_content_length'):
-                        cl = etree.SubElement(prop, "{DAV:}getcontentlength")
-                        cl.text = str(resource.get_content_length())
-
-                    rt = etree.SubElement(prop, "{DAV:}resourcetype")
-                    # Add collection tag for directories
-                    if resource.is_collection:
-                        collection_elem = etree.SubElement(rt, "{DAV:}collection")
-
-                    if hasattr(resource, 'get_display_name'):
-                        dn = etree.SubElement(prop, "{DAV:}displayname")
-                        dn.text = resource.get_display_name()
-
-                    status = etree.SubElement(propstat, "{DAV:}status")
-                    status.text = "HTTP/1.1 200 OK"
-
-                    # Generate XML
-                    body = b'<?xml version=\'1.0\' encoding=\'UTF-8\'?>\n' + etree.tostring(root, encoding='utf-8')
-
-                    logger.info(f"[WebDAV] Generated Depth:0 response for {path}, {len(body)} bytes")
-
-                    # Return response directly, bypassing wsgidav
-                    headers = [('Content-Length', str(len(body))), ('Content-Type', 'application/xml; charset=utf-8')]
-                    start_response('207 Multi-Status', headers)
-                    return [body]
-        except Exception as e:
-            logger.error(f"[WebDAV] Error in patched PROPFIND Depth:0: {e}", exc_info=True)
-
-    # For other depths or if depth:0 failed, call original method
-    result = _original_do_propfind(self, environ, start_response)
-
-    # Check if response is empty multistatus (which happens for VirtualResource Depth:0)
-    # If so, try to generate a proper response
-    if hasattr(result, '__iter__'):
-        body_parts = list(result)
-        if body_parts:
-            body = b''.join(body_parts)
-            # Check if it's an empty multistatus
-            if b'<D:multistatus xmlns:D="DAV:"/>' in body or b'<D:multistatus xmlns:D="DAV:" />' in body:
-                # Try to generate a proper response by getting the resource
-                try:
-                    from wsgidav import util
-                    path = environ.get("PATH_INFO", "")
-                    depth = environ.get("HTTP_DEPTH", "0")
-
-                    # Only handle Depth:0 for now
-                    if depth == "0":
-                        provider = environ.get("wsgidav.provider")
-                        if provider:
-                            resource = provider.get_resource_inst(path, environ)
-                            if resource:  # Handle BOTH files AND directories
-                                # Generate PROPFIND response manually
-                                from wsgidav.util import etree
-                                from datetime import datetime
-
-                                root = etree.Element("{DAV:}multistatus")
-                                response_elem = etree.SubElement(root, "{DAV:}response")
-
-                                href_elem = etree.SubElement(response_elem, "{DAV:}href")
-                                # Use the original request path to ensure href matches client's base URL
-                                from urllib.parse import quote
-                                href_path = path.replace('@', '%40')  # URL-encode @ symbol
-                                href_elem.text = href_path
-
-                                propstat = etree.SubElement(response_elem, "{DAV:}propstat")
-                                prop = etree.SubElement(propstat, "{DAV:}prop")
-
-                                # Add properties - use {DAV:} namespace for all property elements
-                                if hasattr(resource, 'get_last_modified'):
-                                    lm = etree.SubElement(prop, "{DAV:}getlastmodified")
-                                    ts = resource.get_last_modified()
-                                    lm.text = datetime.fromtimestamp(ts).strftime('%a, %d %b %Y %H:%M:%S GMT') if ts else ""
-
-                                if hasattr(resource, 'get_content_length'):
-                                    cl = etree.SubElement(prop, "{DAV:}getcontentlength")
-                                    cl.text = str(resource.get_content_length())
-
-                                rt = etree.SubElement(prop, "{DAV:}resourcetype")
-                                # Add collection tag for directories
-                                if resource.is_collection:
-                                    collection_elem = etree.SubElement(rt, "{DAV:}collection")
-
-                                if hasattr(resource, 'get_display_name'):
-                                    dn = etree.SubElement(prop, "{DAV:}displayname")
-                                    dn.text = resource.get_display_name()
-
-                                status = etree.SubElement(propstat, "{DAV:}status")
-                                status.text = "HTTP/1.1 200 OK"
-
-                                # Generate XML
-                                body = b'<?xml version=\'1.0\' encoding=\'UTF-8\'?>\n' + etree.tostring(root, encoding='utf-8')
-
-                                # Update Content-Length header
-                                headers = [('Content-Length', str(len(body))), ('Content-Type', 'application/xml; charset=utf-8')]
-                                start_response('207 Multi-Status', headers)
-                                return [body]
-                except Exception as e:
-                    logger.error(f"[WebDAV] Error generating PROPFIND response: {e}", exc_info=True)
-
-            # Return original response
-            return [body]
-
+    # Call original method - let wsgidav handle response generation
+    # Our VirtualResource/SimpleResource.get_href() will return correct /webdav/ prefixed paths
     return result
 
 # Apply the PROPFIND patch

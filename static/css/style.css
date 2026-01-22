@@ -2957,12 +2957,32 @@ fieldset legend {
     height: auto !important;
     min-width: auto !important;
     flex-shrink: 0 !important;
-    background: #2a2a3e !important;
-    border: 1px solid #3a3a4e !important;
+    background: #3a3a4e !important;
+    border: 1px solid #5a5a6e !important;
     border-radius: 6px !important;
-    color: #e0e0e0 !important;
+    color: #ffffff !important;
     font-size: 0.9em !important;
+    font-weight: 500 !important;
     cursor: pointer !important;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.3) !important;
+}
+
+.message-content .file-action-btn:hover {
+    background: #4a4a5e !important;
+    border-color: #6a6a7e !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+}
+
+.message-content .file-action-delete {
+    background: #5a2a2a !important;
+    border-color: #7a3a3a !important;
+    color: #ffaaaa !important;
+}
+
+.message-content .file-action-delete:hover {
+    background: #6a3a3a !important;
+    border-color: #8a4a4a !important;
 }
 
 /* Music Search Results Styling */
