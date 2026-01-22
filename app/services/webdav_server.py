@@ -2359,13 +2359,16 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                     def get_property_names(self, *, is_allprop):
                         """Return list of property names in Clark notation."""
-                        return [
+                        props = [
                             "{DAV:}getlastmodified",
                             "{DAV:}getcontentlength",
-                            "{DAV:}resourcetype",
                             "{DAV:}displayname",
                             "{DAV:}getcontenttype",
                         ]
+                        # Only include resourcetype for directories - Flacbox prefers files without it
+                        if self._is_dir:
+                            props.append("{DAV:}resourcetype")
+                        return props
 
                     def get_property_value(self, name):
                         """Return value for a specific property (name in Clark notation)."""
