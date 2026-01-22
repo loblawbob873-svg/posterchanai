@@ -234,7 +234,7 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     href_elem.text = script_name.rstrip('/') + href_text
                     hrefs_fixed += 1
         if hrefs_fixed > 0:
-            logger.debug(f"[WebDAV] Fixed {hrefs_fixed} hrefs in XML response by prepending {script_name}")
+            logger.info(f"[WebDAV] ✅ Fixed {hrefs_fixed} hrefs in XML response by prepending {script_name}")
     
     xml_bytes = etree.tostring(multistatus_elem, encoding='utf-8')
     xml_str = xml_bytes.decode('utf-8')
