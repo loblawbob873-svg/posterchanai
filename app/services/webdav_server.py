@@ -876,9 +876,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 # Storage server expects full email-style username (e.g., verita84@poster.place)
                                 path = self._path.strip('/')
                                 logger.debug(f"[WebDAV] VirtualResource.get_content: self._path={self._path}, stripped path={path}")
-                                if path.startswith('webdav/'):
+
+                                # Remove all webdav/ prefixes (in case path is duplicated)
+                                while path.startswith('webdav/'):
                                     path = path[7:]
                                     logger.debug(f"[WebDAV] VirtualResource.get_content: after removing webdav/ prefix: {path}")
+
                                 parts = path.split('/', 1)
                                 if len(parts) >= 2:
                                     username = parts[0]
@@ -888,6 +891,16 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     rel_path = ''
                                 else:
                                     return None
+
+                                # Normalize rel_path - remove duplicate webdav/username/ prefix if present
+                                # Example: "webdav/verita84@poster.place/avatar.jpeg" -> "avatar.jpeg"
+                                if rel_path.startswith('webdav/' + username + '/'):
+                                    rel_path = rel_path[len('webdav/' + username + '/'):]
+                                    logger.debug(f"[WebDAV] VirtualResource.get_content: removed duplicate webdav/username/ prefix, rel_path={rel_path}")
+                                elif rel_path == 'webdav/' + username:
+                                    rel_path = ''
+                                    logger.debug(f"[WebDAV] VirtualResource.get_content: path was just webdav/username, set to empty")
+
                                 logger.info(f"[WebDAV] VirtualResource.get_content: username={username}, rel_path={rel_path}")
                                 try:
                                     content = self._provider._proxy_download_file(username, rel_path)
