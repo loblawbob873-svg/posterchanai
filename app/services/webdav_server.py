@@ -269,36 +269,54 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                         # Remove patterns like /username/webdav/username/ or /username/username/
                         href_text = re.sub(r'^/' + username_pattern + r'/(webdav/)?' + username_pattern + r'/', f'/{username}/', href_text)
                 
-                # CRITICAL: Make hrefs relative to user's base path to prevent duplicate path construction
-                # If href is /webdav/username@domain/path, make it relative: path (relative to /webdav/username@domain/)
-                # This prevents clients from treating absolute hrefs as relative and creating duplicates
-                if '@' in href_text and href_text.startswith(script_name):
-                    # Extract the path after /webdav/username@domain/
-                    path_parts = href_text[len(script_name):].strip('/').split('/')
-                    if len(path_parts) > 0 and '@' in path_parts[0]:
-                        # This is a user path: /webdav/username@domain/...
-                        username = path_parts[0]
-                        # Make href relative to user's base: remove /webdav/username@domain/ prefix
-                        relative_path = '/'.join(path_parts[1:]) if len(path_parts) > 1 else ''
-                        # Ensure it starts with / for absolute path, but relative to user base
-                        # Actually, WebDAV spec allows relative hrefs, so we can use relative_path directly
-                        # But some clients expect absolute paths, so let's keep it as /path (relative to base)
-                        if relative_path:
-                            href_text = '/' + relative_path
-                        else:
-                            href_text = '/'  # Root of user's space
-                        hrefs_fixed += 1
-                        if hrefs_fixed <= 5:  # Log first few for debugging
-                            logger.info(f"[WebDAV] 🔧 Made href relative: '{original_href}' -> '{href_text}'")
-                    elif not href_text.startswith(script_name):
-                        # Href doesn't have /webdav/ prefix, ensure it's absolute
-                        if not href_text.startswith('/'):
-                            href_text = '/' + href_text
-                        # Prepend /webdav/username@domain/ if it's a user path
+                # CRITICAL: Ensure hrefs are absolute paths with /webdav/username@domain/ prefix
+                # WebDAV spec requires absolute paths. The duplicate path issue is handled server-side in get_resource_inst
+                # So we keep absolute paths here and let the server normalize duplicate requests
+                if '@' in href_text:
+                    # Ensure href has /webdav/ prefix for absolute path
+                    if not href_text.startswith(script_name):
+                        # Check if it's a user path (starts with /username@domain/ or just /path)
                         path_parts = href_text.strip('/').split('/')
                         if len(path_parts) > 0 and '@' in path_parts[0]:
+                            # Path already has username, just prepend /webdav/
                             href_text = script_name.rstrip('/') + href_text
                             hrefs_fixed += 1
+                        elif len(path_parts) > 0 and not href_text.startswith('/webdav/'):
+                            # Path doesn't have username - WSGiDAV stripped it
+                            # Try to reconstruct from the request path in environ
+                            request_path = environ.get('PATH_INFO', '') or environ.get('REQUEST_URI', '')
+                            if request_path and '@' in request_path:
+                                # Extract username from request path
+                                req_parts = request_path.strip('/').split('/')
+                                for part in req_parts:
+                                    if '@' in part:
+                                        username = part
+                                        # Reconstruct full path: /webdav/username/path
+                                        href_text = script_name.rstrip('/') + '/' + username + href_text
+                                        hrefs_fixed += 1
+                                        logger.warning(f"[WebDAV] ⚠️  Reconstructed href from request path: '{original_href}' -> '{href_text}'")
+                                        break
+                                else:
+                                    logger.warning(f"[WebDAV] ⚠️  Href missing username: '{href_text}', cannot reconstruct")
+                            else:
+                                logger.warning(f"[WebDAV] ⚠️  Href missing username: '{href_text}', cannot construct absolute path")
+                elif href_text.startswith('/') and not href_text.startswith(script_name) and '@' not in href_text:
+                    # Href is absolute but missing /webdav/username@domain/ prefix
+                    # This happens when WSGiDAV strips the prefix - reconstruct from request path
+                    request_path = environ.get('PATH_INFO', '') or environ.get('REQUEST_URI', '')
+                    if request_path and '@' in request_path:
+                        # Extract username from request path
+                        req_parts = request_path.strip('/').split('/')
+                        for part in req_parts:
+                            if '@' in part:
+                                username = part
+                                # Reconstruct full path: /webdav/username/path
+                                href_text = script_name.rstrip('/') + '/' + username + href_text
+                                hrefs_fixed += 1
+                                logger.warning(f"[WebDAV] ⚠️  Reconstructed href from request: '{original_href}' -> '{href_text}'")
+                                break
+                    else:
+                        logger.warning(f"[WebDAV] ⚠️  Href missing prefix and no username in request: '{href_text}'")
                 
                 # Update href if it changed
                 if href_text != original_href:
