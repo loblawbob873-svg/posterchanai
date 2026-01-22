@@ -2732,26 +2732,19 @@ fieldset legend {
 /* File search results */
 .file-search-results {
     margin: 16px 0;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
 }
 
-.file-result-item,
-.file-search-results .file-result-item {
-    background: #1a1a2e !important;
-    border: 1px solid #2a2a3e !important;
-    border-radius: 8px !important;
-    padding: 16px !important;
-    transition: all 0.2s ease !important;
-    margin-bottom: 12px !important;
+.file-result-item {
+    background: #1a1a2e;
+    border: 1px solid #2a2a3e;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
 }
 
 .file-result-item:hover {
     background: #1e1e35;
     border-color: #3a3a4e;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .file-result-header {
@@ -2764,189 +2757,94 @@ fieldset legend {
 .file-thumbnail {
     width: 64px;
     height: 64px;
+    min-width: 64px;
+    min-height: 64px;
     object-fit: cover;
     border-radius: 6px;
     border: 1px solid #2a2a3e;
-    flex-shrink: 0;
 }
 
 .file-icon {
     width: 64px;
     height: 64px;
+    min-width: 64px;
+    min-height: 64px;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 32px;
     background: #2a2a3e;
     border-radius: 6px;
-    flex-shrink: 0;
 }
 
 .file-info {
     flex: 1;
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
 }
 
 .file-name {
-    font-weight: 600;
     color: #e0e0e0;
-    font-size: 1em;
-    line-height: 1.3;
+    font-weight: 600;
+    font-size: 16px;
+    margin-bottom: 4px;
     word-break: break-word;
-    margin: 0;
-    padding: 0;
 }
 
 .file-meta {
-    font-size: 0.85em;
-    color: #888;
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-    line-height: 1.3;
-    margin: 0;
-    padding: 0;
+    gap: 12px;
+    font-size: 14px;
+    color: #888;
 }
 
 .file-meta .file-path {
     color: #aaa;
     font-family: monospace;
-    font-size: 0.9em;
     max-width: 300px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.file-meta .file-size {
-    color: #888;
-    font-weight: 500;
-}
-
-.file-meta .file-date {
-    color: #666;
-}
-
 .file-actions {
-    display: flex !important;
-    gap: 8px !important;
-    flex-wrap: wrap !important;
-    margin-top: 12px !important;
-    padding-top: 12px !important;
-    border-top: 1px solid #2a2a3e !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-    align-items: center !important;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding-top: 12px;
+    border-top: 1px solid #2a2a3e;
 }
 
-.file-action-btn {
-    padding: 8px 14px !important;
-    background: #3a3a4e !important;
-    border: 1px solid #5a5a6e !important;
-    border-radius: 6px !important;
-    color: #ffffff !important;
-    cursor: pointer;
-    font-size: 0.9em !important;
-    font-weight: 500 !important;
-    transition: all 0.2s ease;
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 6px !important;
-    white-space: nowrap !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-    margin: 0 !important;
-    flex-shrink: 0 !important;
-    min-width: auto !important;
-    width: auto !important;
-    height: auto !important;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.3) !important;
-}
-
-.file-action-btn:hover {
-    background: #4a4a5e !important;
-    border-color: #6a6a7e !important;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
-}
-
-.file-action-delete {
-    background: #5a2a2a !important;
-    border-color: #7a3a3a !important;
-    color: #ffaaaa !important;
-}
-
-.file-action-delete:hover {
-    background: #6a3a3a !important;
-    border-color: #8a4a4a !important;
-}
-
-.file-search-results .no-results {
-    text-align: center;
-    color: #888;
-    padding: 24px;
-    font-style: italic;
-}
-
-/* Ensure file action buttons are visible in chat messages */
-.message-content .file-search-results .file-actions,
-.message-content .file-actions {
-    display: flex !important;
-    flex-wrap: wrap !important;
-    gap: 8px !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-    margin-top: 12px !important;
-    padding-top: 12px !important;
-    border-top: 1px solid #2a2a3e !important;
-    position: static !important;
-    align-items: center !important;
-}
-
-.message-content .file-search-results .file-action-btn,
+.file-action-btn,
 .message-content .file-action-btn {
-    opacity: 1 !important;
-    visibility: visible !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    margin: 0 !important;
-    padding: 8px 14px !important;
-    gap: 6px !important;
-    white-space: nowrap !important;
-    width: auto !important;
-    height: auto !important;
-    min-width: auto !important;
-    flex-shrink: 0 !important;
-    background: #3a3a4e !important;
-    border: 1px solid #5a5a6e !important;
-    border-radius: 6px !important;
-    color: #ffffff !important;
-    font-size: 0.9em !important;
-    font-weight: 500 !important;
-    cursor: pointer !important;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.3) !important;
+    padding: 8px 14px;
+    background: #4a4a6e;
+    border: 1px solid #6a6a8e;
+    border-radius: 6px;
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
 }
 
+.file-action-btn:hover,
 .message-content .file-action-btn:hover {
-    background: #4a4a5e !important;
-    border-color: #6a6a7e !important;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+    background: #5a5a7e;
+    border-color: #7a7a9e;
 }
 
+.file-action-delete,
 .message-content .file-action-delete {
-    background: #5a2a2a !important;
-    border-color: #7a3a3a !important;
-    color: #ffaaaa !important;
+    background: #6a2a2a;
+    border-color: #8a3a3a;
 }
 
+.file-action-delete:hover,
 .message-content .file-action-delete:hover {
-    background: #6a3a3a !important;
-    border-color: #8a4a4a !important;
+    background: #7a3a3a;
+    border-color: #9a4a4a;
 }
 
 /* Music Search Results Styling */
