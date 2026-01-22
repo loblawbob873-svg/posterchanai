@@ -252,6 +252,23 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     break
     
     if audio_hrefs_in_xml:
+        # Log a sample of the actual XML for one audio file to debug
+        for response in multistatus_elem.findall("{DAV:}response"):
+            href_elem = response.find("{DAV:}href")
+            if href_elem is not None and href_elem.text and any(ext in href_elem.text.lower() for ext in ['.mp3', '.m4a', '.flac']):
+                # Get all properties for this audio file
+                propstat = response.find("{DAV:}propstat")
+                if propstat is not None:
+                    prop = propstat.find("{DAV:}prop")
+                    if prop is not None:
+                        content_type = prop.find("{DAV:}getcontenttype")
+                        content_length = prop.find("{DAV:}getcontentlength")
+                        resourcetype = prop.find("{DAV:}resourcetype")
+                        logger.info(f"[WebDAV] ⚠️  Audio file in XML: href={href_elem.text}, content-type={content_type.text if content_type is not None and content_type.text else 'MISSING'}, content-length={content_length.text if content_length is not None and content_length.text else 'MISSING'}, resourcetype={resourcetype.tag if resourcetype is not None else 'MISSING'}")
+                        # Log the full prop element as XML for debugging
+                        prop_xml = etree.tostring(prop, encoding='utf-8').decode('utf-8')
+                        logger.info(f"[WebDAV] Full prop XML for audio file: {prop_xml[:500]}")
+                        break
         logger.info(f"[WebDAV] ⚠️  Audio file hrefs in FINAL XML response (what Flacbox sees, total responses={total_responses}): {audio_hrefs_in_xml}")
     elif total_responses > 0:
         # Log a sample of hrefs to see what's actually in the response
