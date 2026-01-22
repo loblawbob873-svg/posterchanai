@@ -675,6 +675,15 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     rel_path = rel_path[len(username) + 1:]
                 elif rel_path == username:
                     rel_path = ''
+
+                # Additional check: remove any remaining webdav/username/ prefix
+                # This handles cases where path normalization didn't catch everything
+                if rel_path.startswith(f'webdav/{username}/'):
+                    rel_path = rel_path[len(f'webdav/{username}/'):]
+                    logger.debug(f"[WebDAV] get_resource_list: removed duplicate webdav/{username}/, rel_path={rel_path}")
+                elif rel_path == f'webdav/{username}':
+                    rel_path = ''
+                    logger.debug(f"[WebDAV] get_resource_list: removed duplicate webdav/{username}, rel_path is now empty")
                 
                 # First check if this is a file (not a directory) - if so, return empty list
                 # We can't list files inside a file
