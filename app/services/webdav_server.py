@@ -255,23 +255,6 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                 import re
                 original_href = href_text
                 
-                # CRITICAL: Only remove duplicate patterns, NEVER remove correct /webdav/username@domain/ prefix
-                # Remove duplicate username patterns (e.g., /username/webdav/username/ -> /username/)
-                # BUT ONLY if it's a duplicate - if href starts with /webdav/username/, it's correct, don't touch it
-                if href_text and '@' in href_text and not href_text.startswith(script_name):
-                    # Only process if href doesn't already have /webdav/ prefix
-                    path_parts = href_text.strip('/').split('/')
-                    if len(path_parts) > 1 and '@' in path_parts[0]:
-                        username = path_parts[0]
-                        username_pattern = re.escape(username)
-                        # Remove patterns like /username/webdav/username/ or /username/username/
-                        # This only matches if href starts with /username/ (not /webdav/)
-                        href_text = re.sub(r'^/' + username_pattern + r'/(webdav/)?' + username_pattern + r'/', f'/{username}/', href_text)
-                
-                # Ensure href starts with /
-                if not href_text.startswith('/'):
-                    href_text = '/' + href_text
-                
                 # CRITICAL: Ensure hrefs are absolute with /webdav/username@domain/ prefix for Flacbox
                 # Flacbox needs absolute hrefs to construct GET requests properly
                 # WSGiDAV strips /webdav/ prefix, so we must reconstruct it
@@ -286,11 +269,25 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     if len(uri_parts) >= 2 and uri_parts[0] == 'webdav' and '@' in uri_parts[1]:
                         username = uri_parts[1]
                 
-                # If href doesn't start with /webdav/, it needs fixing
-                if not href_text.startswith(script_name):
+                # Check if href is already absolute with /webdav/ prefix - if so, skip fixing
+                if href_text.startswith(script_name):
+                    # Already has /webdav/ prefix - check for duplicate username patterns
+                    if href_text and '@' in href_text:
+                        path_parts = href_text.strip('/').split('/')
+                        if len(path_parts) > 2 and '@' in path_parts[1]:
+                            # Check for duplicate username (e.g., /webdav/username/webdav/username/)
+                            username_in_path = path_parts[1]
+                            if len(path_parts) > 3 and path_parts[2] == 'webdav' and '@' in path_parts[3] and path_parts[3] == username_in_path:
+                                # Remove duplicate: /webdav/username/webdav/username/ -> /webdav/username/
+                                href_text = f"{script_name}/{username_in_path}/{'/'.join(path_parts[4:])}"
+                                needs_fixing = True
+                else:
+                    # Href doesn't have /webdav/ prefix - needs fixing
                     # Check if it's a relative path (no leading /, like "Music/song.mp3")
-                    if not href_text.startswith('/'):
-                        # Relative path - add /webdav/username/ prefix
+                    is_relative = not href_text.startswith('/')
+                    
+                    if is_relative:
+                        # Relative path like "Music/song.mp3" - add /webdav/username/ prefix
                         if username:
                             href_text = f"{script_name}/{username}/{href_text}"
                             needs_fixing = True
@@ -299,7 +296,7 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                             href_text = f"{script_name}/{href_text}"
                             needs_fixing = True
                     # Check if it's absolute but missing /webdav/ (like "/username@domain/Music/song.mp3")
-                    elif href_text.startswith('/') and '@' in href_text and not href_text.startswith(script_name):
+                    elif href_text.startswith('/') and '@' in href_text:
                         # Has username but missing /webdav/ - add it
                         href_text = script_name.rstrip('/') + href_text
                         needs_fixing = True
@@ -371,19 +368,19 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
     xml_bytes = etree.tostring(multistatus_elem, encoding='utf-8')
     xml_str = xml_bytes.decode('utf-8')
 
-    # OPTIMIZATION: Skip expensive audio file detection for large responses
-    # Only check for audio files in smaller responses to reduce overhead
+    # Check for audio files in response (for logging/debugging)
+    # Sample first few audio files even for large responses
     audio_hrefs_in_xml = []
-    # Use the total_responses we already calculated above
-    if total_responses <= 100:
-        for response in all_responses:
-            href_elem = response.find("{DAV:}href")
-            if href_elem is not None and href_elem.text:
-                href_text = href_elem.text
-                if any(ext in href_text.lower() for ext in ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac']):
-                    audio_hrefs_in_xml.append(href_text)
-                    if len(audio_hrefs_in_xml) >= 5:  # Log first 5
-                        break
+    audio_count = 0
+    for response in all_responses:
+        href_elem = response.find("{DAV:}href")
+        if href_elem is not None and href_elem.text:
+            href_text = href_elem.text
+            if any(ext in href_text.lower() for ext in ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac']):
+                audio_hrefs_in_xml.append(href_text)
+                audio_count += 1
+                if len(audio_hrefs_in_xml) >= 5:  # Log first 5
+                    break
     
     if audio_hrefs_in_xml and total_responses <= 100:
         # Log a sample of the actual XML for one audio file to debug (only for smaller responses)
@@ -442,7 +439,7 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     break
         except Exception as e:
             logger.error(f"[WebDAV] Error logging audio file XML details: {e}", exc_info=True)
-        logger.info(f"[WebDAV] ⚠️  Audio file hrefs in FINAL XML response (what Flacbox sees, total responses={total_responses}): {audio_hrefs_in_xml}")
+        logger.info(f"[WebDAV] ⚠️  Audio file hrefs in FINAL XML response (what Flacbox sees, total responses={total_responses}, audio files found={audio_count}): {audio_hrefs_in_xml}")
     elif total_responses > 0:
         # Log a sample of hrefs to see what's actually in the response
         sample_hrefs = []
