@@ -1605,6 +1605,8 @@ async def list_files(
     depth=1: immediate children only (default)
     depth>1: recursive listing of all descendants
     """
+    logger.info(f"[Storage API] list_files called: username={username}, path={path}, depth={depth}")
+
     # Check if this is a server-to-server request
     from app.models import Setting
     storage_server_token = safe_query_setting(db, "storage_server_token")
