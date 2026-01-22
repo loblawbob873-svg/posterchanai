@@ -218,6 +218,15 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
     """Log the actual XML being sent to debug Joplin issues and fix hrefs for Flacbox."""
     from wsgidav.util import etree
     
+    # Ensure multistatus root has proper namespace declaration
+    # Some clients (like Flacbox) may require explicit xmlns:D declaration
+    if multistatus_elem.tag == "{DAV:}multistatus":
+        # Check if xmlns:D is declared
+        nsmap = multistatus_elem.nsmap if hasattr(multistatus_elem, 'nsmap') else {}
+        if 'D' not in nsmap or nsmap.get('D') != 'DAV:':
+            # Set namespace map to ensure D: prefix is used
+            multistatus_elem.set('xmlns:D', 'DAV:')
+    
     # CRITICAL FIX: WSGiDAV strips /webdav/ from hrefs before putting them in XML
     # We must add it back so Flacbox can construct correct GET URLs
     # Also ensure all property elements are properly namespaced for Flacbox compatibility
