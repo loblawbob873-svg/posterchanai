@@ -802,6 +802,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # Extract relative path from WebDAV path
                 # Path format: /username/subdir -> subdir
                 rel_path = normalized_path.lstrip('/')
+                
+                # CRITICAL: Remove duplicate username patterns first
+                # Handle cases like: username/username/path -> username/path
+                # or: username@domain/username@domain/path -> username@domain/path
+                username_prefix = username + '/'
+                if rel_path.startswith(username_prefix + username_prefix):
+                    # Remove the first occurrence
+                    rel_path = rel_path[len(username) + 1:]
+                    logger.warning(f"[WebDAV] Removed duplicate username pattern in get_resource_list, new rel_path={rel_path}")
+                elif rel_path.startswith(username_prefix + username + '/'):
+                    # Handle case where there's a duplicate but with different separator
+                    rel_path = rel_path[len(username) + 1:]
+                    logger.warning(f"[WebDAV] Removed duplicate username pattern (variant) in get_resource_list, new rel_path={rel_path}")
+                
                 if rel_path.startswith(username + '/'):
                     rel_path = rel_path[len(username) + 1:]
                 elif rel_path == username:
@@ -899,6 +913,21 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # Extract relative path
                 rel_path = normalized_path.lstrip('/')
                 logger.debug(f"[WebDAV] get_resource_inst: after lstrip, rel_path={rel_path}, username={username}")
+
+                # CRITICAL: Remove duplicate username patterns first
+                # Handle cases like: username/username/path -> username/path
+                # or: username@domain/username@domain/path -> username@domain/path
+                import re
+                # Check if path starts with username/username/ pattern
+                username_prefix = username + '/'
+                if rel_path.startswith(username_prefix + username_prefix):
+                    # Remove the first occurrence
+                    rel_path = rel_path[len(username) + 1:]
+                    logger.warning(f"[WebDAV] Removed duplicate username pattern, new rel_path={rel_path}")
+                elif rel_path.startswith(username_prefix + username + '/'):
+                    # Handle case where there's a duplicate but with different separator
+                    rel_path = rel_path[len(username) + 1:]
+                    logger.warning(f"[WebDAV] Removed duplicate username pattern (variant), new rel_path={rel_path}")
 
                 # Handle various path formats:
                 # /username@domain/path -> path (email-style WebDAV paths from iOS/macOS)
