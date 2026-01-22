@@ -2448,13 +2448,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
             # Sample first few hrefs for debugging Flacbox issues
             if unique_resources:
                 sample_hrefs = []
-                for res in unique_resources[:5]:
+                audio_hrefs = []
+                for res in unique_resources[:10]:
                     try:
                         href = res.get_href() if hasattr(res, 'get_href') else str(res.path)
                         sample_hrefs.append(href)
-                    except:
+                        # Collect audio file hrefs specifically
+                        if any(ext in href.lower() for ext in ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac']):
+                            audio_hrefs.append(href)
+                    except Exception as e:
                         sample_hrefs.append(str(res.path) if hasattr(res, 'path') else 'unknown')
-                logger.debug(f"[WebDAV] Sample hrefs (first 5): {sample_hrefs}")
+                logger.debug(f"[WebDAV] Sample hrefs (first 10): {sample_hrefs}")
+                if audio_hrefs:
+                    logger.info(f"[WebDAV] ⚠️  Audio file hrefs in PROPFIND response (first 5): {audio_hrefs[:5]}")
+                    logger.info(f"[WebDAV] ⚠️  These hrefs should be used by Flacbox to construct GET requests")
 
             return unique_resources
             
