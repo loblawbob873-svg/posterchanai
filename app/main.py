@@ -1135,7 +1135,11 @@ async def startup():
                             
                             # CRITICAL: Fix Content-Type headers for audio files in GET responses
                             # WSGiDAV might set wrong Content-Type, so we intercept and fix it here
-                            def fixing_start_response(status, headers):
+                            def fixing_start_response(status, headers, *args):
+                                # WSGI start_response can be called with optional exc_info parameter as 3rd positional arg
+                                # Accept *args to handle both 2-arg and 3-arg calls
+                                exc_info = args[0] if len(args) > 0 else None
+                                
                                 # Only fix Content-Type for GET requests to audio files
                                 if request_method == 'GET' and any(ext in original_path.lower() for ext in ['.mp3', '.m4a', '.m4b', '.flac', '.ogg', '.wav', '.aac']):
                                     fixed_headers = []
@@ -1179,9 +1183,17 @@ async def startup():
                                     if final_content_type.startswith('audio/'):
                                         logging.info(f"[WebDAV Middleware] 🎵 GET response for audio file: path={original_path}, status={status}, content-type={final_content_type}")
                                     
-                                    return start_response(status, fixed_headers)
+                                    # Call original start_response with exc_info if provided
+                                    if exc_info is not None:
+                                        return start_response(status, fixed_headers, exc_info)
+                                    else:
+                                        return start_response(status, fixed_headers)
                                 else:
-                                    return start_response(status, headers)
+                                    # Not an audio file or not GET - pass through unchanged
+                                    if exc_info is not None:
+                                        return start_response(status, headers, exc_info)
+                                    else:
+                                        return start_response(status, headers)
                             
                             logging.info(f"[WebDAV Middleware] {request_method} {original_path} -> {path_info} (SCRIPT_NAME=/webdav)")
                             return wsgi_app(environ, fixing_start_response)
