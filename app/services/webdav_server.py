@@ -234,32 +234,42 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
     if script_name:
         hrefs_fixed = 0
         props_fixed = 0
-        for response in multistatus_elem.findall("{DAV:}response"):
-            href_elem = response.find("{DAV:}href")
-            if href_elem is not None and href_elem.text:
-                href_text = href_elem.text
-                # CRITICAL: Remove any duplicate username patterns that might have been introduced
-                # Handle cases like: /username/webdav/username/path
-                import re
-                if href_text and '@' in href_text:
-                    path_parts = href_text.strip('/').split('/')
-                    if len(path_parts) > 1 and '@' in path_parts[0]:
-                        username = path_parts[0]
-                        # Check for duplicate username pattern
-                        username_pattern = re.escape(username)
-                        # Remove patterns like /username/webdav/username/ or /username/username/
-                        href_text = re.sub(r'^/' + username_pattern + r'/(webdav/)?' + username_pattern + r'/', f'/{username}/', href_text)
-                
-                # Only fix hrefs that don't already have /webdav/ prefix
-                # And that start with /username@domain/ (our user paths)
-                if not href_text.startswith(script_name) and href_text.startswith('/') and '@' in href_text.split('/')[1] if len(href_text.split('/')) > 1 else False:
-                    # Prepend /webdav/ to the href
-                    href_elem.text = script_name.rstrip('/') + href_text
-                    hrefs_fixed += 1
-                elif href_text != href_elem.text:
-                    # Update href if we cleaned up duplicates
-                    href_elem.text = href_text
-                    hrefs_fixed += 1
+            for response in multistatus_elem.findall("{DAV:}response"):
+                href_elem = response.find("{DAV:}href")
+                if href_elem is not None and href_elem.text:
+                    href_text = href_elem.text
+                    # CRITICAL: Remove any duplicate username patterns that might have been introduced
+                    # Handle cases like: /username/webdav/username/path
+                    import re
+                    original_href = href_text
+                    if href_text and '@' in href_text:
+                        path_parts = href_text.strip('/').split('/')
+                        if len(path_parts) > 1 and '@' in path_parts[0]:
+                            username = path_parts[0]
+                            # Check for duplicate username pattern
+                            username_pattern = re.escape(username)
+                            # Remove patterns like /username/webdav/username/ or /username/username/
+                            href_text = re.sub(r'^/' + username_pattern + r'/(webdav/)?' + username_pattern + r'/', f'/{username}/', href_text)
+                    
+                    # CRITICAL: Flacbox is constructing duplicate paths like /webdav/username/webdav/username/...
+                    # This suggests Flacbox is treating hrefs as relative to its base URL
+                    # If Flacbox connected to /webdav/verita84@poster.place/, it might expect relative hrefs
+                    # Try removing /webdav/ prefix and making hrefs relative to /webdav/
+                    # So /webdav/verita84@poster.place/Music/... becomes /verita84@poster.place/Music/...
+                    
+                    # Remove /webdav/ prefix if present to make hrefs relative to base
+                    if href_text.startswith(script_name):
+                        # Make relative by removing /webdav/ prefix
+                        relative_href = href_text[len(script_name):].lstrip('/')
+                        new_href = '/' + relative_href if relative_href else '/'
+                        href_elem.text = new_href
+                        hrefs_fixed += 1
+                        if hrefs_fixed <= 3:  # Log first few for debugging
+                            logger.info(f"[WebDAV] 🔧 Removed /webdav/ prefix: '{href_text}' -> '{new_href}'")
+                    elif href_text != original_href:
+                        # Update href if we cleaned up duplicates
+                        href_elem.text = href_text
+                        hrefs_fixed += 1
             
             # CRITICAL: Ensure all property elements are properly namespaced with D: prefix
             # Flacbox requires explicitly prefixed elements (D:getcontenttype, not just getcontenttype)
