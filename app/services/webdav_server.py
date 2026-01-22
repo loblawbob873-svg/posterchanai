@@ -236,8 +236,8 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     href_elem.text = script_name.rstrip('/') + href_text
                     hrefs_fixed += 1
             
-            # CRITICAL: Ensure all property elements are properly namespaced
-            # Flacbox may require elements to be in DAV namespace explicitly
+            # CRITICAL: Ensure all property elements are properly namespaced with D: prefix
+            # Flacbox requires explicitly prefixed elements (D:getcontenttype, not just getcontenttype)
             propstat = response.find("{DAV:}propstat")
             if propstat is not None:
                 prop = propstat.find("{DAV:}prop")
@@ -248,6 +248,28 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                         # Add status if missing
                         status_elem = etree.SubElement(propstat, "{DAV:}status")
                         status_elem.text = "HTTP/1.1 200 OK"
+                        props_fixed += 1
+                    
+                    # Recreate unprefixed property elements with D: prefix for Flacbox
+                    # ElementTree doesn't allow changing tags, so we need to recreate them
+                    elements_to_replace = []
+                    for elem in prop:
+                        # Check if element is unprefixed (no namespace, no D: prefix)
+                        if not elem.tag.startswith('{') and not elem.tag.startswith('D:'):
+                            elements_to_replace.append((elem, elem.tag, elem.text, list(elem)))
+                    
+                    # Replace unprefixed elements with D: prefixed versions
+                    for old_elem, tag, text, children in elements_to_replace:
+                        # Create new element with D: prefix
+                        new_elem = etree.Element(f"D:{tag}")
+                        if text:
+                            new_elem.text = text
+                        # Copy children
+                        for child in children:
+                            new_elem.append(child)
+                        # Replace in parent
+                        prop.remove(old_elem)
+                        prop.append(new_elem)
                         props_fixed += 1
         
         if hrefs_fixed > 0 or props_fixed > 0:
