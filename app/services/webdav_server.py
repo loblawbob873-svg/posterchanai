@@ -2132,14 +2132,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             href = href + '/'
                             logger.debug(f"[WebDAV] Added trailing slash to directory href: {href}")
 
-                        # CRITICAL: Do NOT prepend /webdav/ here - WSGiDAV will prepend SCRIPT_NAME automatically
-                        # If we include /webdav/ here, WSGiDAV will prepend it again, causing /webdav/webdav/...
-                        # Return the path without /webdav/ prefix and let WSGiDAV handle it via SCRIPT_NAME
-                        # Remove /webdav/ if it's already there (shouldn't be, but be safe)
-                        if href.startswith('/webdav/'):
-                            href = href[7:]  # Remove '/webdav/'
-                        elif href.startswith('/webdav'):
-                            href = href[7:]  # Remove '/webdav'
+                        # CRITICAL: WSGiDAV is NOT prepending SCRIPT_NAME to hrefs in XML responses
+                        # The final XML shows hrefs without /webdav/ prefix, which breaks Flacbox GET requests
+                        # We must include /webdav/ prefix explicitly so Flacbox can construct correct GET URLs
+                        script_name = self.environ.get('SCRIPT_NAME', '/webdav') if hasattr(self, 'environ') and self.environ else '/webdav'
+                        if script_name and not href.startswith(script_name):
+                            # Prepend script_name to ensure hrefs in XML include /webdav/ prefix
+                            href = script_name.rstrip('/') + href
                         
                         # CRITICAL: Do NOT URL-encode @ symbol - Joplin expects @ in hrefs to match base URL
                         # The HTTP layer will handle URL encoding when needed
