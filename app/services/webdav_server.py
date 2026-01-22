@@ -986,12 +986,15 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     return []
 
                                 try:
-                                    # Pass the actual depth to get_resource_list
+                                    # Convert string depth to int (wsgidav sometimes passes string "1" instead of int 1)
+                                    if isinstance(depth, str):
+                                        try:
+                                            depth = int(depth)
+                                        except ValueError:
+                                            depth = 999  # infinity
+
                                     # depth=1 returns immediate children, depth>1 returns all descendants recursively
-                                    # Convert "infinity" depth to a large number (wsgidav may pass -1 or string)
-                                    logger.info(f"[WebDAV] VirtualResource.get_descendants: path={self._path}, depth={depth}, type={type(depth)}")
                                     effective_depth = depth if isinstance(depth, int) and depth > 0 else 999
-                                    logger.info(f"[WebDAV] VirtualResource.get_descendants: effective_depth={effective_depth}")
                                     children = self._provider.get_resource_list(self._path, depth=effective_depth, environ=self._environ)
                                     logger.debug(f"[WebDAV] VirtualResource.get_descendants: get_resource_list returned {len(children) if children else 0} children for {self._path} (depth={effective_depth})")
                                     return children if children else []
