@@ -1132,8 +1132,59 @@ async def startup():
                             # This allows WsgiDAV to generate correct hrefs that include /webdav prefix
                             environ['PATH_INFO'] = path_info
                             environ['SCRIPT_NAME'] = '/webdav'
+                            
+                            # CRITICAL: Fix Content-Type headers for audio files in GET responses
+                            # WSGiDAV might set wrong Content-Type, so we intercept and fix it here
+                            def fixing_start_response(status, headers):
+                                # Only fix Content-Type for GET requests to audio files
+                                if request_method == 'GET' and any(ext in original_path.lower() for ext in ['.mp3', '.m4a', '.m4b', '.flac', '.ogg', '.wav', '.aac']):
+                                    fixed_headers = []
+                                    content_type_found = False
+                                    
+                                    # Determine correct Content-Type from file extension
+                                    correct_content_type = None
+                                    if '.mp3' in original_path.lower():
+                                        correct_content_type = 'audio/mpeg'
+                                    elif any(ext in original_path.lower() for ext in ['.m4a', '.m4b']):
+                                        correct_content_type = 'audio/mp4'
+                                    elif '.flac' in original_path.lower():
+                                        correct_content_type = 'audio/flac'
+                                    elif any(ext in original_path.lower() for ext in ['.ogg', '.oga']):
+                                        correct_content_type = 'audio/ogg'
+                                    elif '.wav' in original_path.lower():
+                                        correct_content_type = 'audio/wav'
+                                    elif '.aac' in original_path.lower():
+                                        correct_content_type = 'audio/aac'
+                                    
+                                    # Replace or add Content-Type header
+                                    for header_name, header_value in headers:
+                                        if header_name.lower() == 'content-type':
+                                            content_type_found = True
+                                            if correct_content_type and correct_content_type != header_value:
+                                                # Replace wrong Content-Type with correct one
+                                                logging.warning(f"[WebDAV Middleware] 🔧 FIXING Content-Type: path={original_path}, was={header_value}, now={correct_content_type}")
+                                                fixed_headers.append(('Content-Type', correct_content_type))
+                                            else:
+                                                fixed_headers.append((header_name, header_value))
+                                        else:
+                                            fixed_headers.append((header_name, header_value))
+                                    
+                                    # Add Content-Type if missing
+                                    if not content_type_found and correct_content_type:
+                                        logging.warning(f"[WebDAV Middleware] 🔧 ADDING Content-Type: path={original_path}, content-type={correct_content_type}")
+                                        fixed_headers.append(('Content-Type', correct_content_type))
+                                    
+                                    # Log audio file GET responses
+                                    final_content_type = correct_content_type or (dict(fixed_headers).get('Content-Type', 'unknown'))
+                                    if final_content_type.startswith('audio/'):
+                                        logging.info(f"[WebDAV Middleware] 🎵 GET response for audio file: path={original_path}, status={status}, content-type={final_content_type}")
+                                    
+                                    return start_response(status, fixed_headers)
+                                else:
+                                    return start_response(status, headers)
+                            
                             logging.info(f"[WebDAV Middleware] {request_method} {original_path} -> {path_info} (SCRIPT_NAME=/webdav)")
-                            return wsgi_app(environ, start_response)
+                            return wsgi_app(environ, fixing_start_response)
                         return wrapper
                     # NOTE: /webdav/caldav/ and /webdav/carddav/ routes are now defined at top level
                     # (before WSGI middleware) to ensure FastAPI handles them first
