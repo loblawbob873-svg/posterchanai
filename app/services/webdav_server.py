@@ -262,10 +262,28 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     if propstat is not None:
                         prop = propstat.find("{DAV:}prop")
                         if prop is not None:
-                            # Try both with and without namespace prefix - XML shows unprefixed elements
-                            content_type = prop.find("{DAV:}getcontenttype") or prop.find("getcontenttype")
-                            content_length = prop.find("{DAV:}getcontentlength") or prop.find("getcontentlength")
-                            resourcetype = prop.find("{DAV:}resourcetype") or prop.find("resourcetype")
+                            # XML shows unprefixed elements like <getcontenttype> inside <D:prop>
+                            # Try multiple approaches to find them
+                            content_type = None
+                            content_length = None
+                            resourcetype = None
+                            # Try with DAV namespace first
+                            content_type = prop.find("{DAV:}getcontenttype")
+                            content_length = prop.find("{DAV:}getcontentlength")
+                            resourcetype = prop.find("{DAV:}resourcetype")
+                            # If not found, try without namespace (unprefixed elements)
+                            if content_type is None:
+                                for elem in prop:
+                                    if elem.tag.endswith('}getcontenttype') or elem.tag == 'getcontenttype':
+                                        content_type = elem
+                                        break
+                            if content_length is None:
+                                for elem in prop:
+                                    if elem.tag.endswith('}getcontentlength') or elem.tag == 'getcontentlength':
+                                        content_length = elem
+                                        break
+                            if resourcetype is None:
+                                resourcetype = prop.find("resourcetype")
                             logger.info(f"[WebDAV] ⚠️  Audio file in XML: href={href_elem.text}, content-type={content_type.text if content_type is not None and content_type.text else 'MISSING'}, content-length={content_length.text if content_length is not None and content_length.text else 'MISSING'}, resourcetype={resourcetype.tag if resourcetype is not None else 'MISSING'}")
                             # Log the full prop element as XML for debugging
                             try:
