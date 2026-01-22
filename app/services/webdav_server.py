@@ -5,8 +5,9 @@ Uses the storage configuration and respects storage quotas.
 import logging
 import threading
 import os
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Tuple
 from sqlalchemy.orm import Session
 from wsgidav.wsgidav_app import WsgiDAVApp
 from wsgidav.fs_dav_provider import FilesystemProvider
@@ -136,8 +137,67 @@ from wsgidav import request_server
 _original_do_propfind = request_server.RequestServer.do_PROPFIND
 
 def _patched_do_propfind(self, environ, start_response):
-    """Patched PROPFIND to handle VirtualResource Depth:0 requests."""
-    # Call the original method
+    """Patched PROPFIND to handle Depth:0 requests correctly - only return the resource itself, not children."""
+    path = environ.get("PATH_INFO", "")
+    depth = environ.get("HTTP_DEPTH", "1")  # Default depth is 1
+
+    logger.info(f"[WebDAV] PROPFIND: path={path}, depth={depth}")
+
+    # For Depth:0 requests, manually generate response to avoid including children
+    if depth == "0":
+        try:
+            from wsgidav.util import etree
+            from datetime import datetime
+
+            provider = environ.get("wsgidav.provider")
+            if provider:
+                resource = provider.get_resource_inst(path, environ)
+                if resource:
+                    # Generate PROPFIND response for just this resource
+                    root = etree.Element("{DAV:}multistatus")
+                    response_elem = etree.SubElement(root, "{DAV:}response")
+
+                    href_elem = etree.SubElement(response_elem, "{DAV:}href")
+                    href_elem.text = resource.get_href() if hasattr(resource, 'get_href') else path
+
+                    propstat = etree.SubElement(response_elem, "{DAV:}propstat")
+                    prop = etree.SubElement(propstat, "{DAV:}prop")
+
+                    # Add properties - use {DAV:} namespace for all property elements
+                    if hasattr(resource, 'get_last_modified'):
+                        lm = etree.SubElement(prop, "{DAV:}getlastmodified")
+                        ts = resource.get_last_modified()
+                        lm.text = datetime.fromtimestamp(ts).strftime('%a, %d %b %Y %H:%M:%S GMT') if ts else ""
+
+                    if hasattr(resource, 'get_content_length'):
+                        cl = etree.SubElement(prop, "{DAV:}getcontentlength")
+                        cl.text = str(resource.get_content_length())
+
+                    rt = etree.SubElement(prop, "{DAV:}resourcetype")
+                    # Add collection tag for directories
+                    if resource.is_collection:
+                        collection_elem = etree.SubElement(rt, "{DAV:}collection")
+
+                    if hasattr(resource, 'get_display_name'):
+                        dn = etree.SubElement(prop, "{DAV:}displayname")
+                        dn.text = resource.get_display_name()
+
+                    status = etree.SubElement(propstat, "{DAV:}status")
+                    status.text = "HTTP/1.1 200 OK"
+
+                    # Generate XML
+                    body = b'<?xml version=\'1.0\' encoding=\'UTF-8\'?>\n' + etree.tostring(root, encoding='utf-8')
+
+                    logger.info(f"[WebDAV] Generated Depth:0 response for {path}, {len(body)} bytes")
+
+                    # Return response directly, bypassing wsgidav
+                    headers = [('Content-Length', str(len(body))), ('Content-Type', 'application/xml; charset=utf-8')]
+                    start_response('207 Multi-Status', headers)
+                    return [body]
+        except Exception as e:
+            logger.error(f"[WebDAV] Error in patched PROPFIND Depth:0: {e}", exc_info=True)
+
+    # For other depths or if depth:0 failed, call original method
     result = _original_do_propfind(self, environ, start_response)
 
     # Check if response is empty multistatus (which happens for VirtualResource Depth:0)
@@ -159,7 +219,7 @@ def _patched_do_propfind(self, environ, start_response):
                         provider = environ.get("wsgidav.provider")
                         if provider:
                             resource = provider.get_resource_inst(path, environ)
-                            if resource and not resource.is_collection:
+                            if resource:  # Handle BOTH files AND directories
                                 # Generate PROPFIND response manually
                                 from wsgidav.util import etree
                                 from datetime import datetime
@@ -173,21 +233,23 @@ def _patched_do_propfind(self, environ, start_response):
                                 propstat = etree.SubElement(response_elem, "{DAV:}propstat")
                                 prop = etree.SubElement(propstat, "{DAV:}prop")
 
-                                # Add properties
+                                # Add properties - use {DAV:} namespace for all property elements
                                 if hasattr(resource, 'get_last_modified'):
-                                    lm = etree.SubElement(prop, "getlastmodified")
+                                    lm = etree.SubElement(prop, "{DAV:}getlastmodified")
                                     ts = resource.get_last_modified()
                                     lm.text = datetime.fromtimestamp(ts).strftime('%a, %d %b %Y %H:%M:%S GMT') if ts else ""
 
                                 if hasattr(resource, 'get_content_length'):
-                                    cl = etree.SubElement(prop, "getcontentlength")
+                                    cl = etree.SubElement(prop, "{DAV:}getcontentlength")
                                     cl.text = str(resource.get_content_length())
 
-                                rt = etree.SubElement(prop, "resourcetype")
-                                # Leave empty for files
+                                rt = etree.SubElement(prop, "{DAV:}resourcetype")
+                                # Add collection tag for directories
+                                if resource.is_collection:
+                                    collection_elem = etree.SubElement(rt, "{DAV:}collection")
 
                                 if hasattr(resource, 'get_display_name'):
-                                    dn = etree.SubElement(prop, "displayname")
+                                    dn = etree.SubElement(prop, "{DAV:}displayname")
                                     dn.text = resource.get_display_name()
 
                                 status = etree.SubElement(propstat, "{DAV:}status")
@@ -269,7 +331,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     logger.warning(f"[WebDAV] Remote storage server configured: {url} (NO TOKEN - authentication may fail)")
                 logger.info(f"[WebDAV] WebDAV will proxy ALL file operations to remote storage server")
                 logger.info(f"[WebDAV] Local filesystem at {root_path} will NOT be used when remote storage is configured")
-        
+
+        # Initialize cache for directory listings to improve performance
+        # Cache format: {(username, path): (timestamp, items_list)}
+        self._dir_cache: Dict[Tuple[str, str], Tuple[float, list]] = {}
+        self._cache_ttl = 5.0  # Cache directory listings for 5 seconds
+        self._cache_lock = threading.Lock()
+
         # Log storage path and verify it's correct
         logger.info(f"[WebDAV] QuotaFilesystemProvider initialized with root_path: {root_path}")
         logger.debug(f"[WebDAV] QuotaFilesystemProvider.__init__ completed")
@@ -567,6 +635,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 return
             response.raise_for_status()
             logger.info(f"[WebDAV] Created directory: {directory_path}")
+
+            # Invalidate cache for the parent directory
+            from pathlib import Path
+            parent_path = str(Path(directory_path).parent) if Path(directory_path).parent != Path('.') else ''
+            self._invalidate_cache(username, parent_path)
         except Exception as e:
             logger.error(f"[WebDAV] Failed to create directory {directory_path}: {e}")
             raise
@@ -615,6 +688,22 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 logger.error(f"[WebDAV] Failed to create parent directory {current_path}: {e}")
                 raise
 
+    def _invalidate_cache(self, username: str, path: str = None):
+        """Invalidate cache for a specific directory or all user directories."""
+        with self._cache_lock:
+            if path is not None:
+                # Invalidate specific directory
+                cache_key = (username, path)
+                if cache_key in self._dir_cache:
+                    del self._dir_cache[cache_key]
+                    logger.debug(f"[WebDAV] Invalidated cache for {username}/{path}")
+            else:
+                # Invalidate all directories for this user
+                keys_to_remove = [k for k in self._dir_cache.keys() if k[0] == username]
+                for key in keys_to_remove:
+                    del self._dir_cache[key]
+                logger.debug(f"[WebDAV] Invalidated all cache entries for user {username}")
+
     def _proxy_upload_file(self, username: str, file_path: str, content: bytes):
         """Proxy file upload - calls storage server directly."""
         import requests
@@ -657,6 +746,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
         response = requests.post(url, headers=headers, files=files, data=data, timeout=30)
         response.raise_for_status()
+
+        # Invalidate cache for the directory
+        self._invalidate_cache(username, directory)
+
         return response.json()
     
     def _locate_file_path(self, path: str) -> Optional[Path]:
@@ -866,7 +959,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             def get_href(self):
                                 """Return href (URL path) for the resource."""
                                 # Always return our stored path as a string
+                                # URL-encode @ symbol for Joplin compatibility
+                                from urllib.parse import quote
                                 href = str(self._path)
+                                # Only encode the @ symbol, leave / and other path characters
+                                href = href.replace('@', '%40')
                                 logger.info(f"[WebDAV] ⚠️⚠️⚠️ VirtualResource.get_href called: returning {href}")
                                 return href
 
@@ -922,8 +1019,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 return not self._is_dir
 
                             def support_ranges(self):
-                                """Return True to support range requests."""
-                                return False
+                                """Return True to support range requests for audio/video streaming."""
+                                return True
 
                             def support_modified(self):
                                 """Return True if get_last_modified() returns a valid value."""
@@ -999,6 +1096,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 # If this is a file (not a directory), return empty list
                                 if not self._is_dir:
                                     logger.debug(f"[WebDAV] VirtualResource.get_descendants: {self._path} is a file, returning empty list")
+                                    return []
+
+                                # If depth is 0, return empty list (PROPFIND Depth:0 means no descendants)
+                                if depth == 0:
+                                    logger.debug(f"[WebDAV] VirtualResource.get_descendants: depth=0, returning empty list (no descendants)")
                                     return []
 
                                 try:
@@ -1152,15 +1254,41 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         logger.info(f"[WebDAV] ⚠️⚠️⚠️ Created VirtualResource for {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}, path={result.path}")
                         return result
                     else:
-                        # File doesn't exist yet - this might be a PUT request to create a new file
-                        # Check if this looks like a file path (not a directory)
-                        # Directories usually end with / or are known folders
-                        is_likely_file = '.' in rel_path.split('/')[-1] if rel_path else False
+                        # File doesn't exist yet - determine if it's a directory or file request
+                        # ONLY auto-create directories if path explicitly ends with /
+                        # This prevents files without extensions from being created as directories
 
-                        if is_likely_file:
-                            # Create a VirtualResource for the non-existent file
+                        # Check if this is explicitly a directory request (ends with /)
+                        is_directory_request = normalized_path.endswith('/') or rel_path.endswith('/')
+
+                        if is_directory_request:
+                            # Path explicitly ends with / - this is a directory
+                            # Create it on the remote storage
+                            logger.info(f"[WebDAV] Directory requested (ends with /): {rel_path}, creating it automatically")
+                            try:
+                                # Remove trailing slash for directory creation
+                                dir_path = rel_path.rstrip('/')
+                                self._proxy_create_directory(username, dir_path)
+                                logger.info(f"[WebDAV] Successfully created directory: {dir_path}")
+                                # Return a VirtualResource representing the newly created directory
+                                info = {
+                                    'path': normalized_path.rstrip('/'),
+                                    'name': dir_path.split('/')[-1] if dir_path else '',
+                                    'is_directory': True,
+                                    'size': 0,
+                                    'modified': time.time(),
+                                }
+                                result = VirtualResource(normalized_path.rstrip('/'), info, self, environ=environ)
+                                logger.info(f"[WebDAV] Created VirtualResource for new directory {normalized_path}: is_collection={result.is_collection}")
+                                return result
+                            except Exception as e:
+                                logger.error(f"[WebDAV] Failed to create directory {rel_path}: {e}")
+                                return None
+                        else:
+                            # Path doesn't end with / - assume it's a file (even without extension)
                             # This allows PUT operations to create new files
-                            logger.info(f"[WebDAV] Creating VirtualResource for non-existent file: {normalized_path}")
+                            # Joplin uses hash-based filenames without extensions
+                            logger.info(f"[WebDAV] Creating VirtualResource for non-existent file (no extension check): {normalized_path}")
                             info = {
                                 'path': normalized_path,
                                 'name': rel_path.split('/')[-1] if rel_path else '',
@@ -1171,8 +1299,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             result = VirtualResource(normalized_path, info, self, environ=environ)
                             logger.info(f"[WebDAV] ⚠️⚠️⚠️ Created VirtualResource for new file {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}, path={result.path}")
                             return result
-                        else:
-                            logger.warning(f"[WebDAV] No info returned from proxy for {username}/{rel_path}")
                 except Exception as e:
                     logger.error(f"[WebDAV] Failed to get info from proxy: {e}", exc_info=True)
                     # Don't fall back to local - raise the error
@@ -1227,7 +1353,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_href(self):
                         """Return href (URL path) for the resource."""
                         # Always return our stored path as a string
-                        return str(self._path)
+                        # URL-encode @ symbol for Joplin compatibility
+                        href = str(self._path)
+                        href = href.replace('@', '%40')
+                        return href
 
                     def get_preferred_path(self):
                         """Return preferred path for this resource."""
@@ -1605,7 +1734,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_href(self):
                         """Return href (URL path) for the resource."""
                         # Always return our stored path as a string
-                        return str(self._path)
+                        # URL-encode @ symbol for Joplin compatibility
+                        href = str(self._path)
+                        href = href.replace('@', '%40')
+                        return href
 
                     def get_preferred_path(self):
                         """Return preferred path for this resource."""
@@ -1965,18 +2097,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
         return info
     
     def _proxy_get_info(self, username: str, path: str):
-        """Get file info - calls remote storage server directly."""
+        """Get file info - calls remote storage server directly with caching."""
         import requests
-        
+
         # Normalize path - trim trailing spaces and slashes
         path = path.rstrip(' /')
-        
-        # Call the REMOTE storage server directly (not local API)
-        url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
-        headers = {}
-        if self.storage_server_token:
-            headers["Authorization"] = f"Bearer {self.storage_server_token}"
-        
+
         # For root directory (empty path), return directory info
         if not path:
             # Root directory always exists - return directory info
@@ -1987,63 +2113,98 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 'size': 0,
                 'modified': 0,
             }
-        
+
         # Get parent directory and filename
         path_parts = path.split('/')
         parent_path = '/'.join(path_parts[:-1]) if len(path_parts) > 1 else ''
         filename = path_parts[-1].rstrip()  # Trim trailing spaces from filename
-        
-        params = {
-            "username": username,
-            "path": parent_path
-        }
-        
-        try:
-            response = requests.get(url, headers=headers, params=params, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            
-            # Find the file in the listing - try exact match first, then trimmed match
-            items = data.get('items', [])
-            matched_item = None
-            logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_get_info: filename='{filename}', parent_path='{parent_path}', item_count={len(items)}")
 
-            # First try exact match
-            for item in items:
-                item_name = item.get('name', '')
-                if item_name == filename:
-                    matched_item = item
-                    logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_get_info: MATCHED item={item}")
-                    break
-            
-            # If no exact match, try trimmed match (handle trailing spaces)
-            if not matched_item:
-                filename_trimmed = filename.rstrip()
-                for item in items:
-                    item_name = item.get('name', '').rstrip()
-                    if item_name == filename_trimmed:
-                        matched_item = item
-                        logger.debug(f"[WebDAV] Matched file with trimmed name: '{item.get('name')}' == '{filename_trimmed}' (original: '{filename}')")
-                        break
-            
-            if matched_item:
-                # Found it - convert to WebDAV format
-                # Use the normalized path (without trailing spaces) for consistency
-                normalized_path = path.rstrip()
-                full_path = f"/{username}/{normalized_path}"
-                return {
-                    'path': full_path,
-                    'name': matched_item.get('name', filename).rstrip(),  # Return trimmed name
-                    'is_directory': matched_item.get('is_directory', False),
-                    'size': matched_item.get('size', 0) if not matched_item.get('is_directory', False) else 0,
-                    'modified': matched_item.get('modified', 0),
-                }
+        # Check cache first
+        cache_key = (username, parent_path)
+        current_time = time.time()
+
+        with self._cache_lock:
+            if cache_key in self._dir_cache:
+                cache_time, cached_items = self._dir_cache[cache_key]
+                if current_time - cache_time < self._cache_ttl:
+                    # Cache is still valid
+                    items = cached_items
+                    logger.debug(f"[WebDAV] Cache hit for {parent_path} ({len(items)} items)")
+                else:
+                    # Cache expired
+                    items = None
+                    del self._dir_cache[cache_key]
             else:
-                # File not found - log for debugging
-                logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_get_info: File not found in listing: filename='{filename}' (trimmed: '{filename.rstrip()}'), parent_path='{parent_path}', items={[i.get('name') for i in items[:5]]}")
-        except Exception as e:
-            logger.error(f"[WebDAV] Failed to get info from storage server: {e}", exc_info=True)
-        
+                items = None
+
+        # If not in cache, fetch from storage server
+        if items is None:
+            url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
+            headers = {}
+            if self.storage_server_token:
+                headers["Authorization"] = f"Bearer {self.storage_server_token}"
+
+            params = {
+                "username": username,
+                "path": parent_path
+            }
+
+            try:
+                response = requests.get(url, headers=headers, params=params, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+                items = data.get('items', [])
+
+                # Store in cache
+                with self._cache_lock:
+                    self._dir_cache[cache_key] = (current_time, items)
+                    # Clean up old cache entries (keep cache size reasonable)
+                    if len(self._dir_cache) > 100:
+                        # Remove oldest entries
+                        sorted_keys = sorted(self._dir_cache.keys(), key=lambda k: self._dir_cache[k][0])
+                        for old_key in sorted_keys[:20]:
+                            del self._dir_cache[old_key]
+
+                logger.debug(f"[WebDAV] Fetched directory listing for {parent_path} ({len(items)} items)")
+            except Exception as e:
+                logger.error(f"[WebDAV] Failed to get info from storage server: {e}", exc_info=True)
+                return None
+
+        # Find the file in the listing
+        matched_item = None
+
+        # First try exact match
+        for item in items:
+            item_name = item.get('name', '')
+            if item_name == filename:
+                matched_item = item
+                break
+
+        # If no exact match, try trimmed match (handle trailing spaces)
+        if not matched_item:
+            filename_trimmed = filename.rstrip()
+            for item in items:
+                item_name = item.get('name', '').rstrip()
+                if item_name == filename_trimmed:
+                    matched_item = item
+                    logger.debug(f"[WebDAV] Matched file with trimmed name: '{item.get('name')}' == '{filename_trimmed}'")
+                    break
+
+        if matched_item:
+            # Found it - convert to WebDAV format
+            normalized_path = path.rstrip()
+            full_path = f"/{username}/{normalized_path}"
+            return {
+                'path': full_path,
+                'name': matched_item.get('name', filename).rstrip(),
+                'is_directory': matched_item.get('is_directory', False),
+                'size': matched_item.get('size', 0) if not matched_item.get('is_directory', False) else 0,
+                'modified': matched_item.get('modified', 0),
+            }
+        else:
+            # File not found
+            logger.debug(f"[WebDAV] File not found: {filename} in {parent_path}")
+
         return None
     
     def read_file_content(self, path: str):
