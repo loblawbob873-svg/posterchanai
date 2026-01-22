@@ -101,32 +101,13 @@ def _patched_add_property_response(multistatus_elem, href, prop_list):
     """Patched add_property_response that ensures href is always a string."""
     # Convert href to string if it's a list
     if isinstance(href, list):
-        logger.error(f"[WebDAV] add_property_response received href as list: {href}, converting to string")
+        logger.warning(f"[WebDAV] href was list: {href}, using first element")
         href = str(href[0]) if len(href) > 0 else '/'
 
     # Ensure href is a string
     href = str(href)
 
-    if '005c51179a764e10b61e3a214d38e79d' in str(href):
-        logger.error(f"[WebDAV] add_property_response called: href={href}, type={type(href)}, is_list={isinstance(href, list)}")
-
     result = _original_add_property_response(multistatus_elem, href, prop_list)
-
-    # Log the actual XML element that was created
-    if '005c51179a764e10b61e3a214d38e79d' in str(href):
-        from wsgidav.util import etree
-        # Find the last response element
-        responses = multistatus_elem.findall('{DAV:}response')
-        if responses:
-            last_response = responses[-1]
-            # Check for ALL href elements (there should only be one)
-            href_elems = last_response.findall('{DAV:}href')
-            logger.error(f"[WebDAV] Found {len(href_elems)} href elements in response")
-            for i, href_elem in enumerate(href_elems):
-                logger.error(f"[WebDAV] href[{i}] text: {href_elem.text}, type={type(href_elem.text)}")
-            # Log the full XML of this response
-            xml_str = etree.tostring(last_response, encoding='unicode')
-            logger.error(f"[WebDAV] Full response XML: {xml_str[:1500]}")
 
     return result
 
@@ -143,9 +124,24 @@ def _patched_do_propfind(self, environ, start_response):
 
     logger.info(f"[WebDAV] PROPFIND: path={path}, depth={depth}")
 
-    # Call original method - let wsgidav handle response generation
-    # Our VirtualResource/SimpleResource.get_href() will return correct /webdav/ prefixed paths
-    return _original_do_propfind(self, environ, start_response)
+    # Capture the response to log it
+    captured_response = []
+    def capturing_start_response(status, headers):
+        captured_response.append((status, headers))
+        return start_response(status, headers)
+
+    # Call original method
+    result = _original_do_propfind(self, environ, capturing_start_response)
+
+    # Log a sample of the response for debugging
+    if result and len(result) > 0:
+        try:
+            sample = result[0][:500] if isinstance(result[0], bytes) else str(result[0])[:500]
+            logger.debug(f"[WebDAV] PROPFIND response sample: {sample}")
+        except Exception:
+            pass
+
+    return result
 
 # Apply the PROPFIND patch
 request_server.RequestServer.do_PROPFIND = _patched_do_propfind
