@@ -1784,82 +1784,84 @@ class QuotaFilesystemProvider(FilesystemProvider):
             items = None
 
         # If not in cache, fetch from storage server
-        if items is None:
-            url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
-            headers = {}
-            if self.storage_server_token:
-                headers["Authorization"] = f"Bearer {self.storage_server_token}"
-            else:
-                logger.warning(f"[WebDAV] No storage_server_token configured - authentication may fail")
+        try:
+            if items is None:
+                url = f"{self.storage_server_url.rstrip('/')}/api/storage/list-files"
+                headers = {}
+                if self.storage_server_token:
+                    headers["Authorization"] = f"Bearer {self.storage_server_token}"
+                else:
+                    logger.warning(f"[WebDAV] No storage_server_token configured - authentication may fail")
 
-            params = {
-                "username": username,
-                "path": path,
-                "depth": depth
-            }
+                params = {
+                    "username": username,
+                    "path": path,
+                    "depth": depth
+                }
 
-            # CRITICAL: Increase timeout for deep listings (depth > 1) which can take longer
-            # Large Music directories with depth=infinity can take 60+ seconds
-            # Use longer timeout for recursive listings, shorter for immediate children
-            if isinstance(depth, str) and depth.lower() in ('infinity', 'inf'):
-                timeout = 120  # 2 minutes for infinity depth
-            elif isinstance(depth, int) and depth > 1:
-                timeout = 90  # 90 seconds for recursive listings
-            else:
-                timeout = 30  # 30 seconds for immediate children (depth=1)
+                # CRITICAL: Increase timeout for deep listings (depth > 1) which can take longer
+                # Large Music directories with depth=infinity can take 60+ seconds
+                # Use longer timeout for recursive listings, shorter for immediate children
+                if isinstance(depth, str) and depth.lower() in ('infinity', 'inf'):
+                    timeout = 120  # 2 minutes for infinity depth
+                elif isinstance(depth, int) and depth > 1:
+                    timeout = 90  # 90 seconds for recursive listings
+                else:
+                    timeout = 30  # 30 seconds for immediate children (depth=1)
 
-            logger.debug(f"[WebDAV] Proxying to storage server: {url} for username={username}, path={path}, depth={depth}, timeout={timeout}s")
-            # Add retry logic for connection errors
-            max_retries = 3
-            retry_delay = 2
-            last_error = None
-            
-            for attempt in range(max_retries):
-                try:
-                    response = requests.get(url, headers=headers, params=params, timeout=timeout)
-                    logger.debug(f"[WebDAV] Storage server response: status={response.status_code}, content_length={len(response.content)}")
-                    
-                    if response.status_code != 200:
-                        logger.error(f"[WebDAV] Storage server error: {response.status_code} - {response.text[:200]}")
-                    
-                    response.raise_for_status()
-                    break  # Success, exit retry loop
-                except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-                    last_error = e
-                    if attempt < max_retries - 1:
-                        logger.warning(f"[WebDAV] Connection error (attempt {attempt + 1}/{max_retries}): {e}, retrying in {retry_delay}s...")
-                        import time
-                        time.sleep(retry_delay)
-                        retry_delay *= 2
-                    else:
-                        logger.error(f"[WebDAV] Failed to connect to storage server after {max_retries} attempts: {e}")
+                logger.debug(f"[WebDAV] Proxying to storage server: {url} for username={username}, path={path}, depth={depth}, timeout={timeout}s")
+                # Add retry logic for connection errors
+                max_retries = 3
+                retry_delay = 2
+                last_error = None
+                
+                for attempt in range(max_retries):
+                    try:
+                        response = requests.get(url, headers=headers, params=params, timeout=timeout)
+                        logger.debug(f"[WebDAV] Storage server response: status={response.status_code}, content_length={len(response.content)}")
+                        
+                        if response.status_code != 200:
+                            logger.error(f"[WebDAV] Storage server error: {response.status_code} - {response.text[:200]}")
+                        
+                        response.raise_for_status()
+                        break  # Success, exit retry loop
+                    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                        last_error = e
+                        if attempt < max_retries - 1:
+                            logger.warning(f"[WebDAV] Connection error (attempt {attempt + 1}/{max_retries}): {e}, retrying in {retry_delay}s...")
+                            import time
+                            time.sleep(retry_delay)
+                            retry_delay *= 2
+                        else:
+                            logger.error(f"[WebDAV] Failed to connect to storage server after {max_retries} attempts: {e}")
+                            raise
+                    except requests.exceptions.RequestException as e:
+                        # Non-connection errors, don't retry
+                        logger.error(f"[WebDAV] Storage server request error: {e}")
                         raise
-                except requests.exceptions.RequestException as e:
-                    # Non-connection errors, don't retry
-                    logger.error(f"[WebDAV] Storage server request error: {e}")
-                    raise
-            data = response.json()
+                    data = response.json()
+                
+                # Convert File Manager format to WebDAV format
+                items = data.get('items', [])
+                if len(items) == 0:
+                    logger.debug(f"[WebDAV] Storage server returned 0 items for {username}/{path} (depth={depth})")
+                elif len(items) > 1000:
+                    logger.info(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path} (depth={depth}) - large listing")
+                else:
+                    logger.debug(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path} (depth={depth})")
+                
+                # Cache the result if depth=1 (immediate children only)
+                if depth == 1:
+                    with self._cache_lock:
+                        self._dir_cache[cache_key] = (current_time, items)
+                        # Clean up old cache entries (keep cache size reasonable)
+                        if len(self._dir_cache) > 100:
+                            # Remove oldest entries
+                            sorted_keys = sorted(self._dir_cache.keys(), key=lambda k: self._dir_cache[k][0])
+                            for old_key in sorted_keys[:20]:
+                                del self._dir_cache[old_key]
             
-            # Convert File Manager format to WebDAV format
-            items = data.get('items', [])
-            if len(items) == 0:
-                logger.debug(f"[WebDAV] Storage server returned 0 items for {username}/{path} (depth={depth})")
-            elif len(items) > 1000:
-                logger.info(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path} (depth={depth}) - large listing")
-            else:
-                logger.debug(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path} (depth={depth})")
-            
-            # Cache the result if depth=1 (immediate children only)
-            if depth == 1:
-                with self._cache_lock:
-                    self._dir_cache[cache_key] = (current_time, items)
-                    # Clean up old cache entries (keep cache size reasonable)
-                    if len(self._dir_cache) > 100:
-                        # Remove oldest entries
-                        sorted_keys = sorted(self._dir_cache.keys(), key=lambda k: self._dir_cache[k][0])
-                        for old_key in sorted_keys[:20]:
-                            del self._dir_cache[old_key]
-            
+            # Process items into SimpleResource objects (whether from cache or server)
             # wsgidav expects a list of ResourceInfo objects, not dictionaries
             # We need to create virtual filesystem entries and use the parent class to create proper resources
             # OR we can create DAVCollection/DAVNonCollection objects directly
