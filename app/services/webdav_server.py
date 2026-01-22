@@ -597,6 +597,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
         # Using Dict[Tuple, ...] to allow different tuple lengths
         self._dir_cache: Dict[Tuple, Tuple[float, list]] = {}
         self._cache_ttl = 60.0  # Cache directory listings for 60 seconds (increased for better performance with large dirs)
+        # CRITICAL: Longer cache TTL for Music directory to reduce processing overhead
+        self._music_cache_ttl = 300.0  # 5 minutes for Music directory (large directory, changes infrequently)
         self._cache_lock = threading.Lock()
 
         # Log storage path and verify it's correct
@@ -2182,14 +2184,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
             with self._cache_lock:
                 if cache_key in self._dir_cache:
                     cache_time, cached_items = self._dir_cache[cache_key]
-                    if current_time - cache_time < self._cache_ttl:
-                        logger.debug(f"[WebDAV] Cache hit for {username}/{path} (depth={depth})")
+                    # Use longer cache TTL for Music directory
+                    cache_ttl = self._music_cache_ttl if path and 'Music' in path else self._cache_ttl
+                    if current_time - cache_time < cache_ttl:
+                        logger.debug(f"[WebDAV] Cache hit for {username}/{path} (depth={depth}, cache_age={current_time - cache_time:.1f}s)")
                         # Continue to process cached items into SimpleResource objects
                         items = cached_items
                     else:
                         # Cache expired
                         items = None
                         del self._dir_cache[cache_key]
+                        logger.debug(f"[WebDAV] Cache expired for {username}/{path} (age={current_time - cache_time:.1f}s > {cache_ttl}s)")
                 else:
                     items = None
         else:
@@ -2267,6 +2272,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 if depth == 1:
                     with self._cache_lock:
                         self._dir_cache[cache_key] = (current_time, items)
+                        logger.debug(f"[WebDAV] Cached {len(items)} items for {username}/{path} (depth={depth})")
                         # Clean up old cache entries (keep cache size reasonable)
                         if len(self._dir_cache) > 100:
                             # Remove oldest entries
