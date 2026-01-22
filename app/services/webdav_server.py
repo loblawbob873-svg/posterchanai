@@ -2386,9 +2386,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 # Log for directories to help debug Flacbox issues
                                 logger.info(f"[WebDAV] Returning resourcetype with collection for directory: {self._path}, is_collection={self.is_collection()}")
                                 return elem
-                            # For files, return empty element (not empty string)
-                            elem = etree.Element("{DAV:}resourcetype")
-                            return elem
+                            # For files, return None instead of empty element - some clients (like Flacbox) prefer this
+                            # Empty element might confuse clients that expect either collection or nothing
+                            return None
                         elif name == "{DAV:}displayname":
                             return self._path.split('/')[-1] if hasattr(self, '_path') else ""
                         elif name == "{DAV:}getcontenttype":
@@ -2417,8 +2417,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 props.append(('resourcetype', elem))
                                 logger.debug(f"[WebDAV] get_properties: Added resourcetype element for directory: {self._path}")
                             else:
-                                elem = etree.Element("{DAV:}resourcetype")
-                                props.append(('resourcetype', elem))
+                                # For files, don't include resourcetype at all (return None)
+                                # Some clients like Flacbox prefer files without resourcetype rather than empty element
+                                # Don't append resourcetype for files
+                                pass
                         if propname == "allprop" or "displayname" in str(propname):
                             props.append(('displayname', self._path.split('/')[-1] or self._path))
                         if propname == "allprop" or "getcontenttype" in str(propname):
