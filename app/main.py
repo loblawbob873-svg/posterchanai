@@ -1108,11 +1108,29 @@ async def startup():
                                 start_response('404 Not Found', [('Content-Type', 'text/plain')])
                                 return [b'CalDAV/CardDAV requests should use /caldav/ or /carddav/ endpoints directly']
 
+                            # CRITICAL: URL decode the path - WSGiDAV expects decoded paths
+                            # FastAPI/Starlette may pass URL-encoded paths that need decoding
+                            import urllib.parse
+                            try:
+                                # Decode the path component by component to preserve slashes
+                                decoded_parts = []
+                                for part in path_info.split('/'):
+                                    if part:
+                                        decoded_parts.append(urllib.parse.unquote(part))
+                                    else:
+                                        decoded_parts.append('')
+                                path_info = '/'.join(decoded_parts)
+                                if decoded_parts != path_info.split('/'):
+                                    logging.debug(f"[WebDAV Middleware] URL decoded path: {original_path} -> {path_info}")
+                            except Exception as e:
+                                logging.warning(f"[WebDAV Middleware] Failed to URL decode path {path_info}: {e}")
+
                             # CRITICAL: Set SCRIPT_NAME so WsgiDAV knows it's mounted at /webdav
                             # This allows WsgiDAV to generate correct hrefs that include /webdav prefix
                             environ['PATH_INFO'] = path_info
                             environ['SCRIPT_NAME'] = '/webdav'
-                            logging.debug(f"[WebDAV Middleware] Forwarding to WsgiDAV: {original_path} -> {path_info} (SCRIPT_NAME=/webdav)")
+                            request_method = environ.get('REQUEST_METHOD', 'UNKNOWN')
+                            logging.info(f"[WebDAV Middleware] {request_method} {original_path} -> {path_info} (SCRIPT_NAME=/webdav)")
                             return wsgi_app(environ, start_response)
                         return wrapper
                     # NOTE: /webdav/caldav/ and /webdav/carddav/ routes are now defined at top level

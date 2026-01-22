@@ -1154,7 +1154,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
     
     def get_resource_inst(self, path: str, environ: dict = None):
         """Override get_resource_inst - wsgidav calls this for PROPFIND and GET requests."""
-        logger.debug(f"[WebDAV] get_resource_inst CALLED: path={path}, storage_server_url={self.storage_server_url}")
+        # Log request method for debugging
+        request_method = environ.get('REQUEST_METHOD', 'UNKNOWN') if environ else 'UNKNOWN'
+        logger.info(f"[WebDAV] get_resource_inst CALLED: method={request_method}, path={path}, storage_server_url={self.storage_server_url}")
         
         # CRITICAL: Normalize path and remove duplicate patterns BEFORE processing
         # Handle cases like: /webdav/username/webdav/username/path -> /webdav/username/path
@@ -1271,6 +1273,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             rel_path = ''
                     else:
                         rel_path = ''
+                
+                # Normalize rel_path - remove any leading/trailing slashes and whitespace
+                rel_path = rel_path.strip(' /')
+                
+                logger.info(f"[WebDAV] get_resource_inst: method={request_method}, username={username}, rel_path={rel_path}, normalized_path={normalized_path}")
                 
                 # Get resource info from remote storage
                 try:
