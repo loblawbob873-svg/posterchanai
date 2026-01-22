@@ -269,20 +269,33 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     if len(uri_parts) >= 2 and uri_parts[0] == 'webdav' and '@' in uri_parts[1]:
                         username = uri_parts[1]
                 
+                # CRITICAL: Remove duplicate /webdav/ patterns first
+                # Handle cases like /webdav/webdav/username/ -> /webdav/username/
+                if '/webdav/webdav/' in href_text:
+                    href_text = href_text.replace('/webdav/webdav/', '/webdav/')
+                    needs_fixing = True
+                
+                # CRITICAL: Remove duplicate username patterns (use username from REQUEST_URI, not from href)
+                # Handle cases like /webdav/username/webdav/username/ -> /webdav/username/
+                if '@' in href_text and username:
+                    username_pattern = re.escape(username)
+                    # Remove duplicate /webdav/username/webdav/username/ pattern
+                    pattern = r'/webdav/' + username_pattern + r'/webdav/' + username_pattern + r'/'
+                    if re.search(pattern, href_text):
+                        href_text = re.sub(pattern, f'/webdav/{username}/', href_text)
+                        needs_fixing = True
+                    # Also handle username/username/ pattern (if /webdav/ was stripped)
+                    pattern2 = r'^/' + username_pattern + r'/' + username_pattern + r'/'
+                    if re.search(pattern2, href_text):
+                        href_text = re.sub(pattern2, f'/{username}/', href_text)
+                        needs_fixing = True
+                
                 # CRITICAL: Ensure hrefs are absolute with /webdav/username@domain/ prefix
                 # Flacbox needs absolute hrefs to construct GET requests
                 if not href_text.startswith(script_name):
                     # Href doesn't have /webdav/ prefix - needs fixing
                     # Check if it's a relative path (no leading /, like "Music/song.mp3")
                     is_relative = not href_text.startswith('/')
-                    
-                    # Extract username from REQUEST_URI if available
-                    request_uri = environ.get('REQUEST_URI', '')
-                    username = None
-                    if '@' in request_uri:
-                        uri_parts = request_uri.strip('/').split('/')
-                        if len(uri_parts) >= 2 and uri_parts[0] == 'webdav' and '@' in uri_parts[1]:
-                            username = uri_parts[1]
                     
                     if is_relative:
                         # Relative path like "Music/song.mp3" - make it absolute
@@ -300,50 +313,10 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                         else:
                             href_text = script_name.rstrip('/') + href_text
                             needs_fixing = True
-                else:
-                    # Href doesn't have /webdav/ prefix - needs fixing
-                    # Check if it's a relative path (no leading /, like "Music/song.mp3")
-                    is_relative = not href_text.startswith('/')
-                    
-                    # Log first few hrefs for debugging (especially audio files)
-                    is_audio = any(ext in href_text.lower() for ext in ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac'])
-                    if (hrefs_fixed < 3 or is_audio) and not is_large_response:
-                        logger.debug(f"[WebDAV] Processing href: '{href_text}' (is_relative={is_relative}, username={username}, script_name={script_name})")
-                    
-                    if is_relative:
-                        # Relative path like "Music/song.mp3" - add /webdav/username/ prefix
-                        if username:
-                            href_text = f"{script_name}/{username}/{href_text}"
-                            needs_fixing = True
-                            if is_audio or hrefs_fixed < 3:
-                                logger.info(f"[WebDAV] 🔧 Detected relative href, fixing: '{original_href}' -> '{href_text}' (username={username})")
-                        else:
-                            # Fallback: just add /webdav/
-                            href_text = f"{script_name}/{href_text}"
-                            needs_fixing = True
-                            if is_audio or hrefs_fixed < 3:
-                                logger.warning(f"[WebDAV] ⚠️  Relative href but no username extracted from REQUEST_URI: '{original_href}' -> '{href_text}'")
-                    # Check if it's absolute but missing /webdav/ (like "/username@domain/Music/song.mp3")
                     elif href_text.startswith('/') and '@' in href_text:
-                        # Has username but missing /webdav/ - add it
+                        # Absolute path with username but missing /webdav/ like "/username@domain/Music/..."
                         href_text = script_name.rstrip('/') + href_text
                         needs_fixing = True
-                        if is_audio or hrefs_fixed < 3:
-                            logger.info(f"[WebDAV] 🔧 Absolute href missing /webdav/, fixing: '{original_href}' -> '{href_text}'")
-                    # Check if it's absolute without username (like "/Music/song.mp3")
-                    elif href_text.startswith('/') and '@' not in href_text:
-                        # Absolute path without username - add /webdav/username/
-                        if username:
-                            href_text = f"{script_name}/{username}{href_text}"
-                            needs_fixing = True
-                            if is_audio or hrefs_fixed < 3:
-                                logger.info(f"[WebDAV] 🔧 Absolute href without username, fixing: '{original_href}' -> '{href_text}' (username={username})")
-                        else:
-                            # Fallback: just add /webdav/
-                            href_text = script_name.rstrip('/') + href_text
-                            needs_fixing = True
-                            if is_audio or hrefs_fixed < 3:
-                                logger.warning(f"[WebDAV] ⚠️  Absolute href without username and no username in REQUEST_URI: '{original_href}' -> '{href_text}'")
                 
                 # Update href if it changed (skip logging for large responses to reduce overhead)
                 if needs_fixing and href_text != original_href:
@@ -352,7 +325,7 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     # Always log audio file href fixes
                     is_audio = any(ext in href_text.lower() or ext in original_href.lower() for ext in ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac'])
                     if (hrefs_fixed <= 5 and not is_large_response) or is_audio:
-                        logger.info(f"[WebDAV] 🔧 Fixed href to relative: '{original_href}' -> '{href_text}'")
+                        logger.info(f"[WebDAV] 🔧 Fixed href to absolute: '{original_href}' -> '{href_text}'")
             
             # CRITICAL: Ensure all property elements are properly namespaced with D: prefix
             # Flacbox requires explicitly prefixed elements (D:getcontenttype, not just getcontenttype)
@@ -1174,14 +1147,21 @@ class QuotaFilesystemProvider(FilesystemProvider):
         logger.info(f"[WebDAV] get_resource_inst CALLED: method={request_method}, path={path}, storage_server_url={self.storage_server_url}")
         
         # CRITICAL: Normalize path and remove duplicate patterns BEFORE processing
-        # Handle cases like: /webdav/username/webdav/username/path -> /webdav/username/path
+        # Handle cases like: /webdav/username/webdav/username/path -> /username/path
         import re
         original_path = path
         
         # First, normalize the path string
         normalized_path = path.strip('/')
         
-        # CRITICAL: Handle duplicate patterns like /username/webdav/username/ or /webdav/username/webdav/username/
+        # CRITICAL: Remove ALL /webdav/ prefixes first (middleware already stripped it)
+        # But handle cases where it wasn't stripped or got duplicated
+        while normalized_path.startswith('webdav/'):
+            normalized_path = normalized_path[7:]
+        
+        # CRITICAL: Handle duplicate username patterns
+        # Pattern: username/webdav/username/path -> username/path
+        # Pattern: username/username/path -> username/path
         if '@' in normalized_path:
             # Find username pattern (e.g., "verita84@poster.place")
             username_match = re.search(r'([^/]+@[^/]+)', normalized_path)
@@ -1189,29 +1169,25 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 username = username_match.group(1)
                 username_pattern = re.escape(username)
                 
-                # Remove duplicate /webdav/username/webdav/username/ pattern
-                # This handles: /webdav/verita84@poster.place/webdav/verita84@poster.place/Music/
+                # Remove duplicate patterns:
+                # 1. username/webdav/username/ -> username/
                 normalized_path = re.sub(
-                    r'/webdav/' + username_pattern + r'/webdav/' + username_pattern + r'/',
-                    '/webdav/' + username + '/',
+                    r'^' + username_pattern + r'/webdav/' + username_pattern + r'/',
+                    username + '/',
                     normalized_path
                 )
-                
-                # Remove duplicate username/webdav/username/ pattern (if /webdav/ was already stripped)
+                # 2. username/username/ -> username/
                 normalized_path = re.sub(
-                    r'^' + username_pattern + r'/(webdav/)?' + username_pattern + r'/',
+                    r'^' + username_pattern + r'/' + username_pattern + r'/',
                     username + '/',
                     normalized_path
                 )
         
-        # Remove duplicate /webdav/ patterns (e.g., webdav/webdav/ -> webdav/)
+        # Remove any remaining duplicate /webdav/ patterns
         while '/webdav/webdav/' in normalized_path:
             normalized_path = normalized_path.replace('/webdav/webdav/', '/webdav/')
         
-        # Strip /webdav prefix if present (after duplicate cleanup)
-        # WSGiDAV expects paths without /webdav/ prefix
-        while normalized_path.startswith('webdav/'):
-            normalized_path = normalized_path[7:]
+        # Ensure path starts with /
         if normalized_path:
             normalized_path = '/' + normalized_path
         else:
