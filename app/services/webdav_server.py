@@ -215,8 +215,27 @@ from wsgidav import util as wsgidav_util2
 _original_send_multi_status_response = wsgidav_util2.send_multi_status_response
 
 def _patched_send_multi_status_response(environ, start_response, multistatus_elem):
-    """Log the actual XML being sent to debug Joplin issues."""
+    """Log the actual XML being sent to debug Joplin issues and fix hrefs for Flacbox."""
     from wsgidav.util import etree
+    
+    # CRITICAL FIX: WSGiDAV strips /webdav/ from hrefs before putting them in XML
+    # We must add it back so Flacbox can construct correct GET URLs
+    script_name = environ.get('SCRIPT_NAME', '/webdav')
+    if script_name:
+        hrefs_fixed = 0
+        for response in multistatus_elem.findall("{DAV:}response"):
+            href_elem = response.find("{DAV:}href")
+            if href_elem is not None and href_elem.text:
+                href_text = href_elem.text
+                # Only fix hrefs that don't already have /webdav/ prefix
+                # And that start with /username@domain/ (our user paths)
+                if not href_text.startswith(script_name) and href_text.startswith('/') and '@' in href_text.split('/')[1] if len(href_text.split('/')) > 1 else False:
+                    # Prepend /webdav/ to the href
+                    href_elem.text = script_name.rstrip('/') + href_text
+                    hrefs_fixed += 1
+        if hrefs_fixed > 0:
+            logger.debug(f"[WebDAV] Fixed {hrefs_fixed} hrefs in XML response by prepending {script_name}")
+    
     xml_bytes = etree.tostring(multistatus_elem, encoding='utf-8')
     xml_str = xml_bytes.decode('utf-8')
 
