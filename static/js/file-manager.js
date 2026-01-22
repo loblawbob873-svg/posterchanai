@@ -885,10 +885,10 @@ class FileManager {
                 <button class="email-file-remove" onclick="this.parentElement.remove(); if(window.fileManager && window.fileManager.updateEmailSubjectAndBody) window.fileManager.updateEmailSubjectAndBody();" title="Remove">✕</button>
             `;
             emailFilesList.appendChild(fileItem);
-            
+
             emailToInput.value = '';
-            updateEmailSubjectAndBody();
-            
+            this.updateEmailSubjectAndBody();
+
             // Load contact emails for autocomplete
             await this.loadContactEmailsForAutocomplete();
             
