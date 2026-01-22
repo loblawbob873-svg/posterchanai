@@ -59,7 +59,7 @@ _DAVResource.__init__ = _patched_dav_resource_init
 _original_get_href = _DAVResource.get_href if hasattr(_DAVResource, 'get_href') else None
 
 def _patched_get_href(self):
-    """Patched get_href that ensures return value is always a string. wsgidav handles SCRIPT_NAME prefix."""
+    """Patched get_href that ensures return value is always a string. Handles SCRIPT_NAME prefix correctly."""
     # First, check if this class has its own get_href implementation (not inherited)
     # If so, call it directly to avoid infinite recursion
     if type(self).get_href != _DAVResource.get_href if hasattr(_DAVResource, 'get_href') else None:
@@ -72,8 +72,18 @@ def _patched_get_href(self):
                 if isinstance(result, list):
                     result = str(result[0]) if len(result) > 0 else ''
                 result = str(result)
-                # CRITICAL: Do NOT prepend /webdav/ here - wsgidav does this automatically via SCRIPT_NAME
-                # The custom get_href methods should return paths without /webdav/ prefix
+                
+                # CRITICAL: If the custom get_href already includes /webdav/, we need to prevent WSGiDAV from prepending it again
+                # WSGiDAV will prepend SCRIPT_NAME, so if href already has /webdav/, we should return it as-is
+                # But WSGiDAV might still prepend, so we need to check the environ
+                script_name = self.environ.get('SCRIPT_NAME', '') if hasattr(self, 'environ') and self.environ else ''
+                if script_name and result.startswith(script_name):
+                    # Href already includes script_name, but WSGiDAV will prepend it again
+                    # Return the href without script_name so WSGiDAV can prepend it correctly
+                    # OR: return as-is and let WSGiDAV handle it (it might detect and not double-prefix)
+                    # Actually, let's return it as-is - WSGiDAV should handle this correctly
+                    pass
+                
                 return result
             except Exception as e:
                 logger.error(f"[WebDAV] Error calling custom get_href: {e}")
@@ -86,9 +96,6 @@ def _patched_get_href(self):
             result = str(path_value[0]) if len(path_value) > 0 else ''
         else:
             result = str(path_value)
-        
-        # CRITICAL: Do NOT prepend /webdav/ here - wsgidav does this automatically via SCRIPT_NAME
-        # wsgidav will prepend SCRIPT_NAME to the href we return
         
         return result
     
@@ -212,6 +219,20 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
     from wsgidav.util import etree
     xml_bytes = etree.tostring(multistatus_elem, encoding='utf-8')
     xml_str = xml_bytes.decode('utf-8')
+
+    # Check for audio files in the XML response for Flacbox debugging
+    audio_hrefs_in_xml = []
+    for response in multistatus_elem.findall("{DAV:}response"):
+        href_elem = response.find("{DAV:}href")
+        if href_elem is not None and href_elem.text:
+            href_text = href_elem.text
+            if any(ext in href_text.lower() for ext in ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac']):
+                audio_hrefs_in_xml.append(href_text)
+                if len(audio_hrefs_in_xml) >= 3:  # Just log first 3
+                    break
+    
+    if audio_hrefs_in_xml:
+        logger.info(f"[WebDAV] ⚠️  Audio file hrefs in FINAL XML response (what Flacbox sees): {audio_hrefs_in_xml}")
 
     # Check for .resource in the XML (Joplin resource files)
     if '.resource' in xml_str:
@@ -2102,14 +2123,14 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             href = href + '/'
                             logger.debug(f"[WebDAV] Added trailing slash to directory href: {href}")
 
-                        # CRITICAL: For Flacbox compatibility, ensure href includes /webdav/ prefix
-                        # WSGiDAV should prepend SCRIPT_NAME, but some clients (like Flacbox) may need it explicitly
-                        # Check if href already has /webdav/ prefix
-                        if not href.startswith('/webdav/'):
-                            script_name = self.environ.get('SCRIPT_NAME', '/webdav') if hasattr(self, 'environ') and self.environ else '/webdav'
-                            # Prepend script_name if it's not already there
-                            if script_name and not href.startswith(script_name):
-                                href = script_name.rstrip('/') + href
+                        # CRITICAL: Do NOT prepend /webdav/ here - WSGiDAV will prepend SCRIPT_NAME automatically
+                        # If we include /webdav/ here, WSGiDAV will prepend it again, causing /webdav/webdav/...
+                        # Return the path without /webdav/ prefix and let WSGiDAV handle it via SCRIPT_NAME
+                        # Remove /webdav/ if it's already there (shouldn't be, but be safe)
+                        if href.startswith('/webdav/'):
+                            href = href[7:]  # Remove '/webdav/'
+                        elif href.startswith('/webdav'):
+                            href = href[7:]  # Remove '/webdav'
                         
                         # CRITICAL: Do NOT URL-encode @ symbol - Joplin expects @ in hrefs to match base URL
                         # The HTTP layer will handle URL encoding when needed
