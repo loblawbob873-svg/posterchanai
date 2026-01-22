@@ -269,20 +269,41 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                         # Remove patterns like /username/webdav/username/ or /username/username/
                         href_text = re.sub(r'^/' + username_pattern + r'/(webdav/)?' + username_pattern + r'/', f'/{username}/', href_text)
                 
-                # Ensure href has /webdav/ prefix if it's a user path (contains @)
-                # This ensures consistency - all user resource hrefs include /webdav/
-                if '@' in href_text and not href_text.startswith(script_name):
-                    # Check if it's a user path (starts with /username@domain/)
-                    path_parts = href_text.strip('/').split('/')
+                # CRITICAL: Make hrefs relative to user's base path to prevent duplicate path construction
+                # If href is /webdav/username@domain/path, make it relative: path (relative to /webdav/username@domain/)
+                # This prevents clients from treating absolute hrefs as relative and creating duplicates
+                if '@' in href_text and href_text.startswith(script_name):
+                    # Extract the path after /webdav/username@domain/
+                    path_parts = href_text[len(script_name):].strip('/').split('/')
                     if len(path_parts) > 0 and '@' in path_parts[0]:
-                        # Prepend /webdav/ to make it absolute
-                        href_text = script_name.rstrip('/') + href_text
+                        # This is a user path: /webdav/username@domain/...
+                        username = path_parts[0]
+                        # Make href relative to user's base: remove /webdav/username@domain/ prefix
+                        relative_path = '/'.join(path_parts[1:]) if len(path_parts) > 1 else ''
+                        # Ensure it starts with / for absolute path, but relative to user base
+                        # Actually, WebDAV spec allows relative hrefs, so we can use relative_path directly
+                        # But some clients expect absolute paths, so let's keep it as /path (relative to base)
+                        if relative_path:
+                            href_text = '/' + relative_path
+                        else:
+                            href_text = '/'  # Root of user's space
                         hrefs_fixed += 1
+                        if hrefs_fixed <= 5:  # Log first few for debugging
+                            logger.info(f"[WebDAV] 🔧 Made href relative: '{original_href}' -> '{href_text}'")
+                    elif not href_text.startswith(script_name):
+                        # Href doesn't have /webdav/ prefix, ensure it's absolute
+                        if not href_text.startswith('/'):
+                            href_text = '/' + href_text
+                        # Prepend /webdav/username@domain/ if it's a user path
+                        path_parts = href_text.strip('/').split('/')
+                        if len(path_parts) > 0 and '@' in path_parts[0]:
+                            href_text = script_name.rstrip('/') + href_text
+                            hrefs_fixed += 1
                 
                 # Update href if it changed
                 if href_text != original_href:
                     href_elem.text = href_text
-                    if hrefs_fixed <= 3:  # Log first few for debugging
+                    if hrefs_fixed <= 5 and hrefs_fixed > 0:  # Log first few for debugging
                         logger.info(f"[WebDAV] 🔧 Fixed href: '{original_href}' -> '{href_text}'")
             
             # CRITICAL: Ensure all property elements are properly namespaced with D: prefix
@@ -1097,14 +1118,49 @@ class QuotaFilesystemProvider(FilesystemProvider):
         """Override get_resource_inst - wsgidav calls this for PROPFIND and GET requests."""
         logger.debug(f"[WebDAV] get_resource_inst CALLED: path={path}, storage_server_url={self.storage_server_url}")
         
-        # Strip /webdav prefix if present
+        # CRITICAL: Normalize path and remove duplicate patterns BEFORE processing
+        # Handle cases like: /webdav/username/webdav/username/path -> /webdav/username/path
+        import re
+        original_path = path
+        
+        # First, normalize the path string
         normalized_path = path.strip('/')
+        
+        # Remove duplicate /webdav/ patterns (e.g., webdav/webdav/ -> webdav/)
+        while '/webdav/webdav/' in normalized_path:
+            normalized_path = normalized_path.replace('/webdav/webdav/', '/webdav/')
+        
+        # Remove duplicate username patterns (e.g., username/webdav/username/ -> username/)
+        # This handles cases where the client constructs paths incorrectly
+        if '@' in normalized_path:
+            # Find username pattern (e.g., "verita84@poster.place")
+            username_match = re.search(r'([^/]+@[^/]+)', normalized_path)
+            if username_match:
+                username = username_match.group(1)
+                username_pattern = re.escape(username)
+                # Remove patterns like: username/webdav/username/ or username/username/
+                normalized_path = re.sub(
+                    r'^' + username_pattern + r'/(webdav/)?' + username_pattern + r'/',
+                    username + '/',
+                    normalized_path
+                )
+                # Also handle if it's in the middle: /webdav/username/webdav/username/
+                normalized_path = re.sub(
+                    r'/webdav/' + username_pattern + r'/webdav/' + username_pattern + r'/',
+                    '/webdav/' + username + '/',
+                    normalized_path
+                )
+        
+        # Strip /webdav prefix if present (after duplicate cleanup)
         while normalized_path.startswith('webdav/'):
             normalized_path = normalized_path[7:]
         if normalized_path:
             normalized_path = '/' + normalized_path
         else:
             normalized_path = '/'
+        
+        if original_path != normalized_path:
+            logger.warning(f"[WebDAV] Normalized duplicate path: '{original_path}' -> '{normalized_path}'")
         
         logger.debug(f"[WebDAV] Normalized path={normalized_path}, storage_server_url={self.storage_server_url}")
         
