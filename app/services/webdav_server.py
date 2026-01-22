@@ -1362,13 +1362,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         return self._path.split('/')[-1] or self._path
 
                     def get_ref_url(self):
-                        return self._path
+                        # Return full path including /webdav/ prefix
+                        ref_url = str(self._path)
+                        if not ref_url.startswith('/webdav/'):
+                            ref_url = '/webdav' + ref_url
+                        return ref_url
 
                     def get_href(self):
                         """Return href (URL path) for the resource."""
-                        # Always return our stored path as a string
-                        # URL-encode @ symbol for Joplin compatibility
+                        # Return full path including /webdav/ prefix for Joplin compatibility
                         href = str(self._path)
+                        # Add /webdav/ prefix if not already present
+                        if not href.startswith('/webdav/'):
+                            href = '/webdav' + href
+                        # URL-encode @ symbol for Joplin compatibility
                         href = href.replace('@', '%40')
                         return href
 
@@ -1743,13 +1750,20 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         return self._path.split('/')[-1] or self._path
 
                     def get_ref_url(self):
-                        return self._path
+                        # Return full path including /webdav/ prefix
+                        ref_url = str(self._path)
+                        if not ref_url.startswith('/webdav/'):
+                            ref_url = '/webdav' + ref_url
+                        return ref_url
 
                     def get_href(self):
                         """Return href (URL path) for the resource."""
-                        # Always return our stored path as a string
-                        # URL-encode @ symbol for Joplin compatibility
+                        # Return full path including /webdav/ prefix for Joplin compatibility
                         href = str(self._path)
+                        # Add /webdav/ prefix if not already present
+                        if not href.startswith('/webdav/'):
+                            href = '/webdav' + href
+                        # URL-encode @ symbol for Joplin compatibility
                         href = href.replace('@', '%40')
                         return href
 
