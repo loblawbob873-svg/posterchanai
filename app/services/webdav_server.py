@@ -222,17 +222,26 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
 
     # Check for audio files in the XML response for Flacbox debugging
     audio_hrefs_in_xml = []
+    total_responses = len(multistatus_elem.findall("{DAV:}response"))
     for response in multistatus_elem.findall("{DAV:}response"):
         href_elem = response.find("{DAV:}href")
         if href_elem is not None and href_elem.text:
             href_text = href_elem.text
             if any(ext in href_text.lower() for ext in ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac']):
                 audio_hrefs_in_xml.append(href_text)
-                if len(audio_hrefs_in_xml) >= 3:  # Just log first 3
+                if len(audio_hrefs_in_xml) >= 5:  # Log first 5
                     break
     
     if audio_hrefs_in_xml:
-        logger.info(f"[WebDAV] ⚠️  Audio file hrefs in FINAL XML response (what Flacbox sees): {audio_hrefs_in_xml}")
+        logger.info(f"[WebDAV] ⚠️  Audio file hrefs in FINAL XML response (what Flacbox sees, total responses={total_responses}): {audio_hrefs_in_xml}")
+    elif total_responses > 0:
+        # Log a sample of hrefs to see what's actually in the response
+        sample_hrefs = []
+        for response in list(multistatus_elem.findall("{DAV:}response"))[:5]:
+            href_elem = response.find("{DAV:}href")
+            if href_elem is not None and href_elem.text:
+                sample_hrefs.append(href_elem.text)
+        logger.debug(f"[WebDAV] PROPFIND response has {total_responses} responses, sample hrefs: {sample_hrefs}")
 
     # Check for .resource in the XML (Joplin resource files)
     if '.resource' in xml_str:
