@@ -145,7 +145,7 @@ def _patched_do_propfind(self, environ, start_response):
 
     # Call original method - let wsgidav handle response generation
     # Our VirtualResource/SimpleResource.get_href() will return correct /webdav/ prefixed paths
-    return result
+    return _original_do_propfind(self, environ, start_response)
 
 # Apply the PROPFIND patch
 request_server.RequestServer.do_PROPFIND = _patched_do_propfind
