@@ -869,6 +869,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 that supports read() method.
                                 """
                                 import io
+                                from wsgidav.dav_error import DAVError, HTTP_INTERNAL_ERROR
                                 if self._is_dir:
                                     return None
                                 # Extract username and relative path
@@ -892,7 +893,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     return io.BytesIO(content)
                                 except Exception as e:
                                     logger.error(f"[WebDAV] VirtualResource.get_content error: {e}")
-                                    return None
+                                    # Raise DAVError instead of returning None to avoid AttributeError on close()
+                                    raise DAVError(HTTP_INTERNAL_ERROR, f"Failed to retrieve file content: {e}")
 
                             def support_content_length(self):
                                 """Return True if get_content_length() returns valid value."""
@@ -1655,6 +1657,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         that supports read() method.
                         """
                         import io
+                        from wsgidav.dav_error import DAVError, HTTP_INTERNAL_ERROR
                         if self._is_dir or not self._provider:
                             return None
                         # Storage server expects full email-style username (e.g., verita84@poster.place)
@@ -1675,7 +1678,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             return io.BytesIO(content)
                         except Exception as e:
                             logger.error(f"[WebDAV] SimpleResource.get_content error: {e}")
-                            return None
+                            # Raise DAVError instead of returning None to avoid AttributeError on close()
+                            raise DAVError(HTTP_INTERNAL_ERROR, f"Failed to retrieve file content: {e}")
 
                     def support_content_length(self):
                         return not self._is_dir
