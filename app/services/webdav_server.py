@@ -335,9 +335,9 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     href_elem.text = href_text
                     hrefs_fixed += 1
                     # Always log audio file href fixes
-                    is_audio = any(ext in href_text.lower() for ext in ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac'])
+                    is_audio = any(ext in href_text.lower() or ext in original_href.lower() for ext in ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac'])
                     if (hrefs_fixed <= 5 and not is_large_response) or is_audio:
-                        logger.info(f"[WebDAV] 🔧 Fixed href to absolute: '{original_href}' -> '{href_text}'")
+                        logger.info(f"[WebDAV] 🔧 Fixed href to relative: '{original_href}' -> '{href_text}'")
             
             # CRITICAL: Ensure all property elements are properly namespaced with D: prefix
             # Flacbox requires explicitly prefixed elements (D:getcontenttype, not just getcontenttype)
