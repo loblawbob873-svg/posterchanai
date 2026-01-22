@@ -1745,7 +1745,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
             "depth": depth
         }
 
-        logger.info(f"[WebDAV] Proxying to storage server: {url} for username={username}, path={path}, depth={depth}")
+        # CRITICAL: Increase timeout for deep listings (depth > 1) which can take longer
+        # Large Music directories with depth=infinity can take 60+ seconds
+        # Use longer timeout for recursive listings, shorter for immediate children
+        if isinstance(depth, str) and depth.lower() in ('infinity', 'inf'):
+            timeout = 120  # 2 minutes for infinity depth
+        elif isinstance(depth, int) and depth > 1:
+            timeout = 90  # 90 seconds for recursive listings
+        else:
+            timeout = 30  # 30 seconds for immediate children (depth=1)
+
+        logger.info(f"[WebDAV] Proxying to storage server: {url} for username={username}, path={path}, depth={depth}, timeout={timeout}s")
         logger.info(f"[WebDAV] Using token: {'Yes' if self.storage_server_token else 'No'}")
         try:
             # Add retry logic for connection errors
@@ -1755,7 +1765,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
             
             for attempt in range(max_retries):
                 try:
-                    response = requests.get(url, headers=headers, params=params, timeout=30)
+                    response = requests.get(url, headers=headers, params=params, timeout=timeout)
                     logger.info(f"[WebDAV] Storage server response: status={response.status_code}, content_length={len(response.content)}")
                     
                     if response.status_code != 200:
@@ -1781,9 +1791,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
             
             # Convert File Manager format to WebDAV format
             items = data.get('items', [])
-            logger.info(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path}")
+            logger.info(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path} (depth={depth})")
             if len(items) == 0:
                 logger.warning(f"[WebDAV] Storage server returned 0 items - check if files exist on storage server")
+            elif len(items) > 1000:
+                logger.warning(f"[WebDAV] Large directory listing: {len(items)} items - this may take a while to process")
             
             # wsgidav expects a list of ResourceInfo objects, not dictionaries
             # We need to create virtual filesystem entries and use the parent class to create proper resources
@@ -1792,8 +1804,13 @@ class QuotaFilesystemProvider(FilesystemProvider):
             import time
             
             webdav_resources = []
+            start_time = time.time()
 
-            for item in items:
+            for idx, item in enumerate(items):
+                # Log progress for large listings
+                if len(items) > 100 and idx > 0 and idx % 100 == 0:
+                    elapsed = time.time() - start_time
+                    logger.info(f"[WebDAV] Processing items: {idx}/{len(items)} ({elapsed:.1f}s elapsed)")
                 # Use 'name' for the filename, not 'path' (which may include parent directories)
                 item_name = item.get('name', '')
                 if not item_name:
@@ -2185,7 +2202,8 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # if depth > 1 and is_directory:
                 #     ... recursive listing code ...
 
-            logger.info(f"[WebDAV] Created {len(webdav_resources)} SimpleResource objects (depth={depth})")
+            elapsed_total = time.time() - start_time
+            logger.info(f"[WebDAV] Created {len(webdav_resources)} SimpleResource objects (depth={depth}) in {elapsed_total:.2f}s")
 
             # Deduplicate resources by path to prevent multiple <d:href> elements for same resource
             # Use resource.path directly instead of calling get_href() to avoid duplicate href calculations
@@ -2201,6 +2219,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
             if len(unique_resources) < len(webdav_resources):
                 logger.error(f"[WebDAV] ⚠️  CRITICAL: Removed {len(webdav_resources) - len(unique_resources)} duplicate resources!")
+
+            elapsed_final = time.time() - start_time
+            if elapsed_final > 10:
+                logger.warning(f"[WebDAV] Slow directory listing: took {elapsed_final:.2f}s for {len(unique_resources)} items - consider using depth=1 for large directories")
 
             return unique_resources
 
