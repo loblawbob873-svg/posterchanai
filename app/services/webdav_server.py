@@ -1923,6 +1923,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_content_length(self):
                         return self._size if not self._is_dir else 0
 
+                    def is_collection(self):
+                        """Return True if this is a collection (directory)."""
+                        return self._is_dir
 
                     def get_display_name(self):
                         return self._path.split('/')[-1] or self._path
@@ -2078,36 +2081,41 @@ class QuotaFilesystemProvider(FilesystemProvider):
                     def get_property_names(self, *, is_allprop):
                         """Return list of property names in Clark notation."""
                         return [
-                            "{{DAV:}}getlastmodified",
-                            "{{DAV:}}getcontentlength",
-                            "{{DAV:}}resourcetype",
-                            "{{DAV:}}displayname",
-                            "{{DAV:}}getcontenttype",
+                            "{DAV:}getlastmodified",
+                            "{DAV:}getcontentlength",
+                            "{DAV:}resourcetype",
+                            "{DAV:}displayname",
+                            "{DAV:}getcontenttype",
                         ]
 
                     def get_property_value(self, name):
                         """Return value for a specific property (name in Clark notation)."""
                         from datetime import datetime
-                        logger.debug(f"[WebDAV] get_property_value called: name={{name}}, path={{self._path if hasattr(self, '_path') else 'unknown'}}")
-                        if name == "{{DAV:}}getlastmodified":
+                        prop_name = name  # Store for logging
+                        logger.debug(f"[WebDAV] SimpleResource.get_property_value: name={prop_name}, path={self._path if hasattr(self, '_path') else 'unknown'}, is_dir={self._is_dir}")
+                        if name == "{DAV:}getlastmodified":
                             ts = self._modified if hasattr(self, '_modified') else 0
                             return datetime.fromtimestamp(ts).strftime('%a, %d %b %Y %H:%M:%S GMT') if ts else ""
-                        elif name == "{{DAV:}}getcontentlength":
+                        elif name == "{DAV:}getcontentlength":
                             return str(self._size) if not self._is_dir else "0"
-                        elif name == "{{DAV:}}resourcetype":
+                        elif name == "{DAV:}resourcetype":
                             from wsgidav.util import etree
                             if self._is_dir:
-                                elem = etree.Element("{{DAV:}}resourcetype")
-                                etree.SubElement(elem, "{{DAV:}}collection")
+                                # CRITICAL: Return proper XML element for collection - Flacbox requires this
+                                elem = etree.Element("{DAV:}resourcetype")
+                                etree.SubElement(elem, "{DAV:}collection")
+                                logger.debug(f"[WebDAV] Returning resourcetype element for directory: {self._path}")
                                 return elem
-                            return ""
-                        elif name == "{{DAV:}}displayname":
+                            # For files, return empty element (not empty string)
+                            elem = etree.Element("{DAV:}resourcetype")
+                            return elem
+                        elif name == "{DAV:}displayname":
                             return self._path.split('/')[-1] if hasattr(self, '_path') else ""
-                        elif name == "{{DAV:}}getcontenttype":
+                        elif name == "{DAV:}getcontenttype":
                             return 'httpd/unix-directory' if self._is_dir else 'application/octet-stream'
                         else:
                             from wsgidav.dav_error import HTTP_NOT_FOUND, DAVError
-                            raise DAVError(HTTP_NOT_FOUND, f"Property {{name}} not found")
+                            raise DAVError(HTTP_NOT_FOUND, f"Property {prop_name} not found")
 
 
                     def get_properties(self, propname="allprop", name_list=None):
@@ -2119,7 +2127,11 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         if propname == "allprop" or "getcontentlength" in str(propname):
                             props.append(('getcontentlength', str(self._size) if not self._is_dir else "0"))
                         if propname == "allprop" or "resourcetype" in str(propname):
-                            props.append(('resourcetype', '<D:collection/>' if self._is_dir else ''))
+                            # Return proper XML string for resourcetype
+                            if self._is_dir:
+                                props.append(('resourcetype', '<D:collection/>'))
+                            else:
+                                props.append(('resourcetype', ''))
                         if propname == "allprop" or "displayname" in str(propname):
                             props.append(('displayname', self._path.split('/')[-1] or self._path))
                         return props
@@ -2220,7 +2232,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 #     ... recursive listing code ...
 
             elapsed_total = time.time() - start_time
-            logger.info(f"[WebDAV] Created {len(webdav_resources)} SimpleResource objects (depth={depth}) in {elapsed_total:.2f}s")
+            # Count directories vs files for debugging
+            dir_count = sum(1 for r in webdav_resources if hasattr(r, '_is_dir') and r._is_dir)
+            file_count = len(webdav_resources) - dir_count
+            logger.info(f"[WebDAV] Created {len(webdav_resources)} SimpleResource objects (depth={depth}) in {elapsed_total:.2f}s: {dir_count} directories, {file_count} files")
 
             # Deduplicate resources by path to prevent multiple <d:href> elements for same resource
             # Use resource.path directly instead of calling get_href() to avoid duplicate href calculations
