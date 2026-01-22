@@ -158,7 +158,11 @@ def _patched_do_propfind(self, environ, start_response):
                     response_elem = etree.SubElement(root, "{DAV:}response")
 
                     href_elem = etree.SubElement(response_elem, "{DAV:}href")
-                    href_elem.text = resource.get_href() if hasattr(resource, 'get_href') else path
+                    # Use the original request path (which includes /webdav/) instead of resource.get_href()
+                    # to ensure href matches the client's base URL
+                    from urllib.parse import quote
+                    href_path = path.replace('@', '%40')  # URL-encode @ symbol
+                    href_elem.text = href_path
 
                     propstat = etree.SubElement(response_elem, "{DAV:}propstat")
                     prop = etree.SubElement(propstat, "{DAV:}prop")
@@ -228,7 +232,10 @@ def _patched_do_propfind(self, environ, start_response):
                                 response_elem = etree.SubElement(root, "{DAV:}response")
 
                                 href_elem = etree.SubElement(response_elem, "{DAV:}href")
-                                href_elem.text = resource.get_href() if hasattr(resource, 'get_href') else path
+                                # Use the original request path to ensure href matches client's base URL
+                                from urllib.parse import quote
+                                href_path = path.replace('@', '%40')  # URL-encode @ symbol
+                                href_elem.text = href_path
 
                                 propstat = etree.SubElement(response_elem, "{DAV:}propstat")
                                 prop = etree.SubElement(propstat, "{DAV:}prop")
@@ -954,15 +961,22 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 return self._path.split('/')[-1] or self._path
                             
                             def get_ref_url(self):
-                                return self._path
+                                # Return full path including /webdav/ prefix
+                                ref_url = str(self._path)
+                                if not ref_url.startswith('/webdav/'):
+                                    ref_url = '/webdav' + ref_url
+                                return ref_url
 
                             def get_href(self):
                                 """Return href (URL path) for the resource."""
-                                # Always return our stored path as a string
-                                # URL-encode @ symbol for Joplin compatibility
+                                # Return full path including /webdav/ prefix for Joplin compatibility
+                                # The stored path already includes the username but not /webdav/
                                 from urllib.parse import quote
                                 href = str(self._path)
-                                # Only encode the @ symbol, leave / and other path characters
+                                # Add /webdav/ prefix if not already present
+                                if not href.startswith('/webdav/'):
+                                    href = '/webdav' + href
+                                # URL-encode @ symbol for Joplin compatibility
                                 href = href.replace('@', '%40')
                                 logger.debug(f"[WebDAV] VirtualResource.get_href called: returning {href}")
                                 return href
