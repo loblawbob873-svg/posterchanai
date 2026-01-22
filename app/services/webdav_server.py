@@ -1730,11 +1730,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         object.__setattr__(self, '_provider', provider)
 
                     def __getattribute__(self, name):
-                        """Override to log and ensure path is always a string."""
+                        """Override to ensure path is always a string."""
                         if name == 'path':
                             _path = object.__getattribute__(self, '_path')
                             result = str(_path)
-                            logger.error(f"[WebDAV] ⚠️⚠️ SimpleResource.__getattribute__('path'): returning {result}, type={type(result)}")
                             return result
                         return object.__getattribute__(self, name)
 

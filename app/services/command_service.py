@@ -475,23 +475,57 @@ class CommandService:
         """Internal file search function."""
         from pathlib import Path
         from app.services.storage_service import get_storage_service
-        
+        from app.models import Setting
+        import requests
+
+        # Check if using remote storage
+        storage_setting = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+        if storage_setting and storage_setting.value and storage_setting.value.startswith(('http://', 'https://')):
+            # Use remote storage API
+            try:
+                url = f"{storage_setting.value.rstrip('/')}/api/storage/search"
+                headers = {}
+                token_setting = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
+                if token_setting and token_setting.value:
+                    headers["Authorization"] = f"Bearer {token_setting.value}"
+
+                params = {
+                    "username": self.user.username,
+                    "query": query
+                }
+
+                response = requests.get(url, headers=headers, params=params, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+
+                results = data.get('results', [])
+                return {
+                    "type": "files",
+                    "content": f"Found {len(results)} file(s) matching '{query}'",
+                    "files": results[:50],  # Limit to 50 results
+                    "query": query
+                }
+            except Exception as e:
+                logger.error(f"Error searching remote files: {e}", exc_info=True)
+                return {"type": "text", "content": f"Error searching files: {str(e)}"}
+
+        # Local storage
         storage = get_storage_service(self.db)
         user_path = storage.get_user_path(self.user.username)
-        
+
         results = []
         query_lower = query.lower()
-        
+
         try:
             # Recursively search through user's files
             for item in user_path.rglob('*'):
                 try:
                     if item.is_dir():
                         continue
-                    
+
                     filename = item.name.lower()
                     relative_path = str(item.relative_to(user_path)).lower()
-                    
+
                     if query_lower in filename or query_lower in relative_path:
                         stat = item.stat()
                         results.append({
@@ -503,10 +537,10 @@ class CommandService:
                 except Exception as e:
                     logger.warning(f"Error processing file {item}: {e}")
                     continue
-            
+
             # Sort by modified time (newest first)
             results.sort(key=lambda x: x.get('modified', 0), reverse=True)
-            
+
             return {
                 "type": "files",
                 "content": f"Found {len(results)} file(s) matching '{query}'",
