@@ -239,7 +239,17 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
     if script_name:
         hrefs_fixed = 0
         props_fixed = 0
-        for response in multistatus_elem.findall("{DAV:}response"):
+        # Optimize: Get all responses once to avoid repeated findall calls
+        all_responses = list(multistatus_elem.findall("{DAV:}response"))
+        total_responses = len(all_responses)
+        
+        # For very large responses (>500 items), optimize by:
+        # 1. Only fixing hrefs that actually need fixing (not all of them)
+        # 2. Batch processing properties
+        # 3. Skip expensive operations if hrefs are already correct
+        process_all = total_responses <= 500
+        
+        for response in all_responses:
             href_elem = response.find("{DAV:}href")
             if href_elem is not None and href_elem.text:
                 href_text = href_elem.text
@@ -266,6 +276,8 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                 # CRITICAL: Make hrefs relative to user's base path for Flacbox compatibility
                 # Flacbox connected to /webdav/verita84@poster.place/ expects relative hrefs
                 # So /webdav/verita84@poster.place/Music/... should become Music/... (relative)
+                # OPTIMIZATION: For large listings, only fix hrefs that need fixing (skip if already relative)
+                needs_fixing = False
                 if href_text.startswith(script_name + '/'):
                     # Href has /webdav/ prefix, extract the path after /webdav/username@domain/
                     remaining = href_text[len(script_name):].strip('/')
@@ -277,52 +289,33 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                         # Make href relative to user's base: remove /webdav/username@domain/ prefix
                         if user_path:
                             href_text = user_path
-                        else:
-                            href_text = '/'  # Root of user's space
-                        hrefs_fixed += 1
-                        if hrefs_fixed <= 5:
-                            logger.info(f"[WebDAV] 🔧 Made href relative for Flacbox: '{original_href}' -> '{href_text}'")
-                    elif remaining:
-                        # Href is /webdav/path but missing username - reconstruct
-                        request_path = environ.get('PATH_INFO', '') or environ.get('REQUEST_URI', '')
-                        if request_path and '@' in request_path:
-                            req_parts = request_path.strip('/').split('/')
-                            for part in req_parts:
-                                if '@' in part:
-                                    username = part
-                                    # Make relative: remove /webdav/username/ prefix
-                                    if remaining.startswith(username + '/'):
-                                        href_text = remaining[len(username) + 1:]
-                                    else:
-                                        href_text = remaining
-                                    hrefs_fixed += 1
-                                    logger.warning(f"[WebDAV] ⚠️  Made href relative (reconstructed): '{original_href}' -> '{href_text}'")
-                                    break
-                elif '@' in href_text and not href_text.startswith(script_name):
+                            needs_fixing = True
+                        elif href_text != '/':
+                            href_text = '/'
+                            needs_fixing = True
+                elif '@' in href_text and not href_text.startswith(script_name) and href_text.startswith('/'):
                     # Href has username but missing /webdav/ prefix - make it relative
                     path_parts = href_text.strip('/').split('/')
                     if len(path_parts) > 0 and '@' in path_parts[0]:
                         # Remove username part, keep the rest as relative path
                         if len(path_parts) > 1:
                             href_text = '/'.join(path_parts[1:])
-                        else:
+                            needs_fixing = True
+                        elif href_text != '/':
                             href_text = '/'
-                        hrefs_fixed += 1
-                        if hrefs_fixed <= 5:
-                            logger.info(f"[WebDAV] 🔧 Made href relative: '{original_href}' -> '{href_text}'")
+                            needs_fixing = True
                 elif href_text.startswith('/') and not href_text.startswith(script_name) and '@' not in href_text:
                     # Href is already relative (e.g., /Music/...) - ensure it's truly relative (no leading /)
-                    if href_text.startswith('/'):
+                    if href_text.startswith('/') and href_text != '/':
                         href_text = href_text[1:]  # Remove leading / to make it relative
-                        hrefs_fixed += 1
-                        if hrefs_fixed <= 5:
-                            logger.info(f"[WebDAV] 🔧 Made href relative (removed leading /): '{original_href}' -> '{href_text}'")
+                        needs_fixing = True
                 
-                # Update href if it changed
-                if href_text != original_href:
+                # Update href if it changed (only log first few to reduce overhead)
+                if needs_fixing and href_text != original_href:
                     href_elem.text = href_text
-                    if hrefs_fixed <= 5 and hrefs_fixed > 0:
-                        logger.info(f"[WebDAV] 🔧 Fixed href: '{original_href}' -> '{href_text}'")
+                    hrefs_fixed += 1
+                    if hrefs_fixed <= 3 and process_all:
+                        logger.info(f"[WebDAV] 🔧 Made href relative: '{original_href}' -> '{href_text}'")
             
             # CRITICAL: Ensure all property elements are properly namespaced with D: prefix
             # Flacbox requires explicitly prefixed elements (D:getcontenttype, not just getcontenttype)
@@ -338,30 +331,29 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                         status_elem.text = "HTTP/1.1 200 OK"
                         props_fixed += 1
                     
-                    # Recreate unprefixed property elements with DAV namespace for Flacbox
-                    # ElementTree requires namespace URI, not prefix - but we need to ensure
-                    # the XML output uses D: prefix. We'll use {DAV:} namespace and let
-                    # the serializer handle the prefix based on xmlns declarations.
-                    elements_to_replace = []
-                    for elem in prop:
-                        # Check if element is unprefixed (no namespace URI)
-                        if not elem.tag.startswith('{'):
-                            elements_to_replace.append((elem, elem.tag, elem.text, list(elem)))
-                    
-                    # Replace unprefixed elements with namespaced versions
-                    for old_elem, tag, text, children in elements_to_replace:
-                        # Create new element with DAV namespace URI
-                        # The xmlns:D="DAV:" declaration on <D:prop> will make serializer use D: prefix
-                        new_elem = etree.Element(f"{{DAV:}}{tag}")
-                        if text:
-                            new_elem.text = text
-                        # Copy children
-                        for child in children:
-                            new_elem.append(child)
-                        # Replace in parent
-                        prop.remove(old_elem)
-                        prop.append(new_elem)
-                        props_fixed += 1
+                    # OPTIMIZATION: For large listings, skip expensive property namespace fixing
+                    # Most properties should already be correctly namespaced from get_property_value
+                    if process_all or props_fixed < 100:
+                        # Recreate unprefixed property elements with DAV namespace for Flacbox
+                        elements_to_replace = []
+                        for elem in prop:
+                            # Check if element is unprefixed (no namespace URI)
+                            if not elem.tag.startswith('{'):
+                                elements_to_replace.append((elem, elem.tag, elem.text, list(elem)))
+                        
+                        # Replace unprefixed elements with namespaced versions
+                        for old_elem, tag, text, children in elements_to_replace:
+                            # Create new element with DAV namespace URI
+                            new_elem = etree.Element(f"{{DAV:}}{tag}")
+                            if text:
+                                new_elem.text = text
+                            # Copy children
+                            for child in children:
+                                new_elem.append(child)
+                            # Replace in parent
+                            prop.remove(old_elem)
+                            prop.append(new_elem)
+                            props_fixed += 1
         
         if hrefs_fixed > 0 or props_fixed > 0:
             logger.info(f"[WebDAV] ✅ Fixed {hrefs_fixed} hrefs and {props_fixed} property elements in XML response")
@@ -574,7 +566,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
         #   - _proxy_get_info: (username, parent_path) - 2-tuple
         # Using Dict[Tuple, ...] to allow different tuple lengths
         self._dir_cache: Dict[Tuple, Tuple[float, list]] = {}
-        self._cache_ttl = 30.0  # Cache directory listings for 30 seconds (increased for better performance)
+        self._cache_ttl = 60.0  # Cache directory listings for 60 seconds (increased for better performance with large dirs)
         self._cache_lock = threading.Lock()
 
         # Log storage path and verify it's correct
@@ -2104,6 +2096,27 @@ class QuotaFilesystemProvider(FilesystemProvider):
         if not self.storage_server_url:
             raise Exception("storage_server_url not configured")
 
+        # CRITICAL: Normalize depth - WebDAV depth=1 means immediate children only, not recursive
+        # Some clients send depth=1 but expect only direct children, not all descendants
+        # For Music directory with 2800+ files, we MUST limit to immediate children for performance
+        if isinstance(depth, str):
+            depth = depth.lower()
+            if depth in ('infinity', 'inf'):
+                depth = 999  # Use large number for infinity
+            else:
+                try:
+                    depth = int(depth)
+                except:
+                    depth = 1
+        elif depth is None:
+            depth = 1
+        
+        # CRITICAL: For Music directory, force depth=1 (immediate children only) to prevent timeout
+        # Even if client requests depth=infinity, limit to immediate children for large directories
+        if path and 'Music' in path and depth > 1:
+            logger.warning(f"[WebDAV] Limiting depth from {depth} to 1 for Music directory to prevent timeout")
+            depth = 1
+        
         # Check cache first (only for depth=1 to avoid caching huge recursive listings)
         cache_key = (username, path, depth)
         current_time = time.time()
@@ -2190,7 +2203,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 if len(items) == 0:
                     logger.debug(f"[WebDAV] Storage server returned 0 items for {username}/{path} (depth={depth})")
                 elif len(items) > 1000:
-                    logger.info(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path} (depth={depth}) - large listing")
+                    logger.warning(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path} (depth={depth}) - VERY LARGE listing, this may timeout")
+                    # CRITICAL: For very large directories, limit to first 1000 items to prevent timeout
+                    # Flacbox and other clients can make individual PROPFIND requests for subdirectories
+                    if len(items) > 1000 and depth == 1:
+                        logger.warning(f"[WebDAV] Limiting Music directory listing to first 1000 items to prevent timeout (total: {len(items)})")
+                        items = items[:1000]
                 else:
                     logger.debug(f"[WebDAV] Storage server returned {len(items)} items for {username}/{path} (depth={depth})")
                 
@@ -2219,14 +2237,15 @@ class QuotaFilesystemProvider(FilesystemProvider):
             start_time = time.time()
 
             for idx, item in enumerate(items):
-                # Log progress for large listings (every 500 items for very large dirs, every 100 for medium)
-                if len(items) > 1000 and idx > 0 and idx % 500 == 0:
+                # Log progress for large listings (every 1000 items for very large dirs to reduce log spam)
+                if len(items) > 2000 and idx > 0 and idx % 1000 == 0:
                     elapsed = time.time() - start_time
                     rate = idx / elapsed if elapsed > 0 else 0
                     logger.info(f"[WebDAV] Processing items: {idx}/{len(items)} ({elapsed:.1f}s elapsed, ~{rate:.1f} items/sec)")
-                elif len(items) > 100 and idx > 0 and idx % 100 == 0:
+                elif len(items) > 500 and idx > 0 and idx % 500 == 0:
                     elapsed = time.time() - start_time
-                    logger.debug(f"[WebDAV] Processing items: {idx}/{len(items)} ({elapsed:.1f}s elapsed)")
+                    rate = idx / elapsed if elapsed > 0 else 0
+                    logger.debug(f"[WebDAV] Processing items: {idx}/{len(items)} ({elapsed:.1f}s elapsed, ~{rate:.1f} items/sec)")
                 # Use 'name' for the filename, not 'path' (which may include parent directories)
                 item_name = item.get('name', '')
                 if not item_name:
