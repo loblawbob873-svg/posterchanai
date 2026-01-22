@@ -540,24 +540,57 @@ def _patched_do_get(self, environ, start_response):
     path = environ.get('PATH_INFO', '')
     resource = self._davProvider.get_resource_inst(path, environ)
     
-    # Capture response headers to log Content-Type
-    captured_headers = []
+    # Capture response headers to fix Content-Type for audio files
     def capturing_start_response(status, headers):
-        captured_headers.append((status, headers))
-        # Log Content-Type for audio files
-        content_type_header = None
+        # CRITICAL: Fix Content-Type header for audio files
+        # WSGiDAV might not be using get_content_type() correctly, so we force it here
+        fixed_headers = []
+        content_type_found = False
+        
+        # Determine correct Content-Type from resource or path
+        correct_content_type = None
+        if resource and hasattr(resource, 'get_content_type'):
+            correct_content_type = resource.get_content_type()
+        elif any(ext in path.lower() for ext in ['.mp3']):
+            correct_content_type = 'audio/mpeg'
+        elif any(ext in path.lower() for ext in ['.m4a', '.m4b']):
+            correct_content_type = 'audio/mp4'
+        elif any(ext in path.lower() for ext in ['.flac']):
+            correct_content_type = 'audio/flac'
+        elif any(ext in path.lower() for ext in ['.ogg', '.oga']):
+            correct_content_type = 'audio/ogg'
+        elif any(ext in path.lower() for ext in ['.wav']):
+            correct_content_type = 'audio/wav'
+        elif any(ext in path.lower() for ext in ['.aac']):
+            correct_content_type = 'audio/aac'
+        
+        # Replace or add Content-Type header
         for header_name, header_value in headers:
             if header_name.lower() == 'content-type':
-                content_type_header = header_value
-                break
+                content_type_found = True
+                if correct_content_type and correct_content_type != header_value:
+                    # Replace wrong Content-Type with correct one
+                    logger.warning(f"[WebDAV] 🔧 FIXING Content-Type: path={path}, was={header_value}, now={correct_content_type}")
+                    fixed_headers.append(('Content-Type', correct_content_type))
+                else:
+                    fixed_headers.append((header_name, header_value))
+            else:
+                fixed_headers.append((header_name, header_value))
         
-        if content_type_header:
-            if content_type_header.startswith('audio/'):
-                logger.info(f"[WebDAV] 🎵 GET response for audio file: path={path}, status={status}, content-type={content_type_header}")
-            elif 'application/octet-stream' in content_type_header and any(ext in path.lower() for ext in ['.mp3', '.m4a', '.flac']):
-                logger.error(f"[WebDAV] ⚠️ CRITICAL: GET response has wrong Content-Type for audio file: path={path}, content-type={content_type_header} (should be audio/mpeg or audio/mp4)")
+        # Add Content-Type if missing
+        if not content_type_found and correct_content_type:
+            logger.warning(f"[WebDAV] 🔧 ADDING Content-Type: path={path}, content-type={correct_content_type}")
+            fixed_headers.append(('Content-Type', correct_content_type))
         
-        return start_response(status, headers)
+        # Log audio file GET requests
+        final_content_type = correct_content_type or (dict(fixed_headers).get('Content-Type', 'unknown'))
+        if final_content_type.startswith('audio/'):
+            logger.info(f"[WebDAV] 🎵 GET response for audio file: path={path}, status={status}, content-type={final_content_type}")
+        elif 'text/plain' in final_content_type or 'application/octet-stream' in final_content_type:
+            if any(ext in path.lower() for ext in ['.mp3', '.m4a', '.flac']):
+                logger.error(f"[WebDAV] ⚠️ CRITICAL: GET response has wrong Content-Type for audio file: path={path}, content-type={final_content_type}")
+        
+        return start_response(status, fixed_headers)
     
     # Call original do_GET
     if _original_do_get:
@@ -1484,7 +1517,10 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 """Return file content as file-like object from remote storage.
 
                                 WsgiDAV expects get_content() to return a file-like object (not bytes)
-                                that supports read() method.
+                                that supports read() method and seek() for Range requests.
+                                
+                                CRITICAL: For audio playback, Range requests require seekable file objects.
+                                We download the full file but return a BytesIO which supports seeking.
                                 """
                                 import io
                                 from wsgidav.dav_error import DAVError, HTTP_INTERNAL_ERROR, HTTP_NOT_FOUND
@@ -1519,12 +1555,16 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     rel_path = ''
                                     logger.debug(f"[WebDAV] VirtualResource.get_content: path was just webdav/username, set to empty")
 
-                                logger.info(f"[WebDAV] VirtualResource.get_content: username={username}, rel_path={rel_path}")
+                                logger.info(f"[WebDAV] 🎵 VirtualResource.get_content: username={username}, rel_path={rel_path}")
                                 try:
                                     content = self._provider._proxy_download_file(username, rel_path)
-                                    logger.info(f"[WebDAV] VirtualResource.get_content: downloaded {len(content)} bytes for {rel_path}")
-                                    # Return file-like object, not raw bytes
-                                    return io.BytesIO(content)
+                                    logger.info(f"[WebDAV] 🎵 VirtualResource.get_content: downloaded {len(content)} bytes for {rel_path}")
+                                    # Return file-like object that supports seek() for Range requests
+                                    # BytesIO supports seek() which is required for audio streaming
+                                    file_obj = io.BytesIO(content)
+                                    # Ensure it's at the beginning
+                                    file_obj.seek(0)
+                                    return file_obj
                                 except Exception as e:
                                     error_str = str(e)
                                     logger.error(f"[WebDAV] VirtualResource.get_content error: {e}")
