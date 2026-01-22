@@ -1116,12 +1116,14 @@ async def startup():
                                 decoded_parts = []
                                 for part in path_info.split('/'):
                                     if part:
-                                        decoded_parts.append(urllib.parse.unquote(part))
+                                        decoded_part = urllib.parse.unquote(part)
+                                        decoded_parts.append(decoded_part)
                                     else:
                                         decoded_parts.append('')
-                                path_info = '/'.join(decoded_parts)
-                                if decoded_parts != path_info.split('/'):
-                                    logging.debug(f"[WebDAV Middleware] URL decoded path: {original_path} -> {path_info}")
+                                decoded_path = '/'.join(decoded_parts)
+                                if decoded_path != path_info:
+                                    logging.info(f"[WebDAV Middleware] URL decoded path: '{path_info}' -> '{decoded_path}'")
+                                    path_info = decoded_path
                             except Exception as e:
                                 logging.warning(f"[WebDAV Middleware] Failed to URL decode path {path_info}: {e}")
 

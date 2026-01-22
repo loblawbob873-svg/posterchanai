@@ -269,21 +269,36 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     if len(uri_parts) >= 2 and uri_parts[0] == 'webdav' and '@' in uri_parts[1]:
                         username = uri_parts[1]
                 
-                # CRITICAL: Flacbox expects relative hrefs when connected to /webdav/username@domain/
-                # If href is absolute with /webdav/username@domain/, make it relative by removing that prefix
-                if href_text.startswith(script_name):
-                    # Extract path after /webdav/username@domain/
-                    remaining = href_text[len(script_name):].strip('/')
-                    if remaining and '@' in remaining.split('/')[0]:
-                        # Split into username and path
-                        parts = remaining.split('/', 1)
-                        if len(parts) > 1:
-                            # Make it relative: remove /webdav/username@domain/ prefix
-                            href_text = parts[1]  # Keep only the path after username
+                # CRITICAL: Ensure hrefs are absolute with /webdav/username@domain/ prefix
+                # Flacbox needs absolute hrefs to construct GET requests
+                if not href_text.startswith(script_name):
+                    # Href doesn't have /webdav/ prefix - needs fixing
+                    # Check if it's a relative path (no leading /, like "Music/song.mp3")
+                    is_relative = not href_text.startswith('/')
+                    
+                    # Extract username from REQUEST_URI if available
+                    request_uri = environ.get('REQUEST_URI', '')
+                    username = None
+                    if '@' in request_uri:
+                        uri_parts = request_uri.strip('/').split('/')
+                        if len(uri_parts) >= 2 and uri_parts[0] == 'webdav' and '@' in uri_parts[1]:
+                            username = uri_parts[1]
+                    
+                    if is_relative:
+                        # Relative path like "Music/song.mp3" - make it absolute
+                        if username:
+                            href_text = f"{script_name}/{username}/{href_text}"
                             needs_fixing = True
-                        elif remaining and '@' in remaining:
-                            # Just username, no path - make it empty or root
-                            href_text = ''
+                        else:
+                            href_text = f"{script_name}/{href_text}"
+                            needs_fixing = True
+                    elif href_text.startswith('/') and '@' not in href_text:
+                        # Absolute path without username like "/Music/song.mp3"
+                        if username:
+                            href_text = f"{script_name}/{username}{href_text}"
+                            needs_fixing = True
+                        else:
+                            href_text = script_name.rstrip('/') + href_text
                             needs_fixing = True
                 else:
                     # Href doesn't have /webdav/ prefix - needs fixing
