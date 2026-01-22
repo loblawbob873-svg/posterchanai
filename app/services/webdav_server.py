@@ -263,14 +263,26 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                 if not href_text.startswith('/'):
                     href_text = '/' + href_text
                 
-                # CRITICAL: If href already has /webdav/username@domain/, KEEP IT - don't modify
+                # CRITICAL: Make hrefs relative to user's base path for Flacbox compatibility
+                # Flacbox connected to /webdav/verita84@poster.place/ expects relative hrefs
+                # So /webdav/verita84@poster.place/Music/... should become Music/... (relative)
                 if href_text.startswith(script_name + '/'):
-                    # Href already has /webdav/ prefix, check if it has username
+                    # Href has /webdav/ prefix, extract the path after /webdav/username@domain/
                     remaining = href_text[len(script_name):].strip('/')
                     if remaining and '@' in remaining.split('/')[0]:
-                        # Href is correct: /webdav/username@domain/path - don't change it
-                        pass
-                    else:
+                        # Extract username and path
+                        parts = remaining.split('/', 1)
+                        username = parts[0]
+                        user_path = parts[1] if len(parts) > 1 else ''
+                        # Make href relative to user's base: remove /webdav/username@domain/ prefix
+                        if user_path:
+                            href_text = user_path
+                        else:
+                            href_text = '/'  # Root of user's space
+                        hrefs_fixed += 1
+                        if hrefs_fixed <= 5:
+                            logger.info(f"[WebDAV] 🔧 Made href relative for Flacbox: '{original_href}' -> '{href_text}'")
+                    elif remaining:
                         # Href is /webdav/path but missing username - reconstruct
                         request_path = environ.get('PATH_INFO', '') or environ.get('REQUEST_URI', '')
                         if request_path and '@' in request_path:
@@ -278,34 +290,33 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                             for part in req_parts:
                                 if '@' in part:
                                     username = part
-                                    href_text = script_name.rstrip('/') + '/' + username + '/' + remaining
+                                    # Make relative: remove /webdav/username/ prefix
+                                    if remaining.startswith(username + '/'):
+                                        href_text = remaining[len(username) + 1:]
+                                    else:
+                                        href_text = remaining
                                     hrefs_fixed += 1
-                                    logger.warning(f"[WebDAV] ⚠️  Reconstructed missing username: '{original_href}' -> '{href_text}'")
+                                    logger.warning(f"[WebDAV] ⚠️  Made href relative (reconstructed): '{original_href}' -> '{href_text}'")
                                     break
-                elif '@' in href_text:
-                    # Href has username but missing /webdav/ prefix
-                    if not href_text.startswith(script_name):
-                        path_parts = href_text.strip('/').split('/')
-                        if len(path_parts) > 0 and '@' in path_parts[0]:
-                            # Path has username, prepend /webdav/
-                            href_text = script_name.rstrip('/') + href_text
-                            hrefs_fixed += 1
+                elif '@' in href_text and not href_text.startswith(script_name):
+                    # Href has username but missing /webdav/ prefix - make it relative
+                    path_parts = href_text.strip('/').split('/')
+                    if len(path_parts) > 0 and '@' in path_parts[0]:
+                        # Remove username part, keep the rest as relative path
+                        if len(path_parts) > 1:
+                            href_text = '/'.join(path_parts[1:])
+                        else:
+                            href_text = '/'
+                        hrefs_fixed += 1
+                        if hrefs_fixed <= 5:
+                            logger.info(f"[WebDAV] 🔧 Made href relative: '{original_href}' -> '{href_text}'")
                 elif href_text.startswith('/') and not href_text.startswith(script_name) and '@' not in href_text:
-                    # Href is missing BOTH /webdav/ and username (e.g., /Music/...)
-                    # This is the critical case - reconstruct from request path
-                    request_path = environ.get('PATH_INFO', '') or environ.get('REQUEST_URI', '')
-                    if request_path and '@' in request_path:
-                        req_parts = request_path.strip('/').split('/')
-                        for part in req_parts:
-                            if '@' in part:
-                                username = part
-                                # Reconstruct: /webdav/username/path
-                                href_text = script_name.rstrip('/') + '/' + username + href_text
-                                hrefs_fixed += 1
-                                logger.warning(f"[WebDAV] ⚠️  Reconstructed href from request: '{original_href}' -> '{href_text}'")
-                                break
-                    else:
-                        logger.warning(f"[WebDAV] ⚠️  Href missing prefix and no username in request: '{href_text}'")
+                    # Href is already relative (e.g., /Music/...) - ensure it's truly relative (no leading /)
+                    if href_text.startswith('/'):
+                        href_text = href_text[1:]  # Remove leading / to make it relative
+                        hrefs_fixed += 1
+                        if hrefs_fixed <= 5:
+                            logger.info(f"[WebDAV] 🔧 Made href relative (removed leading /): '{original_href}' -> '{href_text}'")
                 
                 # Update href if it changed
                 if href_text != original_href:
