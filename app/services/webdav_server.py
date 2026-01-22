@@ -42,7 +42,7 @@ def _patched_dav_resource_init(self, path, is_collection, environ):
     """Patched __init__ that ensures path is always a string."""
     # Convert list to string if needed
     if isinstance(path, list):
-        logger.error(f"[WebDAV] ⚠️⚠️⚠️ _DAVResource.__init__ received path as list: {path}, converting to string")
+        logger.error(f"[WebDAV] _DAVResource.__init__ received path as list: {path}, converting to string")
         path = str(path[0]) if len(path) > 0 else ''
     # Ensure it's a string
     path = str(path)
@@ -87,7 +87,7 @@ _original_setattr = _DAVResource.__setattr__
 def _patched_setattr(self, name, value):
     """Patched __setattr__ that ensures path is never set as a list."""
     if name == 'path' and isinstance(value, list):
-        logger.error(f"[WebDAV] ⚠️⚠️⚠️ Attempting to set path as list: {value}, converting to string")
+        logger.error(f"[WebDAV] Attempting to set path as list: {value}, converting to string")
         value = str(value[0]) if len(value) > 0 else ''
     _original_setattr(self, name, value)
 
@@ -101,14 +101,14 @@ def _patched_add_property_response(multistatus_elem, href, prop_list):
     """Patched add_property_response that ensures href is always a string."""
     # Convert href to string if it's a list
     if isinstance(href, list):
-        logger.error(f"[WebDAV] ⚠️⚠️⚠️ add_property_response received href as list: {href}, converting to string")
+        logger.error(f"[WebDAV] add_property_response received href as list: {href}, converting to string")
         href = str(href[0]) if len(href) > 0 else '/'
 
     # Ensure href is a string
     href = str(href)
 
     if '005c51179a764e10b61e3a214d38e79d' in str(href):
-        logger.error(f"[WebDAV] ⚠️⚠️⚠️ add_property_response called: href={href}, type={type(href)}, is_list={isinstance(href, list)}")
+        logger.error(f"[WebDAV] add_property_response called: href={href}, type={type(href)}, is_list={isinstance(href, list)}")
 
     result = _original_add_property_response(multistatus_elem, href, prop_list)
 
@@ -121,12 +121,12 @@ def _patched_add_property_response(multistatus_elem, href, prop_list):
             last_response = responses[-1]
             # Check for ALL href elements (there should only be one)
             href_elems = last_response.findall('{DAV:}href')
-            logger.error(f"[WebDAV] ⚠️⚠️⚠️ Found {len(href_elems)} href elements in response")
+            logger.error(f"[WebDAV] Found {len(href_elems)} href elements in response")
             for i, href_elem in enumerate(href_elems):
-                logger.error(f"[WebDAV] ⚠️⚠️⚠️ href[{i}] text: {href_elem.text}, type={type(href_elem.text)}")
+                logger.error(f"[WebDAV] href[{i}] text: {href_elem.text}, type={type(href_elem.text)}")
             # Log the full XML of this response
             xml_str = etree.tostring(last_response, encoding='unicode')
-            logger.error(f"[WebDAV] ⚠️⚠️⚠️ Full response XML: {xml_str[:1500]}")
+            logger.error(f"[WebDAV] Full response XML: {xml_str[:1500]}")
 
     return result
 
@@ -939,9 +939,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                     object.__setattr__(self, '_size', info_dict.get('size', 0))
                                     object.__setattr__(self, '_provider', provider)
                                     object.__setattr__(self, '_environ', environ)
-                                    logger.info(f"[WebDAV] ⚠️⚠️⚠️ VirtualResource.__init__ completed successfully for {path_str}")
+                                    logger.debug(f"[WebDAV] VirtualResource.__init__ completed successfully for {path_str}")
                                 except Exception as e:
-                                    logger.error(f"[WebDAV] ⚠️⚠️⚠️ VirtualResource.__init__ FAILED: {e}", exc_info=True)
+                                    logger.error(f"[WebDAV] VirtualResource.__init__ FAILED: {e}", exc_info=True)
                                     raise
 
                             def get_last_modified(self):
@@ -964,7 +964,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 href = str(self._path)
                                 # Only encode the @ symbol, leave / and other path characters
                                 href = href.replace('@', '%40')
-                                logger.info(f"[WebDAV] ⚠️⚠️⚠️ VirtualResource.get_href called: returning {href}")
+                                logger.debug(f"[WebDAV] VirtualResource.get_href called: returning {href}")
                                 return href
 
                             def get_preferred_path(self):
@@ -1127,7 +1127,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
 
                             def get_property_value(self, name):
                                 """Return value for a specific property (name in Clark notation)."""
-                                logger.info(f"[WebDAV] ⚠️⚠️⚠️ VirtualResource.get_property_value called: name={name}, path={self._path}")
+                                logger.debug(f"[WebDAV] VirtualResource.get_property_value called: name={name}, path={self._path}")
                                 from datetime import datetime
                                 if name == "{{DAV:}}getlastmodified":
                                     ts = self._modified if hasattr(self, '_modified') else 0
@@ -1241,17 +1241,17 @@ class QuotaFilesystemProvider(FilesystemProvider):
                             
                             def __getattr__(self, name):
                                 # Gracefully handle any other method calls
-                                logger.info(f"[WebDAV] ⚠️⚠️⚠️ VirtualResource.__getattr__ called for '{name}' on path {self._path} - returning None")
+                                logger.debug(f"[WebDAV] VirtualResource.__getattr__ called for '{name}' on path {self._path} - returning None")
                                 return None
 
                     # Now get info from remote storage
                     info = self._proxy_get_info(username, rel_path)
-                    logger.info(f"[WebDAV] ⚠️⚠️⚠️ _proxy_get_info returned: info={info}, username={username}, rel_path={rel_path}")
+                    logger.debug(f"[WebDAV] _proxy_get_info returned: info={info}, username={username}, rel_path={rel_path}")
 
                     if info:
                         logger.debug(f"[WebDAV] Got info from proxy: is_dir={info.get('is_directory', False)}, path={rel_path}")
                         result = VirtualResource(normalized_path, info, self, environ=environ)
-                        logger.info(f"[WebDAV] ⚠️⚠️⚠️ Created VirtualResource for {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}, path={result.path}")
+                        logger.debug(f"[WebDAV] Created VirtualResource for {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}, path={result.path}")
                         return result
                     else:
                         # File doesn't exist yet - determine if it's a directory or file request
@@ -1297,7 +1297,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 'modified': time.time(),
                             }
                             result = VirtualResource(normalized_path, info, self, environ=environ)
-                            logger.info(f"[WebDAV] ⚠️⚠️⚠️ Created VirtualResource for new file {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}, path={result.path}")
+                            logger.debug(f"[WebDAV] Created VirtualResource for new file {normalized_path}: is_collection={result.is_collection}, size={result.get_content_length()}, path={result.path}")
                             return result
                 except Exception as e:
                     logger.error(f"[WebDAV] Failed to get info from proxy: {e}", exc_info=True)
@@ -1691,7 +1691,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         # Ensure path is always a string, never a list
                         path_str = str(path[0]) if isinstance(path, list) and len(path) > 0 else str(path)
                         if '005c51179a764e10b61e3a214d38e79d' in str(path):
-                            logger.error(f"[WebDAV] ⚠️⚠️⚠️ SimpleResource.__init__: path={path}, path_str={path_str}, type(path)={type(path)}, type(path_str)={type(path_str)}")
+                            logger.error(f"[WebDAV] SimpleResource.__init__: path={path}, path_str={path_str}, type(path)={type(path)}, type(path_str)={type(path_str)}")
                         # Manually set required attributes without calling super().__init__
                         if environ is None:
                             environ = {"wsgidav.provider": provider} if provider else {}
