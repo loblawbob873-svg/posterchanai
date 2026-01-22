@@ -333,8 +333,12 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 logger.info(f"[WebDAV] Local filesystem at {root_path} will NOT be used when remote storage is configured")
 
         # Initialize cache for directory listings to improve performance
-        # Cache format: {(username, path): (timestamp, items_list)}
-        self._dir_cache: Dict[Tuple[str, str], Tuple[float, list]] = {}
+        # Cache format: {(username, path, ...): (timestamp, items_list)}
+        # Note: Different functions use different key formats:
+        #   - _proxy_list_files: (username, path, depth) - 3-tuple
+        #   - _proxy_get_info: (username, parent_path) - 2-tuple
+        # Using Dict[Tuple, ...] to allow different tuple lengths
+        self._dir_cache: Dict[Tuple, Tuple[float, list]] = {}
         self._cache_ttl = 30.0  # Cache directory listings for 30 seconds (increased for better performance)
         self._cache_lock = threading.Lock()
 
@@ -978,7 +982,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
                 # Get resource info from remote storage
                 try:
                     # Define VirtualResource class before using it
-                    import time
+                    # time is already imported at module level
 
                     class VirtualResource(_DAVResource):
                             def __init__(self, path, info_dict, provider, environ=None):
@@ -1754,7 +1758,7 @@ class QuotaFilesystemProvider(FilesystemProvider):
             environ: WSGI environ dict (used to get SCRIPT_NAME for href generation)
         """
         import requests
-        import time
+        # time is already imported at module level
 
         # Use the same proxying logic as /api/files/list
         # Call storage_server_url/api/storage/list-files with server token
@@ -1829,7 +1833,6 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         last_error = e
                         if attempt < max_retries - 1:
                             logger.warning(f"[WebDAV] Connection error (attempt {attempt + 1}/{max_retries}): {e}, retrying in {retry_delay}s...")
-                            import time
                             time.sleep(retry_delay)
                             retry_delay *= 2
                         else:
@@ -1839,7 +1842,9 @@ class QuotaFilesystemProvider(FilesystemProvider):
                         # Non-connection errors, don't retry
                         logger.error(f"[WebDAV] Storage server request error: {e}")
                         raise
-                    data = response.json()
+                
+                # After successful response, parse JSON
+                data = response.json()
                 
                 # Convert File Manager format to WebDAV format
                 items = data.get('items', [])
@@ -1862,11 +1867,14 @@ class QuotaFilesystemProvider(FilesystemProvider):
                                 del self._dir_cache[old_key]
             
             # Process items into SimpleResource objects (whether from cache or server)
+            # Ensure items is always a list before processing
+            if items is None:
+                items = []
+            
             # wsgidav expects a list of ResourceInfo objects, not dictionaries
             # We need to create virtual filesystem entries and use the parent class to create proper resources
             # OR we can create DAVCollection/DAVNonCollection objects directly
             from datetime import datetime
-            import time
             
             webdav_resources = []
             start_time = time.time()
