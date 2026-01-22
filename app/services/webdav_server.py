@@ -220,9 +220,11 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
     
     # CRITICAL FIX: WSGiDAV strips /webdav/ from hrefs before putting them in XML
     # We must add it back so Flacbox can construct correct GET URLs
+    # Also ensure all property elements are properly namespaced for Flacbox compatibility
     script_name = environ.get('SCRIPT_NAME', '/webdav')
     if script_name:
         hrefs_fixed = 0
+        props_fixed = 0
         for response in multistatus_elem.findall("{DAV:}response"):
             href_elem = response.find("{DAV:}href")
             if href_elem is not None and href_elem.text:
@@ -233,8 +235,23 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                     # Prepend /webdav/ to the href
                     href_elem.text = script_name.rstrip('/') + href_text
                     hrefs_fixed += 1
-        if hrefs_fixed > 0:
-            logger.info(f"[WebDAV] ✅ Fixed {hrefs_fixed} hrefs in XML response by prepending {script_name}")
+            
+            # CRITICAL: Ensure all property elements are properly namespaced
+            # Flacbox may require elements to be in DAV namespace explicitly
+            propstat = response.find("{DAV:}propstat")
+            if propstat is not None:
+                prop = propstat.find("{DAV:}prop")
+                if prop is not None:
+                    # Check if propstat has a status - some clients require this
+                    status = propstat.find("{DAV:}status")
+                    if status is None or not status.text:
+                        # Add status if missing
+                        status_elem = etree.SubElement(propstat, "{DAV:}status")
+                        status_elem.text = "HTTP/1.1 200 OK"
+                        props_fixed += 1
+        
+        if hrefs_fixed > 0 or props_fixed > 0:
+            logger.info(f"[WebDAV] ✅ Fixed {hrefs_fixed} hrefs and {props_fixed} property elements in XML response")
     
     xml_bytes = etree.tostring(multistatus_elem, encoding='utf-8')
     xml_str = xml_bytes.decode('utf-8')
@@ -285,12 +302,16 @@ def _patched_send_multi_status_response(environ, start_response, multistatus_ele
                             if resourcetype is None:
                                 resourcetype = prop.find("resourcetype")
                             logger.info(f"[WebDAV] ⚠️  Audio file in XML: href={href_elem.text}, content-type={content_type.text if content_type is not None and content_type.text else 'MISSING'}, content-length={content_length.text if content_length is not None and content_length.text else 'MISSING'}, resourcetype={resourcetype.tag if resourcetype is not None else 'MISSING'}")
-                            # Log the full prop element as XML for debugging
+                            # Log the full response XML to see the complete structure Flacbox receives
                             try:
+                                # Log the full response element (includes href, propstat, status)
+                                response_xml = etree.tostring(response, encoding='utf-8').decode('utf-8')
+                                logger.info(f"[WebDAV] 🔍 FULL response XML for audio file (what Flacbox sees):\n{response_xml}")
+                                # Also log just the prop for reference
                                 prop_xml = etree.tostring(prop, encoding='utf-8').decode('utf-8')
-                                logger.info(f"[WebDAV] Full prop XML for audio file: {prop_xml[:500]}")
+                                logger.info(f"[WebDAV] Prop XML: {prop_xml}")
                             except Exception as e:
-                                logger.warning(f"[WebDAV] Failed to serialize prop XML: {e}")
+                                logger.warning(f"[WebDAV] Failed to serialize XML: {e}")
                             break
                     else:
                         logger.warning(f"[WebDAV] No propstat found for audio file: {href_elem.text}")
