@@ -2833,10 +2833,14 @@ fieldset legend {
     color: #ffffff !important;
     font-size: 14px !important;
     font-weight: 500 !important;
+    line-height: 1.4 !important;
     cursor: pointer !important;
     display: inline-flex !important;
+    flex-direction: row !important;
     align-items: center !important;
+    justify-content: center !important;
     gap: 6px !important;
+    white-space: nowrap !important;
     opacity: 1 !important;
     visibility: visible !important;
     position: static !important;
@@ -2845,6 +2849,7 @@ fieldset legend {
     left: auto !important;
     bottom: auto !important;
     float: none !important;
+    vertical-align: middle !important;
 }
 
 .file-action-btn:hover,
