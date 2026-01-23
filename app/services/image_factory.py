@@ -144,7 +144,7 @@ async def generate_image_with_load_balancing(
                         logger.info(f"Response from {selected_server}: status={response.status_code}")
                         
                         if response.status_code == 401:
-                            logger.error(f"IMAGE ERROR from {selected_server} | Authentication failed - check IMAGE_API_KEY setting")
+                            logger.error(f"IMAGE ERROR from {selected_server} | Authentication failed - check Global API Key (openai_api_key) setting")
                             return None
                         
                         response.raise_for_status()
