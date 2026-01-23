@@ -297,19 +297,14 @@ class LoadBalancer:
         if not self.servers:
             raise ValueError("No servers configured for load balancing")
 
-        # If only one server, use it directly (don't call get_healthy_server to avoid creating a new cycle)
-        if len(self.servers) == 1:
-            server = self.servers[0]
-            logger.info(f"Using single server: {server}")
-        else:
-            # Get a healthy server from round-robin
-            server = await get_healthy_server(self.servers, self.api_key)
-            if not server:
-                logger.warning("No healthy remote servers - signaling to use local")
-                raise NoHealthyServersError("No healthy remote servers available")
+        # Always use round-robin selection to distribute load
+        server = await get_healthy_server(self.servers, self.api_key)
+        if not server:
+            logger.warning("No healthy remote servers - signaling to use local")
+            raise NoHealthyServersError("No healthy remote servers available")
 
         start_time = time.time()
-        logger.info(f"STREAM REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
+        logger.info(f"[LOAD BALANCER] STREAM REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature} | all_servers={self.servers}")
 
         request_body = {
             "model": self.model,
@@ -417,19 +412,14 @@ class LoadBalancer:
         if not self.servers:
             raise ValueError("No servers configured for load balancing")
 
-        # If only one server, use it directly (don't call get_healthy_server to avoid creating a new cycle)
-        if len(self.servers) == 1:
-            server = self.servers[0]
-            logger.info(f"Using single server: {server}")
-        else:
-            # Get a healthy server from round-robin
-            server = await get_healthy_server(self.servers, self.api_key)
-            if not server:
-                logger.warning("No healthy remote servers - signaling to use local")
-                raise NoHealthyServersError("No healthy remote servers available")
+        # Always use round-robin selection, even for single server (for consistency)
+        server = await get_healthy_server(self.servers, self.api_key)
+        if not server:
+            logger.warning("No healthy remote servers - signaling to use local")
+            raise NoHealthyServersError("No healthy remote servers available")
 
         start_time = time.time()
-        logger.info(f"CHAT REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
+        logger.info(f"[LOAD BALANCER] CHAT REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature} | servers={self.servers}")
 
         request_json = {
             "model": self.model,
