@@ -1058,6 +1058,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                         think_start, tag_pair = find_thinking_open(buffer)
                                         if think_start == -1:
                                             # No thinking tag, send buffered content (keep margin in case tag is split)
+                                            # For very short responses, send immediately to avoid empty bubbles
                                             if len(buffer) > BUFFER_MARGIN:
                                                 to_send = buffer[:-BUFFER_MARGIN]
                                                 buffer = buffer[-BUFFER_MARGIN:]
@@ -1067,6 +1068,15 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                                         "type": "stream",
                                                         "content": to_send
                                                     }, conn_id)
+                                            # If buffer is small but we have content, send it immediately
+                                            elif len(buffer) > 0:
+                                                to_send = buffer
+                                                buffer = ""
+                                                logger.info(f"[STREAM] Sending small chunk immediately, len={len(to_send)}")
+                                                await manager.send_json(user.id, {
+                                                    "type": "stream",
+                                                    "content": to_send
+                                                }, conn_id)
                                             break
                                         else:
                                             # Found opening tag, send content before it and enter thinking mode

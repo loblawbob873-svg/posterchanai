@@ -2230,10 +2230,13 @@ class ChatHandler {
         if (/^\s*<think/i.test(text) || /<think/i.test(text)) {
             return '';
         }
-        // Wait for enough content before showing (in case <think comes later)
-        if (text.trim().length < 50) {
+        // For short responses, show immediately (don't wait for 50 chars)
+        // Only wait if we're not sure if thinking tag is coming (very short content)
+        if (text.trim().length < 10) {
+            // Very short - might have thinking tag, wait a bit
             return '';
         }
+        // Show content if it's 10+ chars or if we're at stream end
         return text;
     }
 
@@ -2243,8 +2246,15 @@ class ChatHandler {
             // Use buffered content instead of reading from DOM, with thinking stripped
             const content = this.stripThinkingTags(this.fullStreamContent);
 
+            // Always show content at stream end, even if it's short
             // Final render with complete content
-            contentEl.innerHTML = this.formatMessage(content);
+            if (content || this.fullStreamContent.trim()) {
+                // If stripThinkingTags returned empty but we have content, show it anyway
+                const displayContent = content || this.fullStreamContent.trim();
+                contentEl.innerHTML = this.formatMessage(displayContent);
+            } else {
+                contentEl.innerHTML = this.formatMessage('');
+            }
 
             // Add copy button
             const copyBtn = document.createElement('button');
