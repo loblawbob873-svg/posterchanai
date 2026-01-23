@@ -1271,9 +1271,11 @@ async def list_files(
                 # Convert WebDAV items to file manager format
                 result_items = []
                 for item in items:
+                    # Ensure path is relative (no leading slash) for file manager
+                    item_path = item["path"].lstrip('/')
                     result_items.append({
                         "name": item["name"],
-                        "path": item["path"],
+                        "path": item_path,
                         "is_directory": item["is_directory"],
                         "size": item["size"],
                         "modified": item["modified"],
