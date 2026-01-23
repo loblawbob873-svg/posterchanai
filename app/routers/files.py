@@ -1891,8 +1891,6 @@ async def email_files(
     # Handle file URLs
     if request.file_urls:
         raise HTTPException(status_code=400, detail="File URLs are not supported")
-                logger.error(f"Error fetching file from URL {file_url}: {e}")
-                raise HTTPException(status_code=500, detail=f"Error fetching file: {file_url}")
     
     # Handle file paths (regular files)
     if request.file_paths:
