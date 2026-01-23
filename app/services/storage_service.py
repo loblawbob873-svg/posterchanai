@@ -711,78 +711,7 @@ class StorageService:
             logger.error(f"[STORAGE] Error proxying mail attachment: {e}", exc_info=True)
             raise
 
-    def delete_note_attachment(self, username: str, note_id: int, filename: str, bypass_proxy: bool = False) -> bool:
-        """Delete a specific attachment file for a note. Proxies to storage server if configured."""
-        # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
-        if not bypass_proxy:
-            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-            if storage_server_url and storage_server_url.value:
-                # Validate URL has protocol before proxying
-                url = storage_server_url.value.strip()
-                if url.startswith(('http://', 'https://')):
-                    # Valid URL - try to proxy
-                    try:
-                        return self._proxy_delete_note_attachment(url, username, note_id, filename)
-                    except Exception as e:
-                        # If proxy fails, raise error instead of falling back to local storage
-                        logger.error(f"[STORAGE] Failed to proxy delete_note_attachment to {url}: {e}")
-                        raise Exception(f"Failed to delete note attachment from storage server: {e}")
-                else:
-                    logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
-        
-        # Local file deletion (storage server node or when bypassing proxy)
-        try:
-            note_path = self.get_note_path(username, note_id)
-            safe_filename = _sanitize_path_component(filename)
-            file_path = note_path / safe_filename
-
-            # Verify path is within upload directory (already checked by get_note_path)
-            if not _validate_path_within_base(file_path, Path(self.upload_path)):
-                logger.warning(f"Path traversal attempt blocked in delete_note_attachment: {username}/{note_id}/{filename}")
-                return False
-
-            if file_path.exists():
-                file_path.unlink()
-                return True
-            return False
-        except ValueError as e:
-            logger.warning(f"Invalid path component in delete_note_attachment: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Error deleting note attachment: {e}")
-            return False
-    
-    def delete_note_attachments(self, username: str, note_id: int, bypass_proxy: bool = False) -> bool:
-        """Delete all attachments for a note. Proxies to storage server if configured."""
-        # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
-        if not bypass_proxy:
-            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-            if storage_server_url and storage_server_url.value:
-                # Proxy to storage server
-                return self._proxy_delete_note_attachments(storage_server_url.value, username, note_id)
-        
-        # Local file deletion (storage server node or when bypassing proxy)
-        try:
-            note_path = self.get_note_path(username, note_id)
-            safe_note_id = _sanitize_path_component(str(note_id))
-            
-            if not _validate_path_within_base(note_path, Path(self.upload_path)):
-                logger.warning(f"Path traversal attempt blocked in delete_note_attachments: {username}/{note_id}")
-                return False
-            
-            if note_path.exists():
-                shutil.rmtree(note_path)
-                logger.info(f"Deleted note attachments directory: {note_path}")
-                return True
-            logger.warning(f"Note attachments directory not found: {note_path}")
-            return False
-        except ValueError as e:
-            logger.warning(f"Invalid path component in delete_note_attachments: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Error deleting note attachments: {e}", exc_info=True)
-            return False
-    
+    # Note attachment methods removed - notes feature was removed
 
 
 def get_storage_service(db: Session) -> StorageService:

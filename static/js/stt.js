@@ -76,20 +76,7 @@ const VOICE_COMMANDS = [
     { patterns: [/^notes\s+folder\s+(.+)$/i], command: 'notes folder $1' },
 
     // ==================== MUSIC ====================
-    { patterns: [/^play\s+music$/i], command: 'music shuffle' },
-    { patterns: [/^(my\s+)?music$/i], command: 'music browse' },
-    { patterns: [/^(play|search)\s+(song|music)\s+(.+)$/i], command: 'music search $3' },
-    { patterns: [/^play\s+(\d+)$/i], command: 'music play $1' },
-    { patterns: [/^play\s+(track|song)\s+(\d+)$/i], command: 'music play $2' },
-    { patterns: [/^(next|skip)(\s+song)?$/i], command: 'music skip' },
-    { patterns: [/^(previous|prev|back)(\s+song)?$/i], command: 'music prev' },
-    { patterns: [/^random(\s+song)?$/i], command: 'music random' },
-    { patterns: [/^(stop|pause)(\s+music)?$/i], command: 'music stop' },
-    { patterns: [/^(resume|continue)(\s+music)?$/i], command: 'music play' },
-    { patterns: [/^play\s+(something\s+)?(relaxing|chill|calm)$/i], command: 'music mood relaxing' },
-    { patterns: [/^play\s+(something\s+)?(upbeat|energetic|happy)$/i], command: 'music mood upbeat' },
-    { patterns: [/^play\s+(something\s+)?(sad|melancholy)$/i], command: 'music mood sad' },
-    { patterns: [/^play\s+(something\s+)?(focus|study|work)$/i], command: 'music mood focus' },
+    // Music commands removed
 
     // ==================== NEWS ====================
     { patterns: [/^(the\s+)?news$/i], command: 'news' },

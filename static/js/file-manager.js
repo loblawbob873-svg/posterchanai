@@ -49,7 +49,8 @@ class FileManager {
             return false;
         };
         
-        // Open file manager button (from user settings)
+        // Open file manager button (from user settings) - button may not exist, that's OK
+        // Note: openFileManagerBtn may not exist in all templates, so this will just log a warning
         attachButtonListener('openFileManagerBtn', () => this.open());
         
         // Open file manager button (from chat UI)

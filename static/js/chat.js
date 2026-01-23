@@ -1011,35 +1011,7 @@ class ChatHandler {
             });
         }
 
-        // Test Local Music connection
-        if (testLocalMusic) {
-            testLocalMusic.addEventListener('click', async () => {
-                testMusicResult.textContent = 'Testing...';
-                testMusicResult.className = 'test-result';
-                testMusicResult.style.display = 'block';
-                try {
-                    const response = await csrfFetch('/api/music/test-directory', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            directory: localMusicDir.value.trim(),
-                            recursive: musicRecursiveScan.checked
-                        })
-                    });
-                    const data = await response.json();
-                    if (data.success) {
-                        testMusicResult.textContent = `✓ ${data.message} (${data.track_count || 0} tracks found)`;
-                        testMusicResult.className = 'test-result success';
-                    } else {
-                        testMusicResult.textContent = `✗ ${data.error || data.message || 'Test failed'}`;
-                        testMusicResult.className = 'test-result error';
-                    }
-                } catch (e) {
-                    testMusicResult.textContent = `✗ Error: ${e.message}`;
-                    testMusicResult.className = 'test-result error';
-                }
-            });
-        }
+        // Music test functionality removed - elements no longer exist
 
         if (settingsBtn && settingsModal) {
             settingsBtn.addEventListener('click', async () => {
@@ -1131,9 +1103,7 @@ class ChatHandler {
                         }
 
                         
-                        // Load Local Music settings
-                        if (localMusicDir) localMusicDir.value = data.local_music_dir || '';
-                        if (musicRecursiveScan) musicRecursiveScan.checked = data.music_recursive_scan !== false;
+                        // Music settings removed
                     }
                 } catch (e) {
                     console.error('Failed to load settings:', e);
@@ -1351,23 +1321,7 @@ class ChatHandler {
                 settingsData.mail_accounts = collectMailAccountData();
 
                 
-                // Add Local Music settings
-                console.log('Local Music settings available:', {
-                    dirEl: !!localMusicDir,
-                    recursiveEl: !!musicRecursiveScan,
-                    dirVal: localMusicDir?.value,
-                    recursiveVal: musicRecursiveScan?.checked
-                });
-                if (localMusicDir) {
-                    settingsData.local_music_dir = localMusicDir.value.trim();
-                }
-                if (musicRecursiveScan) {
-                    settingsData.music_recursive_scan = musicRecursiveScan.checked;
-                }
-                console.log('Local Music in settingsData:', {
-                    dir: settingsData.local_music_dir,
-                    recursive: settingsData.music_recursive_scan
-                });
+                // Music settings removed
 
                 try {
                     const response = await csrfFetch('/api/auth/settings', {
@@ -2086,16 +2040,6 @@ class ChatHandler {
         const decodedCmd = textarea.value;
 
         // Notes command removed - no longer intercepting notes commands
-                    const folderName = decodedCmd.substring('notes folder '.length).trim();
-                    // Folder filtering would need folder name lookup - for now just open browser
-                }
-                return;  // Don't send to server
-            } else if (window.openNotesModal) {
-                // Fallback to modal if browser not available
-                window.openNotesModal();
-                return;  // Don't send to server
-            }
-        }
 
         // Intercept cal get commands to open edit modal in WebUI
         const calGetMatch = decodedCmd.match(/^cal\s+get\s+(\S+)/i);
@@ -2557,81 +2501,13 @@ class ChatHandler {
                     htmlPreview: html.substring(0, 1000)
                 });
             }
-        } else if (data.type === 'music_play' && data.track && window.musicPlayer) {
-            // Play single track
-            window.musicPlayer.play(data.track);
-        } else if (data.type === 'music_playlist' && data.tracks && window.musicPlayer) {
-            // Play playlist (multiple tracks)
-            window.musicPlayer.clearQueue();
-            data.tracks.forEach(t => window.musicPlayer.addToQueue(t));
-            if (data.tracks.length > 0) {
-                window.musicPlayer.play(data.tracks[0]);
-            }
+        } else if (data.type === 'music_play' || data.type === 'music_playlist') {
+            // Music features removed
         } else if (data.type === 'text' && data.content && data.content.includes('🔍 **Search Results:**')) {
-            // Music search results - add play buttons
-            // Work with raw content to parse track numbers
-            console.log('[MUSIC SEARCH] Parsing results:', data.content.substring(0, 200));
-            const lines = data.content.split('\n');
-            let musicHtml = '<div class="music-search-results">';
-            let i = 0;
-            let trackCount = 0;
-            
-            while (i < lines.length) {
-                const line = lines[i];
-                
-                // Match track lines like "1. Track Name" (with or without markdown formatting)
-                // Handle both "1. Track Name" and "**1.** Track Name" formats
-                const trackMatch = line.match(/^(?:\*\*)?(\d+)\.(?:\*\*)?\s+(.+?)(?:\s+\[.*?\])?$/);
-                if (trackMatch) {
-                    trackCount++;
-                    const num = trackMatch[1];
-                    // Extract track name - remove any markdown links or buttons that might be on the same line
-                    let trackName = trackMatch[2].trim();
-                    // Remove any markdown links like [text](url) that might be at the end
-                    trackName = trackName.replace(/\s*\[.*?\]\(.*?\)\s*$/, '').trim();
-                    trackName = this.escapeHtml(trackName);
-                    
-                    // Check if next line is the path/details line (starts with 📂)
-                    let trackDetails = '';
-                    if (i + 1 < lines.length && lines[i + 1].trim().startsWith('📂')) {
-                        trackDetails = this.escapeHtml(lines[i + 1].trim());
-                        i++; // Skip the details line
-                    }
-                    
-                    console.log(`[MUSIC SEARCH] Adding track ${num}: ${trackName}`);
-                    musicHtml += `<div class="music-track-result">
-                        <div class="track-main">
-                            <span class="track-number">${num}.</span>
-                            <div class="track-info-col">
-                                <div class="track-name">${trackName}</div>
-                                ${trackDetails ? `<div class="track-details">${trackDetails}</div>` : ''}
-                            </div>
-                            <button class="btn-action-sm" onclick="(function(){const cmd='music play ${num}';if(window.sendMessage){window.sendMessage(cmd);}else if(window.chatHandler&&window.chatHandler.messageInput){window.chatHandler.messageInput.value=cmd;window.chatHandler.sendMessage();}else{console.error('sendMessage not available');}})();" title="Play this track">▶️</button>
-                        </div>
-                    </div>`;
-                } else if (line.trim() && !line.startsWith('📂')) {
-                    // Other lines (headers, instructions, etc) - but skip detail lines
-                    musicHtml += `<div class="music-info">${this.escapeHtml(line)}</div>`;
-                }
-                i++;
-            }
-            
-            console.log(`[MUSIC SEARCH] Total tracks added: ${trackCount}`);
-            musicHtml += '</div>';
-            musicHtml += `<div class="music-search-actions">
-                <button class="btn-action" onclick="console.log('Play All clicked'); window.sendMessage('music queueall')" title="Play all search results">▶️ Play All</button>
-            </div>`;
-            
-            html = musicHtml;
-        } else if (data.type === 'music_next' && window.musicPlayer) {
-            // Skip to next track
-            window.musicPlayer.next();
-        } else if (data.type === 'music_prev' && window.musicPlayer) {
-            // Go to previous track
-            window.musicPlayer.prev();
-        } else if (data.type === 'music_stop' && window.musicPlayer) {
-            // Stop playback
-            window.musicPlayer.stop();
+            // Music search results removed - just show formatted text
+            html = contentHtml;
+        } else if (data.type === 'music_next' || data.type === 'music_prev' || data.type === 'music_stop') {
+            // Music player controls removed
         } else {
             // Default: just use formatted content
             html = contentHtml;
@@ -4102,10 +3978,6 @@ class ChatHandler {
                     this.noteTitles = noteTitles;
 
                     // Notes autocomplete removed - no longer loading note titles
-                    // Use a copy to avoid modifying the original array
-                    this.subcommands['notes search'] = [...noteTitles];
-                    this.subcommands['note find'] = [...noteTitles];
-                    this.subcommands['find note'] = [...noteTitles];
                     
                     console.log('Note titles added to autocomplete:', noteTitles.length, 'titles');
                 }
@@ -4141,13 +4013,10 @@ class ChatHandler {
         'mail archive': [],
         'mail send': [],
         // Music subcommands
-        'music': ['browse', 'search', 'play', 'random', 'skip', 'next', 'prev', 'queue', 'mood', 'stop'],
-        'music mood': ['chill', 'upbeat', 'focus', 'workout', 'relaxing', 'energetic', 'party', 'calm'],
-        'music queue': ['add', 'clear'],
+        // Music subcommands removed
         // Todo subcommands
         'todo': ['add', 'rm', 'list'],
-        // Notes subcommands
-        'notes': ['search', 'folder', 'new', 'list'],
+        // Notes subcommands removed
         // RSS subcommands
         'rss': ['sync', 'add', 'remove', 'list', 'search'],
         // YouTube download subcommands
@@ -4198,24 +4067,7 @@ class ChatHandler {
                 return;
             }
             
-            // Special case: notes search / note find / find note - show note title suggestions
-            if (/^(notes\s+search|note\s+find|find\s+note)$/i.test(cmdPrefix) && this.noteTitles && this.noteTitles.length > 0) {
-                // Filter note titles that match the current input
-                const searchTerm = lastPart.toLowerCase();
-                const matches = this.noteTitles.filter(title => 
-                    title.toLowerCase().includes(searchTerm)
-                ).slice(0, 5); // Limit to 5 suggestions
-                
-                if (matches.length === 1 && matches[0].toLowerCase().startsWith(searchTerm)) {
-                    // Auto-complete if single match
-                    const completed = cmdPrefix + ' ' + matches[0];
-                    this.messageInput.value = completed + input.substring(cursorPos);
-                    this.messageInput.setSelectionRange(completed.length, completed.length);
-                } else if (matches.length > 0) {
-                    this.showToast(`Note suggestions: ${matches.join(', ')}`);
-                }
-                return;
-            }
+            // Notes autocomplete removed
             // Special case: mail forward/send <account> <id> -> suggest recipient emails
             let effectiveCmdPrefix = cmdPrefix;
             if (/^mail\s+(forward|send)\s+\S+\s+\d+$/i.test(cmdPrefix)) {

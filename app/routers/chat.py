@@ -947,10 +947,23 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                     if len(file_content) > max_file_chars:
                                         file_content = file_content[:max_file_chars] + "\n\n[File content truncated - document is too large]"
                                 
-                                messages.append({
-                                    "role": "user",
-                                    "content": f"Here is a file the user uploaded:\n\n```\n{file_content}\n```\n\nUser's message: {content}"
-                                })
+                                # If user message is just "summarize" or similar, make the instruction explicit
+                                user_message_lower = (content or "").lower().strip()
+                                summarize_keywords = ["summarize", "summarise", "summary", "summarie"]
+                                is_summarize_request = any(keyword in user_message_lower for keyword in summarize_keywords) and len(user_message_lower.split()) <= 3
+                                
+                                if is_summarize_request or not content or len(content.strip()) < 5:
+                                    # User wants a summary or gave minimal instruction - be explicit
+                                    messages.append({
+                                        "role": "user",
+                                        "content": f"The user uploaded a file and asked you to summarize it. Please provide a comprehensive summary of the following file content:\n\n```\n{file_content}\n```\n\nProvide a detailed summary covering the main points, key information, and important details from the document."
+                                    })
+                                else:
+                                    # User provided specific instructions - include both file and their message
+                                    messages.append({
+                                        "role": "user",
+                                        "content": f"Here is a file the user uploaded:\n\n```\n{file_content}\n```\n\nUser's message: {content}"
+                                    })
                             elif url_context:
                                 logger.info(f"Adding {len(url_context)} chars of URL context to message")
                                 messages.append({
