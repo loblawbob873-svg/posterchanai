@@ -112,27 +112,61 @@ async def generate_image_with_load_balancing(
                     payload["cfg"] = cfg
                 
                 try:
+                    # Get authentication token from environment or settings
+                    headers = {}
+                    import os
+                    # Check environment variable first (matches image_api.py)
+                    image_api_key = os.getenv("IMAGE_API_KEY", "")
+                    # Also check database settings as fallback
+                    if not image_api_key:
+                        image_api_key = settings.get("image_api_key", "")
+                    
+                    if image_api_key:
+                        headers["X-API-Key"] = image_api_key
+                        logger.debug(f"Using API key authentication for {selected_server}")
+                    else:
+                        # No API key configured - endpoint should allow unauthenticated if no API key is set
+                        logger.debug(f"No API key configured - using unauthenticated request to {selected_server}")
+                    
                     async with httpx.AsyncClient(timeout=timeout) as client:
+                        logger.info(f"Sending image generation request to {selected_server} with prompt: {prompt[:50]}...")
                         response = await client.post(
                             f"{selected_server}/api/generate-image",
-                            json=payload
+                            json=payload,
+                            headers=headers
                         )
+                        
+                        # Log response status for debugging
+                        logger.info(f"Response from {selected_server}: status={response.status_code}")
+                        
+                        if response.status_code == 401:
+                            logger.error(f"IMAGE ERROR from {selected_server} | Authentication failed - check IMAGE_API_KEY setting")
+                            return None
+                        
                         response.raise_for_status()
                         result = response.json()
                         
                         if result.get("error"):
                             logger.error(f"IMAGE ERROR from {selected_server} | error={result['error']}")
+                            logger.error(f"Full error response: {result}")
                             return None
                         
                         image_data = result.get("image")
                         if image_data:
-                            logger.info(f"IMAGE COMPLETE from {selected_server}")
+                            logger.info(f"IMAGE COMPLETE from {selected_server} ({len(image_data)} chars)")
                             return image_data
                         else:
-                            logger.error(f"IMAGE ERROR from {selected_server} | no image in response")
+                            logger.error(f"IMAGE ERROR from {selected_server} | no image in response, result keys: {list(result.keys())}")
                             return None
+                except httpx.HTTPStatusError as e:
+                    error_text = e.response.text[:500] if hasattr(e.response, 'text') else str(e)
+                    logger.error(f"Remote image generation HTTP error from {selected_server}: {e.response.status_code} - {error_text}")
+                    return None
+                except httpx.TimeoutException:
+                    logger.error(f"Remote image generation timeout from {selected_server} (timeout={timeout}s)")
+                    return None
                 except Exception as e:
-                    logger.error(f"Remote image generation failed: {e}")
+                    logger.error(f"Remote image generation failed from {selected_server}: {type(e).__name__}: {e}", exc_info=True)
                     return None
                 
                 # OLD CODE - creates new cycle, causing issues
