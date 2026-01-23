@@ -1147,6 +1147,97 @@ async def test_custom_image_connection(
         )
 
 
+@router.post("/test-webdav", response_model=TestConnectionResponse)
+async def test_webdav_connection(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Test WebDAV storage connection."""
+    try:
+        data = await request.json()
+        url = data.get("url", "").strip()
+        username = data.get("username", "").strip()
+        password = data.get("password", "").strip()
+        
+        if not url:
+            return TestConnectionResponse(
+                success=False,
+                message="WebDAV URL is required"
+            )
+        
+        if not username:
+            return TestConnectionResponse(
+                success=False,
+                message="WebDAV username is required"
+            )
+        
+        # Test WebDAV connection by trying to list root directory
+        import httpx
+        from urllib.parse import urljoin
+        
+        base_url = url.rstrip('/')
+        test_url = urljoin(base_url + '/', '')
+        
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+                # Try PROPFIND on root
+                propfind_body = """<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:">
+    <d:prop>
+        <d:resourcetype/>
+    </d:prop>
+</d:propfind>"""
+                
+                response = await client.request(
+                    "PROPFIND",
+                    test_url,
+                    content=propfind_body,
+                    headers={
+                        "Content-Type": "application/xml",
+                        "Depth": "0"
+                    },
+                    auth=httpx.BasicAuth(username, password)
+                )
+                
+                if response.status_code in (200, 207):
+                    return TestConnectionResponse(
+                        success=True,
+                        message="WebDAV connection successful!"
+                    )
+                else:
+                    return TestConnectionResponse(
+                        success=False,
+                        message=f"WebDAV server returned status {response.status_code}"
+                    )
+        except httpx.ConnectError:
+            return TestConnectionResponse(
+                success=False,
+                message="Cannot connect to WebDAV server. Check URL and network."
+            )
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                return TestConnectionResponse(
+                    success=False,
+                    message="Authentication failed. Check username and password."
+                )
+            return TestConnectionResponse(
+                success=False,
+                message=f"WebDAV server error: {e.response.status_code}"
+            )
+        except Exception as e:
+            return TestConnectionResponse(
+                success=False,
+                message=f"Connection test failed: {str(e)}"
+            )
+    except Exception as e:
+        logger.error(f"Error testing WebDAV connection: {e}", exc_info=True)
+        return TestConnectionResponse(
+            success=False,
+            message=f"Error: {str(e)}"
+        )
+
+
 # ============== Calendar Event API ==============
 
 def rrule_to_human(rrule: str) -> str:

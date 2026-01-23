@@ -403,7 +403,7 @@ async def download_and_save_to_music(
     subfolder: str = "YouTube"
 ) -> DownloadResult:
     """
-    Download YouTube video as MP3 and save to user's local music folder.
+    Download YouTube video as MP3 and save to user's music folder (WebDAV or local).
 
     Args:
         url: YouTube video URL
@@ -412,25 +412,16 @@ async def download_and_save_to_music(
         subfolder: Subfolder within music library (default: "YouTube")
 
     Returns:
-        DownloadResult with success status and local path
+        DownloadResult with success status and storage path
     """
     from app.services.local_music_service import get_user_music_config
+    from app.services.webdav_storage_client import WebDAVStorageClient
     from pathlib import Path
+    import tempfile
 
-    # Check music directory config
-    config = get_user_music_config(user_id, db)
-    if not config or not config.get('directory'):
-        return DownloadResult(
-            success=False,
-            error="Music directory not configured. Go to Settings > Music to set up your local music folder."
-        )
-
-    music_dir = Path(config['directory'])
-    if not music_dir.exists() or not music_dir.is_dir():
-        return DownloadResult(
-            success=False,
-            error="Music directory does not exist or is not accessible."
-        )
+    # Check if user has WebDAV storage enabled
+    webdav_client = WebDAVStorageClient(db, user_id)
+    use_webdav = webdav_client.is_enabled()
 
     # Check yt-dlp available
     if not check_ytdlp_available():
@@ -439,25 +430,96 @@ async def download_and_save_to_music(
             error="yt-dlp not installed. Install with: pip install yt-dlp"
         )
 
-    # Create subfolder if needed
-    target_dir = music_dir / subfolder
-    target_dir.mkdir(parents=True, exist_ok=True)
-
+    # Download to temp directory first
+    temp_dir = tempfile.mkdtemp(prefix='ytdl_audio_')
+    
     try:
-        # Download directly to target directory
-        logger.info(f"Downloading YouTube video to: {target_dir}")
-        result = download_as_mp3(url, str(target_dir))
+        logger.info(f"Downloading YouTube video to temp: {temp_dir}")
+        result = download_as_mp3(url, temp_dir)
 
-        if result.success:
-            # Update path to be relative to music directory
+        if not result.success:
+            return result
+
+        # Now save to WebDAV or local music directory
+        if use_webdav:
+            # Save to WebDAV
+            import asyncio
+            music_path = f"Music/{subfolder}/{result.filename}"
+            
+            try:
+                # Read the downloaded file
+                with open(result.local_path, 'rb') as f:
+                    file_data = f.read()
+                
+                async def _save_to_webdav():
+                    await webdav_client.save_file(music_path, file_data, "audio/mpeg")
+                    return music_path
+                
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    def _run_in_new_loop():
+                        new_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(new_loop)
+                        try:
+                            return new_loop.run_until_complete(_save_to_webdav())
+                        finally:
+                            new_loop.close()
+                    
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(_run_in_new_loop)
+                        webdav_path = future.result()
+                else:
+                    webdav_path = loop.run_until_complete(_save_to_webdav())
+                
+                result.storage_path = webdav_path
+                logger.info(f"Successfully saved to WebDAV: {webdav_path}")
+            except Exception as e:
+                logger.error(f"Error saving to WebDAV: {e}", exc_info=True)
+                return DownloadResult(
+                    success=False,
+                    error=f"Failed to save to WebDAV: {str(e)}"
+                )
+        else:
+            # Save to local music directory
+            config = get_user_music_config(user_id, db)
+            if not config or not config.get('directory'):
+                return DownloadResult(
+                    success=False,
+                    error="Music directory not configured. Go to Settings > Music to set up your local music folder."
+                )
+
+            music_dir = Path(config['directory'])
+            if not music_dir.exists() or not music_dir.is_dir():
+                return DownloadResult(
+                    success=False,
+                    error="Music directory does not exist or is not accessible."
+                )
+
+            # Create subfolder if needed
+            target_dir = music_dir / subfolder
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            # Copy file to music directory
+            import shutil
+            target_file = target_dir / result.filename
+            shutil.copy2(result.local_path, target_file)
+            
             result.storage_path = f"{subfolder}/{result.filename}"
-            logger.info(f"Successfully saved: {result.storage_path}")
+            logger.info(f"Successfully saved to local: {result.storage_path}")
 
         return result
 
     except Exception as e:
-        logger.error(f"Download error: {e}")
+        logger.error(f"Download error: {e}", exc_info=True)
         return DownloadResult(success=False, error=str(e))
+    finally:
+        # Clean up temp directory
+        try:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except:
+            pass
 
 
 async def download_video_and_save_to_music(
@@ -534,7 +596,7 @@ async def download_video_and_save_to_storage(
     quality: str = "best"
 ) -> DownloadResult:
     """
-    Download YouTube video and save to user's storage directory.
+    Download YouTube video and save to user's storage (WebDAV or local).
 
     Args:
         url: YouTube video URL
@@ -544,21 +606,17 @@ async def download_video_and_save_to_storage(
         quality: Video quality preference (default: "best")
 
     Returns:
-        DownloadResult with success status and local path
+        DownloadResult with success status and storage path
     """
+    from app.services.webdav_storage_client import WebDAVStorageClient
+    from app.models import User
     from pathlib import Path
     from app.models import Setting
-    
-    # Get upload path from settings (same as File Manager)
-    upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
-    upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
-    
-    upload_base = Path(upload_path)
-    if not upload_base.exists() or not upload_base.is_dir():
-        return DownloadResult(
-            success=False,
-            error="Storage path does not exist or is not accessible."
-        )
+    import tempfile
+
+    # Check if user has WebDAV storage enabled
+    webdav_client = WebDAVStorageClient(db, user_id)
+    use_webdav = webdav_client.is_enabled()
 
     # Check yt-dlp available
     if not check_ytdlp_available():
@@ -567,30 +625,95 @@ async def download_video_and_save_to_storage(
             error="yt-dlp not installed. Install with: pip install yt-dlp"
         )
 
-    # Create user's storage directory and subfolder
-    from app.models import User
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return DownloadResult(success=False, error="User not found")
+
+    # Download to temp directory first
+    temp_dir = tempfile.mkdtemp(prefix='ytdl_video_')
     
-    user_storage = upload_base / user.username / subfolder
-    user_storage.mkdir(parents=True, exist_ok=True)
-
     try:
-        # Download video directly to target directory
-        logger.info(f"Downloading YouTube video to: {user_storage}")
-        result = download_as_video(url, str(user_storage), quality)
+        logger.info(f"Downloading YouTube video to temp: {temp_dir}")
+        result = download_as_video(url, temp_dir, quality)
 
-        if result.success:
-            # Update path to be relative to user's storage
+        if not result.success:
+            return result
+
+        # Now save to WebDAV or local storage
+        if use_webdav:
+            # Save to WebDAV
+            import asyncio
+            storage_path = f"{subfolder}/{result.filename}"
+            
+            try:
+                # Read the downloaded file
+                with open(result.local_path, 'rb') as f:
+                    file_data = f.read()
+                
+                async def _save_to_webdav():
+                    await webdav_client.save_file(storage_path, file_data, "video/mp4")
+                    return storage_path
+                
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    def _run_in_new_loop():
+                        new_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(new_loop)
+                        try:
+                            return new_loop.run_until_complete(_save_to_webdav())
+                        finally:
+                            new_loop.close()
+                    
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(_run_in_new_loop)
+                        webdav_path = future.result()
+                else:
+                    webdav_path = loop.run_until_complete(_save_to_webdav())
+                
+                result.storage_path = webdav_path
+                logger.info(f"Successfully saved to WebDAV: {webdav_path}")
+            except Exception as e:
+                logger.error(f"Error saving to WebDAV: {e}", exc_info=True)
+                return DownloadResult(
+                    success=False,
+                    error=f"Failed to save to WebDAV: {str(e)}"
+                )
+        else:
+            # Save to local storage
+            upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
+            upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
+            
+            upload_base = Path(upload_path)
+            if not upload_base.exists() or not upload_base.is_dir():
+                return DownloadResult(
+                    success=False,
+                    error="Storage path does not exist or is not accessible."
+                )
+            
+            user_storage = upload_base / user.username / subfolder
+            user_storage.mkdir(parents=True, exist_ok=True)
+
+            # Copy file to storage directory
+            import shutil
+            target_file = user_storage / result.filename
+            shutil.copy2(result.local_path, target_file)
+            
             result.storage_path = f"{subfolder}/{result.filename}"
-            logger.info(f"Successfully saved: {result.storage_path}")
+            logger.info(f"Successfully saved to local: {result.storage_path}")
 
         return result
 
     except Exception as e:
-        logger.error(f"Download error: {e}")
+        logger.error(f"Download error: {e}", exc_info=True)
         return DownloadResult(success=False, error=str(e))
+    finally:
+        # Clean up temp directory
+        try:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except:
+            pass
 
 
 def format_download_result(result: DownloadResult) -> str:

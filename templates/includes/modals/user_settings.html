@@ -397,7 +397,35 @@ foxnews.com|Fox News"></textarea>
 
                 <!-- Storage & Cloud Tab -->
                 <div class="user-tab-content" id="user-tab-storage">
-                    <!-- WebDAV section removed -->
+                    <fieldset>
+                        <legend>WebDAV Storage</legend>
+                        <p class="fieldset-info">Configure WebDAV storage backend. All files will be stored on your WebDAV server instead of local disk.</p>
+                        <div class="form-group">
+                            <label for="webdavStorageEnabled">
+                                <input type="checkbox" id="webdavStorageEnabled" name="webdavStorageEnabled"> Enable WebDAV Storage
+                            </label>
+                            <small>When enabled, all files (images, attachments, music, etc.) will be stored on your WebDAV server.</small>
+                        </div>
+                        <div class="form-group" id="webdavStorageSettings" style="display: none;">
+                            <label for="webdavStorageUrl">WebDAV Server URL</label>
+                            <input type="url" id="webdavStorageUrl" name="webdavStorageUrl" placeholder="https://webdav.example.com">
+                            <small>Full URL to your WebDAV server (e.g., https://webdav.example.com or https://example.com/webdav)</small>
+                        </div>
+                        <div class="form-group" id="webdavStorageUsernameSettings" style="display: none;">
+                            <label for="webdavStorageUsername">WebDAV Username</label>
+                            <input type="text" id="webdavStorageUsername" name="webdavStorageUsername" placeholder="username">
+                            <small>Username for WebDAV authentication</small>
+                        </div>
+                        <div class="form-group" id="webdavStoragePasswordSettings" style="display: none;">
+                            <label for="webdavStoragePassword">WebDAV Password</label>
+                            <input type="password" id="webdavStoragePassword" name="webdavStoragePassword" placeholder="Leave blank to keep existing password">
+                            <small>Password for WebDAV authentication. Leave blank to keep existing password.</small>
+                        </div>
+                        <div class="form-group" style="margin-top: 10px;">
+                            <button type="button" class="btn-secondary" id="testWebDAVStorage">Test WebDAV Connection</button>
+                            <div id="testWebDAVResult" class="test-result" style="display: none; margin-top: 10px;"></div>
+                        </div>
+                    </fieldset>
 
                     <fieldset>
                         <legend>CalDAV Calendar</legend>

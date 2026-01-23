@@ -762,6 +762,94 @@ class ChatHandler {
         const mailAccountList = document.getElementById('mailAccountList');
         const addMailAccount = document.getElementById('addMailAccount');
 
+        // WebDAV Storage elements
+        const webdavStorageEnabled = document.getElementById('webdavStorageEnabled');
+        const webdavStorageSettings = document.getElementById('webdavStorageSettings');
+        const webdavStorageUsernameSettings = document.getElementById('webdavStorageUsernameSettings');
+        const webdavStoragePasswordSettings = document.getElementById('webdavStoragePasswordSettings');
+        const webdavStorageUrl = document.getElementById('webdavStorageUrl');
+        const webdavStorageUsername = document.getElementById('webdavStorageUsername');
+        const webdavStoragePassword = document.getElementById('webdavStoragePassword');
+        const testWebDAVStorage = document.getElementById('testWebDAVStorage');
+        const testWebDAVResult = document.getElementById('testWebDAVResult');
+        
+        // Toggle WebDAV Storage settings visibility
+        function toggleWebDAVStorageSettings(enabled) {
+            if (webdavStorageSettings) webdavStorageSettings.style.display = enabled ? 'block' : 'none';
+            if (webdavStorageUsernameSettings) webdavStorageUsernameSettings.style.display = enabled ? 'block' : 'none';
+            if (webdavStoragePasswordSettings) webdavStoragePasswordSettings.style.display = enabled ? 'block' : 'none';
+        }
+        
+        // Setup WebDAV Storage toggle
+        if (webdavStorageEnabled) {
+            webdavStorageEnabled.addEventListener('change', (e) => {
+                toggleWebDAVStorageSettings(e.target.checked);
+            });
+            // Initial state
+            toggleWebDAVStorageSettings(webdavStorageEnabled.checked);
+        }
+        
+        // Test WebDAV Storage connection
+        if (testWebDAVStorage) {
+            testWebDAVStorage.addEventListener('click', async () => {
+                if (!webdavStorageEnabled || !webdavStorageEnabled.checked) {
+                    if (testWebDAVResult) {
+                        testWebDAVResult.textContent = 'Please enable WebDAV Storage first';
+                        testWebDAVResult.className = 'test-result error';
+                        testWebDAVResult.style.display = 'block';
+                    }
+                    return;
+                }
+                
+                if (!webdavStorageUrl || !webdavStorageUrl.value.trim()) {
+                    if (testWebDAVResult) {
+                        testWebDAVResult.textContent = 'Please enter WebDAV Server URL';
+                        testWebDAVResult.className = 'test-result error';
+                        testWebDAVResult.style.display = 'block';
+                    }
+                    return;
+                }
+                
+                if (testWebDAVResult) {
+                    testWebDAVResult.textContent = 'Testing WebDAV connection...';
+                    testWebDAVResult.className = 'test-result';
+                    testWebDAVResult.style.display = 'block';
+                }
+                
+                try {
+                    // Test by trying to list root directory
+                    const response = await csrfFetch('/api/auth/test-webdav', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            url: webdavStorageUrl.value.trim(),
+                            username: webdavStorageUsername ? webdavStorageUsername.value.trim() : '',
+                            password: webdavStoragePassword ? webdavStoragePassword.value.trim() : ''
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (testWebDAVResult) {
+                            testWebDAVResult.textContent = '✓ WebDAV connection successful!';
+                            testWebDAVResult.className = 'test-result success';
+                        }
+                    } else {
+                        const error = await response.json();
+                        if (testWebDAVResult) {
+                            testWebDAVResult.textContent = '✗ ' + (error.detail || 'Connection failed');
+                            testWebDAVResult.className = 'test-result error';
+                        }
+                    }
+                } catch (e) {
+                    if (testWebDAVResult) {
+                        testWebDAVResult.textContent = '✗ Failed to test connection: ' + e.message;
+                        testWebDAVResult.className = 'test-result error';
+                    }
+                }
+            });
+        }
+        
         // Local Music elements
         const localMusicDir = document.getElementById('localMusicDir');
         const musicRecursiveScan = document.getElementById('musicRecursiveScan');
@@ -1141,6 +1229,16 @@ class ChatHandler {
                             renderMailAccountList();
                         }
 
+                        // Load WebDAV Storage settings
+                        if (webdavStorageEnabled) {
+                            webdavStorageEnabled.checked = data.webdav_storage_enabled === true;
+                            toggleWebDAVStorageSettings(data.webdav_storage_enabled === true);
+                        }
+                        if (webdavStorageUrl) webdavStorageUrl.value = data.webdav_storage_url || '';
+                        if (webdavStorageUsername) webdavStorageUsername.value = data.webdav_storage_username || '';
+                        // Password is not returned, only has_password flag
+                        if (webdavStoragePassword) webdavStoragePassword.value = ''; // Clear on load
+                        
                         // Load Local Music settings
                         if (localMusicDir) localMusicDir.value = data.local_music_dir || '';
                         if (musicRecursiveScan) musicRecursiveScan.checked = data.music_recursive_scan !== false;
@@ -1303,6 +1401,21 @@ class ChatHandler {
                 // Add Mail account settings
                 settingsData.mail_accounts = collectMailAccountData();
 
+                // Add WebDAV Storage settings
+                if (webdavStorageEnabled) {
+                    settingsData.webdav_storage_enabled = webdavStorageEnabled.checked;
+                }
+                if (webdavStorageUrl) {
+                    settingsData.webdav_storage_url = webdavStorageUrl.value.trim();
+                }
+                if (webdavStorageUsername) {
+                    settingsData.webdav_storage_username = webdavStorageUsername.value.trim();
+                }
+                // Only send password if it's been changed (not empty)
+                if (webdavStoragePassword && webdavStoragePassword.value.trim()) {
+                    settingsData.webdav_storage_password = webdavStoragePassword.value.trim();
+                }
+                
                 // Add Local Music settings
                 console.log('Local Music settings available:', {
                     dirEl: !!localMusicDir,
