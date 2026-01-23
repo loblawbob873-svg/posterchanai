@@ -45,31 +45,47 @@ async def get_image_auth(
         setting = db.query(Setting).filter(Setting.key == "openai_api_key").first()
         if setting and setting.value:
             global_api_key = setting.value
-    except Exception:
+            logger.debug(f"[IMAGE-API] Global API Key found (length: {len(global_api_key)})")
+        else:
+            logger.debug(f"[IMAGE-API] Global API Key not set in database")
+    except Exception as e:
+        logger.warning(f"[IMAGE-API] Error reading Global API Key: {e}")
         pass
     
     # Check API key first (for external integrations and server-to-server)
-    if x_api_key and global_api_key and x_api_key == global_api_key:
-        return True
+    if x_api_key:
+        if global_api_key and x_api_key == global_api_key:
+            logger.debug(f"[IMAGE-API] Authenticated via X-API-Key header")
+            return True
+        elif global_api_key:
+            logger.warning(f"[IMAGE-API] X-API-Key provided but doesn't match (provided length: {len(x_api_key)}, expected length: {len(global_api_key)})")
+        else:
+            logger.debug(f"[IMAGE-API] X-API-Key provided but no Global API Key configured")
 
     # Check for API key in Authorization header (Bearer format)
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:]
         if global_api_key and token == global_api_key:
+            logger.debug(f"[IMAGE-API] Authenticated via Bearer token")
             return True
+        elif global_api_key:
+            logger.warning(f"[IMAGE-API] Bearer token provided but doesn't match")
 
     # Try JWT auth (for logged-in users)
     try:
         user = get_current_user_optional(request, db)  # Sync function, no await
         if user:
+            logger.debug(f"[IMAGE-API] Authenticated via JWT (user: {user.username})")
             return True
     except Exception:
         pass
 
     # Allow if no API key is configured (open access mode)
     if not global_api_key:
+        logger.debug(f"[IMAGE-API] No Global API Key configured - allowing unauthenticated access")
         return True
 
+    logger.warning(f"[IMAGE-API] Authentication failed - no valid credentials provided")
     raise HTTPException(status_code=401, detail="Not authenticated")
 
 

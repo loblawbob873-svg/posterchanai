@@ -123,14 +123,14 @@ async def generate_image_with_load_balancing(
                     if not global_api_key:
                         global_api_key = settings.get("storage_server_token", "")
                         if global_api_key:
-                            logger.debug(f"Using storage_server_token for image server authentication")
+                            logger.info(f"Using storage_server_token for image server authentication to {selected_server}")
                     
                     if global_api_key:
                         headers["X-API-Key"] = global_api_key
-                        logger.debug(f"Using Global API Key for server-to-server authentication to {selected_server}")
+                        logger.info(f"Using Global API Key for server-to-server authentication to {selected_server} (key length: {len(global_api_key)})")
                     else:
                         # No API key configured - endpoint should allow unauthenticated if no API key is set
-                        logger.debug(f"No API key configured - using unauthenticated request to {selected_server}")
+                        logger.warning(f"No API key configured - using unauthenticated request to {selected_server} (may fail if remote requires auth)")
                     
                     async with httpx.AsyncClient(timeout=timeout) as client:
                         logger.info(f"Sending image generation request to {selected_server} with prompt: {prompt[:50]}...")
