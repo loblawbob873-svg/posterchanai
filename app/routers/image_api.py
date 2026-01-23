@@ -116,20 +116,7 @@ async def generate_image(
             return ImageResponse(image=result)
         else:
             logger.error(f"[IMAGE-API] Image generation failed (no result)")
-            # Get backend info for better error message
-            try:
-                from app.services.image_factory import get_image_backend_info
-                backend_info = get_image_backend_info(db)
-                backend_type = backend_info.get("backend", "unknown")
-                error_detail = f"Backend: {backend_type}"
-                if backend_type == "comfyui":
-                    comfyui_url = backend_info.get("comfyui_url", "")
-                    error_detail += f", URL: {comfyui_url if comfyui_url else 'not configured'}"
-                logger.error(f"[IMAGE-API] {error_detail}")
-                return ImageResponse(error=f"Image generation failed - {error_detail}")
-            except Exception as e:
-                logger.error(f"[IMAGE-API] Error getting backend info: {e}", exc_info=True)
-                return ImageResponse(error="Image generation failed")
+            return ImageResponse(error="Image generation failed")
 
     except Exception as e:
         logger.error(f"[IMAGE-API] Image generation error: {e}", exc_info=True)
