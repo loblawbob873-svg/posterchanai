@@ -3622,6 +3622,7 @@ Return ONLY valid JSON, no other text.""",
                 
                 # Generate URL to open in browser - saved_filename is now a relative path like "Mail Attachments/filename.ext"
                 from urllib.parse import quote
+                # Use username in path for compatibility, but endpoint will also work without it
                 encoded_username = quote(self.user.username, safe='')
                 # saved_filename is now a relative path, so we need to encode it properly
                 encoded_path = quote(saved_filename, safe='')

@@ -1503,11 +1503,41 @@ async def view_file(
     current_user: User = Depends(get_current_user)
 ):
     """View/download a file. Returns image viewer HTML for images. Supports external storage. Proxies to storage server if configured (NO FALLBACK)."""
-    # Check if this is an external storage path (don't proxy external storage)
+    # Handle URL format: /api/files/view/{username}/{file_path} or /api/files/view/{file_path}
+    # Extract username if present in path
+    from urllib.parse import unquote
     path_parts = file_path.split('/')
-    is_external = False
+    actual_file_path = file_path
+    target_username = current_user.username
+    
+    # Check if first part is a username (contains @ or matches current user)
     if path_parts and path_parts[0]:
-        mount_point = path_parts[0]
+        first_part = unquote(path_parts[0])  # Decode URL-encoded username (e.g., verita84%40poster.place -> verita84@poster.place)
+        # If first part looks like a username (contains @) or matches current user, extract it
+        if '@' in first_part or first_part == current_user.username:
+            target_username = first_part
+            # Rest of path is the actual file path
+            if len(path_parts) > 1:
+                # Decode remaining path parts
+                actual_file_path = '/'.join([unquote(p) for p in path_parts[1:]])
+            else:
+                raise HTTPException(status_code=400, detail="Invalid file path: missing file path after username")
+            
+            # Verify user has access (must be their own files)
+            if target_username != current_user.username:
+                raise HTTPException(status_code=403, detail="Access denied: can only access your own files")
+        else:
+            # No username in path, use current_user and decode the entire path
+            actual_file_path = '/'.join([unquote(p) for p in path_parts])
+    else:
+        # Empty path
+        raise HTTPException(status_code=400, detail="Invalid file path: empty path")
+    
+    # Check if this is an external storage path (don't proxy external storage)
+    file_path_parts = actual_file_path.split('/')
+    is_external = False
+    if file_path_parts and file_path_parts[0]:
+        mount_point = file_path_parts[0]
         external_storage = db.query(ExternalStorage).filter(
             ExternalStorage.mount_point == mount_point,
             ExternalStorage.is_active == True
@@ -1521,18 +1551,18 @@ async def view_file(
         if storage_server_url and storage_server_url.value:
             url = storage_server_url.value.strip()
             if url.startswith(('http://', 'https://')):
-                logger.info(f"[FILES] Proxying view_file to storage server: {url}")
+                logger.info(f"[FILES] Proxying view_file to storage server: {url}, username: {target_username}, path: {actual_file_path}")
                 # Proxy to storage server - NO FALLBACK
-                return await _proxy_view_file(url, current_user.username, file_path, db)
+                return await _proxy_view_file(url, target_username, actual_file_path, db)
             else:
                 raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
         else:
             # On storage server: Use local filesystem
             storage = get_storage_service(db)
-            user_path = storage.get_user_path(current_user.username)
+            user_path = storage.get_user_path(target_username)
             
             # Build full path
-            file_path_obj = user_path / file_path
+            file_path_obj = user_path / actual_file_path
             
             # Verify path is within user directory
             from app.services.storage_service import _validate_path_within_base
