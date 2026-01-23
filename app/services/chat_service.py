@@ -123,8 +123,10 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
             api_key = self._settings.get("openai_api_key", "")
             if not api_key:
                 api_key = self._settings.get("storage_server_token", "")
-            logger.debug(f"Creating LoadBalancer with {len(servers)} servers, model={model}, using Global API Key")
+            logger.info(f"[CHAT SERVICE] Creating LoadBalancer with {len(servers)} server(s): {servers}, model={model}, timeout={timeout}s")
             return LoadBalancer(servers, timeout=timeout, model=model, api_key=api_key if api_key else None)
+        else:
+            logger.debug(f"[CHAT SERVICE] No chat servers configured (chat_server_urls='{chat_server_urls}')")
         return None
 
     def _get_rag_context(self, user_message: str) -> str:
