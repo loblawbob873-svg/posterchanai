@@ -304,17 +304,20 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
                                             thinking_done = True
                                             yield buffer
                                             buffer = ""
+                                        # For short responses, yield immediately when we get a chunk with no more coming
+                                        # This prevents empty bubbles for very short responses
                                     else:
                                         yield content
                             except json.JSONDecodeError:
                                 continue
 
-                    # Yield any remaining buffer
+                    # Yield any remaining buffer (important for short responses < 50 chars)
                     if buffer:
                         clean = self.strip_thinking_tags(buffer)
                         if clean:
                             yield clean
                             received_any_content = True
+                            logger.debug(f"Yielded remaining buffer: {len(clean)} chars")
                     
                     # If we received content, we're done
                     if received_any_content:
