@@ -334,9 +334,11 @@ class LoadBalancer:
                         logger.warning(f"STREAM WARNING from {server} | Unexpected content-type: {content_type}")
 
                     chunk_count = 0
+                    content_chunk_count = 0  # Count chunks that actually have content
                     first_chunk_time = None
                     empty_stream = True
                     non_data_lines = []
+                    error_detected = False
                     async for line in response.aiter_lines():
                         line = line.strip()
                         if not line:
@@ -346,7 +348,35 @@ class LoadBalancer:
                             empty_stream = False
                             if first_chunk_time is None:
                                 first_chunk_time = time.time()
-                                logger.debug(f"STREAM first chunk from {server} after {first_chunk_time - start_time:.2f}s")
+                                logger.info(f"[LOAD BALANCER] STREAM first chunk from {server} after {first_chunk_time - start_time:.2f}s")
+                            
+                            # Check if this chunk has actual content (not just [DONE] or empty)
+                            data_str = line[6:].strip()
+                            if data_str and data_str != "[DONE]":
+                                try:
+                                    import json
+                                    data = json.loads(data_str)
+                                    # Check if there's actual content in the chunk
+                                    if data.get("choices") and len(data["choices"]) > 0:
+                                        delta = data["choices"][0].get("delta", {})
+                                        content = delta.get("content", "")
+                                        if content:
+                                            content_chunk_count += 1
+                                            if content_chunk_count == 1:
+                                                logger.info(f"[LOAD BALANCER] First content chunk from {server}: {repr(content[:50])}")
+                                    # Log errors from remote server and raise exception to trigger fallback
+                                    if "error" in data:
+                                        error_msg = data.get('error', {})
+                                        error_text = error_msg.get('message', str(error_msg)) if isinstance(error_msg, dict) else str(error_msg)
+                                        logger.error(f"[LOAD BALANCER] Error in response from {server}: {error_text}")
+                                        error_detected = True
+                                        # Raise exception to trigger fallback to local
+                                        raise NoHealthyServersError(f"Server {server} returned error: {error_text}")
+                                except json.JSONDecodeError as e:
+                                    logger.warning(f"[LOAD BALANCER] Failed to parse chunk from {server}: {data_str[:100]}")
+                                except Exception as e:
+                                    logger.warning(f"[LOAD BALANCER] Error processing chunk from {server}: {e}")
+                            
                             # Ensure proper SSE format with \n\n
                             yield line + "\n\n" if not line.endswith("\n\n") else line
                         else:
@@ -358,16 +388,20 @@ class LoadBalancer:
                     if chunk_count == 0:
                         # Log details about what we received (or didn't receive) at debug level
                         if non_data_lines:
-                            logger.debug(f"STREAM COMPLETE from {server} | chunks=0 | Received {len(non_data_lines)} non-data lines: {non_data_lines[:3]}")
+                            logger.warning(f"STREAM COMPLETE from {server} | chunks=0 | Received {len(non_data_lines)} non-data lines: {non_data_lines[:3]}")
                         else:
-                            logger.debug(f"STREAM COMPLETE from {server} | chunks=0 | No data lines received (empty response body), falling back to local")
+                            logger.warning(f"STREAM COMPLETE from {server} | chunks=0 | No data lines received (empty response body), falling back to local")
                         # Don't mark as unhealthy immediately - remote may be processing but stream format issue
                         # Instead, raise exception to trigger fallback to local, but keep server in rotation
                         # Use a simple message - this is expected behavior, fallback is automatic
                         raise NoHealthyServersError("")
+                    elif content_chunk_count == 0:
+                        # Got chunks but no actual content - server returned empty response
+                        logger.warning(f"STREAM COMPLETE from {server} | chunks={chunk_count} but content_chunks=0 | Server returned empty content, falling back to local")
+                        raise NoHealthyServersError("Server returned empty content")
                     else:
-                        logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | total_time={total_time:.2f}s")
-                        # Mark as healthy if we got chunks
+                        logger.info(f"STREAM COMPLETE from {server} | chunks={chunk_count} | content_chunks={content_chunk_count} | total_time={total_time:.2f}s")
+                        # Mark as healthy if we got content chunks
                         async with _health_lock:
                             _server_health[server] = (True, time.time())
 

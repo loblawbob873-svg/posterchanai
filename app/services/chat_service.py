@@ -286,8 +286,10 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
                             try:
                                 data = json.loads(data_str)
                                 if "error" in data:
-                                    yield f"Error: {data['error'].get('message', 'Unknown error')}"
-                                    return
+                                    error_msg = data['error'].get('message', 'Unknown error')
+                                    logger.error(f"[CHAT SERVICE] Error from load balancer: {error_msg}")
+                                    # Raise exception to trigger fallback to local
+                                    raise NoHealthyServersError(f"Remote server returned error: {error_msg}")
                                 content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                                 if content:
                                     received_any_content = True
