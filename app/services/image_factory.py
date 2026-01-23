@@ -112,26 +112,22 @@ async def generate_image_with_load_balancing(
                     payload["cfg"] = cfg
                 
                 try:
-                    # Get authentication token from environment or settings
+                    # Get authentication token for server-to-server communication
                     headers = {}
-                    import os
-                    # Check environment variable first (matches image_api.py)
-                    image_api_key = os.getenv("IMAGE_API_KEY", "")
-                    # Also check database settings as fallback
-                    if not image_api_key:
-                        image_api_key = settings.get("image_api_key", "")
+                    # Use Global API Key (openai_api_key) for server-to-server image generation
+                    # This is the same key used for OpenAI API access
+                    global_api_key = settings.get("openai_api_key", "")
                     
-                    # For server-to-server communication, also try storage_server_token as fallback
+                    # Fallback to storage_server_token if Global API Key is not set
                     # This allows using the same token for both storage and image server communication
-                    if not image_api_key:
-                        storage_token = settings.get("storage_server_token", "")
-                        if storage_token:
-                            image_api_key = storage_token
+                    if not global_api_key:
+                        global_api_key = settings.get("storage_server_token", "")
+                        if global_api_key:
                             logger.debug(f"Using storage_server_token for image server authentication")
                     
-                    if image_api_key:
-                        headers["X-API-Key"] = image_api_key
-                        logger.debug(f"Using API key authentication for {selected_server}")
+                    if global_api_key:
+                        headers["X-API-Key"] = global_api_key
+                        logger.debug(f"Using Global API Key for server-to-server authentication to {selected_server}")
                     else:
                         # No API key configured - endpoint should allow unauthenticated if no API key is set
                         logger.debug(f"No API key configured - using unauthenticated request to {selected_server}")

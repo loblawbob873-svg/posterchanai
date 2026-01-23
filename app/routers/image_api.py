@@ -28,10 +28,6 @@ from app.services.image_factory import generate_image_with_load_balancing
 
 router = APIRouter(prefix="/api", tags=["image"])
 
-# API key for external integrations (set via environment or admin settings)
-IMAGE_API_KEY = os.getenv("IMAGE_API_KEY", "")
-
-
 async def get_image_auth(
     request: Request,
     authorization: Optional[str] = Header(None),
@@ -39,17 +35,27 @@ async def get_image_auth(
     db: Session = Depends(get_db)
 ) -> bool:
     """
-    Authenticate for image API - supports JWT token or API key.
+    Authenticate for image API - supports JWT token or Global API Key.
+    Uses the Global API Key (openai_api_key) setting from admin UI for server-to-server auth.
     Returns True if authenticated, raises HTTPException otherwise.
     """
-    # Check API key first (for external integrations like Sharkey)
-    if x_api_key and IMAGE_API_KEY and x_api_key == IMAGE_API_KEY:
+    # Get Global API Key from database settings
+    global_api_key = None
+    try:
+        setting = db.query(Setting).filter(Setting.key == "openai_api_key").first()
+        if setting and setting.value:
+            global_api_key = setting.value
+    except Exception:
+        pass
+    
+    # Check API key first (for external integrations and server-to-server)
+    if x_api_key and global_api_key and x_api_key == global_api_key:
         return True
 
     # Check for API key in Authorization header (Bearer format)
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:]
-        if IMAGE_API_KEY and token == IMAGE_API_KEY:
+        if global_api_key and token == global_api_key:
             return True
 
     # Try JWT auth (for logged-in users)
@@ -61,7 +67,7 @@ async def get_image_auth(
         pass
 
     # Allow if no API key is configured (open access mode)
-    if not IMAGE_API_KEY:
+    if not global_api_key:
         return True
 
     raise HTTPException(status_code=401, detail="Not authenticated")
