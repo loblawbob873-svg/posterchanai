@@ -192,14 +192,30 @@ async def filter_thinking_stream(stream: AsyncGenerator[str, None]) -> AsyncGene
 
 def verify_api_key(
     authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ) -> Optional[User]:
-    """Verify API key from Authorization header. Returns the user if authenticated."""
+    """Verify API key from Authorization header or X-API-Key header. Returns the user if authenticated."""
+    # Get Global API Key from database
+    setting = db.query(Setting).filter(Setting.key == "openai_api_key").first()
+    global_api_key = str(setting.value).strip() if setting and setting.value else None
+    
+    # Check X-API-Key header first (for server-to-server requests)
+    if x_api_key:
+        x_api_key = str(x_api_key).strip()
+        if global_api_key and x_api_key == global_api_key:
+            logger.debug(f"[OPENAI-API] Authenticated via X-API-Key header (server-to-server)")
+            return None  # Global key, no specific user
+        elif global_api_key:
+            logger.warning(f"[OPENAI-API] X-API-Key provided but doesn't match Global API Key")
+        else:
+            logger.debug(f"[OPENAI-API] X-API-Key provided but no Global API Key configured - allowing")
+            # Allow if no key is configured (open access mode)
+            return None
+    
     # Check authorization header
     if not authorization:
-        # Check if there's a global API key configured
-        setting = db.query(Setting).filter(Setting.key == "openai_api_key").first()
-        if not setting or not setting.value:
+        if not global_api_key:
             # No auth required if no global key set
             return None
         raise HTTPException(status_code=401, detail="Missing API key")
@@ -211,8 +227,8 @@ def verify_api_key(
         token = authorization
 
     # First check global API key
-    setting = db.query(Setting).filter(Setting.key == "openai_api_key").first()
-    if setting and setting.value and token == setting.value:
+    if global_api_key and token == global_api_key:
+        logger.debug(f"[OPENAI-API] Authenticated via Bearer token (Global API Key)")
         return None  # Global key, no specific user
 
     # Check user API keys - get api_key AND user_id together to avoid lazy loading
@@ -412,7 +428,11 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     if servers and not skip_load_balancer:
         from app.services.load_balancer import get_healthy_server, is_self_url, NoHealthyServersError
 
-        api_key = settings.get("chat_server_api_key", "")
+        # Use Global API Key (openai_api_key) for server-to-server authentication
+        # Fallback to storage_server_token if Global API Key is not set
+        api_key = settings.get("openai_api_key", "")
+        if not api_key:
+            api_key = settings.get("storage_server_token", "")
         try:
             selected_server = await get_healthy_server(servers, api_key if api_key else None)
 

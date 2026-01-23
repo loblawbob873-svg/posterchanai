@@ -117,20 +117,23 @@ async def generate_image_with_load_balancing(
                     # Use Global API Key (openai_api_key) for server-to-server image generation
                     # This is the same key used for OpenAI API access
                     global_api_key = settings.get("openai_api_key", "")
+                    if global_api_key:
+                        global_api_key = str(global_api_key).strip()  # Ensure it's a string and trim whitespace
                     
                     # Fallback to storage_server_token if Global API Key is not set
                     # This allows using the same token for both storage and image server communication
                     if not global_api_key:
                         global_api_key = settings.get("storage_server_token", "")
                         if global_api_key:
+                            global_api_key = str(global_api_key).strip()
                             logger.info(f"Using storage_server_token for image server authentication to {selected_server}")
                     
                     if global_api_key:
                         headers["X-API-Key"] = global_api_key
-                        logger.info(f"Using Global API Key for server-to-server authentication to {selected_server} (key length: {len(global_api_key)})")
+                        logger.info(f"[IMAGE] Using Global API Key for {selected_server} (length: {len(global_api_key)})")
                     else:
                         # No API key configured - endpoint should allow unauthenticated if no API key is set
-                        logger.warning(f"No API key configured - using unauthenticated request to {selected_server} (may fail if remote requires auth)")
+                        logger.warning(f"[IMAGE] No API key configured - using unauthenticated request to {selected_server} (may fail if remote requires auth)")
                     
                     async with httpx.AsyncClient(timeout=timeout) as client:
                         logger.info(f"Sending image generation request to {selected_server} with prompt: {prompt[:50]}...")

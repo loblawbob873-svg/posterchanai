@@ -33,7 +33,12 @@ async def check_server_health(server: str, api_key: Optional[str] = None) -> boo
     Quick health check - verify server responds to /v1/models within timeout.
     Returns True if healthy, False otherwise.
     """
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    # Use X-API-Key header for server-to-server authentication (matches image API)
+    headers = {}
+    if api_key:
+        headers["X-API-Key"] = api_key
+        # Also support Bearer token for compatibility
+        headers["Authorization"] = f"Bearer {api_key}"
     try:
         async with httpx.AsyncClient(timeout=HEALTH_CHECK_TIMEOUT) as client:
             response = await client.get(f"{server}/v1/models", headers=headers)
@@ -268,7 +273,12 @@ class LoadBalancer:
         self.timeout = timeout
         self.model = model
         self.api_key = api_key
-        self.headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        # Use X-API-Key header for server-to-server authentication (matches image API)
+        self.headers = {}
+        if api_key:
+            self.headers["X-API-Key"] = api_key
+            # Also support Bearer token for compatibility
+            self.headers["Authorization"] = f"Bearer {api_key}"
         # Add header to indicate this is a load-balanced request (prevents loops)
         self.headers["X-Posterchanai-Load-Balanced"] = "true"
 

@@ -44,7 +44,7 @@ async def get_image_auth(
     try:
         setting = db.query(Setting).filter(Setting.key == "openai_api_key").first()
         if setting and setting.value:
-            global_api_key = setting.value
+            global_api_key = str(setting.value).strip()  # Ensure it's a string and trim whitespace
             logger.debug(f"[IMAGE-API] Global API Key found (length: {len(global_api_key)})")
         else:
             logger.debug(f"[IMAGE-API] Global API Key not set in database")
@@ -54,13 +54,18 @@ async def get_image_auth(
     
     # Check API key first (for external integrations and server-to-server)
     if x_api_key:
-        if global_api_key and x_api_key == global_api_key:
-            logger.debug(f"[IMAGE-API] Authenticated via X-API-Key header")
-            return True
-        elif global_api_key:
-            logger.warning(f"[IMAGE-API] X-API-Key provided but doesn't match (provided length: {len(x_api_key)}, expected length: {len(global_api_key)})")
+        x_api_key = str(x_api_key).strip()  # Trim whitespace
+        if global_api_key:
+            global_api_key = str(global_api_key).strip()  # Ensure it's also trimmed
+            if x_api_key == global_api_key:
+                logger.debug(f"[IMAGE-API] ✓ Authenticated via X-API-Key header")
+                return True
+            else:
+                logger.warning(f"[IMAGE-API] ✗ X-API-Key mismatch - provided length: {len(x_api_key)}, expected length: {len(global_api_key)}")
         else:
-            logger.debug(f"[IMAGE-API] X-API-Key provided but no Global API Key configured")
+            logger.debug(f"[IMAGE-API] X-API-Key provided but no Global API Key configured - allowing request")
+            # Allow if no key is configured (open access mode)
+            return True
 
     # Check for API key in Authorization header (Bearer format)
     if authorization and authorization.startswith("Bearer "):
