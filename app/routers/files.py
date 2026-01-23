@@ -1251,6 +1251,11 @@ async def list_files(
     
     # Handle regular user storage path - use WebDAV instead of local filesystem
     if not external_storage:
+        # Check cache first (but only if WebDAV is enabled - cache might have old local filesystem data)
+        cache = get_file_cache(db)
+        normalized_path = path.strip('/') if path else ""
+        cache_key = f"{current_user.username}:{normalized_path}:user"
+        
         # Use WebDAV backend for user storage
         from app.services.webdav_storage_client import WebDAVStorageClient
         webdav_client = WebDAVStorageClient(db, current_user.id)
@@ -1261,18 +1266,30 @@ async def list_files(
                 detail=f"WebDAV storage not configured for user {current_user.username}. Please configure WebDAV storage in user settings."
             )
         
+        # Check cache AFTER confirming WebDAV is enabled (to avoid returning old local filesystem cache)
+        cached_result = cache.get(cache_key)
+        if cached_result:
+            logger.debug(f"[FileCache] Cache hit for {cache_key} (WebDAV)")
+            return cached_result
+        
+        logger.debug(f"[FileCache] Cache miss for {cache_key}, fetching from WebDAV")
+        
         # Use WebDAV to list files
         try:
             # Convert path to WebDAV path format
             webdav_path = path if path else ""
+            logger.info(f"[FILES] Listing WebDAV files for user {current_user.username}, path: '{webdav_path}'")
             
             async def _list_from_webdav():
+                logger.debug(f"[FILES] Calling webdav_client.list_files('{webdav_path}', recursive=False)")
                 items = await webdav_client.list_files(webdav_path, recursive=False)
+                logger.info(f"[FILES] WebDAV returned {len(items)} items")
                 # Convert WebDAV items to file manager format
                 result_items = []
                 for item in items:
                     # Ensure path is relative (no leading slash) for file manager
                     item_path = item["path"].lstrip('/')
+                    logger.debug(f"[FILES] Processing WebDAV item: name={item.get('name')}, path={item_path}, is_dir={item.get('is_directory')}")
                     result_items.append({
                         "name": item["name"],
                         "path": item_path,
@@ -1281,9 +1298,11 @@ async def list_files(
                         "modified": item["modified"],
                         "is_external": False
                     })
+                logger.info(f"[FILES] Converted {len(result_items)} items for file manager")
                 return result_items
             
             items = await _list_from_webdav()
+            logger.info(f"[FILES] Got {len(items)} items from WebDAV")
             
             # Calculate storage usage (WebDAV doesn't provide this easily, so return 0 for now)
             result = {
@@ -1300,10 +1319,7 @@ async def list_files(
                 }
             }
             
-            # Cache the result
-            cache = get_file_cache(db)
-            normalized_path = path.strip('/') if path else ""
-            cache_key = f"{current_user.username}:{normalized_path}:user"
+            # Cache the result (cache was already retrieved above)
             cache.set(cache_key, result)
             
             return result
