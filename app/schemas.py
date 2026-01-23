@@ -392,14 +392,6 @@ class UserSettingsUpdate(BaseModel):
     # Mail settings
     mail_accounts: Optional[List[dict]] = None  # List of {email, imap_server, imap_port, smtp_server, smtp_port, password}
     # Music settings
-    # Local music directory settings
-    local_music_dir: Optional[str] = None
-    music_recursive_scan: Optional[bool] = None
-    # WebDAV storage settings
-    webdav_storage_enabled: Optional[bool] = None
-    webdav_storage_url: Optional[str] = None
-    webdav_storage_username: Optional[str] = None
-    webdav_storage_password: Optional[str] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -430,15 +422,6 @@ class UserSettingsResponse(BaseModel):
     carddav_has_password: bool = False
     # Mail settings
     mail_accounts: List[dict] = []  # List of mail accounts (passwords masked)
-    # Music settings
-    # Local music directory settings
-    local_music_dir: Optional[str] = None
-    music_recursive_scan: bool = True
-    # WebDAV storage settings
-    webdav_storage_enabled: bool = False
-    webdav_storage_url: Optional[str] = None
-    webdav_storage_username: Optional[str] = None
-    webdav_storage_has_password: bool = False
 
 
 class TestConnectionRequest(BaseModel):
@@ -542,57 +525,3 @@ class RAGStatusResponse(BaseModel):
     total_documents: int
 
 
-# Notes schemas
-
-class NoteFolderCreate(BaseModel):
-    name: str
-    parent_id: Optional[int] = None
-
-
-class NoteFolderUpdate(BaseModel):
-    name: Optional[str] = None
-    parent_id: Optional[int] = None
-
-
-class NoteFolderResponse(BaseModel):
-    id: int
-    name: str
-    parent_id: Optional[int] = None
-    created_at: datetime
-    updated_at: datetime
-    notes_count: int = 0
-
-    class Config:
-        from_attributes = True
-
-
-class NoteCreate(BaseModel):
-    title: str
-    content: str = ""
-    folder_id: Optional[int] = None
-    tags: Optional[str] = None
-    is_pinned: bool = False
-
-
-class NoteUpdate(BaseModel):
-    title: Optional[str] = None
-    content: Optional[str] = None
-    folder_id: Optional[int] = None
-    tags: Optional[str] = None
-    is_pinned: Optional[bool] = None
-
-
-class NoteResponse(BaseModel):
-    id: int
-    title: str
-    content: str
-    folder_id: Optional[int] = None
-    folder_name: Optional[str] = None
-    tags: Optional[str] = None
-    attachments: Optional[str] = None  # JSON array of filenames
-    is_pinned: bool
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True

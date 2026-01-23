@@ -207,43 +207,6 @@ class Plugin(Base):
     user = relationship("User", backref="plugins")
 
 
-# Notes System
-
-class NoteFolder(Base):
-    """Folders/notebooks for organizing notes"""
-    __tablename__ = "note_folders"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    parent_id = Column(Integer, ForeignKey("note_folders.id", ondelete="CASCADE"), nullable=True)  # For nested folders
-    name = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    user = relationship("User", backref="note_folders")
-    parent = relationship("NoteFolder", remote_side=[id], backref="children")
-    notes = relationship("Note", back_populates="folder", cascade="all, delete-orphan")
-
-
-class Note(Base):
-    """User notes (markdown supported)"""
-    __tablename__ = "notes"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    folder_id = Column(Integer, ForeignKey("note_folders.id", ondelete="SET NULL"), nullable=True)
-    title = Column(String(255), nullable=False)
-    content = Column(Text, nullable=False, default="")
-    tags = Column(Text, nullable=True)  # Comma-separated tags
-    attachments = Column(Text, nullable=True)  # JSON array of attachment filenames
-    is_pinned = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    user = relationship("User", backref="notes")
-    folder = relationship("NoteFolder", back_populates="notes")
-
-
 # Junction table for ExternalStorage and User many-to-many relationship
 external_storage_users = Table(
     'external_storage_users',

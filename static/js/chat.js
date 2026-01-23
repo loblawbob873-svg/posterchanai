@@ -63,7 +63,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'rss', 'cal', 'contacts', 'mail', 'music', 'todo', 'notes', 'files'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'rss', 'cal', 'contacts', 'mail', 'todo', 'files'];
         this.pluginActions = []; // Will be populated with plugin action hints
 
         // Load plugins and mail accounts for autocomplete
@@ -72,8 +72,7 @@ class ChatHandler {
         this.loadMailAccountsForAutocomplete().then(() => {
             this.loadContactEmailsForAutocomplete();
         });
-        // Load note titles for autocomplete
-        this.loadNoteTitlesForAutocomplete();
+        // Notes autocomplete removed
 
         // Enter to send (Shift+Enter for new line)
         this.messageInput.addEventListener('keydown', (e) => {
@@ -119,11 +118,6 @@ class ChatHandler {
             this.removeUpload.addEventListener('click', () => this.clearUpload());
         }
 
-        // Music shuffle button
-        const musicShuffleBtn = document.getElementById('musicShuffleBtn');
-        if (musicShuffleBtn) {
-            musicShuffleBtn.addEventListener('click', () => this.startMusicShuffle());
-        }
 
         // Paste image from clipboard
         document.addEventListener('paste', (e) => this.handlePaste(e));
@@ -762,99 +756,6 @@ class ChatHandler {
         const mailAccountList = document.getElementById('mailAccountList');
         const addMailAccount = document.getElementById('addMailAccount');
 
-        // WebDAV Storage elements
-        const webdavStorageEnabled = document.getElementById('webdavStorageEnabled');
-        const webdavStorageSettings = document.getElementById('webdavStorageSettings');
-        const webdavStorageUsernameSettings = document.getElementById('webdavStorageUsernameSettings');
-        const webdavStoragePasswordSettings = document.getElementById('webdavStoragePasswordSettings');
-        const webdavStorageUrl = document.getElementById('webdavStorageUrl');
-        const webdavStorageUsername = document.getElementById('webdavStorageUsername');
-        const webdavStoragePassword = document.getElementById('webdavStoragePassword');
-        const testWebDAVStorage = document.getElementById('testWebDAVStorage');
-        const testWebDAVResult = document.getElementById('testWebDAVResult');
-        
-        // Toggle WebDAV Storage settings visibility
-        function toggleWebDAVStorageSettings(enabled) {
-            if (webdavStorageSettings) webdavStorageSettings.style.display = enabled ? 'block' : 'none';
-            if (webdavStorageUsernameSettings) webdavStorageUsernameSettings.style.display = enabled ? 'block' : 'none';
-            if (webdavStoragePasswordSettings) webdavStoragePasswordSettings.style.display = enabled ? 'block' : 'none';
-        }
-        
-        // Setup WebDAV Storage toggle
-        if (webdavStorageEnabled) {
-            webdavStorageEnabled.addEventListener('change', (e) => {
-                toggleWebDAVStorageSettings(e.target.checked);
-            });
-            // Initial state
-            toggleWebDAVStorageSettings(webdavStorageEnabled.checked);
-        }
-        
-        // Test WebDAV Storage connection
-        if (testWebDAVStorage) {
-            testWebDAVStorage.addEventListener('click', async () => {
-                if (!webdavStorageEnabled || !webdavStorageEnabled.checked) {
-                    if (testWebDAVResult) {
-                        testWebDAVResult.textContent = 'Please enable WebDAV Storage first';
-                        testWebDAVResult.className = 'test-result error';
-                        testWebDAVResult.style.display = 'block';
-                    }
-                    return;
-                }
-                
-                if (!webdavStorageUrl || !webdavStorageUrl.value.trim()) {
-                    if (testWebDAVResult) {
-                        testWebDAVResult.textContent = 'Please enter WebDAV Server URL';
-                        testWebDAVResult.className = 'test-result error';
-                        testWebDAVResult.style.display = 'block';
-                    }
-                    return;
-                }
-                
-                if (testWebDAVResult) {
-                    testWebDAVResult.textContent = 'Testing WebDAV connection...';
-                    testWebDAVResult.className = 'test-result';
-                    testWebDAVResult.style.display = 'block';
-                }
-                
-                try {
-                    // Test by trying to list root directory
-                    const response = await csrfFetch('/api/auth/test-webdav', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            url: webdavStorageUrl.value.trim(),
-                            username: webdavStorageUsername ? webdavStorageUsername.value.trim() : '',
-                            password: webdavStoragePassword ? webdavStoragePassword.value.trim() : ''
-                        })
-                    });
-                    
-                    if (response.ok) {
-                        const result = await response.json();
-                        if (testWebDAVResult) {
-                            testWebDAVResult.textContent = '✓ WebDAV connection successful!';
-                            testWebDAVResult.className = 'test-result success';
-                        }
-                    } else {
-                        const error = await response.json();
-                        if (testWebDAVResult) {
-                            testWebDAVResult.textContent = '✗ ' + (error.detail || 'Connection failed');
-                            testWebDAVResult.className = 'test-result error';
-                        }
-                    }
-                } catch (e) {
-                    if (testWebDAVResult) {
-                        testWebDAVResult.textContent = '✗ Failed to test connection: ' + e.message;
-                        testWebDAVResult.className = 'test-result error';
-                    }
-                }
-            });
-        }
-        
-        // Local Music elements
-        const localMusicDir = document.getElementById('localMusicDir');
-        const musicRecursiveScan = document.getElementById('musicRecursiveScan');
-        const testLocalMusic = document.getElementById('testLocalMusic');
-        const testMusicResult = document.getElementById('testMusicResult');
 
         // Mail account list management
         let mailAccounts = [];
@@ -1229,15 +1130,6 @@ class ChatHandler {
                             renderMailAccountList();
                         }
 
-                        // Load WebDAV Storage settings
-                        if (webdavStorageEnabled) {
-                            webdavStorageEnabled.checked = data.webdav_storage_enabled === true;
-                            toggleWebDAVStorageSettings(data.webdav_storage_enabled === true);
-                        }
-                        if (webdavStorageUrl) webdavStorageUrl.value = data.webdav_storage_url || '';
-                        if (webdavStorageUsername) webdavStorageUsername.value = data.webdav_storage_username || '';
-                        // Password is not returned, only has_password flag
-                        if (webdavStoragePassword) webdavStoragePassword.value = ''; // Clear on load
                         
                         // Load Local Music settings
                         if (localMusicDir) localMusicDir.value = data.local_music_dir || '';
@@ -1458,20 +1350,6 @@ class ChatHandler {
                 // Add Mail account settings
                 settingsData.mail_accounts = collectMailAccountData();
 
-                // Add WebDAV Storage settings
-                if (webdavStorageEnabled) {
-                    settingsData.webdav_storage_enabled = webdavStorageEnabled.checked;
-                }
-                if (webdavStorageUrl) {
-                    settingsData.webdav_storage_url = webdavStorageUrl.value.trim();
-                }
-                if (webdavStorageUsername) {
-                    settingsData.webdav_storage_username = webdavStorageUsername.value.trim();
-                }
-                // Only send password if it's been changed (not empty)
-                if (webdavStoragePassword && webdavStoragePassword.value.trim()) {
-                    settingsData.webdav_storage_password = webdavStoragePassword.value.trim();
-                }
                 
                 // Add Local Music settings
                 console.log('Local Music settings available:', {
@@ -2207,22 +2085,7 @@ class ChatHandler {
         textarea.innerHTML = cmd;
         const decodedCmd = textarea.value;
 
-        // Intercept notes command to open notes browser
-        const notesCmdMatch = decodedCmd.trim().toLowerCase();
-        if (notesCmdMatch === 'notes' || notesCmdMatch.startsWith('notes ')) {
-            if (window.notesBrowser) {
-                window.notesBrowser.open();
-                // Handle subcommands
-                if (notesCmdMatch.startsWith('notes search ')) {
-                    const query = decodedCmd.substring('notes search '.length).trim();
-                    if (query && window.notesBrowser) {
-                        setTimeout(() => {
-                            document.getElementById('notesBrowserSearchInput').value = query;
-                            window.notesBrowser.searchQuery = query;
-                            window.notesBrowser.loadNotes();
-                        }, 100);
-                    }
-                } else if (notesCmdMatch.startsWith('notes folder ')) {
+        // Notes command removed - no longer intercepting notes commands
                     const folderName = decodedCmd.substring('notes folder '.length).trim();
                     // Folder filtering would need folder name lookup - for now just open browser
                 }
@@ -2524,7 +2387,8 @@ class ChatHandler {
         return encodeURI(url);
     }
 
-    async startMusicShuffle() {
+    // Music shuffle removed
+    async _removed_startMusicShuffle() {
         // Send the music shuffle command
         try {
             const response = await csrfFetch('/api/command', {
@@ -4237,7 +4101,7 @@ class ChatHandler {
                     // Store for use in autocomplete
                     this.noteTitles = noteTitles;
 
-                    // Add note titles to notes search subcommand for autocomplete
+                    // Notes autocomplete removed - no longer loading note titles
                     // Use a copy to avoid modifying the original array
                     this.subcommands['notes search'] = [...noteTitles];
                     this.subcommands['note find'] = [...noteTitles];
@@ -4253,8 +4117,8 @@ class ChatHandler {
 
     // Subcommands that can be autocompleted
     subcommands = {
-        'torrents': ['download', 'list', 'add', 'start', 'stop', 'delete', 'movies', 'tv', 'music', 'anime'],
-        'torrents download': ['movies', 'tv', 'music', 'anime'],
+        'torrents': ['download', 'list', 'add', 'start', 'stop', 'delete', 'movies', 'tv', 'anime'],
+        'torrents download': ['movies', 'tv', 'anime'],
         'nyaa': ['download'],
         'budget': ['bills', 'add', 'pay'],
         'firewall': ['search', 'analyze'],

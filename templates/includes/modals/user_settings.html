@@ -12,7 +12,6 @@
                 <button class="user-tab-btn" data-tab="ai">AI Services</button>
                 <button class="user-tab-btn" data-tab="calendar">Calendar & Contacts</button>
                 <button class="user-tab-btn" data-tab="mail">Mail</button>
-                <button class="user-tab-btn" data-tab="music">Music</button>
                 <button class="user-tab-btn" data-tab="news">News & RSS</button>
                 <button class="user-tab-btn" data-tab="storage">Storage & Cloud</button>
                 <button class="user-tab-btn" data-tab="apikeys">API Keys</button>
@@ -274,37 +273,11 @@ My name: John Smith"></textarea>
                     </fieldset>
                 </div>
 
-                <!-- Music Tab -->
-                <div class="user-tab-content" id="user-tab-music">
-                    <fieldset>
-                        <legend>Local Music Library</legend>
-                        <p class="fieldset-info">Play music from a local directory. Use <code>music</code> to browse your library.</p>
-                        <div class="form-group">
-                            <label for="localMusicDir">Music Directory Path</label>
-                            <input type="text" id="localMusicDir" placeholder="Default: [storage]/username/Music">
-                            <small>Leave blank to use default storage path + /Music. Or specify a custom absolute path (e.g., /mnt/music, /raid/music)</small>
-                        </div>
-                        <div class="form-group">
-                            <button type="button" class="btn-secondary" id="testLocalMusic">Test Directory</button>
-                            <div id="testMusicResult" class="test-result" style="display: block; margin-top: 10px;"></div>
-                        </div>
-                        <div class="form-group">
-                            <div class="toggle-row">
-                                <label for="musicRecursiveScan">Scan Subdirectories</label>
-                                <input type="checkbox" id="musicRecursiveScan" checked>
-                            </div>
-                            <small>Enable to search all subdirectories for music files</small>
-                        </div>
-                    </fieldset>
-
-                    <fieldset>
-                        <legend>Supported Formats</legend>
-                        <small class="form-hint">
-                            <strong>Audio:</strong> MP3, FLAC, WAV, OGG, M4A, AAC, WMA, OPUS<br>
-                            <strong>Streaming:</strong> Files are served directly from the local directory
-                        </small>
-                    </fieldset>
-
+                <!-- Music tab removed -->
+                <div class="user-tab-content" id="user-tab-music" style="display: none;">
+                    <!-- Music features removed -->
+                </div>
+                <div class="user-tab-content" id="user-tab-placeholder" style="display: none;">
                     <fieldset>
                         <legend>Music Commands</legend>
                         <small class="form-hint">
@@ -397,36 +370,6 @@ foxnews.com|Fox News"></textarea>
 
                 <!-- Storage & Cloud Tab -->
                 <div class="user-tab-content" id="user-tab-storage">
-                    <fieldset>
-                        <legend>WebDAV Storage</legend>
-                        <p class="fieldset-info">Configure WebDAV storage backend. All files will be stored on your WebDAV server instead of local disk.</p>
-                        <div class="form-group">
-                            <label for="webdavStorageEnabled">
-                                <input type="checkbox" id="webdavStorageEnabled" name="webdavStorageEnabled"> Enable WebDAV Storage
-                            </label>
-                            <small>When enabled, all files (images, attachments, music, etc.) will be stored on your WebDAV server.</small>
-                        </div>
-                        <div class="form-group" id="webdavStorageSettings" style="display: none;">
-                            <label for="webdavStorageUrl">WebDAV Server URL</label>
-                            <input type="url" id="webdavStorageUrl" name="webdavStorageUrl" placeholder="https://webdav.example.com">
-                            <small>Full URL to your WebDAV server (e.g., https://webdav.example.com or https://example.com/webdav)</small>
-                        </div>
-                        <div class="form-group" id="webdavStorageUsernameSettings" style="display: none;">
-                            <label for="webdavStorageUsername">WebDAV Username</label>
-                            <input type="text" id="webdavStorageUsername" name="webdavStorageUsername" placeholder="username">
-                            <small>Username for WebDAV authentication</small>
-                        </div>
-                        <div class="form-group" id="webdavStoragePasswordSettings" style="display: none;">
-                            <label for="webdavStoragePassword">WebDAV Password</label>
-                            <input type="password" id="webdavStoragePassword" name="webdavStoragePassword" placeholder="Leave blank to keep existing password">
-                            <small>Password for WebDAV authentication. Leave blank to keep existing password.</small>
-                        </div>
-                        <div class="form-group" style="margin-top: 10px;">
-                            <button type="button" class="btn-secondary" id="testWebDAVStorage">Test WebDAV Connection</button>
-                            <div id="testWebDAVResult" class="test-result" style="display: none; margin-top: 10px;"></div>
-                        </div>
-                    </fieldset>
-
                     <fieldset>
                         <legend>CalDAV Calendar</legend>
                         <p class="fieldset-info">Sync your calendar with external apps (Thunderbird, Evolution, etc.).</p>

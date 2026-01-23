@@ -100,7 +100,7 @@ def _validate_path_within_base(file_path: Path, base_path: Path) -> bool:
 class StorageService:
     def __init__(self, db: Session, user_id: int = None):
         self.db = db
-        self.user_id = user_id  # Optional: user ID for WebDAV config
+        self.user_id = user_id
         self._load_settings()
 
     def _load_settings(self):
@@ -108,29 +108,6 @@ class StorageService:
         settings = safe_query_settings(self.db)
         self.upload_path = settings.get("upload_path", "/var/lib/posterchanai")
     
-    def _get_webdav_client(self, user_id: int = None):
-        """Get WebDAV client if enabled for user. Returns None if not enabled."""
-        from app.services.webdav_storage_client import WebDAVStorageClient
-        from app.models import User
-        
-        # Get user_id from parameter or instance
-        uid = user_id or self.user_id
-        if not uid:
-            return None
-        
-        try:
-            client = WebDAVStorageClient(self.db, uid)
-            if client.is_enabled():
-                return client
-        except Exception as e:
-            logger.debug(f"[STORAGE] WebDAV not available for user {uid}: {e}")
-        return None
-    
-    def _get_user_id_from_username(self, username: str) -> int:
-        """Get user ID from username."""
-        from app.models import User
-        user = self.db.query(User).filter(User.username == username).first()
-        return user.id if user else None
 
     def get_user_path(self, username: str) -> Path:
         """Get the upload directory for a user"""
@@ -157,66 +134,42 @@ class StorageService:
         conv_path.mkdir(parents=True, exist_ok=True)
         return conv_path
 
-    def save_image(self, username: str, conversation_id: int, image_base64: str, prefix: str = "img") -> str:
-        """Save a base64 image. Proxies to storage server if configured, otherwise uses WebDAV backend (replaces local disk)."""
-        # Check if storage server is configured - proxy request if so
-        storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-        if storage_server_url and storage_server_url.value:
-            # Validate URL has protocol before proxying
-            url = storage_server_url.value.strip()
-            if url.startswith(('http://', 'https://')):
-                # Valid URL - try to proxy
-                try:
-                    return self._proxy_save_image(url, username, conversation_id, image_base64, prefix)
-                except Exception as e:
-                    # If proxy fails, raise error instead of silently falling back
-                    logger.error(f"[STORAGE] Failed to proxy save_image to {url}: {e}")
-                    raise Exception(f"Failed to save image to storage server: {e}")
-            else:
-                # Invalid URL - raise error
-                raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
-        
-        # On storage server: Use WebDAV backend (replaces local disk)
-        user_id = self._get_user_id_from_username(username)
-        webdav_client = self._get_webdav_client(user_id) if user_id else None
-        
-        if not webdav_client or not webdav_client.is_enabled():
-            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
-        
-        # Use WebDAV storage
-        import asyncio
-        image_data = base64.b64decode(image_base64)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        filename = f"{prefix}_{timestamp}.png"
-        file_path = f"chat/{conversation_id}/{filename}"
-        
-        try:
-            async def _save_to_webdav():
-                return await webdav_client.save_file(file_path, image_data, "image/png")
-            
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                def _run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
+    def save_image(self, username: str, conversation_id: int, image_base64: str, prefix: str = "img", bypass_proxy: bool = False) -> str:
+        """Save a base64 image. Proxies to storage server if configured, otherwise saves to local disk."""
+        # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
+        if not bypass_proxy:
+            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+            if storage_server_url and storage_server_url.value:
+                # Validate URL has protocol before proxying
+                url = storage_server_url.value.strip()
+                if url.startswith(('http://', 'https://')):
+                    # Always proxy when storage_server_url is set - no local fallback
                     try:
-                        return new_loop.run_until_complete(_save_to_webdav())
-                    finally:
-                        new_loop.close()
-                
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    webdav_url = future.result()
-                    logger.debug(f"[STORAGE] Saved image to WebDAV: {webdav_url}")
-                    return webdav_url
-            else:
-                webdav_url = loop.run_until_complete(_save_to_webdav())
-                logger.debug(f"[STORAGE] Saved image to WebDAV: {webdav_url}")
-                return webdav_url
+                        return self._proxy_save_image(url, username, conversation_id, image_base64, prefix)
+                    except Exception as e:
+                        # If proxy fails, raise error instead of silently falling back
+                        logger.error(f"[STORAGE] Failed to proxy save_image to {url}: {e}")
+                        raise Exception(f"Failed to save image to storage server: {e}")
+                else:
+                    # Invalid URL - raise error
+                    raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
+        
+        # Local file saving (only on storage server node when bypass_proxy=True)
+        try:
+            conv_path = self.get_conversation_path(username, conversation_id)
+            conv_path.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            filename = f"{prefix}_{timestamp}.png"
+            filepath = conv_path / filename
+
+            image_data = base64.b64decode(image_base64)
+            with open(filepath, "wb") as f:
+                f.write(image_data)
+
+            return str(filepath.relative_to(Path(self.upload_path)))
         except Exception as e:
-            logger.error(f"[STORAGE] Failed to save image to WebDAV: {e}", exc_info=True)
-            raise Exception(f"Failed to save image to WebDAV storage: {e}")
+            logger.error(f"[STORAGE] Error saving image locally: {e}", exc_info=True)
+            raise
     
     def _proxy_save_image(self, storage_server_url: str, username: str, conversation_id: int, image_base64: str, prefix: str) -> str:
         """Proxy image save to storage server"""
@@ -273,75 +226,46 @@ class StorageService:
             logger.error(f"[STORAGE] Error proxying save_image: {e}", exc_info=True)
             raise
 
-    def save_avatar(self, username: str, image_data: bytes, ext: str = ".png") -> str:
-        """Save user avatar image and return the filename. Proxies to storage server if configured, otherwise uses WebDAV backend (replaces local disk)."""
-        # Check if storage server is configured - proxy request if so
-        storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-        if storage_server_url and storage_server_url.value:
-            # Validate URL has protocol before proxying
-            url = storage_server_url.value.strip()
-            if url.startswith(('http://', 'https://')):
-                # Check if URL points to same machine - this is likely a misconfiguration
-                if _is_same_machine_url(url):
-                    logger.error(f"[STORAGE] storage_server_url points to same machine: {url}. This will cause files to be saved locally. Please use a different machine's URL or leave storage_server_url empty for local storage.")
-                
-                # Valid URL - try to proxy
-                try:
-                    return self._proxy_save_avatar(url, username, image_data, ext)
-                except Exception as e:
-                    # If proxy fails, raise error instead of silently falling back
-                    logger.error(f"[STORAGE] Failed to proxy save_avatar to {url}: {e}")
-                    raise Exception(f"Failed to save avatar to storage server: {e}")
-            else:
-                # Invalid URL - raise error
-                raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
+    def save_avatar(self, username: str, image_data: bytes, ext: str = ".png", bypass_proxy: bool = False) -> str:
+        """Save user avatar image and return the filename. Proxies to storage server if configured, otherwise saves to local disk."""
+        # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
+        if not bypass_proxy:
+            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+            if storage_server_url and storage_server_url.value:
+                # Validate URL has protocol before proxying
+                url = storage_server_url.value.strip()
+                if url.startswith(('http://', 'https://')):
+                    # Always proxy when storage_server_url is set - no local fallback
+                    try:
+                        return self._proxy_save_avatar(url, username, image_data, ext)
+                    except Exception as e:
+                        # If proxy fails, raise error instead of silently falling back
+                        logger.error(f"[STORAGE] Failed to proxy save_avatar to {url}: {e}")
+                        raise Exception(f"Failed to save avatar to storage server: {e}")
+                else:
+                    # Invalid URL - raise error
+                    raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
         
-        # On storage server: Use WebDAV backend (replaces local disk)
-        user_id = self._get_user_id_from_username(username)
-        webdav_client = self._get_webdav_client(user_id) if user_id else None
-        
-        if not webdav_client or not webdav_client.is_enabled():
-            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
-        
-        # Use WebDAV storage
-        import asyncio
-        file_path = f"avatar{ext}"
-        
+        # Local file saving (only on storage server node when bypass_proxy=True)
         try:
-            async def _save_to_webdav():
-                content_type = f"image/{ext[1:]}" if ext else "image/png"
-                # Delete old avatar first (try different extensions)
-                for old_ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
-                    try:
-                        await webdav_client.delete_file(f"avatar{old_ext}")
-                    except:
-                        pass  # Ignore if doesn't exist
-                await webdav_client.save_file(file_path, image_data, content_type)
-                return f"avatar{ext}"  # Return just filename for compatibility
+            user_path = self.get_user_path(username)
+            user_path.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
             
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                def _run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(_save_to_webdav())
-                    finally:
-                        new_loop.close()
-                
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    filename = future.result()
-                    logger.debug(f"[STORAGE] Saved avatar to WebDAV: {filename}")
-                    return filename
-            else:
-                filename = loop.run_until_complete(_save_to_webdav())
-                logger.debug(f"[STORAGE] Saved avatar to WebDAV: {filename}")
-                return filename
+            # Delete old avatar files with different extensions
+            for old_ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
+                old_avatar = user_path / f"avatar{old_ext}"
+                if old_avatar.exists():
+                    old_avatar.unlink()
+            
+            # Save new avatar
+            avatar_path = user_path / f"avatar{ext}"
+            with open(avatar_path, "wb") as f:
+                f.write(image_data)
+            
+            return f"avatar{ext}"  # Return just filename for compatibility
         except Exception as e:
-            logger.error(f"[STORAGE] Failed to save avatar to WebDAV: {e}", exc_info=True)
-            raise Exception(f"Failed to save avatar to WebDAV storage: {e}")
+            logger.error(f"[STORAGE] Error saving avatar locally: {e}", exc_info=True)
+            raise
     
     def _proxy_save_avatar(self, storage_server_url: str, username: str, image_data: bytes, ext: str) -> str:
         """Proxy avatar save to storage server"""
@@ -408,70 +332,42 @@ class StorageService:
             return avatar_file
         return None
 
-    def save_file(self, username: str, conversation_id: int, content: str, original_name: str = "file.txt") -> str:
-        """Save a text file. Proxies to storage server if configured, otherwise uses WebDAV backend (replaces local disk)."""
-        # Check if storage server is configured - proxy request if so
-        storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-        if storage_server_url and storage_server_url.value:
-            url = storage_server_url.value.strip()
-            # Validate URL has protocol before proxying
-            if url.startswith(('http://', 'https://')):
-                # Check if URL points to same machine - this is likely a misconfiguration
-                if _is_same_machine_url(url):
-                    logger.error(f"[STORAGE] storage_server_url points to same machine: {url}. This will cause files to be saved locally. Please use a different machine's URL or leave storage_server_url empty for local storage.")
-                try:
-                    # Proxy to storage server
-                    return self._proxy_save_file(url, username, conversation_id, content, original_name)
-                except Exception as e:
-                    # If proxy fails, raise error instead of silently falling back
-                    logger.error(f"[STORAGE] Failed to proxy save_file to {url}: {e}")
-                    raise Exception(f"Failed to save file to storage server: {e}")
-            else:
-                # Invalid URL - raise error
-                raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
-        
-        # On storage server: Use WebDAV backend (replaces local disk)
-        user_id = self._get_user_id_from_username(username)
-        webdav_client = self._get_webdav_client(user_id) if user_id else None
-        
-        if not webdav_client or not webdav_client.is_enabled():
-            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
-        
-        # Use WebDAV storage
-        import asyncio
-        file_data = content.encode('utf-8')
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        ext = Path(original_name).suffix or ".txt"
-        filename = f"file_{timestamp}{ext}"
-        file_path = f"chat/{conversation_id}/{filename}"
-        
-        try:
-            async def _save_to_webdav():
-                return await webdav_client.save_file(file_path, file_data, "text/plain")
-            
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                def _run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
+    def save_file(self, username: str, conversation_id: int, content: str, original_name: str = "file.txt", bypass_proxy: bool = False) -> str:
+        """Save a text file. Proxies to storage server if configured, otherwise saves to local disk."""
+        # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
+        if not bypass_proxy:
+            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+            if storage_server_url and storage_server_url.value:
+                url = storage_server_url.value.strip()
+                # Validate URL has protocol before proxying
+                if url.startswith(('http://', 'https://')):
+                    # Always proxy when storage_server_url is set - no local fallback
                     try:
-                        return new_loop.run_until_complete(_save_to_webdav())
-                    finally:
-                        new_loop.close()
-                
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    webdav_url = future.result()
-                    logger.debug(f"[STORAGE] Saved file to WebDAV: {webdav_url}")
-                    return webdav_url
-            else:
-                webdav_url = loop.run_until_complete(_save_to_webdav())
-                logger.debug(f"[STORAGE] Saved file to WebDAV: {webdav_url}")
-                return webdav_url
+                        return self._proxy_save_file(url, username, conversation_id, content, original_name)
+                    except Exception as e:
+                        # If proxy fails, raise error instead of silently falling back
+                        logger.error(f"[STORAGE] Failed to proxy save_file to {url}: {e}")
+                        raise Exception(f"Failed to save file to storage server: {e}")
+                else:
+                    # Invalid URL - raise error
+                    raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
+        
+        # Local file saving (only on storage server node when bypass_proxy=True)
+        try:
+            conv_path = self.get_conversation_path(username, conversation_id)
+            conv_path.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            ext = Path(original_name).suffix or ".txt"
+            filename = f"file_{timestamp}{ext}"
+            filepath = conv_path / filename
+
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+
+            return str(filepath.relative_to(Path(self.upload_path)))
         except Exception as e:
-            logger.error(f"[STORAGE] Failed to save file to WebDAV: {e}", exc_info=True)
-            raise Exception(f"Failed to save file to WebDAV storage: {e}")
+            logger.error(f"[STORAGE] Error saving file locally: {e}", exc_info=True)
+            raise
     
     def _proxy_save_file(self, storage_server_url: str, username: str, conversation_id: int, content: str, original_name: str) -> str:
         """Proxy file save to storage server"""
@@ -525,49 +421,6 @@ class StorageService:
         except Exception as e:
             logger.error(f"[STORAGE] Error proxying save_file: {e}", exc_info=True)
             raise
-        
-        # On storage server: Use WebDAV backend (replaces local disk)
-        user_id = self._get_user_id_from_username(username)
-        webdav_client = self._get_webdav_client(user_id) if user_id else None
-        
-        if not webdav_client or not webdav_client.is_enabled():
-            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
-        
-        # Use WebDAV storage
-        import asyncio
-        file_data = content.encode('utf-8')
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        ext = Path(original_name).suffix or ".txt"
-        filename = f"file_{timestamp}{ext}"
-        file_path = f"chat/{conversation_id}/{filename}"
-        
-        try:
-            async def _save_to_webdav():
-                return await webdav_client.save_file(file_path, file_data, "text/plain")
-            
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                def _run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(_save_to_webdav())
-                    finally:
-                        new_loop.close()
-                
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    webdav_url = future.result()
-                    logger.debug(f"[STORAGE] Saved file to WebDAV: {webdav_url}")
-                    return webdav_url
-            else:
-                webdav_url = loop.run_until_complete(_save_to_webdav())
-                logger.debug(f"[STORAGE] Saved file to WebDAV: {webdav_url}")
-                return webdav_url
-        except Exception as e:
-            logger.error(f"[STORAGE] Failed to save file to WebDAV: {e}", exc_info=True)
-            raise Exception(f"Failed to save file to WebDAV storage: {e}")
 
     def save_raw_file(self, username: str, conversation_id: int, data: bytes, original_name: str) -> str:
         """Save raw file bytes to disk and return the file path"""
@@ -755,7 +608,7 @@ class StorageService:
                     logger.warning(f"[STORAGE PROXY] Error loading image from storage server: {e}")
                     return None
 
-        # On storage server: Use WebDAV backend (replaces local filesystem)
+        # On storage server: Use local filesystem
         # URL is like /api/files/username/conv_id/filename.png
         # Extract path parts
         try:
@@ -766,184 +619,25 @@ class StorageService:
                 filename = unquote(parts[4]) if len(parts) > 4 else None
 
                 if filename:
-                    # Get user ID for WebDAV
-                    user_id = self._get_user_id_from_username(username)
-                    webdav_client = self._get_webdav_client(user_id) if user_id else None
-                    
-                    if webdav_client and webdav_client.is_enabled():
-                        # Use WebDAV to load file
-                        webdav_path = f"chat/{conv_id}/{filename}"
-                        try:
-                            import asyncio
-                            async def _load_from_webdav():
-                                return await webdav_client.get_file(webdav_path)
-                            
-                            loop = asyncio.get_event_loop()
-                            if loop.is_running():
-                                import concurrent.futures
-                                def _run_in_new_loop():
-                                    new_loop = asyncio.new_event_loop()
-                                    asyncio.set_event_loop(new_loop)
-                                    try:
-                                        file_data = new_loop.run_until_complete(_load_from_webdav())
-                                        return base64.b64encode(file_data).decode('utf-8')
-                                    finally:
-                                        new_loop.close()
-                                
-                                with concurrent.futures.ThreadPoolExecutor() as executor:
-                                    future = executor.submit(_run_in_new_loop)
-                                    return future.result()
-                            else:
-                                file_data = loop.run_until_complete(_load_from_webdav())
-                                return base64.b64encode(file_data).decode('utf-8')
-                        except FileNotFoundError:
-                            logger.warning(f"[STORAGE] File not found in WebDAV: {webdav_path}")
-                            return None
-                        except Exception as e:
-                            logger.warning(f"[STORAGE] Failed to load from WebDAV: {e}")
-                            return None
-                    else:
-                        # Fallback to local filesystem (for backwards compatibility or if WebDAV not configured)
-                        # Use get_conversation_path to get correct path structure
-                        conv_path = self.get_conversation_path(username, conv_id)
-                        safe_filename = _sanitize_path_component(filename)
-                        file_path = conv_path / safe_filename
+                    # Load from local filesystem
+                    # Use get_conversation_path to get correct path structure
+                    conv_path = self.get_conversation_path(username, conv_id)
+                    safe_filename = _sanitize_path_component(filename)
+                    file_path = conv_path / safe_filename
 
-                        # Verify path is within upload directory (already checked by get_conversation_path)
-                        if not _validate_path_within_base(file_path, Path(self.upload_path)):
-                            logger.warning(f"Path traversal attempt blocked: {image_url}")
-                            return None
+                    # Verify path is within upload directory (already checked by get_conversation_path)
+                    if not _validate_path_within_base(file_path, Path(self.upload_path)):
+                        logger.warning(f"Path traversal attempt blocked: {image_url}")
+                        return None
 
-                        if file_path.exists():
-                            with open(file_path, 'rb') as f:
-                                return base64.b64encode(f.read()).decode('utf-8')
+                    if file_path.exists():
+                        with open(file_path, 'rb') as f:
+                            return base64.b64encode(f.read()).decode('utf-8')
         except ValueError as e:
             logger.warning(f"Invalid path component in image URL: {e}")
         except Exception as e:
             logger.error(f"Failed to load image: {e}")
         return None
-
-    def get_note_path(self, username: str, note_id: int) -> Path:
-        """
-        Get the upload directory for a specific note's attachments.
-        Uses the same user storage structure as chat files: {upload_path}/{username}/notes/{note_id}/
-        
-        Note: In load-balanced setups, use storage_server_url to proxy requests to storage node.
-        """
-        safe_username = _sanitize_path_component(username)
-        safe_note_id = _sanitize_path_component(str(note_id))
-        # Use same user storage structure as chat files
-        note_path = self.get_user_path(username) / "notes" / safe_note_id
-
-        # Verify path is within upload directory
-        if not _validate_path_within_base(note_path, Path(self.upload_path)):
-            raise ValueError(f"Invalid note path: {note_id}")
-
-        note_path.mkdir(parents=True, exist_ok=True)
-        return note_path
-
-    def save_note_attachment(self, username: str, note_id: int, file_data: bytes, original_name: str, bypass_proxy: bool = False) -> str:
-        """Save an attachment file for a note and return the filename. Proxies to storage server if configured."""
-        # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
-        if not bypass_proxy:
-            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
-            if storage_server_url and storage_server_url.value:
-                # Validate URL has protocol before proxying
-                url = storage_server_url.value.strip()
-                if url.startswith(('http://', 'https://')):
-                    # Check if URL points to same machine - this is likely a misconfiguration
-                    if _is_same_machine_url(url):
-                        logger.error(f"[STORAGE] storage_server_url points to same machine: {url}. This will cause files to be saved locally. Please use a different machine's URL or leave storage_server_url empty for local storage.")
-                    try:
-                        # Proxy to storage server
-                        return self._proxy_save_note_attachment(url, username, note_id, file_data, original_name)
-                    except Exception as e:
-                        # If proxy fails, raise error instead of silently falling back
-                        logger.error(f"[STORAGE] Failed to proxy save_note_attachment to {url}: {e}")
-                        raise Exception(f"Failed to save note attachment to storage server: {e}")
-                else:
-                    # Invalid URL - raise error
-                    raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
-        
-        # On storage server: Use WebDAV backend (replaces local disk)
-        user_id = self._get_user_id_from_username(username)
-        webdav_client = self._get_webdav_client(user_id) if user_id else None
-        
-        if not webdav_client or not webdav_client.is_enabled():
-            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
-        
-        # Use WebDAV storage
-        import asyncio
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        ext = Path(original_name).suffix or ""
-        safe_name = "".join(c for c in Path(original_name).stem if c.isalnum() or c in "-_")[:50]
-        filename = f"{safe_name}_{timestamp}{ext}"
-        file_path = f"notes/{note_id}/{filename}"
-        
-        try:
-            async def _save_to_webdav():
-                return await webdav_client.save_file(file_path, file_data, "application/octet-stream")
-            
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                def _run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(_save_to_webdav())
-                    finally:
-                        new_loop.close()
-                
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    webdav_url = future.result()
-                    logger.debug(f"[STORAGE] Saved note attachment to WebDAV: {webdav_url}")
-                    return filename
-            else:
-                webdav_url = loop.run_until_complete(_save_to_webdav())
-                logger.debug(f"[STORAGE] Saved note attachment to WebDAV: {webdav_url}")
-                return filename
-        except Exception as e:
-            logger.error(f"[STORAGE] Failed to save note attachment to WebDAV: {e}", exc_info=True)
-            raise Exception(f"Failed to save note attachment to WebDAV storage: {e}")
-    
-    def _proxy_save_note_attachment(self, storage_server_url: str, username: str, note_id: int, file_data: bytes, original_name: str) -> str:
-        """Proxy note attachment save to storage server - uses synchronous requests to avoid event loop issues"""
-        import requests
-        try:
-            # Get server-to-server API token
-            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
-            
-            url = f"{storage_server_url.rstrip('/')}/api/storage/save-note-attachment"
-            headers = {}
-            if storage_server_token and storage_server_token.value:
-                headers["Authorization"] = f"Bearer {storage_server_token.value}"
-            # Note: If no server token, the storage server endpoint should accept the forwarded API key
-            # But since we're in a sync context, we can't access the original request's headers
-            # The storage server should accept requests without auth if storage_server_token is not set
-            # (it will use the forwarded API key from the main server's request)
-            
-            files = {
-                "file": (original_name, file_data, "application/octet-stream")
-            }
-            data = {
-                "username": username,
-                "note_id": str(note_id)
-            }
-            
-            # Use synchronous requests instead of async httpx to avoid event loop issues
-            response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result.get("filename", original_name)
-            else:
-                logger.error(f"[STORAGE] Failed to proxy save_note_attachment: {response.status_code} - {response.text}")
-                raise Exception(f"Storage server error: {response.status_code}")
-        except Exception as e:
-            logger.error(f"[STORAGE] Error proxying note attachment: {e}", exc_info=True)
-            raise
 
     def save_mail_attachment(self, username: str, file_data: bytes, original_name: str, bypass_proxy: bool = False) -> str:
         """Save a mail attachment file to temp/mail_attachments and return the filename. Proxies to storage server if configured."""
@@ -1036,42 +730,26 @@ class StorageService:
                 else:
                     logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
         
-        # On storage server: Use WebDAV backend (replaces local disk)
-        user_id = self._get_user_id_from_username(username)
-        webdav_client = self._get_webdav_client(user_id) if user_id else None
-        
-        if not webdav_client or not webdav_client.is_enabled():
-            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
-        
-        # Use WebDAV to delete file
-        import asyncio
-        file_path = f"notes/{note_id}/{filename}"
-        
+        # Local file deletion (storage server node or when bypassing proxy)
         try:
-            async def _delete_from_webdav():
-                return await webdav_client.delete_file(file_path)
-            
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                def _run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(_delete_from_webdav())
-                    finally:
-                        new_loop.close()
-                
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    return future.result()
-            else:
-                return loop.run_until_complete(_delete_from_webdav())
-        except FileNotFoundError:
-            logger.warning(f"[STORAGE] Note attachment not found in WebDAV: {file_path}")
+            note_path = self.get_note_path(username, note_id)
+            safe_filename = _sanitize_path_component(filename)
+            file_path = note_path / safe_filename
+
+            # Verify path is within upload directory (already checked by get_note_path)
+            if not _validate_path_within_base(file_path, Path(self.upload_path)):
+                logger.warning(f"Path traversal attempt blocked in delete_note_attachment: {username}/{note_id}/{filename}")
+                return False
+
+            if file_path.exists():
+                file_path.unlink()
+                return True
+            return False
+        except ValueError as e:
+            logger.warning(f"Invalid path component in delete_note_attachment: {e}")
             return False
         except Exception as e:
-            logger.error(f"[STORAGE] Failed to delete note attachment from WebDAV: {e}", exc_info=True)
+            logger.error(f"Error deleting note attachment: {e}")
             return False
     
     def delete_note_attachments(self, username: str, note_id: int, bypass_proxy: bool = False) -> bool:
@@ -1083,141 +761,28 @@ class StorageService:
                 # Proxy to storage server
                 return self._proxy_delete_note_attachments(storage_server_url.value, username, note_id)
         
-        # On storage server: Use WebDAV backend (replaces local disk)
-        user_id = self._get_user_id_from_username(username)
-        webdav_client = self._get_webdav_client(user_id) if user_id else None
-        
-        if not webdav_client or not webdav_client.is_enabled():
-            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
-        
-        # Use WebDAV to delete all files in notes/{note_id}/ directory
-        import asyncio
-        notes_dir = f"notes/{note_id}"
-        
+        # Local file deletion (storage server node or when bypassing proxy)
         try:
-            async def _delete_note_dir():
-                # List all files in the directory
-                items = await webdav_client.list_files(notes_dir, recursive=True)
-                # Delete all files (not directories)
-                deleted_count = 0
-                for item in items:
-                    if not item.get('is_directory', False):
-                        file_path = item.get('path', '')
-                        if file_path.startswith(notes_dir):
-                            try:
-                                await webdav_client.delete_file(file_path)
-                                deleted_count += 1
-                            except:
-                                pass  # Continue deleting other files even if one fails
-                return deleted_count > 0
+            note_path = self.get_note_path(username, note_id)
+            safe_note_id = _sanitize_path_component(str(note_id))
             
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                def _run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(_delete_note_dir())
-                    finally:
-                        new_loop.close()
-                
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    result = future.result()
-                    logger.info(f"[STORAGE] Deleted note attachments from WebDAV: {notes_dir}")
-                    return result
-            else:
-                result = loop.run_until_complete(_delete_note_dir())
-                logger.info(f"[STORAGE] Deleted note attachments from WebDAV: {notes_dir}")
-                return result
-        except Exception as e:
-            logger.error(f"[STORAGE] Failed to delete note attachments from WebDAV: {e}", exc_info=True)
-            return False
-    
-    def _proxy_delete_note_attachment(self, storage_server_url: str, username: str, note_id: int, filename: str) -> bool:
-        """Proxy single note attachment deletion to storage server"""
-        import requests
-        try:
-            # Get server-to-server API token
-            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
-            
-            url = f"{storage_server_url.rstrip('/')}/api/storage/delete-note-attachment"
-            headers = {}
-            if storage_server_token and storage_server_token.value:
-                headers["Authorization"] = f"Bearer {storage_server_token.value}"
-            
-            data = {
-                "username": username,
-                "note_id": note_id,
-                "filename": filename
-            }
-            
-            response = requests.post(url, headers=headers, data=data, timeout=30)
-            if response.status_code == 200:
-                result = response.json()
-                return result.get("success", False)
-            else:
-                logger.error(f"[STORAGE] Failed to proxy delete_note_attachment: {response.status_code} - {response.text}")
+            if not _validate_path_within_base(note_path, Path(self.upload_path)):
+                logger.warning(f"Path traversal attempt blocked in delete_note_attachments: {username}/{note_id}")
                 return False
-        except Exception as e:
-            logger.error(f"[STORAGE] Error proxying delete_note_attachment: {e}", exc_info=True)
-            raise
-    
-    def _proxy_delete_note_attachments(self, storage_server_url: str, username: str, note_id: int) -> bool:
-        """Proxy note attachments deletion to storage server"""
-        import asyncio
-        try:
-            # Get server-to-server API token
-            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
             
-            url = f"{storage_server_url.rstrip('/')}/api/storage/delete-note-attachments"
-            headers = {}
-            if storage_server_token and storage_server_token.value:
-                headers["Authorization"] = f"Bearer {storage_server_token.value}"
-            
-            data = {
-                "username": username,
-                "note_id": note_id
-            }
-            
-            async def _async_proxy():
-                import httpx
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(url, json=data, headers=headers)
-                    if response.status_code == 200:
-                        return True
-                    else:
-                        logger.error(f"Storage server error deleting note attachments: {response.status_code}")
-                        return False
-            
-            # Try to get running event loop
-            try:
-                loop = asyncio.get_running_loop()
-                # If we're in an async context with a running loop, run in a new thread with its own event loop
-                import concurrent.futures
-                def _run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(_async_proxy())
-                    finally:
-                        new_loop.close()
-                
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    return future.result()
-            except RuntimeError:
-                # No running loop, we can use asyncio.run or create a new loop
-                try:
-                    loop = asyncio.get_event_loop()
-                    return loop.run_until_complete(_async_proxy())
-                except RuntimeError:
-                    # No event loop at all, create one
-                    return asyncio.run(_async_proxy())
-        except Exception as e:
-            logger.error(f"[STORAGE] Error proxying note attachments deletion: {e}", exc_info=True)
+            if note_path.exists():
+                shutil.rmtree(note_path)
+                logger.info(f"Deleted note attachments directory: {note_path}")
+                return True
+            logger.warning(f"Note attachments directory not found: {note_path}")
             return False
+        except ValueError as e:
+            logger.warning(f"Invalid path component in delete_note_attachments: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting note attachments: {e}", exc_info=True)
+            return False
+    
 
 
 def get_storage_service(db: Session) -> StorageService:

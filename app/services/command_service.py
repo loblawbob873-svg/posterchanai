@@ -59,19 +59,8 @@ from app.services.torrent_service import (
     scrape_torrents,
     search_torrents,
 )
-from app.services.local_music_service import (
-    format_music_browse,
-    format_music_tracks,
-    generate_mood_playlist,
-    get_stream_url,
-    get_user_music_config,
-    scan_music_directory,
-    search_music_files,
-)
 from app.services.youtube_service import (
     check_ytdlp_available,
-    download_and_save_to_music,
-    download_video_and_save_to_music,
     download_video_and_save_to_storage,
     extract_youtube_urls,
     format_download_result,
@@ -91,8 +80,6 @@ _torrent_cache: dict[int, dict[str, list[TorrentResult]]] = {}
 _nyaa_cache: dict[int, list[NyaaResult]] = {}
 # Cache for flood torrent number-to-hash mapping (per user)
 _flood_hash_map: dict[int, dict[int, str]] = {}
-# Cache for music results (per user)
-_music_cache: dict[int, dict] = {}  # user_id -> {tracks, folders, current_path}
 # Locks for thread-safe cache access
 
 
@@ -171,7 +158,7 @@ class CommandService:
         "budget": "Check system budget/usage",
         "firewall": "Toggle network firewall",
         "yt": "YouTube search: yt <query>",
-        "ytdl": "Download YouTube: ytdl <url> (audio to Music) | ytdl video <url> (video to Storage)",
+        "ytdl": "Download YouTube: ytdl video <url> (video to Storage)",
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
         "news": "RSS news (alias for rss sync)",
@@ -182,9 +169,7 @@ class CommandService:
         "contacts": "Contacts: contacts <query>",
         "mail": "Email: mail <to> [subject] <body>",
         "todo": "Todo list: todo | todo add <task>",
-        "music": "Music player: music <play|stop|next>",
         "translate": "Translate: translate <text> to <lang>",
-        "notes": "Notes: notes | notes search <query> | notes folder <name>",
     }
     # Command aliases (alias -> canonical command)
     COMMAND_ALIASES = {
@@ -288,8 +273,7 @@ class CommandService:
                 return "notes", f"search {query}"
 
         # Check for "download song/video <url>" patterns
-        # Audio downloads (song, music, audio)
-        for prefix in ["download song ", "download music ", "download audio "]:
+        # Audio downloads removed - use ytdl video instead
             if lower.startswith(prefix):
                 url = message[len(prefix):].strip()
                 return "ytdl", url
@@ -381,8 +365,6 @@ class CommandService:
             return await self._mail_command(arg, attachments=attachments)
         elif command == "todo":
             return await self._todo_command(arg)
-        elif command == "music":
-            return await self._music_command(arg)
         elif command == "translate":
             return await self._translate_command(arg)
         else:
@@ -980,7 +962,6 @@ class CommandService:
 `yt <url>` - Get AI summary of video transcript
 
 **Download:**
-- `ytdl <url>` - Download as MP3 (audio only) to your Music folder
 - `ytdl video <url>` - Download as video (MP4) to your Storage folder
 
 Example: `yt https://youtube.com/watch?v=...`""",
@@ -1004,14 +985,12 @@ Example: `yt https://youtube.com/watch?v=...`""",
                 "content": """## YouTube Download
 
 **Usage:**
-- `ytdl <url>` - Download as MP3 (audio only) to Music folder
 - `ytdl video <url>` - Download as video (MP4) to Storage
 
 **Examples:**
-- `ytdl https://youtube.com/watch?v=dQw4w9WgXcQ` - Download audio
 - `ytdl video https://youtube.com/watch?v=dQw4w9WgXcQ` - Download video
 
-**Note:** Audio goes to Music Dir, Videos go to Storage.""",
+**Note:** Videos are saved to Storage.""",
             }
 
         # Check if yt-dlp is available
@@ -1037,20 +1016,19 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
         target_url = urls[0]
 
-        # Download and save: audio to Music Dir, video to Storage
-        if is_video:
-            result = await download_video_and_save_to_storage(
-                url=target_url,
-                user_id=self.user.id,
-                db=self.db,
-                subfolder="YouTube Videos"
-            )
-        else:
-            result = await download_and_save_to_music(
-                url=target_url,
-                user_id=self.user.id,
-                db=self.db
-            )
+        # Download and save: video to Storage
+        if not is_video:
+            return {
+                "type": "text",
+                "content": "Usage: `ytdl video <url>`\n\nExample: `ytdl video https://youtube.com/watch?v=...`\n\nNote: Audio downloads are no longer supported. Use video downloads instead."
+            }
+        
+        result = await download_video_and_save_to_storage(
+            url=target_url,
+            user_id=self.user.id,
+            db=self.db,
+            subfolder="YouTube Videos"
+        )
 
         return {"type": "text", "content": format_download_result(result)}
 
@@ -1175,7 +1153,7 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
         parts = arg.strip().split()
         subcommand = parts[0].lower() if parts else ""
-        categories = ("movies", "tv", "music", "anime", "search")
+        categories = ("movies", "tv", "anime", "search")
 
         # Get built-in service (None if disabled or not configured)
         bt_service, bt_error = self._get_bt_service()
@@ -1595,7 +1573,7 @@ Example: `yt https://youtube.com/watch?v=...`""",
         if category not in categories:
             return {
                 "type": "text",
-                "content": f"Unknown category: `{subcommand}`\n\nAvailable: `torrents movies`, `torrents tv`, `torrents music`, `torrents anime`",
+                    "content": f"Unknown category: `{subcommand}`\n\nAvailable: `torrents movies`, `torrents tv`, `torrents anime`",
             }
 
         try:
@@ -3869,317 +3847,6 @@ Return ONLY valid JSON, no other text.""",
             logger.error(f"Todo command error: {e}")
             return {"type": "text", "content": f"Error: {str(e)}"}
 
-    async def _music_command(self, arg: str) -> dict:
-        """Local music browsing and playback commands"""
-        global _music_cache
-
-        if not self.user:
-            return {"type": "text", "content": "Please log in to use the music command."}
-
-        config = get_user_music_config(self.user.id, self.db)
-        if not config or not config.get("directory"):
-            return {
-                "type": "text",
-                "content": "Music directory not configured. Set your music directory in User Settings > Music.",
-            }
-
-        directory = config["directory"]
-        recursive = config.get("recursive", True)
-        
-        parts = arg.strip().split(maxsplit=1)
-        subcommand = parts[0].lower() if parts else ""
-        param = parts[1] if len(parts) > 1 else ""
-
-        try:
-            # Default: browse root directory
-            if not subcommand:
-                logger.info(f"[MUSIC CMD] About to scan directory: {directory}")
-                items = scan_music_directory(directory, recursive, db=self.db, user_id=self.user.id)
-                logger.info(f"[MUSIC CMD] Scan returned {len(items)} items")
-                
-                # Cache results
-                _music_cache[self.user.id] = {
-                    "tracks": [item for item in items if item['type'] == 'file'],
-                    "folders": [item for item in items if item['type'] == 'folder'],
-                    "current_path": ""
-                }
-                
-                logger.info(f"[MUSIC CMD] Cached {len(_music_cache[self.user.id]['tracks'])} tracks")
-                return {"type": "text", "content": format_music_browse(items, "")}
-
-            # Browse folder
-            if subcommand == "browse":
-                subfolder = param if param else ""
-                items = scan_music_directory(directory, recursive, subfolder, db=self.db, user_id=self.user.id)
-
-                # Cache results
-                _music_cache[self.user.id] = {
-                    "tracks": [item for item in items if item['type'] == 'file'],
-                    "folders": [item for item in items if item['type'] == 'folder'],
-                    "current_path": subfolder,
-                }
-
-                return {"type": "text", "content": format_music_browse(items, subfolder)}
-
-            # Search tracks
-            elif subcommand == "search":
-                if not param:
-                    return {
-                        "type": "text",
-                        "content": "Usage: `music search <query>`\n\nExample: `music search beatles`",
-                    }
-
-                logger.info(f"[MUSIC SEARCH] Searching for: {param}")
-                tracks = search_music_files(directory, param, recursive, db=self.db, user_id=self.user.id)
-                logger.info(f"[MUSIC SEARCH] Found {len(tracks)} tracks")
-                
-                if tracks:
-                    logger.info(f"[MUSIC SEARCH] First track: {tracks[0]}")
-
-                # Cache results
-                _music_cache[self.user.id] = {"tracks": tracks, "folders": [], "current_path": ""}
-                
-                formatted_result = format_music_tracks(tracks)
-                logger.info(f"[MUSIC SEARCH] Formatted result length: {len(formatted_result)}, starts with: {formatted_result[:100]}")
-
-                return {"type": "text", "content": formatted_result}
-
-            # Play track by number
-            elif subcommand == "play":
-                if not param:
-                    return {"type": "text", "content": "Usage: `music play <#>`\n\nExample: `music play 1`"}
-
-                try:
-                    num = int(param)
-                except ValueError:
-                    return {"type": "text", "content": "Please provide a valid track number."}
-
-                cache = _music_cache.get(self.user.id, {})
-                tracks = cache.get("tracks", [])
-
-                if not tracks:
-                    return {"type": "text", "content": "No tracks loaded. Browse or search music first."}
-
-                if num < 1 or num > len(tracks):
-                    return {"type": "text", "content": f"Invalid track number. Choose 1-{len(tracks)}."}
-
-                track = tracks[num - 1]
-                stream_url = get_stream_url(track['path'])
-                
-                # Extract title from filename (without extension)
-                title = track['name'].rsplit('.', 1)[0]
-
-                return {
-                    "type": "music_play",
-                    "content": f"## ◈ NOW PLAYING ◈\n\n**{title}**",
-                    "track": {
-                        "path": track['path'],
-                        "title": title,
-                        "artist": "",  # Could be extracted from ID3 tags in future
-                        "album": "",
-                        "streamUrl": stream_url,
-                        "duration": None,
-                    },
-                }
-
-            # Queue management
-            elif subcommand == "queue":
-                if param.startswith("add "):
-                    try:
-                        num = int(param[4:].strip())
-                    except ValueError:
-                        return {"type": "text", "content": "Usage: `music queue add <#>`"}
-
-                    cache = _music_cache.get(self.user.id, {})
-                    tracks = cache.get("tracks", [])
-
-                    if num < 1 or num > len(tracks):
-                        return {"type": "text", "content": f"Invalid track number. Choose 1-{len(tracks)}."}
-
-                    track = tracks[num - 1]
-                    stream_url = get_stream_url(track['path'])
-                    title = track['name'].rsplit('.', 1)[0]
-
-                    return {
-                        "type": "music_queue_add",
-                        "content": f"Added to queue: **{title}**",
-                        "track": {"title": title, "artist": "", "stream_url": stream_url},
-                    }
-                else:
-                    return {
-                        "type": "text",
-                        "content": "Usage: `music queue add <#>`\n\nQueue is managed by the player. Use the player controls to view queue.",
-                    }
-
-            # Mood-based playlist
-            elif subcommand == "mood":
-                if not param:
-                    return {
-                        "type": "text",
-                        "content": "Usage: `music mood <vibe>`\n\nExamples:\n- `music mood chill`\n- `music mood upbeat workout`\n- `music mood relaxing evening`",
-                    }
-
-                # Generate mood playlist
-                playlist_tracks = generate_mood_playlist(directory, param, recursive)
-
-                if not playlist_tracks:
-                    return {"type": "text", "content": f"No tracks found for mood: {param}"}
-
-                # Cache the playlist
-                _music_cache[self.user.id] = {"tracks": playlist_tracks, "folders": [], "current_path": ""}
-
-                # Build track list for player
-                playlist_data = []
-                for t in playlist_tracks:
-                    title = t['name'].rsplit('.', 1)[0]
-                    playlist_data.append({
-                        "path": t['path'],
-                        "title": title,
-                        "artist": "",
-                        "streamUrl": get_stream_url(t['path'])
-                    })
-
-                return {
-                    "type": "music_playlist",
-                    "content": f"🎵 **{param.title()} Vibes**\n\n{len(playlist_tracks)} tracks curated for your mood.\n\nNow playing: **{playlist_data[0]['title']}**",
-                    "tracks": playlist_data,
-                }
-
-            # Skip to next track
-            elif subcommand in ("skip", "next"):
-                return {"type": "music_next", "content": "Skipping to next track..."}
-
-            # Previous track
-            elif subcommand == "prev":
-                return {"type": "music_prev", "content": "Going to previous track..."}
-
-            # Random/shuffle play
-            elif subcommand == "random":
-                # Get all tracks from music directory
-                import random as rand_module
-                all_tracks = []
-                
-                if recursive:
-                    from pathlib import Path
-                    base_path = Path(directory)
-                    for item in base_path.rglob('*'):
-                        if item.is_file() and item.suffix in {'.mp3', '.flac', '.wav', '.ogg', '.m4a', '.aac', '.wma', '.opus'}:
-                            all_tracks.append({
-                                'type': 'file',
-                                'name': item.name,
-                                'path': str(item.relative_to(base_path)),
-                                'size': item.stat().st_size,
-                                'extension': item.suffix.lower()
-                            })
-                else:
-                    from pathlib import Path
-                    base_path = Path(directory)
-                    for item in base_path.iterdir():
-                        if item.is_file() and item.suffix in {'.mp3', '.flac', '.wav', '.ogg', '.m4a', '.aac', '.wma', '.opus'}:
-                            all_tracks.append({
-                                'type': 'file',
-                                'name': item.name,
-                                'path': str(item.relative_to(base_path)),
-                                'size': item.stat().st_size,
-                                'extension': item.suffix.lower()
-                            })
-
-                if not all_tracks:
-                    return {"type": "text", "content": "No tracks available for random play."}
-
-                # Pick a random track
-                track = rand_module.choice(all_tracks)
-                title = track['name'].rsplit('.', 1)[0]
-                
-                return {
-                    "type": "music_play",
-                    "content": f"🎲 Random: **{title}**",
-                    "track": {
-                        "path": track['path'],
-                        "title": title,
-                        "artist": "",
-                        "album": "",
-                        "streamUrl": get_stream_url(track['path']),
-                    },
-                }
-
-            # Shuffle all tracks
-            elif subcommand == "shuffle":
-                import random as rand_module
-
-                logger.info(f"[MUSIC SHUFFLE] Scanning directory: {directory}")
-                # Use storage proxy-aware scanning
-                items = scan_music_directory(directory, recursive, db=self.db, user_id=self.user.id)
-                all_tracks = [item for item in items if item['type'] == 'file']
-                
-                logger.info(f"[MUSIC SHUFFLE] Found {len(all_tracks)} tracks")
-
-                if not all_tracks:
-                    return {"type": "text", "content": "No tracks found."}
-
-                # Shuffle tracks
-                rand_module.shuffle(all_tracks)
-                
-                # Limit to 1000 tracks to prevent UI freeze
-                MAX_SHUFFLE_TRACKS = 1000
-                tracks_to_play = all_tracks[:MAX_SHUFFLE_TRACKS]
-
-                # Update cache with ALL shuffled tracks (for browsing)
-                _music_cache[self.user.id] = {"tracks": all_tracks, "folders": [], "current_path": ""}
-
-                # Build playlist data (limited)
-                playlist_data = []
-                for t in tracks_to_play:
-                    title = t['name'].rsplit('.', 1)[0]
-                    stream_url = get_stream_url(t['path'])
-                    playlist_data.append({
-                        "path": t['path'],
-                        "title": title,
-                        "artist": "",
-                        "streamUrl": stream_url
-                    })
-                
-                logger.info(f"[MUSIC SHUFFLE] Sending {len(playlist_data)} tracks to player (out of {len(all_tracks)} total)")
-
-                return {
-                    "type": "music_playlist",
-                    "content": f"🔀 Shuffling {len(playlist_data)} tracks (out of {len(all_tracks)} total)",
-                    "tracks": playlist_data,
-                }
-
-            # Queue all cached tracks (from last browse/search)
-            elif subcommand == "queueall":
-                cached = _music_cache.get(self.user.id, {})
-                tracks = cached.get("tracks", [])
-
-                if not tracks:
-                    return {"type": "text", "content": "No tracks to queue. Browse or search first."}
-
-                playlist_data = []
-                for t in tracks:
-                    title = t['name'].rsplit('.', 1)[0]
-                    playlist_data.append({
-                        "path": t['path'],
-                        "title": title,
-                        "artist": "",
-                        "streamUrl": get_stream_url(t['path'])
-                    })
-
-                return {"type": "music_playlist", "content": f"Queued {len(tracks)} tracks", "tracks": playlist_data}
-
-            # Stop playback
-            elif subcommand == "stop":
-                return {"type": "music_stop", "content": "Playback stopped."}
-
-            else:
-                return {
-                    "type": "text",
-                    "content": "Usage:\n- `music` - Browse music library\n- `music browse <path>` - Browse folder\n- `music search <query>` - Search tracks\n- `music play <#>` - Play track\n- `music shuffle` - Shuffle all tracks\n- `music queueall` - Queue all from last search/browse\n- `music random` - Play random track\n- `music skip` / `music next` - Skip to next\n- `music prev` - Previous track\n- `music mood <vibe>` - AI mood playlist\n- `music stop` - Stop playback",
-                }
-
-        except Exception as e:
-            logger.error(f"Music command error: {e}")
-            return {"type": "text", "content": f"Error: {str(e)}"}
 
     async def _translate_command(self, arg: str) -> dict:
         """Translate last response or email to specified language."""

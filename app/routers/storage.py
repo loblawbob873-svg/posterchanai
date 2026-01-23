@@ -77,9 +77,10 @@ async def save_image(
     image_base64 = base64.b64encode(content).decode('utf-8')
     
     # Run blocking file I/O in thread pool to prevent blocking other requests
+    # Use bypass_proxy=True since we're on the storage server node
     def _save_image_sync():
         storage = StorageService(db)
-        return storage.save_image(username, conversation_id, image_base64, prefix)
+        return storage.save_image(username, conversation_id, image_base64, prefix, bypass_proxy=True)
     
     file_path = await asyncio.to_thread(_save_image_sync)
     
@@ -137,9 +138,10 @@ async def save_avatar(
     ext = "." + (file.filename.split('.')[-1] if '.' in file.filename else "png")
     
     # Run blocking file I/O in thread pool to prevent blocking other requests
+    # Use bypass_proxy=True since we're on the storage server node
     def _save_avatar_sync():
         storage = StorageService(db)
-        return storage.save_avatar(username, content, ext)
+        return storage.save_avatar(username, content, ext, bypass_proxy=True)
     
     filename = await asyncio.to_thread(_save_avatar_sync)
     
@@ -208,7 +210,7 @@ async def save_file(
     def _save_file_sync():
         storage = StorageService(db)
         if is_text:
-            return storage.save_file(username, conversation_id, text_content, original_name)
+            return storage.save_file(username, conversation_id, text_content, original_name, bypass_proxy=True)
         else:
             return storage.save_raw_file(username, conversation_id, content, original_name)
     
@@ -226,103 +228,6 @@ async def save_file(
     return {"file_path": file_path}
 
 
-@router.post("/save-note-attachment")
-async def save_note_attachment(
-    request: FastAPIRequest,
-    file: UploadFile = File(...),
-    username: str = Form(...),
-    note_id: int = Form(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_optional)
-):
-    """
-    Save a note attachment file. Called by client nodes when proxying note attachment uploads.
-    Only accessible on storage server node.
-    
-    Note: For proxied requests, current_user may be None if using server token auth.
-    In that case, we trust the main server and skip user verification.
-    """
-    # Check if this is a server-to-server request
-    # Either current_user is None OR we have a valid storage_server_token
-    is_server_request = current_user is None
-    if not is_server_request:
-        # Check if this is a server token request
-        from app.models import Setting
-        storage_server_token = safe_query_setting(db, "storage_server_token")
-        if storage_server_token and storage_server_token.value:
-            # Check if the request has the server token
-            auth_header = request.headers.get("Authorization", "")
-            if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-                is_server_request = True
-    
-    if not is_server_request:
-        # Verify username matches for user requests
-        if current_user.username != username:
-            raise HTTPException(status_code=403, detail="Access denied")
-        
-        # Verify note belongs to user (for user requests)
-        from app.models import Note
-        note = db.query(Note).filter(
-            Note.id == note_id,
-            Note.user_id == current_user.id
-        ).first()
-        if not note:
-            raise HTTPException(status_code=404, detail="Note not found")
-    # For server-to-server requests, we skip note verification (main server already verified)
-    
-    # Read file content
-    content = await file.read()
-    
-    # Get original filename
-    original_name = file.filename or "attachment"
-    
-    # Run blocking file I/O - handle both async and sync contexts
-    # Bypass proxy since we're already on the storage server endpoint
-    def _save_attachment_sync():
-        storage = StorageService(db)
-        return storage.save_note_attachment(username, note_id, content, original_name, bypass_proxy=True)
-    
-    # Try to get running event loop
-    try:
-        loop = asyncio.get_running_loop()
-        # Use executor to run blocking I/O
-        filename = await loop.run_in_executor(None, _save_attachment_sync)
-    except RuntimeError:
-        # No running event loop - we're likely in a thread pool
-        # Just run synchronously since we're already in a separate thread
-        filename = _save_attachment_sync()
-    
-    # Generate thumbnail for note attachment images asynchronously (don't block response)
-    try:
-        from app.services.thumbnail_service import is_image_file, generate_thumbnail_for_image
-        from pathlib import Path
-        
-        storage = StorageService(db)
-        note_path = storage.get_note_path(username, note_id)
-        attachment_path = note_path / filename
-        
-        if attachment_path.exists() and is_image_file(attachment_path):
-            user_path = storage.get_user_path(username)
-            
-            # Schedule thumbnail generation in background
-            asyncio.create_task(
-                asyncio.to_thread(generate_thumbnail_for_image, user_path, attachment_path)
-            )
-            logger.debug(f"Scheduled thumbnail generation for note attachment: {attachment_path}")
-    except Exception as e:
-        logger.warning(f"Failed to schedule thumbnail generation for note attachment {filename}: {e}")
-    
-    # Invalidate file cache for notes directory (non-blocking)
-    try:
-        from app.routers.files import get_file_cache
-        cache = get_file_cache(db)
-        cache.invalidate(f"{username}:")
-        cache.invalidate(f"{username}:notes")
-        cache.invalidate(f"{username}:notes/{note_id}")
-    except Exception as e:
-        logger.warning(f"Failed to invalidate cache: {e}")
-    
-    return {"filename": filename}
 
 
 @router.post("/save-mail-attachment")

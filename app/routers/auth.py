@@ -449,60 +449,6 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         except json.JSONDecodeError:
             pass
 
-    # Get local music settings - return the user's input (not resolved path)
-    local_music_dir = None
-    music_recursive_scan = True
-    music_setting = db.query(UserSetting).filter(
-        UserSetting.user_id == current_user.id,
-        UserSetting.key == "local_music_config"
-    ).first()
-    if music_setting and music_setting.value:
-        try:
-            music_config = json.loads(music_setting.value)
-            # Return the raw directory path (what the user entered), not the resolved path
-            local_music_dir = music_config.get('directory')
-            music_recursive_scan = music_config.get('recursive', True)
-        except json.JSONDecodeError:
-            pass
-    
-    # If not configured, show default as relative path (not resolved)
-    if not local_music_dir:
-        local_music_dir = "/Music"
-
-    # Get WebDAV storage settings
-    webdav_storage_enabled = False
-    webdav_storage_url = None
-    webdav_storage_username = None
-    webdav_storage_has_password = False
-    
-    webdav_enabled_setting = db.query(UserSetting).filter(
-        UserSetting.user_id == current_user.id,
-        UserSetting.key == "webdav_storage_enabled"
-    ).first()
-    if webdav_enabled_setting:
-        webdav_storage_enabled = webdav_enabled_setting.value.lower() == "true"
-    
-    webdav_url_setting = db.query(UserSetting).filter(
-        UserSetting.user_id == current_user.id,
-        UserSetting.key == "webdav_storage_url"
-    ).first()
-    if webdav_url_setting:
-        webdav_storage_url = webdav_url_setting.value
-    
-    webdav_username_setting = db.query(UserSetting).filter(
-        UserSetting.user_id == current_user.id,
-        UserSetting.key == "webdav_storage_username"
-    ).first()
-    if webdav_username_setting:
-        webdav_storage_username = webdav_username_setting.value
-    
-    webdav_password_setting = db.query(UserSetting).filter(
-        UserSetting.user_id == current_user.id,
-        UserSetting.key == "webdav_storage_password"
-    ).first()
-    if webdav_password_setting:
-        webdav_storage_has_password = bool(webdav_password_setting.value)
-
     return UserSettingsResponse(
         notification_email=current_user.notification_email,
         avatar=avatar_url,
@@ -530,15 +476,7 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         carddav_username=carddav_username,
         carddav_has_password=carddav_has_password,
         # Mail settings
-        mail_accounts=mail_accounts,
-        # Local music settings
-        local_music_dir=local_music_dir,
-        music_recursive_scan=music_recursive_scan,
-        # WebDAV storage settings
-        webdav_storage_enabled=webdav_storage_enabled,
-        webdav_storage_url=webdav_storage_url,
-        webdav_storage_username=webdav_storage_username,
-        webdav_storage_has_password=webdav_storage_has_password
+        mail_accounts=mail_accounts
     )
 
 
@@ -710,65 +648,6 @@ def update_user_settings(
             new_accounts.append(new_acc)
 
         save_user_setting("mail_accounts", json.dumps(new_accounts))
-
-    # Save local music settings
-    logger.info(f"Local Music settings received: dir={settings.local_music_dir}, recursive={settings.music_recursive_scan}")
-    if settings.local_music_dir is not None or settings.music_recursive_scan is not None:
-        from app.services.local_music_service import save_user_music_config
-        logger.info(f"Saving local music config for user {current_user.id}")
-        
-        # Get existing config to preserve values not being updated
-        existing_config = db.query(UserSetting).filter(
-            UserSetting.user_id == current_user.id,
-            UserSetting.key == "local_music_config"
-        ).first()
-        
-        existing_dir = ''
-        existing_recursive = True
-        if existing_config and existing_config.value:
-            try:
-                existing_data = json.loads(existing_config.value)
-                existing_dir = existing_data.get('directory', '')
-                existing_recursive = existing_data.get('recursive', True)
-            except json.JSONDecodeError:
-                pass
-        
-        save_user_music_config(
-            current_user.id, db,
-            directory=settings.local_music_dir if settings.local_music_dir is not None else existing_dir,
-            recursive=settings.music_recursive_scan if settings.music_recursive_scan is not None else existing_recursive
-        )
-        logger.info("Local music config saved")
-
-    # Save WebDAV storage settings
-    if (settings.webdav_storage_enabled is not None or 
-        settings.webdav_storage_url is not None or 
-        settings.webdav_storage_username is not None or 
-        settings.webdav_storage_password is not None):
-        
-        if settings.webdav_storage_enabled is not None:
-            save_user_setting("webdav_storage_enabled", "true" if settings.webdav_storage_enabled else "false")
-        
-        if settings.webdav_storage_url is not None:
-            save_user_setting("webdav_storage_url", settings.webdav_storage_url)
-        
-        if settings.webdav_storage_username is not None:
-            save_user_setting("webdav_storage_username", settings.webdav_storage_username)
-        
-        if settings.webdav_storage_password is not None:
-            # Only save if password is provided (not empty string means update, empty means clear)
-            if settings.webdav_storage_password:
-                save_user_setting("webdav_storage_password", settings.webdav_storage_password)
-            else:
-                # Clear password
-                setting = db.query(UserSetting).filter(
-                    UserSetting.user_id == current_user.id,
-                    UserSetting.key == "webdav_storage_password"
-                ).first()
-                if setting:
-                    db.delete(setting)
-        
-        logger.info(f"WebDAV storage config saved for user {current_user.id}")
 
     db.commit()
 
@@ -1147,163 +1026,16 @@ async def test_custom_image_connection(
         )
 
 
-@router.get("/webdav-debug")
-async def webdav_debug(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Debug endpoint to check WebDAV configuration and list files."""
-    from app.services.webdav_storage_client import WebDAVStorageClient
-    import asyncio
-    
-    webdav_client = WebDAVStorageClient(db, current_user.id)
-    
-    debug_info = {
-        "user_id": current_user.id,
-        "username": current_user.username,
-        "webdav_enabled": webdav_client.is_enabled(),
-        "base_url": webdav_client.base_url if hasattr(webdav_client, 'base_url') else None,
-        "username_set": bool(webdav_client.username) if hasattr(webdav_client, 'username') else None,
-        "password_set": bool(webdav_client.password) if hasattr(webdav_client, 'password') else None,
-    }
-    
-    if webdav_client.is_enabled():
-        try:
-            # Try to list files
-            async def _test_list():
-                return await webdav_client.list_files("", recursive=False)
-            
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                def _run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(_test_list())
-                    finally:
-                        new_loop.close()
-                
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    files = future.result()
-            else:
-                files = loop.run_until_complete(_test_list())
-            
-            debug_info["files_count"] = len(files)
-            debug_info["files"] = files[:10]  # First 10 files
-            debug_info["list_success"] = True
-        except Exception as e:
-            debug_info["list_success"] = False
-            debug_info["list_error"] = str(e)
-            import traceback
-            debug_info["list_traceback"] = traceback.format_exc()
-    
-    return debug_info
-
-@router.post("/test-webdav", response_model=TestConnectionResponse)
-async def test_webdav_connection(
-    request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Test WebDAV storage connection."""
-    try:
-        data = await request.json()
-        url = data.get("url", "").strip()
-        username = data.get("username", "").strip()
-        password = data.get("password", "").strip()
-        
-        if not url:
-            return TestConnectionResponse(
-                success=False,
-                message="WebDAV URL is required"
-            )
-        
-        if not username:
-            return TestConnectionResponse(
-                success=False,
-                message="WebDAV username is required"
-            )
-        
-        # Test WebDAV connection by trying to list root directory
-        import httpx
-        from urllib.parse import urljoin
-        
-        base_url = url.rstrip('/')
-        test_url = urljoin(base_url + '/', '')
-        
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
-                # Try PROPFIND on root
-                propfind_body = """<?xml version="1.0" encoding="utf-8"?>
-<d:propfind xmlns:d="DAV:">
-    <d:prop>
-        <d:resourcetype/>
-    </d:prop>
-</d:propfind>"""
-                
-                response = await client.request(
-                    "PROPFIND",
-                    test_url,
-                    content=propfind_body,
-                    headers={
-                        "Content-Type": "application/xml",
-                        "Depth": "0"
-                    },
-                    auth=httpx.BasicAuth(username, password)
-                )
-                
-                if response.status_code in (200, 207):
-                    return TestConnectionResponse(
-                        success=True,
-                        message="WebDAV connection successful!"
-                    )
-                else:
-                    return TestConnectionResponse(
-                        success=False,
-                        message=f"WebDAV server returned status {response.status_code}"
-                    )
-        except httpx.ConnectError:
-            return TestConnectionResponse(
-                success=False,
-                message="Cannot connect to WebDAV server. Check URL and network."
-            )
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                return TestConnectionResponse(
-                    success=False,
-                    message="Authentication failed. Check username and password."
-                )
-            return TestConnectionResponse(
-                success=False,
-                message=f"WebDAV server error: {e.response.status_code}"
-            )
-        except Exception as e:
-            return TestConnectionResponse(
-                success=False,
-                message=f"Connection test failed: {str(e)}"
-            )
-    except Exception as e:
-        logger.error(f"Error testing WebDAV connection: {e}", exc_info=True)
-        return TestConnectionResponse(
-            success=False,
-            message=f"Error: {str(e)}"
-        )
-
-
 @router.post("/scan-storage")
 async def scan_user_storage(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Scan the current user's storage (WebDAV or local).
+    Scan the current user's local storage.
     Invalidates file cache and counts files/directories.
-    For WebDAV users, this scans their WebDAV server.
-    For local storage users, this also restores EXIF timestamps and generates thumbnails.
+    Also restores EXIF timestamps and generates thumbnails.
     """
-    from app.services.webdav_storage_client import WebDAVStorageClient
     from app.routers.files import get_file_cache
     from app.services.storage_service import get_storage_service
     from app.utils.exif_utils import batch_restore_timestamps
@@ -1313,72 +1045,47 @@ async def scan_user_storage(
     cache = get_file_cache(db)
     cache.invalidate(f"{current_user.username}:")
     
-    # Check if user has WebDAV enabled
-    webdav_client = WebDAVStorageClient(db, current_user.id)
-    use_webdav = webdav_client.is_enabled()
-    
     try:
-        if use_webdav:
-            # Scan WebDAV storage
-            logger.info(f"[User Scan] Scanning WebDAV storage for user {current_user.username}")
+        # Scan local filesystem
+        storage = get_storage_service(db)
+        user_path = storage.get_user_path(current_user.username)
+        
+        file_count = 0
+        dir_count = 0
+        exif_stats = {'restored': 0, 'processed': 0}
+        thumbnail_stats = {'successful': 0, 'failed': 0}
+        
+        if user_path.exists():
+            # Restore EXIF timestamps
+            logger.info(f"[User Scan] Restoring EXIF timestamps for {current_user.username}")
+            exif_stats = batch_restore_timestamps(user_path)
             
-            # Recursively list all files from WebDAV
-            all_items = await webdav_client.list_files("", recursive=True)
+            # Generate thumbnails
+            logger.info(f"[User Scan] Generating thumbnails for {current_user.username}")
+            successful, failed = generate_thumbnails_for_user(user_path)
+            thumbnail_stats = {'successful': successful, 'failed': failed}
             
-            # Count files and directories
-            file_count = sum(1 for item in all_items if not item.get('is_directory', False))
-            dir_count = sum(1 for item in all_items if item.get('is_directory', False))
-            
-            logger.info(f"[User Scan] WebDAV scan complete: {file_count} files, {dir_count} directories")
-            
-            return {
-                "message": f"Storage scan complete for {current_user.username}",
-                "files": file_count,
-                "directories": dir_count,
-                "storage_type": "webdav",
-                "note": "EXIF restoration and thumbnail generation not available for WebDAV storage (files are remote)"
-            }
-        else:
-            # Scan local filesystem
-            storage = get_storage_service(db)
-            user_path = storage.get_user_path(current_user.username)
-            
-            file_count = 0
-            dir_count = 0
-            exif_stats = {'restored': 0, 'processed': 0}
-            thumbnail_stats = {'successful': 0, 'failed': 0}
-            
-            if user_path.exists():
-                # Restore EXIF timestamps
-                logger.info(f"[User Scan] Restoring EXIF timestamps for {current_user.username}")
-                exif_stats = batch_restore_timestamps(user_path)
-                
-                # Generate thumbnails
-                logger.info(f"[User Scan] Generating thumbnails for {current_user.username}")
-                successful, failed = generate_thumbnails_for_user(user_path)
-                thumbnail_stats = {'successful': successful, 'failed': failed}
-                
-                # Count files
-                for item in user_path.rglob('*'):
-                    try:
-                        if item.is_file():
-                            file_count += 1
-                        elif item.is_dir():
-                            dir_count += 1
-                    except Exception as e:
-                        logger.warning(f"Error processing {item}: {e}")
-                        continue
-            
-            return {
-                "message": f"Storage scan complete for {current_user.username}",
-                "files": file_count,
-                "directories": dir_count,
-                "exif_restored": exif_stats.get('restored', 0),
-                "exif_processed": exif_stats.get('processed', 0),
-                "thumbnails_generated": thumbnail_stats.get('successful', 0),
-                "thumbnails_failed": thumbnail_stats.get('failed', 0),
-                "storage_type": "local"
-            }
+            # Count files
+            for item in user_path.rglob('*'):
+                try:
+                    if item.is_file():
+                        file_count += 1
+                    elif item.is_dir():
+                        dir_count += 1
+                except Exception as e:
+                    logger.warning(f"Error processing {item}: {e}")
+                    continue
+        
+        return {
+            "message": f"Storage scan complete for {current_user.username}",
+            "files": file_count,
+            "directories": dir_count,
+            "exif_restored": exif_stats.get('restored', 0),
+            "exif_processed": exif_stats.get('processed', 0),
+            "thumbnails_generated": thumbnail_stats.get('successful', 0),
+            "thumbnails_failed": thumbnail_stats.get('failed', 0),
+            "storage_type": "local"
+        }
     except Exception as e:
         logger.error(f"[User Scan] Error scanning storage for {current_user.username}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to scan storage: {str(e)}")
