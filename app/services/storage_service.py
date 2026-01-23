@@ -755,7 +755,7 @@ class StorageService:
                     logger.warning(f"[STORAGE PROXY] Error loading image from storage server: {e}")
                     return None
 
-        # Local filesystem access (original code)
+        # On storage server: Use WebDAV backend (replaces local filesystem)
         # URL is like /api/files/username/conv_id/filename.png
         # Extract path parts
         try:
@@ -766,19 +766,57 @@ class StorageService:
                 filename = unquote(parts[4]) if len(parts) > 4 else None
 
                 if filename:
-                    # Use get_conversation_path to get correct path structure
-                    conv_path = self.get_conversation_path(username, conv_id)
-                    safe_filename = _sanitize_path_component(filename)
-                    file_path = conv_path / safe_filename
+                    # Get user ID for WebDAV
+                    user_id = self._get_user_id_from_username(username)
+                    webdav_client = self._get_webdav_client(user_id) if user_id else None
+                    
+                    if webdav_client and webdav_client.is_enabled():
+                        # Use WebDAV to load file
+                        webdav_path = f"chat/{conv_id}/{filename}"
+                        try:
+                            import asyncio
+                            async def _load_from_webdav():
+                                return await webdav_client.get_file(webdav_path)
+                            
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                import concurrent.futures
+                                def _run_in_new_loop():
+                                    new_loop = asyncio.new_event_loop()
+                                    asyncio.set_event_loop(new_loop)
+                                    try:
+                                        file_data = new_loop.run_until_complete(_load_from_webdav())
+                                        return base64.b64encode(file_data).decode('utf-8')
+                                    finally:
+                                        new_loop.close()
+                                
+                                with concurrent.futures.ThreadPoolExecutor() as executor:
+                                    future = executor.submit(_run_in_new_loop)
+                                    return future.result()
+                            else:
+                                file_data = loop.run_until_complete(_load_from_webdav())
+                                return base64.b64encode(file_data).decode('utf-8')
+                        except FileNotFoundError:
+                            logger.warning(f"[STORAGE] File not found in WebDAV: {webdav_path}")
+                            return None
+                        except Exception as e:
+                            logger.warning(f"[STORAGE] Failed to load from WebDAV: {e}")
+                            return None
+                    else:
+                        # Fallback to local filesystem (for backwards compatibility or if WebDAV not configured)
+                        # Use get_conversation_path to get correct path structure
+                        conv_path = self.get_conversation_path(username, conv_id)
+                        safe_filename = _sanitize_path_component(filename)
+                        file_path = conv_path / safe_filename
 
-                    # Verify path is within upload directory (already checked by get_conversation_path)
-                    if not _validate_path_within_base(file_path, Path(self.upload_path)):
-                        logger.warning(f"Path traversal attempt blocked: {image_url}")
-                        return None
+                        # Verify path is within upload directory (already checked by get_conversation_path)
+                        if not _validate_path_within_base(file_path, Path(self.upload_path)):
+                            logger.warning(f"Path traversal attempt blocked: {image_url}")
+                            return None
 
-                    if file_path.exists():
-                        with open(file_path, 'rb') as f:
-                            return base64.b64encode(f.read()).decode('utf-8')
+                        if file_path.exists():
+                            with open(file_path, 'rb') as f:
+                                return base64.b64encode(f.read()).decode('utf-8')
         except ValueError as e:
             logger.warning(f"Invalid path component in image URL: {e}")
         except Exception as e:

@@ -194,31 +194,54 @@ async def serve_file(
             stream=True
         )
 
-    # Local file serving
-    # Get file path using storage service method to ensure correct path structure
-    storage = StorageService(db)
-    conv_path = storage.get_conversation_path(username, conversation_id)
-    file_path = conv_path / filename
-
-    if not file_path.exists():
+    # On storage server: Use WebDAV backend (replaces local file serving)
+    from app.services.webdav_storage_client import WebDAVStorageClient
+    webdav_client = WebDAVStorageClient(db, current_user.id)
+    
+    if not webdav_client.is_enabled():
+        raise HTTPException(
+            status_code=500, 
+            detail=f"WebDAV storage not configured for user {current_user.username}. Please configure WebDAV storage in user settings."
+        )
+    
+    # Get file from WebDAV
+    try:
+        # Build WebDAV path: chat/{conversation_id}/{filename}
+        webdav_path = f"chat/{conversation_id}/{filename}"
+        file_data = await webdav_client.get_file(webdav_path)
+        
+        # Determine media type
+        from mimetypes import guess_type
+        content_type, _ = guess_type(filename)
+        if not content_type:
+            suffix = Path(filename).suffix.lower()
+            media_types = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".gif": "image/gif",
+                ".webp": "image/webp",
+                ".pdf": "application/pdf",
+                ".txt": "text/plain",
+                ".doc": "application/msword",
+                ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            }
+            content_type = media_types.get(suffix, "application/octet-stream")
+        
+        # Return file response
+        from fastapi.responses import Response
+        return Response(
+            content=file_data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'inline; filename="{filename}"'
+            }
+        )
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found")
-
-    # Determine media type
-    suffix = file_path.suffix.lower()
-    media_types = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-        ".pdf": "application/pdf",
-        ".txt": "text/plain",
-        ".doc": "application/msword",
-        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    }
-    media_type = media_types.get(suffix, "application/octet-stream")
-
-    return FileResponse(file_path, media_type=media_type)
+    except Exception as e:
+        logger.error(f"[CHAT] Failed to get file from WebDAV: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get file from WebDAV: {str(e)}")
 
 
 @router.post("/chat/email-response")

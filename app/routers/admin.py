@@ -591,6 +591,20 @@ async def rescan_storage(
         """Scan files for a single user - includes EXIF, thumbnails, and indexing. Works with both local filesystem and WebDAV."""
         # Create a NEW database session for this thread (SQLite sessions are not thread-safe)
         from app.database import SessionLocal
+        import sys
+        import os
+        
+        # Ensure Python path includes the project root (important for thread execution)
+        # Get the project root by going up from this file: app/routers/admin.py -> app -> posterchanai
+        current_file = os.path.abspath(__file__)
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        
+        # Also ensure we're in the right directory
+        if os.path.exists(os.path.join(project_root, 'app')):
+            os.chdir(project_root)
+        
         thread_db = SessionLocal()
         try:
             from app.services.webdav_storage_client import WebDAVStorageClient
