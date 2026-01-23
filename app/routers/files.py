@@ -1259,6 +1259,10 @@ async def list_files(
         
         if cached_result:
             logger.debug(f"[FileCache] Cache hit for {cache_key}")
+            # Still return cached result, but log what folders are in it for debugging
+            if not path:  # Only log for root directory
+                folder_names = [item['name'] for item in cached_result.get('items', []) if item.get('is_directory')]
+                logger.debug(f"[FileCache] Cached root listing contains {len(folder_names)} folders: {folder_names}")
             return cached_result
         
         logger.debug(f"[FileCache] Cache miss for {cache_key}, generating listing")
@@ -1320,10 +1324,15 @@ async def list_files(
                                 pass
                         
                         items.append(item_info)
+                    except (OSError, PermissionError) as e:
+                        # Log but continue - some files/dirs might not be accessible
+                        logger.debug(f"Error reading item {item.name}: {e}")
+                        continue
                     except Exception as e:
                         logger.warning(f"Error reading item {item}: {e}")
                         continue
             except Exception as e:
+                logger.error(f"Error listing directory {target_path}: {e}", exc_info=True)
                 raise Exception(f"Error listing directory: {e}")
             return items
         
@@ -1353,6 +1362,11 @@ async def list_files(
         
         # Cache the result
         cache.set(cache_key, result)
+        
+        # Log folder names for debugging (only for root directory)
+        if not path:
+            folder_names = [item['name'] for item in items if item.get('is_directory')]
+            logger.info(f"[FILES] Root directory listing: {len(folder_names)} folders found: {folder_names}")
         
         return result
     

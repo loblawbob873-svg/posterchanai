@@ -582,10 +582,15 @@ async def list_files(
                     # Thumbnails can be generated on the client node if needed
                     
                     items.append(item_info)
+                except (OSError, PermissionError) as e:
+                    # Log but continue - some files/dirs might not be accessible
+                    logger.debug(f"Error reading item {item.name}: {e}")
+                    continue
                 except Exception as e:
                     logger.warning(f"Error reading item {item}: {e}")
                     continue
         except Exception as e:
+            logger.error(f"Error listing directory {target_path}: {e}", exc_info=True)
             raise Exception(f"Error listing directory: {e}")
         return items
     
