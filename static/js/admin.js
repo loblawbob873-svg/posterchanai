@@ -170,7 +170,7 @@ async function loadUsers() {
                                style="width: 80px; padding: 4px;"
                                placeholder="MB (0=unlimited)">
                         <button class="btn-secondary btn-small" onclick="updateStorageQuota(${u.id}, '${escapeHtml(u.username)}')">Set</button>
-                        <button class="btn-secondary btn-small" onclick="rescanUserStorage(${u.id}, '${escapeHtml(u.username)}')" title="Rescan this user's file storage">🔄 Rescan</button>
+                        <!-- Storage scanning moved to user-level - users can scan from User Settings -->
                         <button class="btn-secondary btn-small" onclick="generateThumbnailsForUser(${u.id}, '${escapeHtml(u.username)}')" title="Generate thumbnails for this user's images">🖼️ Thumbnails</button>
                     </div>
                     <button class="btn-secondary btn-small" onclick="resetPassword(${u.id}, '${escapeHtml(u.username)}')">Reset Password</button>
@@ -243,75 +243,7 @@ async function toggleRssSkip(id) {
     }
 }
 
-// Combined file scanning functionality (EXIF + thumbnails + rescan)
-document.getElementById('scanFilesBtn')?.addEventListener('click', async () => {
-    if (!confirm('Scan all user files?\n\nThis will:\n• Restore EXIF timestamps from photos/videos\n• Generate thumbnails\n• Update file index\n• Clear caches\n\nThis may take 2-5 minutes for large collections.')) {
-        return;
-    }
-    
-    const statusDiv = document.getElementById('storageRescanStatus');
-    statusDiv.style.display = 'block';
-    statusDiv.innerHTML = '<div style="color: #4a9eff;">⏳ Scanning files for all users...</div>';
-    
-    try {
-        const response = await csrfFetch('/api/admin/storage/rescan', {
-            method: 'POST'
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            let html = `<div style="color: #4ade80; margin-bottom: 12px;">✅ ${data.message}</div>`;
-            
-            if (data.summary) {
-                html += `<div style="background: #1a1a2e; padding: 12px; border-radius: 6px; margin-top: 8px;">
-                    <strong>Summary:</strong><br>
-                    • Total users: ${data.summary.total_users}<br>
-                    • Successful: ${data.summary.successful}<br>
-                    • Failed: ${data.summary.failed}<br>
-                    • Total files found: ${data.summary.total_files.toLocaleString()}<br>
-                    • Total directories: ${data.summary.total_directories.toLocaleString()}<br>
-                    • EXIF timestamps restored: ${data.summary.total_exif_restored.toLocaleString()}<br>
-                    • Thumbnails generated: ${data.summary.total_thumbnails_generated.toLocaleString()}</div>`;
-            }
-            
-            if (data.results && data.results.length > 0) {
-                html += `<details style="margin-top: 12px;">
-                    <summary style="cursor: pointer; color: #888; user-select: none;">View detailed results</summary>
-                    <div style="margin-top: 8px; max-height: 300px; overflow-y: auto; background: #1a1a2e; padding: 12px; border-radius: 6px;">
-                `;
-                for (const result of data.results) {
-                    if (result.status === 'success') {
-                        let detailInfo = `${result.files} files, ${result.directories} directories`;
-                        if (result.exif_restored !== undefined) {
-                            detailInfo += ` | EXIF: ${result.exif_restored}/${result.exif_processed}`;
-                        }
-                        if (result.thumbnails_generated !== undefined) {
-                            detailInfo += ` | Thumbnails: ${result.thumbnails_generated} generated`;
-                        }
-                        html += `<div style="color: #4ade80; margin-bottom: 4px;">
-                            ${result.username}: ${detailInfo}
-                        </div>`;
-                    } else {
-                        html += `<div style="color: #ff6b6b; margin-bottom: 4px;">
-                            ${result.username}: Error - ${result.error || 'Unknown error'}
-                        </div>`;
-                    }
-                }
-                html += `</div></details>`;
-            }
-            
-            statusDiv.innerHTML = html;
-        } else {
-            const error = await response.json();
-            statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${error.detail || 'Failed to scan files'}</div>`;
-        }
-    } catch (err) {
-        console.error('File scan error:', err);
-        statusDiv.innerHTML = `<div style="color: #ff6b6b;">❌ Error: ${err.message}</div>`;
-    }
-});
-
-// Rescan for specific user - functionality removed, use scanFilesBtn instead
+// Storage scanning moved to user-level - users can scan their own storage from User Settings
 
 async function updateStorageQuota(userId, username) {
     const quotaInput = document.getElementById(`quota_${userId}`);
@@ -340,37 +272,8 @@ async function updateStorageQuota(userId, username) {
     }
 }
 
-// Rescan storage for a specific user
-async function rescanUserStorage(userId, username) {
-    if (!confirm(`Rescan file storage for user "${username}"? This will invalidate file cache.`)) {
-        return;
-    }
-    
-    try {
-        const response = await csrfFetch(`/api/admin/storage/rescan?user_id=${userId}`, {
-            method: 'POST'
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            if (data.results && data.results.length > 0) {
-                const result = data.results[0];
-                if (result.status === 'success') {
-                    alert(`Storage rescanned for ${username}:\n• ${result.files.toLocaleString()} files\n• ${result.directories.toLocaleString()} directories`);
-                } else {
-                    alert(`Error: ${result.error || 'Unknown error'}`);
-                }
-            } else {
-                alert('Rescan completed');
-            }
-        } else {
-            const error = await response.json();
-            alert(`Failed: ${error.detail || 'Unknown error'}`);
-        }
-    } catch (err) {
-        alert(`Error: ${err.message}`);
-    }
-}
+// Storage scanning moved to user-level - users can scan their own storage from User Settings
+// Removed rescanUserStorage function - users should use the scan button in their own User Settings
 
 async function generateThumbnailsForUser(userId, username) {
     if (!confirm(`Generate thumbnails for all images for user "${username}"? This may take a moment if there are many images.`)) {

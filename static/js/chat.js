@@ -1648,6 +1648,62 @@ class ChatHandler {
             console.error('Failed to load storage usage:', e);
         }
     }
+    
+    // Scan user storage button
+    const scanUserStorageBtn = document.getElementById('scanUserStorageBtn');
+    const scanStorageStatus = document.getElementById('scanStorageStatus');
+    if (scanUserStorageBtn) {
+        scanUserStorageBtn.addEventListener('click', async () => {
+            if (scanStorageStatus) {
+                scanStorageStatus.textContent = 'Scanning storage...';
+                scanStorageStatus.className = 'test-result';
+                scanStorageStatus.style.display = 'block';
+            }
+            
+            try {
+                const response = await csrfFetch('/api/auth/scan-storage', {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    let message = `✓ ${data.message}\n`;
+                    message += `• Files: ${data.files.toLocaleString()}\n`;
+                    message += `• Directories: ${data.directories.toLocaleString()}\n`;
+                    
+                    if (data.storage_type === 'local') {
+                        if (data.exif_restored) {
+                            message += `• EXIF timestamps restored: ${data.exif_restored}\n`;
+                        }
+                        if (data.thumbnails_generated) {
+                            message += `• Thumbnails generated: ${data.thumbnails_generated}\n`;
+                        }
+                    } else if (data.storage_type === 'webdav') {
+                        message += `\nNote: ${data.note || 'EXIF and thumbnail operations not available for WebDAV'}`;
+                    }
+                    
+                    if (scanStorageStatus) {
+                        scanStorageStatus.textContent = message;
+                        scanStorageStatus.className = 'test-result success';
+                    }
+                    
+                    // Reload storage usage
+                    this.loadStorageUsage();
+                } else {
+                    const error = await response.json();
+                    if (scanStorageStatus) {
+                        scanStorageStatus.textContent = '✗ ' + (error.detail || 'Failed to scan storage');
+                        scanStorageStatus.className = 'test-result error';
+                    }
+                }
+            } catch (e) {
+                if (scanStorageStatus) {
+                    scanStorageStatus.textContent = '✗ Error: ' + e.message;
+                    scanStorageStatus.className = 'test-result error';
+                }
+            }
+        });
+    }
 
     updateAvatarPreview(avatarUrl) {
         const avatarImage = document.getElementById('avatarImage');

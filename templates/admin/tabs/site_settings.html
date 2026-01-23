@@ -205,26 +205,14 @@
     <fieldset>
         <legend>Storage Administration</legend>
         <div class="form-group">
-            <label>Scan Files</label>
-            <div style="display: flex; gap: 8px; align-items: center;">
-                <button type="button" class="btn-primary" id="scanFilesBtn">Scan All Users</button>
-                <button type="button" class="btn-secondary" id="rescanUserStorageBtn" style="display: none;">Scan Selected User</button>
-            </div>
+            <label>Storage Scanning</label>
             <small>
-                Scans all user files and performs the following:
+                Users can scan their own storage from <strong>User Settings → Storage & Cloud</strong> tab.
                 <ul style="margin: 8px 0; padding-left: 20px;">
-                    <li><strong>Restore EXIF timestamps</strong> - Sets file modification dates to match original photo/video capture dates</li>
-                    <li><strong>Generate thumbnails</strong> - Creates preview images for photos and videos</li>
-                    <li><strong>Update file index</strong> - Ensures database is consistent with actual storage</li>
+                    <li><strong>For local storage:</strong> Restores EXIF timestamps, generates thumbnails, updates file index</li>
+                    <li><strong>For WebDAV storage:</strong> Scans WebDAV server and counts files/directories (EXIF/thumbnails not available for remote storage)</li>
                     <li><strong>Clear caches</strong> - Invalidates stale cached data</li>
                 </ul>
-                Use this after uploading files via rsync or if photos aren't sorting correctly by date.
-            </small>
-            <div id="storageRescanStatus" style="margin-top: 12px; display: none;"></div>
-        </div>
-        <div class="form-group" style="margin-top: 12px; padding: 10px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;">
-            <small style="color: #aaa; display: block;">
-                <strong style="color: #4a9eff;">ℹ️ Note:</strong> This process may take 2-5 minutes for large photo collections (4,000+ files). Progress will be shown below.
             </small>
         </div>
     </fieldset>

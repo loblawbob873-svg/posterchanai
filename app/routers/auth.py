@@ -1238,6 +1238,98 @@ async def test_webdav_connection(
         )
 
 
+@router.post("/scan-storage")
+async def scan_user_storage(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Scan the current user's storage (WebDAV or local).
+    Invalidates file cache and counts files/directories.
+    For WebDAV users, this scans their WebDAV server.
+    For local storage users, this also restores EXIF timestamps and generates thumbnails.
+    """
+    from app.services.webdav_storage_client import WebDAVStorageClient
+    from app.routers.files import get_file_cache
+    from app.services.storage_service import get_storage_service
+    from app.utils.exif_utils import batch_restore_timestamps
+    from app.services.thumbnail_service import generate_thumbnails_for_user
+    
+    # Invalidate file cache for this user
+    cache = get_file_cache(db)
+    cache.invalidate(f"{current_user.username}:")
+    
+    # Check if user has WebDAV enabled
+    webdav_client = WebDAVStorageClient(db, current_user.id)
+    use_webdav = webdav_client.is_enabled()
+    
+    try:
+        if use_webdav:
+            # Scan WebDAV storage
+            logger.info(f"[User Scan] Scanning WebDAV storage for user {current_user.username}")
+            
+            # Recursively list all files from WebDAV
+            all_items = await webdav_client.list_files("", recursive=True)
+            
+            # Count files and directories
+            file_count = sum(1 for item in all_items if not item.get('is_directory', False))
+            dir_count = sum(1 for item in all_items if item.get('is_directory', False))
+            
+            logger.info(f"[User Scan] WebDAV scan complete: {file_count} files, {dir_count} directories")
+            
+            return {
+                "message": f"Storage scan complete for {current_user.username}",
+                "files": file_count,
+                "directories": dir_count,
+                "storage_type": "webdav",
+                "note": "EXIF restoration and thumbnail generation not available for WebDAV storage (files are remote)"
+            }
+        else:
+            # Scan local filesystem
+            storage = get_storage_service(db)
+            user_path = storage.get_user_path(current_user.username)
+            
+            file_count = 0
+            dir_count = 0
+            exif_stats = {'restored': 0, 'processed': 0}
+            thumbnail_stats = {'successful': 0, 'failed': 0}
+            
+            if user_path.exists():
+                # Restore EXIF timestamps
+                logger.info(f"[User Scan] Restoring EXIF timestamps for {current_user.username}")
+                exif_stats = batch_restore_timestamps(user_path)
+                
+                # Generate thumbnails
+                logger.info(f"[User Scan] Generating thumbnails for {current_user.username}")
+                successful, failed = generate_thumbnails_for_user(user_path)
+                thumbnail_stats = {'successful': successful, 'failed': failed}
+                
+                # Count files
+                for item in user_path.rglob('*'):
+                    try:
+                        if item.is_file():
+                            file_count += 1
+                        elif item.is_dir():
+                            dir_count += 1
+                    except Exception as e:
+                        logger.warning(f"Error processing {item}: {e}")
+                        continue
+            
+            return {
+                "message": f"Storage scan complete for {current_user.username}",
+                "files": file_count,
+                "directories": dir_count,
+                "exif_restored": exif_stats.get('restored', 0),
+                "exif_processed": exif_stats.get('processed', 0),
+                "thumbnails_generated": thumbnail_stats.get('successful', 0),
+                "thumbnails_failed": thumbnail_stats.get('failed', 0),
+                "storage_type": "local"
+            }
+    except Exception as e:
+        logger.error(f"[User Scan] Error scanning storage for {current_user.username}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to scan storage: {str(e)}")
+
+
 # ============== Calendar Event API ==============
 
 def rrule_to_human(rrule: str) -> str:

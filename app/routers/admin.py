@@ -588,15 +588,17 @@ async def rescan_storage(
                 raise HTTPException(status_code=500, detail=f"Failed to proxy scan: {str(e)}")
     
     def _scan_user_files(user_id: int, username: str):
-        """Scan files for a single user - includes EXIF, thumbnails, and indexing."""
+        """Scan files for a single user - includes EXIF, thumbnails, and indexing. Works with both local filesystem and WebDAV."""
         # Create a NEW database session for this thread (SQLite sessions are not thread-safe)
         from app.database import SessionLocal
         thread_db = SessionLocal()
         try:
+            from app.services.webdav_storage_client import WebDAVStorageClient
             from app.utils.exif_utils import batch_restore_timestamps
             
-            storage = get_storage_service(thread_db)
-            user_path = storage.get_user_path(username)
+            # Check if user has WebDAV enabled
+            webdav_client = WebDAVStorageClient(thread_db, user_id)
+            use_webdav = webdav_client.is_enabled()
             
             # Invalidate file cache for this user
             cache = get_file_cache(thread_db)
@@ -608,44 +610,95 @@ async def rescan_storage(
             exif_stats = {'restored': 0, 'processed': 0}
             thumbnail_stats = {'successful': 0, 'failed': 0}
             
-            if user_path.exists():
-                # Step 1: Restore EXIF timestamps for all media files
-                logger.info(f"[File Scan] Step 1/3: Restoring EXIF timestamps for user {username}")
-                logger.info(f"[File Scan] This will update file modification times from EXIF metadata")
-                logger.info(f"[File Scan] Files copied via rsync will get their original photo/video dates restored")
-                exif_stats = batch_restore_timestamps(user_path)
-                logger.info(f"[File Scan] EXIF stats: {exif_stats['restored']} restored, {exif_stats['processed']} processed, {exif_stats.get('skipped', 0)} skipped, {exif_stats.get('errors', 0)} errors")
-                
-                # Step 2: Generate thumbnails
-                logger.info(f"[File Scan] Step 2/3: Generating thumbnails for user {username}")
-                successful, failed = generate_thumbnails_for_user(user_path)
-                thumbnail_stats = {'successful': successful, 'failed': failed}
-                logger.info(f"[File Scan] Thumbnail stats: {successful} generated, {failed} failed")
-                
-                # Step 3: Count files for indexing
-                logger.info(f"[File Scan] Step 3/3: Indexing files for user {username}")
-                for item in user_path.rglob('*'):
+            if use_webdav:
+                # Scan WebDAV storage
+                logger.info(f"[File Scan] Scanning WebDAV storage for user {username}")
+                try:
+                    # Use asyncio to call async WebDAV methods
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
                     try:
-                        if item.is_file():
-                            file_count += 1
-                        elif item.is_dir():
-                            dir_count += 1
-                    except Exception as e:
-                        logger.warning(f"Error processing {item} for user {username}: {e}")
-                        continue
-            
-            logger.info(f"[File Scan] Complete for {username}: {file_count} files, {dir_count} directories")
-            return {
-                "user_id": user_id,
-                "username": username,
-                "files": file_count,
-                "directories": dir_count,
-                "exif_restored": exif_stats.get('restored', 0),
-                "exif_processed": exif_stats.get('processed', 0),
-                "thumbnails_generated": thumbnail_stats.get('successful', 0),
-                "thumbnails_failed": thumbnail_stats.get('failed', 0),
-                "status": "success"
-            }
+                        # Recursively list all files from WebDAV
+                        all_items = loop.run_until_complete(webdav_client.list_files("", recursive=True))
+                        
+                        # Count files and directories
+                        for item in all_items:
+                            if item.get('is_directory', False):
+                                dir_count += 1
+                            else:
+                                file_count += 1
+                        
+                        logger.info(f"[File Scan] WebDAV scan complete for {username}: {file_count} files, {dir_count} directories")
+                        logger.info(f"[File Scan] Note: EXIF restoration and thumbnail generation not available for WebDAV (files are remote)")
+                        
+                        return {
+                            "user_id": user_id,
+                            "username": username,
+                            "files": file_count,
+                            "directories": dir_count,
+                            "exif_restored": 0,  # Not available for WebDAV
+                            "exif_processed": 0,
+                            "thumbnails_generated": 0,  # Not available for WebDAV (would require downloading all files)
+                            "thumbnails_failed": 0,
+                            "storage_type": "webdav",
+                            "status": "success"
+                        }
+                    finally:
+                        loop.close()
+                except Exception as e:
+                    logger.error(f"[File Scan] Error scanning WebDAV for user {username}: {e}", exc_info=True)
+                    return {
+                        "user_id": user_id,
+                        "username": username,
+                        "status": "error",
+                        "error": f"WebDAV scan failed: {str(e)}",
+                        "storage_type": "webdav"
+                    }
+            else:
+                # Scan local filesystem (original code)
+                storage = get_storage_service(thread_db)
+                user_path = storage.get_user_path(username)
+                
+                if user_path.exists():
+                    # Step 1: Restore EXIF timestamps for all media files
+                    logger.info(f"[File Scan] Step 1/3: Restoring EXIF timestamps for user {username}")
+                    logger.info(f"[File Scan] This will update file modification times from EXIF metadata")
+                    logger.info(f"[File Scan] Files copied via rsync will get their original photo/video dates restored")
+                    exif_stats = batch_restore_timestamps(user_path)
+                    logger.info(f"[File Scan] EXIF stats: {exif_stats['restored']} restored, {exif_stats['processed']} processed, {exif_stats.get('skipped', 0)} skipped, {exif_stats.get('errors', 0)} errors")
+                    
+                    # Step 2: Generate thumbnails
+                    logger.info(f"[File Scan] Step 2/3: Generating thumbnails for user {username}")
+                    successful, failed = generate_thumbnails_for_user(user_path)
+                    thumbnail_stats = {'successful': successful, 'failed': failed}
+                    logger.info(f"[File Scan] Thumbnail stats: {successful} generated, {failed} failed")
+                    
+                    # Step 3: Count files for indexing
+                    logger.info(f"[File Scan] Step 3/3: Indexing files for user {username}")
+                    for item in user_path.rglob('*'):
+                        try:
+                            if item.is_file():
+                                file_count += 1
+                            elif item.is_dir():
+                                dir_count += 1
+                        except Exception as e:
+                            logger.warning(f"Error processing {item} for user {username}: {e}")
+                            continue
+                
+                logger.info(f"[File Scan] Complete for {username}: {file_count} files, {dir_count} directories")
+                return {
+                    "user_id": user_id,
+                    "username": username,
+                    "files": file_count,
+                    "directories": dir_count,
+                    "exif_restored": exif_stats.get('restored', 0),
+                    "exif_processed": exif_stats.get('processed', 0),
+                    "thumbnails_generated": thumbnail_stats.get('successful', 0),
+                    "thumbnails_failed": thumbnail_stats.get('failed', 0),
+                    "storage_type": "local",
+                    "status": "success"
+                }
         except Exception as e:
             logger.error(f"[File Scan] Error scanning user {username}: {e}", exc_info=True)
             return {
