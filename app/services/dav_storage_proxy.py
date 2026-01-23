@@ -130,8 +130,13 @@ class DAVStorageProxy:
             dav_path = self._get_local_dav_path(subpath)
             
             if not dav_path.exists():
-                logger.debug(f"[{self.dav_type.upper()}] DAV directory does not exist: {dav_path}")
-                return []
+                # Auto-create caldav/carddav directories if they don't exist
+                try:
+                    dav_path.mkdir(parents=True, exist_ok=True)
+                    logger.info(f"[{self.dav_type.upper()}] Auto-created missing DAV directory: {dav_path}")
+                except Exception as e:
+                    logger.error(f"[{self.dav_type.upper()}] Failed to auto-create DAV directory {dav_path}: {e}", exc_info=True)
+                    return []
             
             if not dav_path.is_dir():
                 logger.warning(f"[{self.dav_type.upper()}] DAV path is not a directory: {dav_path}")

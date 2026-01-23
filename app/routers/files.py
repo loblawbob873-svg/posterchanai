@@ -1277,7 +1277,20 @@ async def list_files(
                     target_path = target_path / part
         
         if not target_path.exists():
-            raise HTTPException(status_code=404, detail="Path not found")
+            # Special handling: auto-create caldav/carddav folders if they don't exist
+            # These are critical for calendar/contacts functionality
+            path_parts = path.split('/') if path else []
+            if path_parts and path_parts[0].lower() in ('caldav', 'carddav'):
+                try:
+                    target_path.mkdir(parents=True, exist_ok=True)
+                    logger.info(f"[FILES] Auto-created missing {path_parts[0]} directory: {target_path}")
+                    # Invalidate cache for root directory since we added a folder
+                    cache.invalidate(f"{current_user.username}:")
+                except Exception as e:
+                    logger.error(f"[FILES] Failed to auto-create {path_parts[0]} directory: {e}", exc_info=True)
+                    raise HTTPException(status_code=500, detail=f"Failed to create {path_parts[0]} directory: {e}")
+            else:
+                raise HTTPException(status_code=404, detail="Path not found")
         
         if not target_path.is_dir():
             raise HTTPException(status_code=400, detail="Path is not a directory")
@@ -1289,6 +1302,27 @@ async def list_files(
             try:
                 for item in sorted(target_path.iterdir()):
                     try:
+                        # Check if it's a symlink and handle it properly
+                        is_symlink = item.is_symlink()
+                        if is_symlink:
+                            try:
+                                resolved = item.resolve()
+                                # If symlink is broken, log warning and skip
+                                if not resolved.exists():
+                                    item_name_lower = item.name.lower()
+                                    if item_name_lower in ('caldav', 'carddav'):
+                                        logger.warning(f"[FILES] ⚠️ Broken symlink detected for {item.name} - this may cause calendar/contacts to break!")
+                                    else:
+                                        logger.debug(f"Broken symlink: {item.name}")
+                                    continue
+                            except Exception as e:
+                                item_name_lower = item.name.lower()
+                                if item_name_lower in ('caldav', 'carddav'):
+                                    logger.warning(f"[FILES] ⚠️ Error resolving symlink {item.name}: {e} - this may cause calendar/contacts to break!")
+                                else:
+                                    logger.debug(f"Error resolving symlink {item.name}: {e}")
+                                continue
+                        
                         stat = item.stat()
                         is_dir = item.is_dir()
                         
@@ -1325,11 +1359,19 @@ async def list_files(
                         
                         items.append(item_info)
                     except (OSError, PermissionError) as e:
-                        # Log but continue - some files/dirs might not be accessible
-                        logger.debug(f"Error reading item {item.name}: {e}")
+                        # Log with warning level for caldav/carddav folders - these are critical
+                        item_name_lower = item.name.lower()
+                        if item_name_lower in ('caldav', 'carddav'):
+                            logger.warning(f"[FILES] ⚠️ Permission error reading {item.name}: {e} - this may cause calendar/contacts to break!")
+                        else:
+                            logger.debug(f"Error reading item {item.name}: {e}")
                         continue
                     except Exception as e:
-                        logger.warning(f"Error reading item {item}: {e}")
+                        item_name_lower = item.name.lower()
+                        if item_name_lower in ('caldav', 'carddav'):
+                            logger.warning(f"[FILES] ⚠️ Error reading {item.name}: {e} - this may cause calendar/contacts to break!")
+                        else:
+                            logger.warning(f"Error reading item {item}: {e}")
                         continue
             except Exception as e:
                 logger.error(f"Error listing directory {target_path}: {e}", exc_info=True)
@@ -1367,6 +1409,27 @@ async def list_files(
         if not path:
             folder_names = [item['name'] for item in items if item.get('is_directory')]
             logger.info(f"[FILES] Root directory listing: {len(folder_names)} folders found: {folder_names}")
+            
+            # Check for critical caldav/carddav folders
+            folder_names_lower = [name.lower() for name in folder_names]
+            if 'caldav' not in folder_names_lower:
+                # Check if folder exists but wasn't listed (permission issue?)
+                caldav_path = user_path / 'caldav'
+                if caldav_path.exists():
+                    logger.warning(f"[FILES] ⚠️ CRITICAL: caldav folder exists but was not listed! This will break calendar functionality!")
+                    logger.warning(f"[FILES] Check permissions on {caldav_path}")
+                else:
+                    logger.warning(f"[FILES] ⚠️ CRITICAL: caldav folder is missing! This will break calendar functionality!")
+                    logger.warning(f"[FILES] Expected path: {caldav_path}")
+            if 'carddav' not in folder_names_lower:
+                # Check if folder exists but wasn't listed (permission issue?)
+                carddav_path = user_path / 'carddav'
+                if carddav_path.exists():
+                    logger.warning(f"[FILES] ⚠️ CRITICAL: carddav folder exists but was not listed! This will break contacts functionality!")
+                    logger.warning(f"[FILES] Check permissions on {carddav_path}")
+                else:
+                    logger.warning(f"[FILES] ⚠️ CRITICAL: carddav folder is missing! This will break contacts functionality!")
+                    logger.warning(f"[FILES] Expected path: {carddav_path}")
         
         return result
     
