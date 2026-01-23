@@ -89,7 +89,7 @@ async def generate_image_with_load_balancing(
         
         if selected_server:
             # Make HTTP request to selected server (round-robin)
-            logger.info(f"[IMAGE] Load balancer selected: {selected_server} (from {len(servers)} server(s))")
+            logger.info(f"[IMAGE] Load balancer selected: {selected_server} (from {len(servers)} server(s): {servers})")
             import httpx
             payload = {
                 "prompt": prompt,

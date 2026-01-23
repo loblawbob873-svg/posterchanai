@@ -73,7 +73,7 @@ async def get_healthy_image_server(servers: List[str]) -> Optional[str]:
 
         # Simple round-robin - get next server
         server = next(_image_server_cycle)
-        logger.info(f"Selected image server (round-robin): {server} (from {len(_image_server_list)} servers)")
+        logger.info(f"[IMAGE LB] Selected image server (round-robin): {server} (from {len(_image_server_list)} servers: {_image_server_list})")
         return server
 
 
