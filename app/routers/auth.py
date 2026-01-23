@@ -469,6 +469,40 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
     if not local_music_dir:
         local_music_dir = "/Music"
 
+    # Get WebDAV storage settings
+    webdav_storage_enabled = False
+    webdav_storage_url = None
+    webdav_storage_username = None
+    webdav_storage_has_password = False
+    
+    webdav_enabled_setting = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == "webdav_storage_enabled"
+    ).first()
+    if webdav_enabled_setting:
+        webdav_storage_enabled = webdav_enabled_setting.value.lower() == "true"
+    
+    webdav_url_setting = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == "webdav_storage_url"
+    ).first()
+    if webdav_url_setting:
+        webdav_storage_url = webdav_url_setting.value
+    
+    webdav_username_setting = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == "webdav_storage_username"
+    ).first()
+    if webdav_username_setting:
+        webdav_storage_username = webdav_username_setting.value
+    
+    webdav_password_setting = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == "webdav_storage_password"
+    ).first()
+    if webdav_password_setting:
+        webdav_storage_has_password = bool(webdav_password_setting.value)
+
     return UserSettingsResponse(
         notification_email=current_user.notification_email,
         avatar=avatar_url,
@@ -499,7 +533,12 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         mail_accounts=mail_accounts,
         # Local music settings
         local_music_dir=local_music_dir,
-        music_recursive_scan=music_recursive_scan
+        music_recursive_scan=music_recursive_scan,
+        # WebDAV storage settings
+        webdav_storage_enabled=webdav_storage_enabled,
+        webdav_storage_url=webdav_storage_url,
+        webdav_storage_username=webdav_storage_username,
+        webdav_storage_has_password=webdav_storage_has_password
     )
 
 
@@ -700,6 +739,36 @@ def update_user_settings(
             recursive=settings.music_recursive_scan if settings.music_recursive_scan is not None else existing_recursive
         )
         logger.info("Local music config saved")
+
+    # Save WebDAV storage settings
+    if (settings.webdav_storage_enabled is not None or 
+        settings.webdav_storage_url is not None or 
+        settings.webdav_storage_username is not None or 
+        settings.webdav_storage_password is not None):
+        
+        if settings.webdav_storage_enabled is not None:
+            save_user_setting("webdav_storage_enabled", "true" if settings.webdav_storage_enabled else "false")
+        
+        if settings.webdav_storage_url is not None:
+            save_user_setting("webdav_storage_url", settings.webdav_storage_url)
+        
+        if settings.webdav_storage_username is not None:
+            save_user_setting("webdav_storage_username", settings.webdav_storage_username)
+        
+        if settings.webdav_storage_password is not None:
+            # Only save if password is provided (not empty string means update, empty means clear)
+            if settings.webdav_storage_password:
+                save_user_setting("webdav_storage_password", settings.webdav_storage_password)
+            else:
+                # Clear password
+                setting = db.query(UserSetting).filter(
+                    UserSetting.user_id == current_user.id,
+                    UserSetting.key == "webdav_storage_password"
+                ).first()
+                if setting:
+                    db.delete(setting)
+        
+        logger.info(f"WebDAV storage config saved for user {current_user.id}")
 
     db.commit()
 

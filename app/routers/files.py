@@ -1208,7 +1208,7 @@ async def list_files(
                     # Proxy to storage server - no fallback
                     return await _proxy_list_files(url, current_user.username, path, db)
     
-    # Local file listing (storage server node or when proxy fails or external storage)
+    # On storage server: Check for external storage first, then use WebDAV backend (replaces local filesystem)
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
@@ -1249,31 +1249,70 @@ async def list_files(
                 if not external_path.is_dir():
                     raise HTTPException(status_code=400, detail="Path is not a directory")
     
-    # Handle regular user storage path
+    # Handle regular user storage path - use WebDAV instead of local filesystem
     if not external_storage:
-        # Sanitize and validate path
-        if path:
-            try:
-                safe_path = Path(*[_sanitize_path_component(p) for p in path.split('/') if p])
-                full_path = user_path / safe_path
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
-        else:
-            full_path = user_path
+        # Use WebDAV backend for user storage
+        from app.services.webdav_storage_client import WebDAVStorageClient
+        webdav_client = WebDAVStorageClient(db, current_user.id)
         
-        # Validate path is within user directory
-        if not _validate_path_within_base(full_path, user_path):
-            raise HTTPException(status_code=403, detail="Access denied")
+        if not webdav_client.is_enabled():
+            raise HTTPException(
+                status_code=500, 
+                detail=f"WebDAV storage not configured for user {current_user.username}. Please configure WebDAV storage in user settings."
+            )
         
-        if not full_path.exists():
-            raise HTTPException(status_code=404, detail="Path not found")
-        
-        if not full_path.is_dir():
-            raise HTTPException(status_code=400, detail="Path is not a directory")
+        # Use WebDAV to list files
+        try:
+            # Convert path to WebDAV path format
+            webdav_path = path if path else ""
+            
+            async def _list_from_webdav():
+                items = await webdav_client.list_files(webdav_path, recursive=False)
+                # Convert WebDAV items to file manager format
+                result_items = []
+                for item in items:
+                    result_items.append({
+                        "name": item["name"],
+                        "path": item["path"],
+                        "is_directory": item["is_directory"],
+                        "size": item["size"],
+                        "modified": item["modified"],
+                        "is_external": False
+                    })
+                return result_items
+            
+            items = await _list_from_webdav()
+            
+            # Calculate storage usage (WebDAV doesn't provide this easily, so return 0 for now)
+            result = {
+                "items": items,
+                "path": path if path else "",
+                "is_external": False,
+                "external_name": None,
+                "storage": {
+                    "used": 0,  # WebDAV doesn't provide quota info easily
+                    "quota": current_user.storage_quota,
+                    "quota_mb": current_user.storage_quota / (1024 * 1024) if current_user.storage_quota > 0 else 0,
+                    "used_mb": 0,
+                    "unlimited": current_user.storage_quota == 0
+                }
+            }
+            
+            # Cache the result
+            cache = get_file_cache(db)
+            normalized_path = path.strip('/') if path else ""
+            cache_key = f"{current_user.username}:{normalized_path}:user"
+            cache.set(cache_key, result)
+            
+            return result
+        except Exception as e:
+            logger.error(f"[FILES] Failed to list files from WebDAV: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Failed to list files from WebDAV: {str(e)}")
     
+    # External storage - use local filesystem (external storage is always local)
     # Determine which path to use
-    target_path = external_path if external_storage else full_path
-    base_path = Path(external_storage.mount_path) if external_storage else user_path
+    target_path = external_path
+    base_path = Path(external_storage.mount_path)
     
     # Check cache (normalize path to avoid cache key inconsistencies)
     cache = get_file_cache(db)
@@ -1440,9 +1479,66 @@ async def view_file(
             else:
                 raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
         else:
-            pass  # Fall through to local file serving
+            # On storage server: Use WebDAV backend (replaces local file serving)
+            from app.services.webdav_storage_client import WebDAVStorageClient
+            webdav_client = WebDAVStorageClient(db, current_user.id)
+            
+            if not webdav_client.is_enabled():
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"WebDAV storage not configured for user {current_user.username}. Please configure WebDAV storage in user settings."
+                )
+            
+            # Get file from WebDAV
+            try:
+                file_data = await webdav_client.get_file(file_path)
+                
+                # Determine content type
+                from mimetypes import guess_type
+                content_type, _ = guess_type(file_path)
+                if not content_type:
+                    content_type = "application/octet-stream"
+                
+                # Check if it's an image (for image viewer)
+                if content_type.startswith('image/'):
+                    # Return image viewer HTML
+                    from fastapi.responses import HTMLResponse
+                    import base64
+                    image_base64 = base64.b64encode(file_data).decode('utf-8')
+                    html_content = f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>{file_path.split('/')[-1]}</title>
+                        <style>
+                            body {{ margin: 0; padding: 20px; background: #1a1a1a; color: #fff; text-align: center; }}
+                            img {{ max-width: 100%; max-height: 90vh; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }}
+                        </style>
+                    </head>
+                    <body>
+                        <img src="data:{content_type};base64,{image_base64}" alt="{file_path.split('/')[-1]}" />
+                    </body>
+                    </html>
+                    """
+                    return HTMLResponse(content=html_content)
+                else:
+                    # Return file download
+                    from fastapi.responses import Response
+                    filename = file_path.split('/')[-1]
+                    return Response(
+                        content=file_data,
+                        media_type=content_type,
+                        headers={
+                            "Content-Disposition": f'attachment; filename="{filename}"'
+                        }
+                    )
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail="File not found")
+            except Exception as e:
+                logger.error(f"[FILES] Failed to get file from WebDAV: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Failed to get file from WebDAV: {str(e)}")
     
-    # Handle external storage or local file serving
+    # Handle external storage (external storage is always local filesystem)
     storage = get_storage_service(db)
     user_path = storage.get_user_path(current_user.username)
     
@@ -1481,10 +1577,8 @@ async def view_file(
             # User doesn't have access
             raise HTTPException(status_code=403, detail="Access denied: you don't have permission to access this storage")
         else:
-            # Regular user storage path - serve from local filesystem
-            full_path = user_path / file_path
-            if not full_path.exists() or not full_path.is_file():
-                raise HTTPException(status_code=404, detail="File not found")
+            # This shouldn't happen - we already handled WebDAV above
+            raise HTTPException(status_code=500, detail="Invalid file path")
     else:
         raise HTTPException(status_code=400, detail="Invalid file path")
     

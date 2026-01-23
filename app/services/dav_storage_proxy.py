@@ -113,8 +113,25 @@ class DAVStorageProxy:
             headers["Authorization"] = f"Bearer {self.storage_token}"
         return headers
     
+    def _get_webdav_client(self):
+        """Get WebDAV client for user if enabled."""
+        from app.services.webdav_storage_client import WebDAVStorageClient
+        from app.models import User
+        
+        user = self.db.query(User).filter(User.username == self.username).first()
+        if not user:
+            return None
+        
+        try:
+            client = WebDAVStorageClient(self.db, user.id)
+            if client.is_enabled():
+                return client
+        except Exception as e:
+            logger.debug(f"[{self.dav_type.upper()}] WebDAV not available for user {self.username}: {e}")
+        return None
+    
     def _get_local_dav_path(self, subpath: str = "") -> Path:
-        """Get local filesystem path for DAV directory."""
+        """Get local filesystem path for DAV directory (deprecated - use WebDAV instead)."""
         from app.services.storage_service import StorageService
         storage = StorageService(self.db)
         user_path = storage.get_user_path(self.username)
@@ -126,37 +143,126 @@ class DAVStorageProxy:
     def list_files(self, subpath: str = "") -> List[Dict[str, any]]:
         """List files in DAV directory."""
         if not self.use_proxy:
-            # No fallback to local storage - storage proxy must be configured
-            # Log at debug level since this is expected when DAV services aren't configured
-            logger.debug(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot list files (this is normal if {self.dav_type} is not enabled)")
+            # On storage server: Use WebDAV backend (replaces local filesystem)
+            webdav_client = self._get_webdav_client()
+            if webdav_client:
+                try:
+                    import asyncio
+                    # Build WebDAV path: caldav/subpath or carddav/subpath
+                    dav_path = f"{self.base_path}/{subpath}" if subpath else self.base_path
+                    dav_path = dav_path.rstrip('/')
+                    
+                    async def _list_from_webdav():
+                        items = await webdav_client.list_files(dav_path, recursive=False)
+                        # Convert to expected format
+                        # WebDAV returns paths relative to root, but we need paths relative to DAV directory
+                        result = []
+                        for item in items:
+                            # Strip base_path prefix from path (e.g., "caldav/calendar/event.ics" -> "calendar/event.ics")
+                            item_path = item["path"]
+                            if item_path.startswith(f"{self.base_path}/"):
+                                item_path = item_path[len(f"{self.base_path}/"):]
+                            elif item_path == self.base_path:
+                                item_path = ""
+                            
+                            result.append({
+                                "name": item["name"],
+                                "path": item_path,
+                                "is_directory": item["is_directory"],
+                                "size": item["size"],
+                                "modified": item["modified"],
+                            })
+                        return result
+                    
+                    # Run async in sync context
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            import concurrent.futures
+                            def _run_in_new_loop():
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                try:
+                                    return new_loop.run_until_complete(_list_from_webdav())
+                                finally:
+                                    new_loop.close()
+                            
+                            with concurrent.futures.ThreadPoolExecutor() as executor:
+                                future = executor.submit(_run_in_new_loop)
+                                return future.result()
+                        else:
+                            return loop.run_until_complete(_list_from_webdav())
+                    except Exception as e:
+                        logger.error(f"[{self.dav_type.upper()}] Error listing from WebDAV: {e}", exc_info=True)
+                        return []
+                except Exception as e:
+                    logger.error(f"[{self.dav_type.upper()}] WebDAV not configured - cannot list files: {e}")
+                    return []
+            
+            # WebDAV not configured - log at debug level since this is expected when DAV services aren't configured
+            logger.debug(f"[{self.dav_type.upper()}] Storage proxy and WebDAV not configured - cannot list files (this is normal if {self.dav_type} is not enabled)")
             return []
         
-        # If same server, use local filesystem
+        # If same server, use WebDAV backend (replaces local filesystem)
         if self.is_same_server:
-            try:
-                dav_path = self._get_local_dav_path(subpath)
-                if not dav_path.exists():
-                    return []
-                
-                items = []
-                for item in dav_path.iterdir():
+            webdav_client = self._get_webdav_client()
+            if webdav_client:
+                try:
+                    import asyncio
+                    # Build WebDAV path: caldav/subpath or carddav/subpath
+                    dav_path = f"{self.base_path}/{subpath}" if subpath else self.base_path
+                    dav_path = dav_path.rstrip('/')
+                    
+                    async def _list_from_webdav():
+                        items = await webdav_client.list_files(dav_path, recursive=False)
+                        # Convert to expected format
+                        # WebDAV returns paths relative to root, but we need paths relative to DAV directory
+                        result = []
+                        for item in items:
+                            # Strip base_path prefix from path (e.g., "caldav/calendar/event.ics" -> "calendar/event.ics")
+                            item_path = item["path"]
+                            if item_path.startswith(f"{self.base_path}/"):
+                                item_path = item_path[len(f"{self.base_path}/"):]
+                            elif item_path == self.base_path:
+                                item_path = ""
+                            
+                            result.append({
+                                "name": item["name"],
+                                "path": item_path,
+                                "is_directory": item["is_directory"],
+                                "size": item["size"],
+                                "modified": item["modified"],
+                            })
+                        return result
+                    
+                    # Run async in sync context
                     try:
-                        stat = item.stat()
-                        item_info = {
-                            "name": item.name,
-                            "path": str(item.relative_to(dav_path)),
-                            "is_directory": item.is_dir(),
-                            "size": stat.st_size if item.is_file() else 0,
-                            "modified": stat.st_mtime,
-                        }
-                        items.append(item_info)
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            import concurrent.futures
+                            def _run_in_new_loop():
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                try:
+                                    return new_loop.run_until_complete(_list_from_webdav())
+                                finally:
+                                    new_loop.close()
+                            
+                            with concurrent.futures.ThreadPoolExecutor() as executor:
+                                future = executor.submit(_run_in_new_loop)
+                                return future.result()
+                        else:
+                            return loop.run_until_complete(_list_from_webdav())
                     except Exception as e:
-                        logger.warning(f"[{self.dav_type.upper()}] Error reading item {item}: {e}")
-                        continue
-                return items
-            except Exception as e:
-                logger.error(f"[{self.dav_type.upper()}] Error listing local files: {e}", exc_info=True)
-                return []
+                        logger.error(f"[{self.dav_type.upper()}] Error listing from WebDAV: {e}", exc_info=True)
+                        return []
+                except Exception as e:
+                    logger.error(f"[{self.dav_type.upper()}] Error using WebDAV: {e}", exc_info=True)
+                    return []
+            
+            # WebDAV not configured - this is an error on storage server
+            logger.error(f"[{self.dav_type.upper()}] WebDAV storage not configured for user {self.username}. CalDAV/CardDAV requires WebDAV storage.")
+            return []
         
         # Otherwise, use HTTP proxy
         try:
@@ -198,24 +304,94 @@ class DAVStorageProxy:
     def read_file(self, filepath: str) -> Optional[str]:
         """Read file content from storage."""
         if not self.use_proxy:
-            # No fallback to local storage - storage proxy must be configured
-            # Log at debug level since this is expected when DAV services aren't configured
-            logger.debug(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot read file: {filepath} (this is normal if {self.dav_type} is not enabled)")
+            # On storage server: Use WebDAV backend (replaces local filesystem)
+            webdav_client = self._get_webdav_client()
+            if webdav_client:
+                try:
+                    import asyncio
+                    # Build WebDAV path: caldav/filepath or carddav/filepath
+                    dav_path = f"{self.base_path}/{filepath}".replace('//', '/')
+                    
+                    async def _read_from_webdav():
+                        file_data = await webdav_client.get_file(dav_path)
+                        return file_data.decode('utf-8')
+                    
+                    # Run async in sync context
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            import concurrent.futures
+                            def _run_in_new_loop():
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                try:
+                                    return new_loop.run_until_complete(_read_from_webdav())
+                                finally:
+                                    new_loop.close()
+                            
+                            with concurrent.futures.ThreadPoolExecutor() as executor:
+                                future = executor.submit(_run_in_new_loop)
+                                return future.result()
+                        else:
+                            return loop.run_until_complete(_read_from_webdav())
+                    except FileNotFoundError:
+                        logger.warning(f"[{self.dav_type.upper()}] File not found: {filepath}")
+                        return None
+                    except Exception as e:
+                        logger.error(f"[{self.dav_type.upper()}] Error reading from WebDAV: {e}", exc_info=True)
+                        return None
+                except Exception as e:
+                    logger.error(f"[{self.dav_type.upper()}] WebDAV not configured - cannot read file: {e}")
+                    return None
+            
+            # WebDAV not configured
+            logger.debug(f"[{self.dav_type.upper()}] Storage proxy and WebDAV not configured - cannot read file: {filepath} (this is normal if {self.dav_type} is not enabled)")
             return None
         
-        # If same server, use local filesystem
+        # If same server, use WebDAV backend (replaces local filesystem)
         if self.is_same_server:
-            try:
-                dav_path = self._get_local_dav_path()
-                full_path = dav_path / filepath
-                if full_path.exists() and full_path.is_file():
-                    return full_path.read_text(encoding='utf-8')
-                else:
-                    logger.warning(f"[{self.dav_type.upper()}] File not found: {filepath}")
+            webdav_client = self._get_webdav_client()
+            if webdav_client:
+                try:
+                    import asyncio
+                    # Build WebDAV path: caldav/filepath or carddav/filepath
+                    dav_path = f"{self.base_path}/{filepath}".replace('//', '/')
+                    
+                    async def _read_from_webdav():
+                        file_data = await webdav_client.get_file(dav_path)
+                        return file_data.decode('utf-8')
+                    
+                    # Run async in sync context
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            import concurrent.futures
+                            def _run_in_new_loop():
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                try:
+                                    return new_loop.run_until_complete(_read_from_webdav())
+                                finally:
+                                    new_loop.close()
+                            
+                            with concurrent.futures.ThreadPoolExecutor() as executor:
+                                future = executor.submit(_run_in_new_loop)
+                                return future.result()
+                        else:
+                            return loop.run_until_complete(_read_from_webdav())
+                    except FileNotFoundError:
+                        logger.warning(f"[{self.dav_type.upper()}] File not found: {filepath}")
+                        return None
+                    except Exception as e:
+                        logger.error(f"[{self.dav_type.upper()}] Error reading from WebDAV: {e}", exc_info=True)
+                        return None
+                except Exception as e:
+                    logger.error(f"[{self.dav_type.upper()}] Error using WebDAV: {e}", exc_info=True)
                     return None
-            except Exception as e:
-                logger.error(f"[{self.dav_type.upper()}] Error reading local file {filepath}: {e}", exc_info=True)
-                return None
+            
+            # WebDAV not configured - this is an error on storage server
+            logger.error(f"[{self.dav_type.upper()}] WebDAV storage not configured for user {self.username}. CalDAV/CardDAV requires WebDAV storage.")
+            return None
         
         # Otherwise, use HTTP proxy
         try:
@@ -248,24 +424,118 @@ class DAVStorageProxy:
     def write_file(self, filepath: str, content: str) -> bool:
         """Write file content to storage."""
         if not self.use_proxy:
-            # No fallback to local storage - storage proxy must be configured
-            # Log at debug level since this is expected when DAV services aren't configured
-            logger.debug(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot write file: {filepath} (this is normal if {self.dav_type} is not enabled)")
+            # On storage server: Use WebDAV backend (replaces local filesystem)
+            webdav_client = self._get_webdav_client()
+            if webdav_client:
+                try:
+                    import asyncio
+                    # Build WebDAV path: caldav/filepath or carddav/filepath
+                    dav_path = f"{self.base_path}/{filepath}".replace('//', '/')
+                    
+                    async def _write_to_webdav():
+                        # Determine content type based on file extension
+                        if filepath.endswith('.ics'):
+                            content_type = 'text/calendar'
+                        elif filepath.endswith('.vcf'):
+                            content_type = 'text/vcard'
+                        else:
+                            content_type = 'text/plain'
+                        
+                        file_data = content.encode('utf-8')
+                        await webdav_client.save_file(dav_path, file_data, content_type)
+                        return True
+                    
+                    # Run async in sync context
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            import concurrent.futures
+                            def _run_in_new_loop():
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                try:
+                                    return new_loop.run_until_complete(_write_to_webdav())
+                                finally:
+                                    new_loop.close()
+                            
+                            with concurrent.futures.ThreadPoolExecutor() as executor:
+                                future = executor.submit(_run_in_new_loop)
+                                success = future.result()
+                                if success:
+                                    logger.info(f"[{self.dav_type.upper()}] Saved {filepath} to WebDAV")
+                                return success
+                        else:
+                            success = loop.run_until_complete(_write_to_webdav())
+                            if success:
+                                logger.info(f"[{self.dav_type.upper()}] Saved {filepath} to WebDAV")
+                            return success
+                    except Exception as e:
+                        logger.error(f"[{self.dav_type.upper()}] Error writing to WebDAV: {e}", exc_info=True)
+                        return False
+                except Exception as e:
+                    logger.error(f"[{self.dav_type.upper()}] WebDAV not configured - cannot write file: {e}")
+                    return False
+            
+            # WebDAV not configured
+            logger.debug(f"[{self.dav_type.upper()}] Storage proxy and WebDAV not configured - cannot write file: {filepath} (this is normal if {self.dav_type} is not enabled)")
             return False
         
-        # If same server, use local filesystem
+        # If same server, use WebDAV backend (replaces local filesystem)
         if self.is_same_server:
-            try:
-                dav_path = self._get_local_dav_path()
-                dav_path.mkdir(parents=True, exist_ok=True)
-                full_path = dav_path / filepath
-                full_path.parent.mkdir(parents=True, exist_ok=True)
-                full_path.write_text(content, encoding='utf-8')
-                logger.info(f"[{self.dav_type.upper()}] Saved {filepath} locally")
-                return True
-            except Exception as e:
-                logger.error(f"[{self.dav_type.upper()}] Error writing local file {filepath}: {e}", exc_info=True)
-                return False
+            webdav_client = self._get_webdav_client()
+            if webdav_client:
+                try:
+                    import asyncio
+                    # Build WebDAV path: caldav/filepath or carddav/filepath
+                    dav_path = f"{self.base_path}/{filepath}".replace('//', '/')
+                    
+                    async def _write_to_webdav():
+                        # Determine content type based on file extension
+                        if filepath.endswith('.ics'):
+                            content_type = 'text/calendar'
+                        elif filepath.endswith('.vcf'):
+                            content_type = 'text/vcard'
+                        else:
+                            content_type = 'text/plain'
+                        
+                        file_data = content.encode('utf-8')
+                        await webdav_client.save_file(dav_path, file_data, content_type)
+                        return True
+                    
+                    # Run async in sync context
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            import concurrent.futures
+                            def _run_in_new_loop():
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                try:
+                                    return new_loop.run_until_complete(_write_to_webdav())
+                                finally:
+                                    new_loop.close()
+                            
+                            with concurrent.futures.ThreadPoolExecutor() as executor:
+                                future = executor.submit(_run_in_new_loop)
+                                success = future.result()
+                                if success:
+                                    logger.info(f"[{self.dav_type.upper()}] Saved {filepath} to WebDAV")
+                                return success
+                        else:
+                            success = loop.run_until_complete(_write_to_webdav())
+                            if success:
+                                logger.info(f"[{self.dav_type.upper()}] Saved {filepath} to WebDAV")
+                            return success
+                    except Exception as e:
+                        logger.error(f"[{self.dav_type.upper()}] Error writing to WebDAV: {e}", exc_info=True)
+                        return False
+                except Exception as e:
+                    logger.error(f"[{self.dav_type.upper()}] Error using WebDAV: {e}", exc_info=True)
+                    return False
+            
+            # WebDAV not configured - this is an error on storage server
+            logger.error(f"[{self.dav_type.upper()}] WebDAV storage not configured for user {self.username}. CalDAV/CardDAV requires WebDAV storage.")
+            return False
         
         # Otherwise, use HTTP proxy
         try:
@@ -298,30 +568,104 @@ class DAVStorageProxy:
     def delete_file(self, filepath: str) -> bool:
         """Delete file from storage."""
         if not self.use_proxy:
-            # No fallback to local storage - storage proxy must be configured
-            # Log at debug level since this is expected when DAV services aren't configured
-            logger.debug(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot delete file: {filepath} (this is normal if {self.dav_type} is not enabled)")
+            # On storage server: Use WebDAV backend (replaces local filesystem)
+            webdav_client = self._get_webdav_client()
+            if webdav_client:
+                try:
+                    import asyncio
+                    # Build WebDAV path: caldav/filepath or carddav/filepath
+                    dav_path = f"{self.base_path}/{filepath}".replace('//', '/')
+                    
+                    async def _delete_from_webdav():
+                        return await webdav_client.delete_file(dav_path)
+                    
+                    # Run async in sync context
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            import concurrent.futures
+                            def _run_in_new_loop():
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                try:
+                                    return new_loop.run_until_complete(_delete_from_webdav())
+                                finally:
+                                    new_loop.close()
+                            
+                            with concurrent.futures.ThreadPoolExecutor() as executor:
+                                future = executor.submit(_run_in_new_loop)
+                                success = future.result()
+                                if success:
+                                    logger.info(f"[{self.dav_type.upper()}] Deleted {filepath} from WebDAV")
+                                return success
+                        else:
+                            success = loop.run_until_complete(_delete_from_webdav())
+                            if success:
+                                logger.info(f"[{self.dav_type.upper()}] Deleted {filepath} from WebDAV")
+                            return success
+                    except FileNotFoundError:
+                        logger.warning(f"[{self.dav_type.upper()}] File not found for deletion: {filepath}")
+                        return False
+                    except Exception as e:
+                        logger.error(f"[{self.dav_type.upper()}] Error deleting from WebDAV: {e}", exc_info=True)
+                        return False
+                except Exception as e:
+                    logger.error(f"[{self.dav_type.upper()}] WebDAV not configured - cannot delete file: {e}")
+                    return False
+            
+            # WebDAV not configured
+            logger.debug(f"[{self.dav_type.upper()}] Storage proxy and WebDAV not configured - cannot delete file: {filepath} (this is normal if {self.dav_type} is not enabled)")
             return False
         
-        # If same server, use local filesystem
+        # If same server, use WebDAV backend (replaces local filesystem)
         if self.is_same_server:
-            try:
-                dav_path = self._get_local_dav_path()
-                full_path = dav_path / filepath
-                if full_path.exists():
-                    if full_path.is_file():
-                        full_path.unlink()
-                    elif full_path.is_dir():
-                        import shutil
-                        shutil.rmtree(full_path)
-                    logger.info(f"[{self.dav_type.upper()}] Deleted {filepath} locally")
-                    return True
-                else:
-                    logger.warning(f"[{self.dav_type.upper()}] File not found for deletion: {filepath}")
+            webdav_client = self._get_webdav_client()
+            if webdav_client:
+                try:
+                    import asyncio
+                    # Build WebDAV path: caldav/filepath or carddav/filepath
+                    dav_path = f"{self.base_path}/{filepath}".replace('//', '/')
+                    
+                    async def _delete_from_webdav():
+                        return await webdav_client.delete_file(dav_path)
+                    
+                    # Run async in sync context
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            import concurrent.futures
+                            def _run_in_new_loop():
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                try:
+                                    return new_loop.run_until_complete(_delete_from_webdav())
+                                finally:
+                                    new_loop.close()
+                            
+                            with concurrent.futures.ThreadPoolExecutor() as executor:
+                                future = executor.submit(_run_in_new_loop)
+                                success = future.result()
+                                if success:
+                                    logger.info(f"[{self.dav_type.upper()}] Deleted {filepath} from WebDAV")
+                                return success
+                        else:
+                            success = loop.run_until_complete(_delete_from_webdav())
+                            if success:
+                                logger.info(f"[{self.dav_type.upper()}] Deleted {filepath} from WebDAV")
+                            return success
+                    except FileNotFoundError:
+                        logger.warning(f"[{self.dav_type.upper()}] File not found for deletion: {filepath}")
+                        return False
+                    except Exception as e:
+                        logger.error(f"[{self.dav_type.upper()}] Error deleting from WebDAV: {e}", exc_info=True)
+                        return False
+                except Exception as e:
+                    logger.error(f"[{self.dav_type.upper()}] Error using WebDAV: {e}", exc_info=True)
                     return False
-            except Exception as e:
-                logger.error(f"[{self.dav_type.upper()}] Error deleting local file {filepath}: {e}", exc_info=True)
-                return False
+            
+            # WebDAV not configured - this is an error on storage server
+            logger.error(f"[{self.dav_type.upper()}] WebDAV storage not configured for user {self.username}. CalDAV/CardDAV requires WebDAV storage.")
+            return False
         
         # Otherwise, use HTTP proxy
         try:
@@ -351,19 +695,81 @@ class DAVStorageProxy:
     def file_exists(self, filepath: str) -> bool:
         """Check if file exists."""
         if not self.use_proxy:
-            # No fallback to local storage - storage proxy must be configured
-            # Log at debug level since this is expected when DAV services aren't configured
-            logger.debug(f"[{self.dav_type.upper()}] Storage proxy not configured - cannot check file existence: {filepath} (this is normal if {self.dav_type} is not enabled)")
+            # On storage server: Use WebDAV backend (replaces local filesystem)
+            webdav_client = self._get_webdav_client()
+            if webdav_client:
+                try:
+                    import asyncio
+                    # Build WebDAV path: caldav/filepath or carddav/filepath
+                    dav_path = f"{self.base_path}/{filepath}".replace('//', '/')
+                    
+                    async def _check_webdav():
+                        return await webdav_client.file_exists(dav_path)
+                    
+                    # Run async in sync context
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            import concurrent.futures
+                            def _run_in_new_loop():
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                try:
+                                    return new_loop.run_until_complete(_check_webdav())
+                                finally:
+                                    new_loop.close()
+                            
+                            with concurrent.futures.ThreadPoolExecutor() as executor:
+                                future = executor.submit(_run_in_new_loop)
+                                return future.result()
+                        else:
+                            return loop.run_until_complete(_check_webdav())
+                    except Exception:
+                        return False
+                except Exception:
+                    return False
+            
+            # WebDAV not configured
+            logger.debug(f"[{self.dav_type.upper()}] Storage proxy and WebDAV not configured - cannot check file existence: {filepath} (this is normal if {self.dav_type} is not enabled)")
             return False
         
-        # If same server, use local filesystem
+        # If same server, use WebDAV backend (replaces local filesystem)
         if self.is_same_server:
-            try:
-                dav_path = self._get_local_dav_path()
-                full_path = dav_path / filepath
-                return full_path.exists() and full_path.is_file()
-            except Exception:
-                return False
+            webdav_client = self._get_webdav_client()
+            if webdav_client:
+                try:
+                    import asyncio
+                    # Build WebDAV path: caldav/filepath or carddav/filepath
+                    dav_path = f"{self.base_path}/{filepath}".replace('//', '/')
+                    
+                    async def _check_webdav():
+                        return await webdav_client.file_exists(dav_path)
+                    
+                    # Run async in sync context
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            import concurrent.futures
+                            def _run_in_new_loop():
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                try:
+                                    return new_loop.run_until_complete(_check_webdav())
+                                finally:
+                                    new_loop.close()
+                            
+                            with concurrent.futures.ThreadPoolExecutor() as executor:
+                                future = executor.submit(_run_in_new_loop)
+                                return future.result()
+                        else:
+                            return loop.run_until_complete(_check_webdav())
+                    except Exception:
+                        return False
+                except Exception:
+                    return False
+            
+            # WebDAV not configured
+            return False
         
         # Otherwise, try to read the file - if successful, it exists
         content = self.read_file(filepath)

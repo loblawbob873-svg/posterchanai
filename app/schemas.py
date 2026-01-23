@@ -395,6 +395,11 @@ class UserSettingsUpdate(BaseModel):
     # Local music directory settings
     local_music_dir: Optional[str] = None
     music_recursive_scan: Optional[bool] = None
+    # WebDAV storage settings
+    webdav_storage_enabled: Optional[bool] = None
+    webdav_storage_url: Optional[str] = None
+    webdav_storage_username: Optional[str] = None
+    webdav_storage_password: Optional[str] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -429,6 +434,11 @@ class UserSettingsResponse(BaseModel):
     # Local music directory settings
     local_music_dir: Optional[str] = None
     music_recursive_scan: bool = True
+    # WebDAV storage settings
+    webdav_storage_enabled: bool = False
+    webdav_storage_url: Optional[str] = None
+    webdav_storage_username: Optional[str] = None
+    webdav_storage_has_password: bool = False
 
 
 class TestConnectionRequest(BaseModel):

@@ -98,14 +98,39 @@ def _validate_path_within_base(file_path: Path, base_path: Path) -> bool:
 
 
 class StorageService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: int = None):
         self.db = db
+        self.user_id = user_id  # Optional: user ID for WebDAV config
         self._load_settings()
 
     def _load_settings(self):
         from app.database import safe_query_settings
         settings = safe_query_settings(self.db)
         self.upload_path = settings.get("upload_path", "/var/lib/posterchanai")
+    
+    def _get_webdav_client(self, user_id: int = None):
+        """Get WebDAV client if enabled for user. Returns None if not enabled."""
+        from app.services.webdav_storage_client import WebDAVStorageClient
+        from app.models import User
+        
+        # Get user_id from parameter or instance
+        uid = user_id or self.user_id
+        if not uid:
+            return None
+        
+        try:
+            client = WebDAVStorageClient(self.db, uid)
+            if client.is_enabled():
+                return client
+        except Exception as e:
+            logger.debug(f"[STORAGE] WebDAV not available for user {uid}: {e}")
+        return None
+    
+    def _get_user_id_from_username(self, username: str) -> int:
+        """Get user ID from username."""
+        from app.models import User
+        user = self.db.query(User).filter(User.username == username).first()
+        return user.id if user else None
 
     def get_user_path(self, username: str) -> Path:
         """Get the upload directory for a user"""
@@ -133,18 +158,13 @@ class StorageService:
         return conv_path
 
     def save_image(self, username: str, conversation_id: int, image_base64: str, prefix: str = "img") -> str:
-        """Save a base64 image to disk and return the file path. Proxies to storage server if configured."""
+        """Save a base64 image. Proxies to storage server if configured, otherwise uses WebDAV backend (replaces local disk)."""
         # Check if storage server is configured - proxy request if so
         storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
         if storage_server_url and storage_server_url.value:
             # Validate URL has protocol before proxying
             url = storage_server_url.value.strip()
             if url.startswith(('http://', 'https://')):
-                # Check if URL points to same machine - this is likely a misconfiguration
-                if _is_same_machine_url(url):
-                    logger.error(f"[STORAGE] storage_server_url points to same machine: {url}. This will cause files to be saved locally. Please use a different machine's URL or leave storage_server_url empty for local storage.")
-                    # Still try to proxy, but log the warning
-                
                 # Valid URL - try to proxy
                 try:
                     return self._proxy_save_image(url, username, conversation_id, image_base64, prefix)
@@ -156,17 +176,47 @@ class StorageService:
                 # Invalid URL - raise error
                 raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
         
-        # Local file saving (storage server node)
-        conv_path = self.get_conversation_path(username, conversation_id)
+        # On storage server: Use WebDAV backend (replaces local disk)
+        user_id = self._get_user_id_from_username(username)
+        webdav_client = self._get_webdav_client(user_id) if user_id else None
+        
+        if not webdav_client or not webdav_client.is_enabled():
+            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
+        
+        # Use WebDAV storage
+        import asyncio
+        image_data = base64.b64decode(image_base64)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         filename = f"{prefix}_{timestamp}.png"
-        filepath = conv_path / filename
-
-        image_data = base64.b64decode(image_base64)
-        with open(filepath, "wb") as f:
-            f.write(image_data)
-
-        return str(filepath)
+        file_path = f"chat/{conversation_id}/{filename}"
+        
+        try:
+            async def _save_to_webdav():
+                return await webdav_client.save_file(file_path, image_data, "image/png")
+            
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_save_to_webdav())
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    webdav_url = future.result()
+                    logger.debug(f"[STORAGE] Saved image to WebDAV: {webdav_url}")
+                    return webdav_url
+            else:
+                webdav_url = loop.run_until_complete(_save_to_webdav())
+                logger.debug(f"[STORAGE] Saved image to WebDAV: {webdav_url}")
+                return webdav_url
+        except Exception as e:
+            logger.error(f"[STORAGE] Failed to save image to WebDAV: {e}", exc_info=True)
+            raise Exception(f"Failed to save image to WebDAV storage: {e}")
     
     def _proxy_save_image(self, storage_server_url: str, username: str, conversation_id: int, image_base64: str, prefix: str) -> str:
         """Proxy image save to storage server"""
@@ -224,7 +274,7 @@ class StorageService:
             raise
 
     def save_avatar(self, username: str, image_data: bytes, ext: str = ".png") -> str:
-        """Save user avatar image and return the filename. Proxies to storage server if configured."""
+        """Save user avatar image and return the filename. Proxies to storage server if configured, otherwise uses WebDAV backend (replaces local disk)."""
         # Check if storage server is configured - proxy request if so
         storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
         if storage_server_url and storage_server_url.value:
@@ -246,19 +296,52 @@ class StorageService:
                 # Invalid URL - raise error
                 raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
         
-        # Local file saving (storage server node)
-        user_path = self.get_user_path(username)
-        filename = f"avatar{ext}"
-        filepath = user_path / filename
-
-        # Delete old avatar if exists (any extension)
-        for old_file in user_path.glob("avatar.*"):
-            old_file.unlink()
-
-        with open(filepath, "wb") as f:
-            f.write(image_data)
-
-        return filename
+        # On storage server: Use WebDAV backend (replaces local disk)
+        user_id = self._get_user_id_from_username(username)
+        webdav_client = self._get_webdav_client(user_id) if user_id else None
+        
+        if not webdav_client or not webdav_client.is_enabled():
+            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
+        
+        # Use WebDAV storage
+        import asyncio
+        file_path = f"avatar{ext}"
+        
+        try:
+            async def _save_to_webdav():
+                content_type = f"image/{ext[1:]}" if ext else "image/png"
+                # Delete old avatar first (try different extensions)
+                for old_ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
+                    try:
+                        await webdav_client.delete_file(f"avatar{old_ext}")
+                    except:
+                        pass  # Ignore if doesn't exist
+                await webdav_client.save_file(file_path, image_data, content_type)
+                return f"avatar{ext}"  # Return just filename for compatibility
+            
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_save_to_webdav())
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    filename = future.result()
+                    logger.debug(f"[STORAGE] Saved avatar to WebDAV: {filename}")
+                    return filename
+            else:
+                filename = loop.run_until_complete(_save_to_webdav())
+                logger.debug(f"[STORAGE] Saved avatar to WebDAV: {filename}")
+                return filename
+        except Exception as e:
+            logger.error(f"[STORAGE] Failed to save avatar to WebDAV: {e}", exc_info=True)
+            raise Exception(f"Failed to save avatar to WebDAV storage: {e}")
     
     def _proxy_save_avatar(self, storage_server_url: str, username: str, image_data: bytes, ext: str) -> str:
         """Proxy avatar save to storage server"""
@@ -326,7 +409,7 @@ class StorageService:
         return None
 
     def save_file(self, username: str, conversation_id: int, content: str, original_name: str = "file.txt") -> str:
-        """Save a text file to disk and return the file path. Proxies to storage server if configured."""
+        """Save a text file. Proxies to storage server if configured, otherwise uses WebDAV backend (replaces local disk)."""
         # Check if storage server is configured - proxy request if so
         storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
         if storage_server_url and storage_server_url.value:
@@ -347,18 +430,48 @@ class StorageService:
                 # Invalid URL - raise error
                 raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
         
-        # Local file saving (only when storage server is NOT configured)
-        conv_path = self.get_conversation_path(username, conversation_id)
+        # On storage server: Use WebDAV backend (replaces local disk)
+        user_id = self._get_user_id_from_username(username)
+        webdav_client = self._get_webdav_client(user_id) if user_id else None
+        
+        if not webdav_client or not webdav_client.is_enabled():
+            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
+        
+        # Use WebDAV storage
+        import asyncio
+        file_data = content.encode('utf-8')
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        # Keep extension from original name
         ext = Path(original_name).suffix or ".txt"
         filename = f"file_{timestamp}{ext}"
-        filepath = conv_path / filename
-
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        return str(filepath)
+        file_path = f"chat/{conversation_id}/{filename}"
+        
+        try:
+            async def _save_to_webdav():
+                return await webdav_client.save_file(file_path, file_data, "text/plain")
+            
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_save_to_webdav())
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    webdav_url = future.result()
+                    logger.debug(f"[STORAGE] Saved file to WebDAV: {webdav_url}")
+                    return webdav_url
+            else:
+                webdav_url = loop.run_until_complete(_save_to_webdav())
+                logger.debug(f"[STORAGE] Saved file to WebDAV: {webdav_url}")
+                return webdav_url
+        except Exception as e:
+            logger.error(f"[STORAGE] Failed to save file to WebDAV: {e}", exc_info=True)
+            raise Exception(f"Failed to save file to WebDAV storage: {e}")
     
     def _proxy_save_file(self, storage_server_url: str, username: str, conversation_id: int, content: str, original_name: str) -> str:
         """Proxy file save to storage server"""
@@ -412,6 +525,49 @@ class StorageService:
         except Exception as e:
             logger.error(f"[STORAGE] Error proxying save_file: {e}", exc_info=True)
             raise
+        
+        # On storage server: Use WebDAV backend (replaces local disk)
+        user_id = self._get_user_id_from_username(username)
+        webdav_client = self._get_webdav_client(user_id) if user_id else None
+        
+        if not webdav_client or not webdav_client.is_enabled():
+            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
+        
+        # Use WebDAV storage
+        import asyncio
+        file_data = content.encode('utf-8')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        ext = Path(original_name).suffix or ".txt"
+        filename = f"file_{timestamp}{ext}"
+        file_path = f"chat/{conversation_id}/{filename}"
+        
+        try:
+            async def _save_to_webdav():
+                return await webdav_client.save_file(file_path, file_data, "text/plain")
+            
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_save_to_webdav())
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    webdav_url = future.result()
+                    logger.debug(f"[STORAGE] Saved file to WebDAV: {webdav_url}")
+                    return webdav_url
+            else:
+                webdav_url = loop.run_until_complete(_save_to_webdav())
+                logger.debug(f"[STORAGE] Saved file to WebDAV: {webdav_url}")
+                return webdav_url
+        except Exception as e:
+            logger.error(f"[STORAGE] Failed to save file to WebDAV: {e}", exc_info=True)
+            raise Exception(f"Failed to save file to WebDAV storage: {e}")
 
     def save_raw_file(self, username: str, conversation_id: int, data: bytes, original_name: str) -> str:
         """Save raw file bytes to disk and return the file path"""
