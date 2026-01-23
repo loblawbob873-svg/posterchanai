@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 import os
 import logging
+import sys
 
 from app.middleware.csrf import CSRFMiddleware
 
@@ -131,7 +132,7 @@ app.add_middleware(CSRFMiddleware)
 static_path = os.path.join(os.path.dirname(__file__), "..", "static")
 app.mount("/static", StaticFiles(directory=static_path), name="static")
 
-# WebDAV will be mounted at startup if enabled (see startup event)
+# WebDAV code removed
 
 # Templates
 templates_path = os.path.join(os.path.dirname(__file__), "..", "templates")
@@ -1037,18 +1038,8 @@ async def startup():
                 return dav_settings.get(key, default)
             
             # Get all DAV settings once to avoid duplicate queries
-            webdav_enabled = get_dav_setting("webdav_enabled", "false")
             caldav_enabled = get_dav_setting("caldav_enabled", "false")
             cardav_enabled = get_dav_setting("cardav_enabled", "false")
-            
-            try:
-                from app.services.webdav_server import start_webdav_server
-            except ImportError as e:
-                # Only warn if WebDAV is actually enabled
-                if webdav_enabled.lower() == "true":
-                    logging.warning(f"WebDAV server is enabled but not available (missing wsgidav?): {e}")
-                    logging.warning("Install wsgidav to enable WebDAV: pip install wsgidav>=4.3.0")
-                start_webdav_server = None
             try:
                 from app.services.caldav_server import start_caldav_server
                 from app.services.cardav_server import start_cardav_server
@@ -1058,181 +1049,6 @@ async def startup():
                     logging.warning(f"CalDAV/CardDAV servers are enabled but not available: {e}")
                 start_caldav_server = None
                 start_cardav_server = None
-            
-            # Mount WebDAV directly into FastAPI (no separate port needed!)
-            if webdav_enabled.lower() == "true":
-                try:
-                    from app.services.webdav_server import create_webdav_app
-                    # Try to get WSGI middleware - Starlette includes this
-                    try:
-                        from starlette.middleware.wsgi import WSGIMiddleware
-                        wsgi_middleware = WSGIMiddleware
-                    except ImportError:
-                        # Fallback to asgiref if available
-                        try:
-                            from asgiref.wsgi import WsgiToAsgi
-                            wsgi_middleware = WsgiToAsgi
-                        except ImportError:
-                            raise ImportError("Neither starlette.middleware.wsgi.WSGIMiddleware nor asgiref.wsgi.WsgiToAsgi available")
-                    
-                    webdav_app = create_webdav_app(db_dav)
-                    # Mount WebDAV at /webdav/ path - handles all WebDAV requests
-                    # Nginx will rewrite /username/ to /webdav/username/ so WebDAV sees the correct path
-                    # Wrap in middleware to strip /webdav prefix from PATH_INFO
-                    def strip_webdav_prefix(wsgi_app):
-                        def wrapper(environ, start_response):
-                            # Strip /webdav prefix from PATH_INFO if present (handle multiple occurrences)
-                            path_info = environ.get('PATH_INFO', '')
-                            original_path = path_info
-                            request_method = environ.get('REQUEST_METHOD', 'UNKNOWN')
-
-                            # CRITICAL: Check for /webdav/caldav/ or /webdav/carddav/ paths FIRST
-                            # These should NOT go to WsgiDAV - they need FastAPI proxy routes
-                            if path_info.startswith('/webdav/caldav') or path_info.startswith('/webdav/carddav'):
-                                # Don't process - let FastAPI handle with proxy routes
-                                # Return 404 so Starlette falls through to the next route
-                                logging.info(f"[WebDAV Middleware] Skipping CalDAV/CardDAV path for FastAPI: {path_info}")
-                                start_response('404 Not Found', [('Content-Type', 'text/plain')])
-                                return [b'']
-
-                            # Remove all /webdav prefixes
-                            while path_info.startswith('/webdav'):
-                                path_info = path_info[7:]  # Remove '/webdav'
-                            if not path_info:
-                                path_info = '/'
-                            elif not path_info.startswith('/'):
-                                path_info = '/' + path_info
-
-                            # After stripping, also check for caldav/carddav (shouldn't happen but be safe)
-                            if path_info.startswith('/caldav') or path_info.startswith('/carddav'):
-                                logging.warning(f"[WebDAV Middleware] Rejecting CalDAV/CardDAV path: {path_info}")
-                                start_response('404 Not Found', [('Content-Type', 'text/plain')])
-                                return [b'CalDAV/CardDAV requests should use /caldav/ or /carddav/ endpoints directly']
-
-                            # CRITICAL: Normalize duplicate username patterns BEFORE URL decoding
-                            # Flacbox may send paths like /webdav/username/webdav/username/path
-                            # We need to remove these duplicates so get_resource_inst can handle them correctly
-                            import re
-                            # Extract username from path if present (format: /webdav/username@domain/...)
-                            username_match = re.search(r'/webdav/([^/]+@[^/]+)', path_info)
-                            if username_match:
-                                username = username_match.group(1)
-                                username_pattern = re.escape(username)
-                                # Remove duplicate /webdav/username/webdav/username/ pattern
-                                pattern = r'/webdav/' + username_pattern + r'/webdav/' + username_pattern + r'/'
-                                if re.search(pattern, path_info):
-                                    path_info = re.sub(pattern, f'/webdav/{username}/', path_info)
-                                    logging.debug(f"[WebDAV Middleware] Fixed duplicate username pattern: {path_info}")
-                                # Also handle username/username/ pattern (if /webdav/ was stripped)
-                                pattern2 = r'^/' + username_pattern + r'/' + username_pattern + r'/'
-                                if re.search(pattern2, path_info):
-                                    path_info = re.sub(pattern2, f'/{username}/', path_info)
-                                    logging.debug(f"[WebDAV Middleware] Fixed duplicate username pattern (no webdav): {path_info}")
-                            
-                            # CRITICAL: URL decode the path - WSGiDAV expects decoded paths
-                            # FastAPI/Starlette may pass URL-encoded paths that need decoding
-                            import urllib.parse
-                            try:
-                                # Decode the path component by component to preserve slashes
-                                decoded_parts = []
-                                for part in path_info.split('/'):
-                                    if part:
-                                        decoded_part = urllib.parse.unquote(part)
-                                        decoded_parts.append(decoded_part)
-                                    else:
-                                        decoded_parts.append('')
-                                decoded_path = '/'.join(decoded_parts)
-                                if decoded_path != path_info:
-                                    logging.info(f"[WebDAV Middleware] {request_method} URL decoded path: '{path_info}' -> '{decoded_path}'")
-                                    path_info = decoded_path
-                            except Exception as e:
-                                logging.warning(f"[WebDAV Middleware] Failed to URL decode path {path_info}: {e}")
-
-                            # CRITICAL: Set SCRIPT_NAME so WsgiDAV knows it's mounted at /webdav
-                            # This allows WsgiDAV to generate correct hrefs that include /webdav prefix
-                            environ['PATH_INFO'] = path_info
-                            environ['SCRIPT_NAME'] = '/webdav'
-                            
-                            # CRITICAL: Fix Content-Type headers for audio files in GET responses
-                            # WSGiDAV might set wrong Content-Type, so we intercept and fix it here
-                            def fixing_start_response(status, headers, *args):
-                                # WSGI start_response can be called with optional exc_info parameter as 3rd positional arg
-                                # Accept *args to handle both 2-arg and 3-arg calls
-                                exc_info = args[0] if len(args) > 0 else None
-                                
-                                # Only fix Content-Type for GET requests to audio files
-                                if request_method == 'GET' and any(ext in original_path.lower() for ext in ['.mp3', '.m4a', '.m4b', '.flac', '.ogg', '.wav', '.aac']):
-                                    fixed_headers = []
-                                    content_type_found = False
-                                    
-                                    # Determine correct Content-Type from file extension
-                                    correct_content_type = None
-                                    if '.mp3' in original_path.lower():
-                                        correct_content_type = 'audio/mpeg'
-                                    elif any(ext in original_path.lower() for ext in ['.m4a', '.m4b']):
-                                        correct_content_type = 'audio/mp4'
-                                    elif '.flac' in original_path.lower():
-                                        correct_content_type = 'audio/flac'
-                                    elif any(ext in original_path.lower() for ext in ['.ogg', '.oga']):
-                                        correct_content_type = 'audio/ogg'
-                                    elif '.wav' in original_path.lower():
-                                        correct_content_type = 'audio/wav'
-                                    elif '.aac' in original_path.lower():
-                                        correct_content_type = 'audio/aac'
-                                    
-                                    # Replace or add Content-Type header
-                                    for header_name, header_value in headers:
-                                        if header_name.lower() == 'content-type':
-                                            content_type_found = True
-                                            if correct_content_type and correct_content_type != header_value:
-                                                # Replace wrong Content-Type with correct one
-                                                logging.warning(f"[WebDAV Middleware] 🔧 FIXING Content-Type: path={original_path}, was={header_value}, now={correct_content_type}")
-                                                fixed_headers.append(('Content-Type', correct_content_type))
-                                            else:
-                                                fixed_headers.append((header_name, header_value))
-                                        else:
-                                            fixed_headers.append((header_name, header_value))
-                                    
-                                    # Add Content-Type if missing
-                                    if not content_type_found and correct_content_type:
-                                        logging.warning(f"[WebDAV Middleware] 🔧 ADDING Content-Type: path={original_path}, content-type={correct_content_type}")
-                                        fixed_headers.append(('Content-Type', correct_content_type))
-                                    
-                                    # Log audio file GET responses
-                                    final_content_type = correct_content_type or (dict(fixed_headers).get('Content-Type', 'unknown'))
-                                    if final_content_type.startswith('audio/'):
-                                        logging.info(f"[WebDAV Middleware] 🎵 GET response for audio file: path={original_path}, status={status}, content-type={final_content_type}")
-                                    
-                                    # Call original start_response with exc_info if provided
-                                    if exc_info is not None:
-                                        return start_response(status, fixed_headers, exc_info)
-                                    else:
-                                        return start_response(status, fixed_headers)
-                                else:
-                                    # Not an audio file or not GET - pass through unchanged
-                                    if exc_info is not None:
-                                        return start_response(status, headers, exc_info)
-                                    else:
-                                        return start_response(status, headers)
-                            
-                            logging.info(f"[WebDAV Middleware] {request_method} {original_path} -> {path_info} (SCRIPT_NAME=/webdav)")
-                            return wsgi_app(environ, fixing_start_response)
-                        return wrapper
-                    # NOTE: /webdav/caldav/ and /webdav/carddav/ routes are now defined at top level
-                    # (before WSGI middleware) to ensure FastAPI handles them first
-                    
-                    # CRITICAL: Mount WebDAV - this should handle ALL requests under /webdav/
-                    # including GET, PROPFIND, PUT, DELETE, etc.
-                    # The mount is processed AFTER specific routes, so /webdav/caldav/ routes take precedence
-                    app.mount("/webdav", wsgi_middleware(strip_webdav_prefix(webdav_app)))
-                    logging.info("✅ WebDAV mounted directly into FastAPI on port 443 (via /webdav/)")
-                    logging.info("   No separate port 8080 needed - all traffic goes through 443!")
-                    logging.info("   Added redirects: /webdav/caldav/... -> /caldav/... and /webdav/carddav/... -> /carddav/...")
-                except ImportError as e:
-                    logging.warning(f"WebDAV is enabled but dependencies not available: {e}")
-                    logging.warning("   Install wsgidav and ensure Starlette is available")
-                except Exception as e:
-                    logging.error(f"Failed to mount WebDAV: {e}", exc_info=True)
             
             # Start CalDAV server
             if start_caldav_server and caldav_enabled.lower() == "true":
@@ -1262,8 +1078,7 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    # Stop WebDAV/CalDAV/CardDAV servers
-    # Note: WebDAV is now mounted directly in FastAPI, no separate server to stop
+    # Stop CalDAV/CardDAV servers
     try:
         # Only stop separate CalDAV/CardDAV servers if they exist
         try:

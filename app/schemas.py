@@ -226,10 +226,7 @@ class SettingsResponse(BaseModel):
     bt_download_dir: str = "/var/lib/posterchanai/torrents"
     storage_server_url: str = ""  # Remote storage server URL (empty = local)
     storage_server_token: str = ""  # API token for remote storage server auth
-    # WebDAV/CalDAV/CardDAV server settings
-    webdav_enabled: str = "false"  # Enable built-in WebDAV server
-    webdav_port: str = "8080"  # WebDAV server port
-    webdav_base_url: str = ""  # WebDAV base URL (e.g., https://ai.poster.place) - leave empty to auto-detect
+    # CalDAV/CardDAV server settings
     caldav_enabled: str = "false"  # Enable built-in CalDAV server
     caldav_port: str = "8081"  # CalDAV server port
     caldav_base_url: str = ""  # CalDAV base URL (e.g., https://ai.poster.place) - leave empty to auto-detect
