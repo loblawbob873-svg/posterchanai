@@ -865,23 +865,48 @@ class StorageService:
                     # Invalid URL - raise error
                     raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
         
-        # Local file saving (storage server node or when bypassing proxy)
+        # On storage server: Use WebDAV backend (replaces local disk)
+        user_id = self._get_user_id_from_username(username)
+        webdav_client = self._get_webdav_client(user_id) if user_id else None
+        
+        if not webdav_client or not webdav_client.is_enabled():
+            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
+        
+        # Use WebDAV storage
+        import asyncio
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        ext = Path(original_name).suffix or ""
+        safe_name = "".join(c for c in Path(original_name).stem if c.isalnum() or c in "-_")[:50]
+        filename = f"{safe_name}_{timestamp}{ext}"
+        file_path = f"notes/{note_id}/{filename}"
+        
         try:
-            note_path = self.get_note_path(username, note_id)
-            note_path.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            ext = Path(original_name).suffix or ""
-            safe_name = "".join(c for c in Path(original_name).stem if c.isalnum() or c in "-_")[:50]
-            filename = f"{safe_name}_{timestamp}{ext}"
-            filepath = note_path / filename
-
-            with open(filepath, "wb") as f:
-                f.write(file_data)
-
-            return filename
+            async def _save_to_webdav():
+                return await webdav_client.save_file(file_path, file_data, "application/octet-stream")
+            
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_save_to_webdav())
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    webdav_url = future.result()
+                    logger.debug(f"[STORAGE] Saved note attachment to WebDAV: {webdav_url}")
+                    return filename
+            else:
+                webdav_url = loop.run_until_complete(_save_to_webdav())
+                logger.debug(f"[STORAGE] Saved note attachment to WebDAV: {webdav_url}")
+                return filename
         except Exception as e:
-            logger.error(f"[STORAGE] Error saving note attachment locally: {e}", exc_info=True)
-            raise
+            logger.error(f"[STORAGE] Failed to save note attachment to WebDAV: {e}", exc_info=True)
+            raise Exception(f"Failed to save note attachment to WebDAV storage: {e}")
     
     def _proxy_save_note_attachment(self, storage_server_url: str, username: str, note_id: int, file_data: bytes, original_name: str) -> str:
         """Proxy note attachment save to storage server - uses synchronous requests to avoid event loop issues"""
@@ -1011,30 +1036,42 @@ class StorageService:
                 else:
                     logger.warning(f"[STORAGE] Invalid storage_server_url (missing protocol): {url}, using local storage")
         
-        # Local file deletion (storage server node or when bypassing proxy)
+        # On storage server: Use WebDAV backend (replaces local disk)
+        user_id = self._get_user_id_from_username(username)
+        webdav_client = self._get_webdav_client(user_id) if user_id else None
+        
+        if not webdav_client or not webdav_client.is_enabled():
+            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
+        
+        # Use WebDAV to delete file
+        import asyncio
+        file_path = f"notes/{note_id}/{filename}"
+        
         try:
-            safe_username = _sanitize_path_component(username)
-            safe_note_id = _sanitize_path_component(str(note_id))
-            safe_filename = _sanitize_path_component(filename)
-            note_path = Path(self.upload_path) / safe_username / "notes" / safe_note_id
-            file_path = note_path / safe_filename
+            async def _delete_from_webdav():
+                return await webdav_client.delete_file(file_path)
             
-            if not _validate_path_within_base(file_path, note_path):
-                logger.warning(f"Path traversal attempt blocked in delete_note_attachment: {username}/{note_id}/{filename}")
-                return False
-            
-            if file_path.exists():
-                file_path.unlink()
-                logger.info(f"Deleted attachment: {file_path}")
-                return True
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_delete_from_webdav())
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    return future.result()
             else:
-                logger.warning(f"Attachment file not found: {file_path}")
-                return False
-        except ValueError as e:
-            logger.warning(f"Invalid path component in delete_note_attachment: {e}")
+                return loop.run_until_complete(_delete_from_webdav())
+        except FileNotFoundError:
+            logger.warning(f"[STORAGE] Note attachment not found in WebDAV: {file_path}")
             return False
         except Exception as e:
-            logger.error(f"Error deleting attachment: {e}", exc_info=True)
+            logger.error(f"[STORAGE] Failed to delete note attachment from WebDAV: {e}", exc_info=True)
             return False
     
     def delete_note_attachments(self, username: str, note_id: int, bypass_proxy: bool = False) -> bool:
@@ -1046,29 +1083,57 @@ class StorageService:
                 # Proxy to storage server
                 return self._proxy_delete_note_attachments(storage_server_url.value, username, note_id)
         
-        # Local file deletion (storage server node or when bypassing proxy)
+        # On storage server: Use WebDAV backend (replaces local disk)
+        user_id = self._get_user_id_from_username(username)
+        webdav_client = self._get_webdav_client(user_id) if user_id else None
+        
+        if not webdav_client or not webdav_client.is_enabled():
+            raise ValueError(f"WebDAV storage not configured for user {username}. Please configure WebDAV storage in user settings.")
+        
+        # Use WebDAV to delete all files in notes/{note_id}/ directory
+        import asyncio
+        notes_dir = f"notes/{note_id}"
+        
         try:
-            safe_username = _sanitize_path_component(username)
-            safe_note_id = _sanitize_path_component(str(note_id))
-            note_path = Path(self.upload_path) / safe_username / "notes" / safe_note_id
-
-            # Verify path is within upload directory
-            if not _validate_path_within_base(note_path, Path(self.upload_path)):
-                logger.warning(f"Path traversal attempt blocked in delete_note_attachments: {username}/{note_id}")
-                return False
-
-            if note_path.exists():
-                shutil.rmtree(note_path)
-                logger.info(f"Deleted note attachments directory: {note_path}")
-                return True
+            async def _delete_note_dir():
+                # List all files in the directory
+                items = await webdav_client.list_files(notes_dir, recursive=True)
+                # Delete all files (not directories)
+                deleted_count = 0
+                for item in items:
+                    if not item.get('is_directory', False):
+                        file_path = item.get('path', '')
+                        if file_path.startswith(notes_dir):
+                            try:
+                                await webdav_client.delete_file(file_path)
+                                deleted_count += 1
+                            except:
+                                pass  # Continue deleting other files even if one fails
+                return deleted_count > 0
+            
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_delete_note_dir())
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    result = future.result()
+                    logger.info(f"[STORAGE] Deleted note attachments from WebDAV: {notes_dir}")
+                    return result
             else:
-                logger.warning(f"Note attachments directory not found: {note_path}")
-                return False
-        except ValueError as e:
-            logger.warning(f"Invalid path component in delete_note_attachments: {e}")
+                result = loop.run_until_complete(_delete_note_dir())
+                logger.info(f"[STORAGE] Deleted note attachments from WebDAV: {notes_dir}")
+                return result
         except Exception as e:
-            logger.error(f"Error deleting note attachments: {e}", exc_info=True)
-        return False
+            logger.error(f"[STORAGE] Failed to delete note attachments from WebDAV: {e}", exc_info=True)
+            return False
     
     def _proxy_delete_note_attachment(self, storage_server_url: str, username: str, note_id: int, filename: str) -> bool:
         """Proxy single note attachment deletion to storage server"""

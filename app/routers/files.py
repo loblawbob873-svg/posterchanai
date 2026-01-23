@@ -1186,10 +1186,10 @@ async def list_files(
     if storage_server_url and storage_server_url.value:
         url = storage_server_url.value.strip()
         if url.startswith(('http://', 'https://')):
-            # If same server, skip HTTP proxy and use local storage directly
+            # If same server, skip HTTP proxy and use WebDAV backend (not local filesystem)
             if _is_same_server(url):
-                logger.debug(f"[FILES] Storage URL points to same server - using local list")
-                # Fall through to local storage below
+                logger.debug(f"[FILES] Storage URL points to same server - using WebDAV backend")
+                # Fall through to WebDAV backend below (not local filesystem)
             else:
                 # Check if this is an external storage path (don't proxy external storage)
                 is_external = False
@@ -1850,19 +1850,18 @@ async def email_files(
                         encoded_filename = parts[5].split('?')[0]  # Remove query params
                         filename = unquote(encoded_filename)
                         
-                        # Get file from storage service
-                        note_path = storage.get_note_path(current_user.username, note_id)
-                        file_path = note_path / filename
+                        # Get file from WebDAV
+                        from app.services.webdav_storage_client import WebDAVStorageClient
+                        webdav_client = WebDAVStorageClient(db, current_user.id)
                         
-                        if not file_path.exists():
-                            raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+                        if not webdav_client.is_enabled():
+                            raise HTTPException(
+                                status_code=500, 
+                                detail=f"WebDAV storage not configured for user {current_user.username}."
+                            )
                         
-                        # Read file
-                        def _read_file_sync():
-                            with open(file_path, 'rb') as f:
-                                return f.read()
-                        
-                        file_data = await asyncio.to_thread(_read_file_sync)
+                        webdav_path = f"notes/{note_id}/{filename}"
+                        file_data = await webdav_client.get_file(webdav_path)
                         
                         # Determine content type
                         suffix = file_path.suffix.lower()

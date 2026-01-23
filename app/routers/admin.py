@@ -590,23 +590,47 @@ async def rescan_storage(
     def _scan_user_files(user_id: int, username: str):
         """Scan files for a single user - includes EXIF, thumbnails, and indexing. Works with both local filesystem and WebDAV."""
         # Create a NEW database session for this thread (SQLite sessions are not thread-safe)
-        from app.database import SessionLocal
         import sys
         import os
         
         # Ensure Python path includes the project root (important for thread execution)
-        # Get the project root by going up from this file: app/routers/admin.py -> app -> posterchanai
-        current_file = os.path.abspath(__file__)
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
-        if project_root not in sys.path:
-            sys.path.insert(0, project_root)
+        # Try multiple methods to get project root
+        project_root = None
+        try:
+            # Method 1: Use __file__ if available
+            current_file = os.path.abspath(__file__)
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
+        except NameError:
+            # Method 2: Use inspect to get file location
+            try:
+                import inspect
+                current_file = inspect.getfile(_scan_user_files)
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(current_file))))
+            except:
+                # Method 3: Try common project root locations
+                possible_roots = [
+                    '/home/verita84/posterchanai',
+                    os.path.expanduser('~/posterchanai'),
+                    os.getcwd()
+                ]
+                for root in possible_roots:
+                    if os.path.exists(os.path.join(root, 'app', 'services', 'webdav_storage_client.py')):
+                        project_root = root
+                        break
         
-        # Also ensure we're in the right directory
-        if os.path.exists(os.path.join(project_root, 'app')):
-            os.chdir(project_root)
+        if project_root and os.path.exists(project_root):
+            if project_root not in sys.path:
+                sys.path.insert(0, project_root)
+            # Change to project root directory
+            try:
+                os.chdir(project_root)
+            except:
+                pass  # If chdir fails, continue anyway
         
+        from app.database import SessionLocal
         thread_db = SessionLocal()
         try:
+            # Import after path is configured
             from app.services.webdav_storage_client import WebDAVStorageClient
             from app.utils.exif_utils import batch_restore_timestamps
             

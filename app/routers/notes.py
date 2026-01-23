@@ -508,286 +508,103 @@ async def serve_note_file(
                 )
                 raise HTTPException(status_code=403, detail="Access denied")
         
-        # Check if storage server is configured - but check local file first
-        # (Note: When proxying, the main server has already verified the note exists)
+        # Check if storage server is configured - proxy request if so
         storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-        
-        # Get file path to check if it exists locally
-        from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
-        from urllib.parse import unquote
-        storage = StorageService(db)
-        
-        # FastAPI automatically URL-decodes path parameters, but handle both encoded and unencoded filenames
-        # Decode filename if it's URL-encoded (handles cases where frontend sends encoded, but import script might not)
-        try:
-            decoded_filename = unquote(filename)
-        except:
-            decoded_filename = filename
-        
-        # Sanitize filename to prevent path traversal attacks
-        try:
-            safe_filename = _sanitize_path_component(decoded_filename)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid filename: {str(e)}")
-        
-        # Construct path using sanitized components
-        file_path = Path(storage.upload_path) / current_user.username / "notes" / str(note_id) / safe_filename
-        
-        # Validate path is within expected directory (defense in depth)
-        base_path = Path(storage.upload_path) / current_user.username / "notes" / str(note_id)
-        if not _validate_path_within_base(file_path, base_path):
-            raise HTTPException(status_code=403, detail="Invalid file path")
-        
-        # If storage server is configured, prefer proxying to it
-        # This ensures we always get the latest files from the storage server
-        # Only serve locally if no storage server is configured or if proxy fails
         if storage_server_url and storage_server_url.value:
-            # Validate storage_server_url has protocol before proxying
-            base_url = storage_server_url.value.strip()
-            if base_url.startswith(('http://', 'https://')):
-                # Try proxying to storage server first
-                from app.services.storage_proxy import proxy_storage_request
-                # Use the actual request method (GET or HEAD)
-                method = request.method
-                try:
-                    return await proxy_storage_request(
-                        db=db,
-                        request=request,
-                        endpoint=f"/api/notes/files/{username}/{note_id}/{filename}",
-                        method=method,
-                        stream=True
-                    )
-                except HTTPException as e:
-                    # If proxy fails (e.g., 401, 404, 503), fall back to local file if it exists
-                    logger.warning(f"Failed to proxy note file to storage server: {e.detail} (status: {e.status_code}), checking local file")
-                    # Check if local file exists - if so, serve it locally instead of raising error
-                    if file_path.exists():
-                        logger.info(f"Local file found, serving locally: {file_path}")
-                        # Fall through to local file serving below (don't raise exception)
-                    elif e.status_code == 404:
-                        # Storage server says file doesn't exist, and local doesn't exist either
-                        logger.error(f"File not found on storage server or locally: {file_path}")
-                        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
-                    else:
-                        # Other error (401, 503, etc.) - try local file, but if it doesn't exist, return original error
-                        if not file_path.exists():
-                            logger.error(f"Proxy failed and local file not found: {file_path}")
-                            raise HTTPException(status_code=404, detail=f"File not found: {filename}")
-                        # Local file exists, fall through to serve it
-            else:
-                # Invalid storage_server_url configuration - log but don't fail the request
-                logger.error(f"Invalid storage_server_url (missing protocol): {base_url}")
-                # Fall through to local file serving below
+            url = storage_server_url.value.strip()
+            if url.startswith(('http://', 'https://')):
+                # Check if same server - if so, use WebDAV backend instead of proxying
+                from app.routers.files import _is_same_server
+                if not _is_same_server(url):
+                    # Proxy to storage server
+                    try:
+                        from app.services.storage_proxy import proxy_storage_request
+                        return await proxy_storage_request(
+                            db=db,
+                            request=request,
+                            endpoint=f"/api/notes/files/{username}/{note_id}/{filename}",
+                            method=request.method,
+                            stream=True
+                        )
+                    except HTTPException as e:
+                        logger.warning(f"Failed to proxy note file to storage server: {e.detail} (status: {e.status_code})")
+                        raise
+                    except Exception as e:
+                        logger.warning(f"Error proxying note file: {e}")
+                        raise
         
-        # Local file serving (file exists locally or no storage server configured)
-        # Note: For storage servers, we may not have notes in the database.
-        # The main server verifies note ownership before proxying, so we can
-        # serve files if they exist on disk without checking the database.
-        # Optionally verify note exists if we have it in the database (for local setups)
+        # On storage server: Use WebDAV backend (replaces local filesystem)
+        from app.services.webdav_storage_client import WebDAVStorageClient
+        webdav_client = WebDAVStorageClient(db, current_user.id)
+        
+        if not webdav_client.is_enabled():
+            raise HTTPException(
+                status_code=500, 
+                detail=f"WebDAV storage not configured for user {current_user.username}. Please configure WebDAV storage in user settings."
+            )
+        
+        # Verify note exists (if we have it in DB)
         note = db.query(Note).filter(
             Note.id == note_id,
             Note.user_id == current_user.id
         ).first()
-        # If note doesn't exist in DB, we'll still try to serve the file if it exists on disk
-        # (This allows storage servers to serve files without notes in their database)
-        # File path was already constructed above, just verify it exists
-        if not file_path.exists():
-            # Log detailed error for debugging
+        
+        if not note:
             logger.warning(
                 f"Note file not found: username={current_user.username}, note_id={note_id}, "
-                f"filename={filename}, decoded_filename={decoded_filename}, safe_filename={safe_filename}, "
-                f"file_path={file_path}, base_path={base_path}, base_exists={base_path.exists()}"
+                f"filename={filename}. Note may not exist in database (this is OK for storage servers)."
             )
-            if base_path.exists():
-                # List files in the directory to help debug
-                try:
-                    files_in_dir = [f.name for f in base_path.iterdir() if f.is_file()]
-                    logger.warning(f"Files in note directory: {files_in_dir[:10]}")
-                    
-                    # Try multiple matching strategies:
-                    # 1. Case-insensitive exact match
-                    for f in files_in_dir:
-                        if f.lower() == safe_filename.lower():
-                            logger.warning(f"Found case-insensitive match: {f} vs {safe_filename}")
-                            file_path = base_path / f
-                            break
-                    
-                    # 2. If still not found, try matching by base filename (without extension)
-                    # This handles cases where files were saved with timestamps
-                    # e.g., "image.png" -> "image_20260116_203122_329081.png"
-                    if not file_path.exists():
-                        safe_base = Path(safe_filename).stem  # filename without extension
-                        safe_ext = Path(safe_filename).suffix.lower()  # extension
-                        
-                        for f in files_in_dir:
-                            f_base = Path(f).stem
-                            f_ext = Path(f).suffix.lower()
-                            
-                            # Match if:
-                            # 1. Base name exactly matches (case-insensitive)
-                            # 2. Actual file starts with requested base name + underscore (timestamped)
-                            # 3. Requested base name starts with actual base name + underscore (reverse)
-                            # 4. Extension must match
-                            if f_ext == safe_ext:
-                                if (f_base.lower() == safe_base.lower() or 
-                                    f_base.lower().startswith(safe_base.lower() + '_') or
-                                    safe_base.lower().startswith(f_base.lower() + '_')):
-                                    logger.warning(f"Found base name match: {f} vs {safe_filename} (base: {safe_base})")
-                                    file_path = base_path / f
-                                    break
-                    
-                    # 3. If still not found, try partial match (filename contains the requested name)
-                    # This handles cases where files were saved with additional timestamps
-                    # e.g., "20220415_123623.jpg" -> "20220415_123623_20260116_203124_299386.jpg"
-                    if not file_path.exists():
-                        safe_base = Path(safe_filename).stem.lower()
-                        safe_ext = Path(safe_filename).suffix.lower()
-                        
-                        # Try to find a file that starts with the base name (for timestamped files)
-                        best_match = None
-                        best_match_score = 0
-                        
-                        for f in files_in_dir:
-                            f_base = Path(f).stem.lower()
-                            f_ext = Path(f).suffix.lower()
-                            
-                            if f_ext != safe_ext:
-                                continue
-                            
-                            # Score matches based on how well they match
-                            # Exact match gets highest score
-                            if f_base == safe_base:
-                                best_match = f
-                                best_match_score = 100
-                                break
-                            # Starts with requested base + underscore (timestamped) gets high score
-                            elif f_base.startswith(safe_base + '_'):
-                                score = len(safe_base) / len(f_base) * 90  # Prefer shorter matches
-                                if score > best_match_score:
-                                    best_match = f
-                                    best_match_score = score
-                            # Requested starts with file base (reverse) gets medium score
-                            elif safe_base.startswith(f_base + '_'):
-                                score = len(f_base) / len(safe_base) * 70
-                                if score > best_match_score:
-                                    best_match = f
-                                    best_match_score = score
-                            # Contains match gets lower score
-                            elif safe_base in f_base or f_base in safe_base:
-                                score = min(len(safe_base), len(f_base)) / max(len(safe_base), len(f_base)) * 50
-                                if score > best_match_score:
-                                    best_match = f
-                                    best_match_score = score
-                        
-                        if best_match and best_match_score >= 50:  # Only use if score is reasonable
-                            logger.warning(f"Found partial match (score: {best_match_score:.1f}): {best_match} vs {safe_filename}")
-                            file_path = base_path / best_match
-                                
-                except Exception as e:
-                    logger.warning(f"Error listing directory: {e}")
-            
-            # If still not found after all matching attempts, raise 404
-            if not file_path.exists():
-                raise HTTPException(status_code=404, detail=f"File not found: {safe_filename}")
         
-        # Determine media type (comprehensive list)
-        suffix = file_path.suffix.lower()
-        media_types = {
-            # Images
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".gif": "image/gif",
-            ".webp": "image/webp",
-            ".svg": "image/svg+xml",
-            ".bmp": "image/bmp",
-            ".tiff": "image/tiff",
-            ".tif": "image/tiff",
-            ".ico": "image/x-icon",
-            # Videos
-            ".mp4": "video/mp4",
-            ".mpeg": "video/mpeg",
-            ".mpg": "video/mpeg",
-            ".mov": "video/quicktime",
-            ".avi": "video/x-msvideo",
-            ".webm": "video/webm",
-            ".mkv": "video/x-matroska",
-            ".flv": "video/x-flv",
-            ".wmv": "video/x-ms-wmv",
-            ".3gp": "video/3gpp",
-            ".ogv": "video/ogg",
-            # Documents
-            ".pdf": "application/pdf",
-            ".doc": "application/msword",
-            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            ".xls": "application/vnd.ms-excel",
-            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            ".ppt": "application/vnd.ms-powerpoint",
-            ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            ".odt": "application/vnd.oasis.opendocument.text",
-            ".ods": "application/vnd.oasis.opendocument.spreadsheet",
-            ".odp": "application/vnd.oasis.opendocument.presentation",
-            # Text
-            ".txt": "text/plain",
-            ".md": "text/markdown",
-            ".html": "text/html",
-            ".css": "text/css",
-            ".js": "text/javascript",
-            ".json": "application/json",
-            ".xml": "text/xml",
-            # Archives
-            ".zip": "application/zip",
-            ".rar": "application/x-rar-compressed",
-            ".tar": "application/x-tar",
-            ".gz": "application/gzip",
-            ".7z": "application/x-7z-compressed",
-            # Audio
-            ".mp3": "audio/mpeg",
-            ".wav": "audio/wav",
-            ".ogg": "audio/ogg",
-            ".m4a": "audio/mp4",
-            ".webm": "audio/webm",
-            # Video
-            ".mp4": "video/mp4",
-            ".mpeg": "video/mpeg",
-            ".mov": "video/quicktime",
-            ".avi": "video/x-msvideo",
-            ".mkv": "video/x-matroska",
-            # Code
-            ".py": "text/x-python",
-            ".java": "text/x-java",
-            ".c": "text/x-c",
-            ".cpp": "text/x-c++",
-            ".cs": "text/x-csharp",
-            ".sh": "application/x-sh",
-        }
-        media_type = media_types.get(suffix, "application/octet-stream")
-        
-        # For images, set Content-Disposition to inline so they display instead of downloading
-        headers = {}
-        image_extensions = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".tiff", ".tif", ".ico"]
-        if suffix in image_extensions:
-            headers["Content-Disposition"] = "inline"
-        
-        # For HEAD requests, return headers only (no body)
-        if request.method == "HEAD":
-            from fastapi.responses import Response
-            try:
-                response_headers = {
-                    "Content-Type": media_type,
-                    "Content-Length": str(file_path.stat().st_size),
-                }
-                response_headers.update(headers)
-                return Response(headers=response_headers, status_code=200)
-            except Exception as e:
-                logger.error(f"Error serving note file (HEAD): {e}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
+        # Get file from WebDAV
+        webdav_path = f"notes/{note_id}/{filename}"
         
         try:
-            return FileResponse(file_path, media_type=media_type, headers=headers)
+            file_data = await webdav_client.get_file(webdav_path)
+            
+            # Determine content type
+            from mimetypes import guess_type
+            content_type, _ = guess_type(filename)
+            if not content_type:
+                suffix = Path(filename).suffix.lower()
+                media_types = {
+                    ".png": "image/png",
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".gif": "image/gif",
+                    ".webp": "image/webp",
+                    ".pdf": "application/pdf",
+                    ".txt": "text/plain",
+                    ".doc": "application/msword",
+                    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                }
+                content_type = media_types.get(suffix, "application/octet-stream")
+            
+            # For HEAD requests, return headers only
+            if request.method == "HEAD":
+                from fastapi.responses import Response
+                return Response(
+                    headers={
+                        "Content-Type": content_type,
+                        "Content-Length": str(len(file_data)),
+                        "Content-Disposition": f'inline; filename="{filename}"'
+                    },
+                    status_code=200
+                )
+            
+            # Return file response
+            from fastapi.responses import Response
+            return Response(
+                content=file_data,
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f'inline; filename="{filename}"'
+                }
+            )
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="File not found")
         except Exception as e:
-            logger.error(f"Error serving note file: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Error serving file: {str(e)}")
+            logger.error(f"[NOTES] Failed to get file from WebDAV: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Failed to get file from WebDAV: {str(e)}")
     except HTTPException:
         raise
     except Exception as e:
