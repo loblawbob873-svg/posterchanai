@@ -609,20 +609,10 @@ class CommandService:
             
             return {"type": "text", "content": error_msg}
 
-        # Save generated image to user storage (Generated Images folder)
-        saved_path = None
-        try:
-            from app.services.storage_service import get_storage_service
-            storage = get_storage_service(self.db)
-            saved_path = storage.save_generated_image(self.user.username, image_data, prompt)
-            logger.info(f"Saved generated image to user storage: {saved_path}")
-        except Exception as e:
-            logger.warning(f"Failed to save generated image to user storage: {e}", exc_info=True)
-            # Continue anyway - image is still shown in chat
-        
+        # Don't save automatically - just display the image with a save button
         return {
             "type": "generated_image",
-            "content": f"Generated image for: {prompt}" + (f"\n\n💾 Saved to: `{saved_path}`" if saved_path else ""),
+            "content": f"Generated image for: {prompt}",
             "image": image_data,
             "prompt": prompt,
         }
@@ -3591,48 +3581,42 @@ Return ONLY valid JSON, no other text.""",
                 if not attachment.data:
                     return {"type": "text", "content": f"Attachment too large or couldn't be downloaded."}
 
-                # Save attachment to user's temp directory for serving via API
-                import os
-                import tempfile
-                import hashlib
-                from pathlib import Path
-                from app.services.storage_service import StorageService
+                # Don't save automatically - just display the attachment with a save button
+                # Encode attachment data as base64 for display
+                import base64
+                attachment_base64 = base64.b64encode(attachment.data).decode('utf-8')
                 
-                storage = StorageService(self.db)
+                # Determine MIME type
+                import mimetypes
+                mime_type, _ = mimetypes.guess_type(attachment.filename)
+                if not mime_type:
+                    mime_type = 'application/octet-stream'
                 
-                # Create a unique filename based on account, uid, and index to avoid conflicts
-                unique_id = hashlib.md5(f"{account_email}_{uid}_{att_index}".encode()).hexdigest()[:8]
-                _, ext = os.path.splitext(attachment.filename)
-                safe_filename = f"{unique_id}_{attachment.filename}"
-                
-                # Save attachment using StorageService (will proxy to storage server if configured)
-                try:
-                    saved_filename = storage.save_mail_attachment(
-                        self.user.username,
-                        attachment.data,
-                        safe_filename
-                    )
-                    logger.info(f"Saved mail attachment: {saved_filename} ({len(attachment.data)} bytes)")
-                except Exception as e:
-                    logger.error(f"Failed to save mail attachment: {e}", exc_info=True)
+                # Return attachment data for display (image preview if it's an image, otherwise download button)
+                if mime_type.startswith('image/'):
                     return {
-                        "type": "text",
-                        "content": f"❌ Error saving attachment: {str(e)}"
+                        "type": "mail_attachment",
+                        "content": f"📎 **{attachment.filename}** ({attachment.size / 1024:.1f} KB)",
+                        "filename": attachment.filename,
+                        "data": attachment_base64,
+                        "mime_type": mime_type,
+                        "size": attachment.size,
+                        "account": account_email,
+                        "uid": uid,
+                        "index": att_index,
                     }
-                
-                # Generate URL to open in browser - saved_filename is now a relative path like "Mail Attachments/filename.ext"
-                from urllib.parse import quote
-                # Use username in path for compatibility, but endpoint will also work without it
-                encoded_username = quote(self.user.username, safe='')
-                # saved_filename is now a relative path, so we need to encode it properly
-                encoded_path = quote(saved_filename, safe='')
-                attachment_url = f"/api/files/view/{encoded_username}/{encoded_path}"
-                
-                # Return HTML with clickable link that opens in new tab
-                return {
-                    "type": "text",
-                    "content": f"📎 Saved: **{attachment.filename}** ({attachment.size / 1024:.1f} KB)\n\n💾 Saved to: `{saved_filename}`\n\n<a href=\"{attachment_url}\" target=\"_blank\" rel=\"noopener noreferrer\">Open in browser</a>",
-                }
+                else:
+                    return {
+                        "type": "mail_attachment",
+                        "content": f"📎 **{attachment.filename}** ({attachment.size / 1024:.1f} KB)",
+                        "filename": attachment.filename,
+                        "data": attachment_base64,
+                        "mime_type": mime_type,
+                        "size": attachment.size,
+                        "account": account_email,
+                        "uid": uid,
+                        "index": att_index,
+                    }
 
             elif subcommand == "send":
                 # Explicit send: mail send [account] <recipient> ["subject"] <message>

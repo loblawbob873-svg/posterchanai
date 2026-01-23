@@ -112,6 +112,66 @@ def delete_all_conversations(
 class CommandRequest(BaseModel):
     command: str
 
+@router.post("/save-generated-image")
+async def save_generated_image(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Save a generated image to user storage on demand."""
+    try:
+        data = await request.json()
+        image_base64 = data.get("image")
+        prompt = data.get("prompt", "")
+        
+        if not image_base64:
+            raise HTTPException(status_code=400, detail="Image data is required")
+        
+        storage = StorageService(db)
+        saved_path = storage.save_generated_image(current_user.username, image_base64, prompt)
+        logger.info(f"Saved generated image to user storage: {saved_path}")
+        
+        return {"success": True, "path": saved_path}
+    except Exception as e:
+        logger.error(f"Failed to save generated image: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/save-mail-attachment")
+async def save_mail_attachment(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Save a mail attachment to user storage on demand."""
+    try:
+        data = await request.json()
+        attachment_data = data.get("data")  # base64 encoded
+        filename = data.get("filename")
+        
+        if not attachment_data or not filename:
+            raise HTTPException(status_code=400, detail="Attachment data and filename are required")
+        
+        # Decode base64 data
+        import base64
+        attachment_bytes = base64.b64decode(attachment_data)
+        
+        storage = StorageService(db)
+        saved_path = storage.save_mail_attachment(current_user.username, attachment_bytes, filename)
+        logger.info(f"Saved mail attachment to user storage: {saved_path}")
+        
+        # Generate URL to view the file
+        from urllib.parse import quote
+        encoded_username = quote(current_user.username, safe='')
+        encoded_path = quote(saved_path, safe='')
+        view_url = f"/api/files/view/{encoded_username}/{encoded_path}"
+        
+        return {"success": True, "path": saved_path, "view_url": view_url}
+    except Exception as e:
+        logger.error(f"Failed to save mail attachment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/command")
 async def execute_command_endpoint(
     request: CommandRequest,

@@ -1388,6 +1388,98 @@ async def list_files(
         user_quota = current_user.storage_quota
         current_usage = await asyncio.to_thread(calculate_directory_size, user_path)
         
+        # Proactively ensure caldav/carddav folders exist (create if missing) - BEFORE caching
+        # This must happen before caching so folders appear in cached results
+        if not path:
+            folder_names = [item['name'] for item in items if item.get('is_directory')]
+            logger.info(f"[FILES] Root directory listing: {len(folder_names)} folders found: {folder_names}")
+            
+            # Proactively ensure caldav/carddav folders exist (create if missing)
+            caldav_path = user_path / 'caldav'
+            carddav_path = user_path / 'carddav'
+            
+            # Check if folders already exist in items list
+            existing_names = [item['name'].lower() for item in items]
+            
+            try:
+                # Always ensure caldav exists
+                if not caldav_path.exists():
+                    caldav_path.mkdir(parents=True, exist_ok=True)
+                    logger.info(f"[FILES] ✓ Created missing caldav directory: {caldav_path}")
+                    # Invalidate cache so folder appears immediately
+                    cache.invalidate(f"{current_user.username}:")
+                
+                # Add to items if it exists and isn't already in the list
+                if caldav_path.exists() and caldav_path.is_dir() and 'caldav' not in existing_names:
+                    try:
+                        stat = caldav_path.stat()
+                        items.append({
+                            "name": "caldav",
+                            "path": "caldav",
+                            "is_directory": True,
+                            "size": 0,
+                            "modified": stat.st_mtime,
+                            "is_external": False,
+                        })
+                        logger.info(f"[FILES] ✓ Added caldav folder to listing (exists: {caldav_path.exists()}, is_dir: {caldav_path.is_dir()})")
+                    except Exception as e:
+                        logger.error(f"[FILES] Failed to add caldav to listing: {e}", exc_info=True)
+                elif 'caldav' not in existing_names:
+                    logger.warning(f"[FILES] caldav folder missing from listing - exists: {caldav_path.exists()}, is_dir: {caldav_path.is_dir() if caldav_path.exists() else 'N/A'}")
+            except Exception as e:
+                logger.error(f"[FILES] Failed to create/check caldav directory: {e}", exc_info=True)
+            
+            try:
+                # Always ensure carddav exists
+                if not carddav_path.exists():
+                    carddav_path.mkdir(parents=True, exist_ok=True)
+                    logger.info(f"[FILES] ✓ Created missing carddav directory: {carddav_path}")
+                    # Invalidate cache so folder appears immediately
+                    cache.invalidate(f"{current_user.username}:")
+                
+                # Add to items if it exists and isn't already in the list
+                if carddav_path.exists() and carddav_path.is_dir() and 'carddav' not in existing_names:
+                    try:
+                        stat = carddav_path.stat()
+                        items.append({
+                            "name": "carddav",
+                            "path": "carddav",
+                            "is_directory": True,
+                            "size": 0,
+                            "modified": stat.st_mtime,
+                            "is_external": False,
+                        })
+                        logger.info(f"[FILES] ✓ Added carddav folder to listing (exists: {carddav_path.exists()}, is_dir: {carddav_path.is_dir()})")
+                    except Exception as e:
+                        logger.error(f"[FILES] Failed to add carddav to listing: {e}", exc_info=True)
+                elif 'carddav' not in existing_names:
+                    logger.warning(f"[FILES] carddav folder missing from listing - exists: {carddav_path.exists()}, is_dir: {carddav_path.is_dir() if carddav_path.exists() else 'N/A'}")
+            except Exception as e:
+                logger.error(f"[FILES] Failed to create/check carddav directory: {e}", exc_info=True)
+            
+            # Sort items by name after adding folders
+            items.sort(key=lambda x: (not x.get('is_directory', False), x.get('name', '').lower()))
+            
+            # Check for critical caldav/carddav folders after creation
+            folder_names = [item['name'] for item in items if item.get('is_directory')]
+            folder_names_lower = [name.lower() for name in folder_names]
+            if 'caldav' not in folder_names_lower:
+                # Check if folder exists but wasn't listed (permission issue?)
+                if caldav_path.exists():
+                    logger.warning(f"[FILES] ⚠️ CRITICAL: caldav folder exists but was not listed! This will break calendar functionality!")
+                    logger.warning(f"[FILES] Check permissions on {caldav_path}")
+                else:
+                    logger.warning(f"[FILES] ⚠️ CRITICAL: caldav folder is missing! This will break calendar functionality!")
+                    logger.warning(f"[FILES] Expected path: {caldav_path}")
+            if 'carddav' not in folder_names_lower:
+                # Check if folder exists but wasn't listed (permission issue?)
+                if carddav_path.exists():
+                    logger.warning(f"[FILES] ⚠️ CRITICAL: carddav folder exists but was not listed! This will break contacts functionality!")
+                    logger.warning(f"[FILES] Check permissions on {carddav_path}")
+                else:
+                    logger.warning(f"[FILES] ⚠️ CRITICAL: carddav folder is missing! This will break contacts functionality!")
+                    logger.warning(f"[FILES] Expected path: {carddav_path}")
+        
         result = {
             "items": items,
             "path": path if path else "",
@@ -1402,34 +1494,8 @@ async def list_files(
             }
         }
         
-        # Cache the result
+        # Cache the result AFTER adding folders
         cache.set(cache_key, result)
-        
-        # Log folder names for debugging (only for root directory)
-        if not path:
-            folder_names = [item['name'] for item in items if item.get('is_directory')]
-            logger.info(f"[FILES] Root directory listing: {len(folder_names)} folders found: {folder_names}")
-            
-            # Check for critical caldav/carddav folders
-            folder_names_lower = [name.lower() for name in folder_names]
-            if 'caldav' not in folder_names_lower:
-                # Check if folder exists but wasn't listed (permission issue?)
-                caldav_path = user_path / 'caldav'
-                if caldav_path.exists():
-                    logger.warning(f"[FILES] ⚠️ CRITICAL: caldav folder exists but was not listed! This will break calendar functionality!")
-                    logger.warning(f"[FILES] Check permissions on {caldav_path}")
-                else:
-                    logger.warning(f"[FILES] ⚠️ CRITICAL: caldav folder is missing! This will break calendar functionality!")
-                    logger.warning(f"[FILES] Expected path: {caldav_path}")
-            if 'carddav' not in folder_names_lower:
-                # Check if folder exists but wasn't listed (permission issue?)
-                carddav_path = user_path / 'carddav'
-                if carddav_path.exists():
-                    logger.warning(f"[FILES] ⚠️ CRITICAL: carddav folder exists but was not listed! This will break contacts functionality!")
-                    logger.warning(f"[FILES] Check permissions on {carddav_path}")
-                else:
-                    logger.warning(f"[FILES] ⚠️ CRITICAL: carddav folder is missing! This will break contacts functionality!")
-                    logger.warning(f"[FILES] Expected path: {carddav_path}")
         
         return result
     

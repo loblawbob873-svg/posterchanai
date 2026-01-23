@@ -2402,9 +2402,11 @@ class ChatHandler {
         } else if (data.type === 'generated_image' && data.image) {
             html = contentHtml;
             const imageId = 'img_' + Date.now();
+            const saveButtonId = 'save_img_' + Date.now();
             html += `<div class="image-wrapper">
                 <img src="data:image/png;base64,${data.image}" alt="Generated image" class="generated-image" id="${imageId}">
                 <div class="image-actions">
+                    <button class="btn-action" onclick="window.chatHandler.saveGeneratedImage('${imageId}', '${this.escapeHtml(data.prompt || '')}', '${saveButtonId}')" id="${saveButtonId}" title="Save to storage">💾</button>
                     <button class="btn-action" onclick="window.chatHandler.downloadImage('${imageId}')" title="Download">⬇️</button>
                     <button class="btn-action" onclick="window.chatHandler.copyImage('${imageId}')" title="Copy to clipboard">📋</button>
                 </div>
@@ -2427,6 +2429,32 @@ class ChatHandler {
                 </div>`;
             }
             html += '</div>';
+        } else if (data.type === 'mail_attachment' && data.data) {
+            html = contentHtml;
+            const attachmentId = 'attach_' + Date.now();
+            const saveButtonId = 'save_attach_' + Date.now();
+            
+            if (data.mime_type && data.mime_type.startsWith('image/')) {
+                // Display image preview
+                html += `<div class="attachment-wrapper">
+                    <img src="data:${data.mime_type};base64,${data.data}" alt="${this.escapeHtml(data.filename)}" class="attachment-image" id="${attachmentId}">
+                    <div class="attachment-actions">
+                        <button class="btn-action" onclick="window.chatHandler.saveMailAttachment('${data.data}', '${this.escapeHtml(data.filename)}', '${saveButtonId}')" id="${saveButtonId}" title="Save to storage">💾</button>
+                        <button class="btn-action" onclick="window.chatHandler.downloadAttachment('${data.data}', '${this.escapeHtml(data.filename)}', '${data.mime_type}')" title="Download">⬇️</button>
+                    </div>
+                </div>`;
+            } else {
+                // Display download button for non-image attachments
+                html += `<div class="attachment-wrapper">
+                    <div class="attachment-info">
+                        <strong>${this.escapeHtml(data.filename)}</strong> (${(data.size / 1024).toFixed(1)} KB)
+                    </div>
+                    <div class="attachment-actions">
+                        <button class="btn-action" onclick="window.chatHandler.saveMailAttachment('${data.data}', '${this.escapeHtml(data.filename)}', '${saveButtonId}')" id="${saveButtonId}" title="Save to storage">💾</button>
+                        <button class="btn-action" onclick="window.chatHandler.downloadAttachment('${data.data}', '${this.escapeHtml(data.filename)}', '${data.mime_type}')" title="Download">⬇️</button>
+                    </div>
+                </div>`;
+            }
         } else if (data.type === 'files' && data.files) {
             // For files, put content first, then file results in a separate container
             // Ensure contentHtml doesn't break the structure - extract text from p tags if needed
@@ -3005,6 +3033,111 @@ class ChatHandler {
         }
     }
 
+    async saveGeneratedImage(imageId, prompt, buttonId) {
+        const img = document.getElementById(imageId);
+        if (!img) {
+            console.error('Image not found:', imageId);
+            return;
+        }
+        
+        const button = document.getElementById(buttonId);
+        if (button) {
+            button.disabled = true;
+            button.textContent = '💾 Saving...';
+        }
+        
+        try {
+            // Get base64 data from image src
+            const imageData = img.src.replace('data:image/png;base64,', '');
+            
+            const response = await fetch('/api/save-generated-image', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    image: imageData,
+                    prompt: prompt || ''
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                if (button) {
+                    button.textContent = '✅ Saved';
+                    button.title = `Saved to: ${result.path}`;
+                    setTimeout(() => {
+                        button.textContent = '💾';
+                        button.disabled = false;
+                    }, 2000);
+                }
+                // Show success message
+                this.showNotification(`Image saved to: ${result.path}`, 'success');
+            } else {
+                throw new Error(result.error || 'Failed to save image');
+            }
+        } catch (error) {
+            console.error('Error saving image:', error);
+            if (button) {
+                button.textContent = '❌ Error';
+                button.disabled = false;
+                setTimeout(() => {
+                    button.textContent = '💾';
+                }, 2000);
+            }
+            this.showNotification('Failed to save image: ' + error.message, 'error');
+        }
+    }
+
+    async saveMailAttachment(attachmentData, filename, buttonId) {
+        const button = document.getElementById(buttonId);
+        if (button) {
+            button.disabled = true;
+            button.textContent = '💾 Saving...';
+        }
+        
+        try {
+            const response = await fetch('/api/save-mail-attachment', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    data: attachmentData,
+                    filename: filename
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                if (button) {
+                    button.textContent = '✅ Saved';
+                    button.title = `Saved to: ${result.path}`;
+                    setTimeout(() => {
+                        button.textContent = '💾';
+                        button.disabled = false;
+                    }, 2000);
+                }
+                // Show success message with link
+                this.showNotification(`Attachment saved to: ${result.path}`, 'success');
+            } else {
+                throw new Error(result.error || 'Failed to save attachment');
+            }
+        } catch (error) {
+            console.error('Error saving attachment:', error);
+            if (button) {
+                button.textContent = '❌ Error';
+                button.disabled = false;
+                setTimeout(() => {
+                    button.textContent = '💾';
+                }, 2000);
+            }
+            this.showNotification('Failed to save attachment: ' + error.message, 'error');
+        }
+    }
+
     downloadImage(imageId) {
         const img = document.getElementById(imageId);
         if (!img) return;
@@ -3421,6 +3554,35 @@ class ChatHandler {
         } catch (err) {
             console.error('Failed to copy image:', err);
             this.showToast('Failed to copy image');
+        }
+    }
+
+    downloadAttachment(base64Data, filename, mimeType) {
+        try {
+            // Convert base64 to blob
+            const byteCharacters = atob(base64Data);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: mimeType || 'application/octet-stream' });
+            
+            // Create download link
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            
+            this.showToast(`Downloading ${filename}...`);
+        } catch (err) {
+            console.error('Failed to download attachment:', err);
+            this.showToast('Failed to download attachment');
         }
     }
 
