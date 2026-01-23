@@ -1103,6 +1103,9 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
 
                             # Ensure we always send stream_end, even if there was an error or stop request
                             logger.info(f"[STREAM] Complete, total_len={len(full_response)}, stopped={manager.should_stop(user.id, conn_id)}")
+                            
+                            # Always send stream_end, even if full_response is empty
+                            await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
 
                             # Save assistant response
                             if full_response:

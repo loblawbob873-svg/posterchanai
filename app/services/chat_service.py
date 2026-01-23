@@ -250,6 +250,7 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
         """Streaming chat completion - uses async queue to avoid blocking event loop"""
         # Import thinking tag utilities from central location
         from app.services.text_utils import THINKING_CLOSE_PATTERN, THINKING_OPEN_PREFIXES, has_thinking_open
+        from app.services.load_balancer import NoHealthyServersError
 
         try:
             # Extract user message for RAG query (last user message)
@@ -265,52 +266,68 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
             # Check for site-wide load balancer first
             load_balancer = self._get_load_balancer()
             if load_balancer:
-                # Stream from load-balanced server with thinking tag filtering
-                buffer = ""
-                thinking_done = False
+                try:
+                    # Stream from load-balanced server with thinking tag filtering
+                    buffer = ""
+                    thinking_done = False
+                    received_any_content = False
 
-                async for chunk in load_balancer.chat_stream(
-                    messages=messages,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    max_tokens=self.num_predict,
-                    stop=self.stop
-                ):
-                    if chunk.startswith("data: "):
-                        data_str = chunk[6:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            data = json.loads(data_str)
-                            if "error" in data:
-                                yield f"Error: {data['error'].get('message', 'Unknown error')}"
-                                return
-                            content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                            if content:
-                                if not thinking_done:
-                                    buffer += content
-                                    match = THINKING_CLOSE_PATTERN.search(buffer)
-                                    if match:
-                                        thinking_done = True
-                                        after_think = buffer[match.end():]
-                                        buffer = ""  # Clear buffer - no longer needed
-                                        if after_think.strip():
-                                            yield after_think
-                                    elif len(buffer) > 50 and not has_thinking_open(buffer):
-                                        thinking_done = True
-                                        yield buffer
-                                        buffer = ""  # Clear buffer - no longer needed
-                                else:
-                                    # Thinking is done, yield content directly (don't buffer)
-                                    yield content
-                        except json.JSONDecodeError:
-                            continue
+                    async for chunk in load_balancer.chat_stream(
+                        messages=messages,
+                        temperature=self.temperature,
+                        top_p=self.top_p,
+                        max_tokens=self.num_predict,
+                        stop=self.stop
+                    ):
+                        if chunk.startswith("data: "):
+                            data_str = chunk[6:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                if "error" in data:
+                                    yield f"Error: {data['error'].get('message', 'Unknown error')}"
+                                    return
+                                content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                if content:
+                                    received_any_content = True
+                                    if not thinking_done:
+                                        buffer += content
+                                        match = THINKING_CLOSE_PATTERN.search(buffer)
+                                        if match:
+                                            thinking_done = True
+                                            after_think = buffer[match.end():]
+                                            buffer = ""
+                                            if after_think.strip():
+                                                yield after_think
+                                        elif len(buffer) >= 50 and not has_thinking_open(buffer):
+                                            thinking_done = True
+                                            yield buffer
+                                            buffer = ""
+                                    else:
+                                        yield content
+                            except json.JSONDecodeError:
+                                continue
 
-                if buffer:
-                    clean = self.strip_thinking_tags(buffer)
-                    if clean:
-                        yield clean
-                return
+                    # Yield any remaining buffer
+                    if buffer:
+                        clean = self.strip_thinking_tags(buffer)
+                        if clean:
+                            yield clean
+                            received_any_content = True
+                    
+                    # If we received content, we're done
+                    if received_any_content:
+                        return
+                    else:
+                        # No content received - raise exception to trigger fallback
+                        logger.warning("Load balancer returned no content, falling back to local")
+                        raise NoHealthyServersError("No content from load balancer")
+                except NoHealthyServersError:
+                    # Load balancer failed - fall back to local inference
+                    logger.info("Load balancer unavailable, using local inference")
+                except Exception as e:
+                    logger.warning(f"Load balancer error: {e}, falling back to local", exc_info=True)
 
             # Check if user has custom AI service enabled
             custom_service = self._get_custom_ai_service()

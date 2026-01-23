@@ -205,9 +205,10 @@ def verify_api_key(
         x_api_key = str(x_api_key).strip()
         if global_api_key and x_api_key == global_api_key:
             logger.debug(f"[OPENAI-API] Authenticated via X-API-Key header (server-to-server)")
-            return None  # Global key, no specific user
+            return None  # Global key, no specific user - authenticated but no user object
         elif global_api_key:
             logger.warning(f"[OPENAI-API] X-API-Key provided but doesn't match Global API Key")
+            raise HTTPException(status_code=401, detail="Invalid API key")
         else:
             logger.debug(f"[OPENAI-API] X-API-Key provided but no Global API Key configured - allowing")
             # Allow if no key is configured (open access mode)
@@ -229,7 +230,7 @@ def verify_api_key(
     # First check global API key
     if global_api_key and token == global_api_key:
         logger.debug(f"[OPENAI-API] Authenticated via Bearer token (Global API Key)")
-        return None  # Global key, no specific user
+        return None  # Global key, no specific user - authenticated but no user object
 
     # Check user API keys - get api_key AND user_id together to avoid lazy loading
     api_key, user_id = query_api_key_with_retry(db, token)
@@ -437,69 +438,65 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
             selected_server = await get_healthy_server(servers, api_key if api_key else None)
 
             if selected_server:
-                # Check if selected server is THIS instance
-                if is_self_url(selected_server):
-                    logger.info(f"Load balancer: selected {selected_server} -> LOCAL inference (self detected)")
-                    # Fall through to local inference below
-                else:
-                    # Remote server - make HTTP request
-                    logger.info(f"Load balancer: selected {selected_server} -> REMOTE")
-                    timeout = int(settings.get("ollama_timeout", "120000")) / 1000
-                    model = settings.get("ollama_model", "default")
-                    load_balancer = LoadBalancer([selected_server], timeout=timeout, model=model, api_key=api_key if api_key else None)
+                # Always make HTTP request to selected server (even if it's "self")
+                # This ensures proper load balancing and avoids self-detection issues
+                logger.info(f"Load balancer: selected {selected_server} -> HTTP request")
+                timeout = int(settings.get("ollama_timeout", "120000")) / 1000
+                model = settings.get("ollama_model", "default")
+                load_balancer = LoadBalancer([selected_server], timeout=timeout, model=model, api_key=api_key if api_key else None)
 
-                    try:
-                        if request.stream:
-                            # Create a wrapper that catches NoHealthyServersError and re-raises it
-                            # so the outer handler can catch it and fall back to local
-                            lb_stream = load_balancer.chat_stream(
-                                messages=messages,
-                                temperature=temperature,
-                                top_p=top_p,
-                                max_tokens=max_tokens
-                            )
-                            
-                            # Wrap generator - if NoHealthyServersError is raised, stop silently
-                            # The outer exception handler will catch it when StreamingResponse fails
-                            # and fall back to local inference
-                            async def safe_stream():
-                                try:
-                                    async for chunk in filter_thinking_stream(lb_stream):
-                                        yield chunk
-                                except NoHealthyServersError:
-                                    # Remote server unavailable - stop generator silently
-                                    # FastAPI will see an empty stream, but the outer handler
-                                    # should catch the exception and fall back to local
-                                    # For now, just stop - don't yield anything
-                                    return
-                            
-                            return StreamingResponse(
-                                safe_stream(),
-                                media_type="text/event-stream",
-                                headers={
-                                    "Cache-Control": "no-cache",
-                                    "Connection": "keep-alive",
-                                    "X-Accel-Buffering": "no",
-                                }
-                            )
-                        else:
-                            result = await load_balancer.chat(
-                                messages=messages,
-                                temperature=temperature,
-                                top_p=top_p,
-                                max_tokens=max_tokens
-                            )
-                            if "error" in result:
-                                logger.warning(f"Load balancer returned error, falling back to local: {result.get('error')}")
-                                # Fall through to local inference instead of raising exception
-                                raise NoHealthyServersError(f"Remote server returned error: {result.get('error')}")
-                            # Strip thinking tags from load balancer response
-                            if result.get("choices"):
-                                for choice in result["choices"]:
-                                    if choice.get("message", {}).get("content"):
-                                        choice["message"]["content"] = strip_thinking_tags(choice["message"]["content"])
-                            return result
-                    except (NoHealthyServersError, Exception) as e:
+                try:
+                    if request.stream:
+                        # Create a wrapper that catches NoHealthyServersError and re-raises it
+                        # so the outer handler can catch it and fall back to local
+                        lb_stream = load_balancer.chat_stream(
+                            messages=messages,
+                            temperature=temperature,
+                            top_p=top_p,
+                            max_tokens=max_tokens
+                        )
+                        
+                        # Wrap generator - if NoHealthyServersError is raised, stop silently
+                        # The outer exception handler will catch it when StreamingResponse fails
+                        # and fall back to local inference
+                        async def safe_stream():
+                            try:
+                                async for chunk in filter_thinking_stream(lb_stream):
+                                    yield chunk
+                            except NoHealthyServersError:
+                                # Remote server unavailable - stop generator silently
+                                # FastAPI will see an empty stream, but the outer handler
+                                # should catch the exception and fall back to local
+                                # For now, just stop - don't yield anything
+                                return
+                        
+                        return StreamingResponse(
+                            safe_stream(),
+                            media_type="text/event-stream",
+                            headers={
+                                "Cache-Control": "no-cache",
+                                "Connection": "keep-alive",
+                                "X-Accel-Buffering": "no",
+                            }
+                        )
+                    else:
+                        result = await load_balancer.chat(
+                            messages=messages,
+                            temperature=temperature,
+                            top_p=top_p,
+                            max_tokens=max_tokens
+                        )
+                        if "error" in result:
+                            logger.warning(f"Load balancer returned error, falling back to local: {result.get('error')}")
+                            # Fall through to local inference instead of raising exception
+                            raise NoHealthyServersError(f"Remote server returned error: {result.get('error')}")
+                        # Strip thinking tags from load balancer response
+                        if result.get("choices"):
+                            for choice in result["choices"]:
+                                if choice.get("message", {}).get("content"):
+                                    choice["message"]["content"] = strip_thinking_tags(choice["message"]["content"])
+                        return result
+                except (NoHealthyServersError, Exception) as e:
                         # NoHealthyServersError is expected when remote returns empty stream - fallback is automatic
                         # Don't log this as it's expected behavior - just silently fall back to local
                         if not isinstance(e, NoHealthyServersError):
