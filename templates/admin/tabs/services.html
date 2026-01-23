@@ -279,55 +279,5 @@
         </div>
     </fieldset>
 
-    <fieldset>
-        <legend>WebDAV Sync Client</legend>
-        <div class="form-group">
-            <label for="webdav_sync_cache_enabled">
-                <input type="checkbox" id="webdav_sync_cache_enabled" name="webdav_sync_cache_enabled"> Enable Offline Cache
-            </label>
-            <small>Cache files locally for offline access. Default cache size: 10GB</small>
-        </div>
-        <div class="form-group" id="webdav_cache_settings" style="display: none;">
-            <label for="webdav_cache_max_size_mb">Cache Size (MB)</label>
-            <input type="number" id="webdav_cache_max_size_mb" name="webdav_cache_max_size_mb" value="10240" min="100" max="1048576" step="100">
-            <small>Maximum cache size in MB (default: 10240 = 10GB). Old files are automatically evicted when limit is reached.</small>
-        </div>
-        <div class="form-group" id="webdav_cache_age_settings" style="display: none;">
-            <label for="webdav_cache_max_age_days">Cache Max Age (days)</label>
-            <input type="number" id="webdav_cache_max_age_days" name="webdav_cache_max_age_days" value="30" min="1" max="365">
-            <small>Files older than this are automatically removed from cache (default: 30 days)</small>
-        </div>
-        <div class="form-group" id="webdav_cache_dirs_settings" style="display: none;">
-            <label for="webdav_cache_directories">Cache Directories</label>
-            <input type="text" id="webdav_cache_directories" name="webdav_cache_directories" placeholder="documents,images,downloads">
-            <small>Comma-separated list of directories to cache locally (e.g., "documents,images"). Leave empty to cache all directories.</small>
-            <div style="margin-top: 10px;">
-                <button type="button" class="btn-secondary" id="refreshWebDAVDirsBtn">Refresh Directory List</button>
-                <small>Get list of available directories from storage</small>
-            </div>
-            <div id="webdav_dir_list" style="margin-top: 10px; max-height: 200px; overflow-y: auto; border: 1px solid #444; padding: 10px; border-radius: 4px; display: none;">
-                <div style="font-weight: bold; margin-bottom: 5px;">Available Directories:</div>
-                <div id="webdav_dir_checkboxes"></div>
-            </div>
-        </div>
-        <div class="form-group" id="webdav_network_settings" style="display: none;">
-            <label for="webdav_network_retry_attempts">Network Retry Attempts</label>
-            <input type="number" id="webdav_network_retry_attempts" name="webdav_network_retry_attempts" value="5" min="1" max="20">
-            <small>Number of retry attempts on network failure (default: 5)</small>
-        </div>
-        <div class="form-group" id="webdav_network_delay_settings" style="display: none;">
-            <label for="webdav_network_retry_delay">Network Retry Delay (seconds)</label>
-            <input type="number" id="webdav_network_retry_delay" name="webdav_network_retry_delay" value="5" min="1" max="60">
-            <small>Initial delay between retries, uses exponential backoff (default: 5s)</small>
-        </div>
-        <div class="form-group" id="webdav_offline_settings" style="display: none;">
-            <label for="webdav_offline_mode">
-                <input type="checkbox" id="webdav_offline_mode" name="webdav_offline_mode"> Offline Mode
-            </label>
-            <small>If enabled, sync client will only use cache and not attempt to sync from server</small>
-        </div>
-        <div class="form-group" style="margin-top: 10px;">
-            <small><strong>Note:</strong> These settings are stored in ~/.config/posterchanai-sync/config.json. Restart the sync client daemon to apply changes.</small>
-        </div>
-    </fieldset>
+    <!-- WebDAV Sync Client section removed -->
 </div>

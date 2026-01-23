@@ -1027,7 +1027,7 @@ async def startup():
         finally:
             db3.close()
 
-        # Auto-start WebDAV/CalDAV/CardDAV servers if enabled
+        # Auto-start CalDAV/CardDAV servers if enabled
         db_dav = SessionLocal()
         try:
             from app.database import safe_query_settings

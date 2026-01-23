@@ -1022,7 +1022,7 @@ class ChatHandler {
             });
         }
 
-        // Test WebDAV Music connection
+        // Test Local Music connection
         if (testLocalMusic) {
             testLocalMusic.addEventListener('click', async () => {
                 testMusicResult.textContent = 'Testing...';
@@ -1141,12 +1141,7 @@ class ChatHandler {
                             renderMailAccountList();
                         }
 
-                        // Load WebDAV Music settings
-                        console.log('Loading WebDAV Music settings from server:', {
-                            url: data.webdav_music_url,
-                            username: data.webdav_music_username,
-                            hasPassword: data.webdav_music_has_password
-                        });
+                        // Load Local Music settings
                         if (localMusicDir) localMusicDir.value = data.local_music_dir || '';
                         if (musicRecursiveScan) musicRecursiveScan.checked = data.music_recursive_scan !== false;
                     }
@@ -1442,35 +1437,7 @@ class ChatHandler {
                 const protocol = window.location.protocol;
                 const hostname = window.location.hostname;
                 
-                // Update WebDAV address
-                const webdavInput = document.getElementById('webdavAddress');
-                const webdavUsername = document.getElementById('webdavUsername');
-                console.log('WebDAV elements:', { input: !!webdavInput, username: !!webdavUsername, url: data.webdav_url });
-                
-                if (webdavInput) {
-                    if (data.webdav_url) {
-                        // Replace localhost with actual hostname
-                        let webdavUrl = data.webdav_url;
-                        // Only replace localhost if it's actually localhost
-                        if (webdavUrl.includes('localhost')) {
-                            webdavUrl = webdavUrl.replace('localhost', hostname);
-                        }
-                        // Ensure protocol matches current page
-                        if (webdavUrl.startsWith('http://') && protocol === 'https:') {
-                            webdavUrl = webdavUrl.replace('http://', 'https://');
-                        }
-                        webdavInput.value = webdavUrl;
-                        console.log('Set WebDAV URL:', webdavUrl);
-                    } else {
-                        webdavInput.value = '';
-                        webdavInput.placeholder = 'WebDAV server not enabled (enable in Admin → Site Settings)';
-                        console.log('WebDAV URL is empty (server not enabled?)');
-                    }
-                }
-                if (webdavUsername && data.username) {
-                    webdavUsername.textContent = data.username;
-                    console.log('Set WebDAV username:', data.username);
-                }
+                // WebDAV address code removed
                 
                 // Update CalDAV address
                 const caldavInput = document.getElementById('caldavAddress');

@@ -112,7 +112,7 @@ class DownloadResult:
     artist: Optional[str] = None
     filename: Optional[str] = None
     local_path: Optional[str] = None
-    webdav_path: Optional[str] = None
+    storage_path: Optional[str] = None
     error: Optional[str] = None
     duration: Optional[int] = None  # seconds
 
@@ -330,7 +330,7 @@ def download_as_mp3(url: str, output_dir: Optional[str] = None) -> DownloadResul
             for f in os.listdir(output_dir):
                 if f.endswith('.mp3'):
                     mp3_path = os.path.join(output_dir, f)
-                    # Build a clean filename for WebDAV
+                    # Build a clean filename for storage
                     clean_title = title
                     if artist:
                         clean_filename = f"{artist} - {clean_title}"
@@ -450,8 +450,8 @@ async def download_and_save_to_music(
 
         if result.success:
             # Update path to be relative to music directory
-            result.webdav_path = f"{subfolder}/{result.filename}"
-            logger.info(f"Successfully saved: {result.webdav_path}")
+            result.storage_path = f"{subfolder}/{result.filename}"
+            logger.info(f"Successfully saved: {result.storage_path}")
 
         return result
 
@@ -516,8 +516,8 @@ async def download_video_and_save_to_music(
 
         if result.success:
             # Update path to be relative to music directory
-            result.webdav_path = f"{subfolder}/{result.filename}"
-            logger.info(f"Successfully saved: {result.webdav_path}")
+            result.storage_path = f"{subfolder}/{result.filename}"
+            logger.info(f"Successfully saved: {result.storage_path}")
 
         return result
 
@@ -583,8 +583,8 @@ async def download_video_and_save_to_storage(
 
         if result.success:
             # Update path to be relative to user's storage
-            result.webdav_path = f"{subfolder}/{result.filename}"
-            logger.info(f"Successfully saved: {result.webdav_path}")
+            result.storage_path = f"{subfolder}/{result.filename}"
+            logger.info(f"Successfully saved: {result.storage_path}")
 
         return result
 
@@ -609,8 +609,8 @@ def format_download_result(result: DownloadResult) -> str:
         secs = result.duration % 60
         lines.append(f"**Duration:** {mins}:{secs:02d}")
 
-    if result.webdav_path:
-        lines.append(f"\n**Saved to:** `{result.webdav_path}`")
+    if result.storage_path:
+        lines.append(f"\n**Saved to:** `{result.storage_path}`")
         # Add play button
         lines.append(f"\n[▶ Browse Downloads](cmd:music browse YouTube)")
 

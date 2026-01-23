@@ -397,18 +397,7 @@ foxnews.com|Fox News"></textarea>
 
                 <!-- Storage & Cloud Tab -->
                 <div class="user-tab-content" id="user-tab-storage">
-                    <fieldset>
-                        <legend>WebDAV Cloud Storage</legend>
-                        <p class="fieldset-info">Access your files via WebDAV from external apps (file managers, sync clients, etc.).</p>
-                        <div class="form-group">
-                            <label>WebDAV Address</label>
-                            <div class="address-copy-box">
-                                <input type="text" id="webdavAddress" readonly value="" class="address-input">
-                                <button type="button" class="btn-secondary" id="copyWebdavBtn" onclick="copyAddress('webdavAddress')">📋 Copy</button>
-                            </div>
-                            <small>Use this URL in your WebDAV client. Username: <strong id="webdavUsername"></strong>, Password: your account password</small>
-                        </div>
-                    </fieldset>
+                    <!-- WebDAV section removed -->
 
                     <fieldset>
                         <legend>CalDAV Calendar</legend>
@@ -479,7 +468,7 @@ foxnews.com|Fox News"></textarea>
                                 <p style="margin: 15px 0 5px 0; font-weight: 600;">Evolution (Linux):</p>
                                 <ol style="margin: 5px 0; padding-left: 20px; font-size: 13px; opacity: 0.9;">
                                     <li>File → New → Address Book</li>
-                                    <li>Select "On the Web (WebDAV/CardDAV)"</li>
+                                    <li>Select "On the Web (CardDAV)"</li>
                                     <li>Paste the CardDAV URL above</li>
                                     <li>Enter username and password</li>
                                 </ol>

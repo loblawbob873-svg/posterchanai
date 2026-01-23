@@ -996,7 +996,7 @@ Example: `yt https://youtube.com/watch?v=...`""",
         return {"type": "text", "content": result}
 
     async def _youtube_download_command(self, arg: str) -> dict:
-        """Download a YouTube video (audio or video) to WebDAV"""
+        """Download a YouTube video (audio or video) to storage"""
 
         if not arg:
             return {

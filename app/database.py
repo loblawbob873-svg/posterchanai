@@ -443,10 +443,7 @@ When asked to write or modify code or files:
             "bt_server_token": "",            # API token for remote torrent server auth
             "storage_server_url": "",         # Remote storage server URL (empty = local)
             "storage_server_token": "",       # API token for remote storage server auth
-            # WebDAV/CalDAV/CardDAV server settings
-            "webdav_enabled": "false",       # Enable built-in WebDAV server
-            "webdav_port": "8080",            # WebDAV server port
-            "webdav_base_url": "",            # WebDAV base URL (e.g., https://ai.poster.place) - leave empty to auto-detect
+            # CalDAV/CardDAV server settings
             "caldav_enabled": "false",         # Enable built-in CalDAV server
             "caldav_port": "8081",            # CalDAV server port
             "caldav_base_url": "",            # CalDAV base URL (e.g., https://ai.poster.place) - leave empty to auto-detect

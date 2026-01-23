@@ -102,23 +102,7 @@
     </fieldset>
 
     <fieldset>
-        <legend>WebDAV/CalDAV/CardDAV Servers</legend>
-        <div class="form-group">
-            <label for="webdav_enabled">
-                <input type="checkbox" id="webdav_enabled" name="webdav_enabled"> Enable WebDAV Server
-            </label>
-            <small>Built-in WebDAV server for cloud storage access. Uses the storage configuration above.</small>
-        </div>
-        <div class="form-group">
-            <label for="webdav_port">WebDAV Port</label>
-            <input type="number" id="webdav_port" name="webdav_port" value="8080" min="1024" max="65535">
-            <small>Port for WebDAV server (default: 8080). Restart required to change port.</small>
-        </div>
-        <div class="form-group">
-            <label for="webdav_base_url">WebDAV Base URL (optional)</label>
-            <input type="url" id="webdav_base_url" name="webdav_base_url" placeholder="https://ai.poster.place">
-            <small>Base URL for WebDAV (e.g., https://ai.poster.place). Leave empty to auto-detect from request (ports are omitted, assumes reverse proxy).</small>
-        </div>
+        <legend>CalDAV/CardDAV Servers</legend>
         <div class="form-group">
             <label for="caldav_enabled">
                 <input type="checkbox" id="caldav_enabled" name="caldav_enabled"> Enable CalDAV Server

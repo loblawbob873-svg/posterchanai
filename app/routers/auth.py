@@ -812,12 +812,8 @@ async def get_storage_addresses(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get WebDAV/CalDAV/CardDAV server addresses for current user."""
+    """Get CalDAV/CardDAV server addresses for current user."""
     # Get server settings
-    webdav_enabled = db.query(Setting).filter(Setting.key == "webdav_enabled").first()
-    webdav_port = db.query(Setting).filter(Setting.key == "webdav_port").first()
-    webdav_base_url = db.query(Setting).filter(Setting.key == "webdav_base_url").first()
-    
     caldav_enabled = db.query(Setting).filter(Setting.key == "caldav_enabled").first()
     caldav_port = db.query(Setting).filter(Setting.key == "caldav_port").first()
     caldav_base_url = db.query(Setting).filter(Setting.key == "caldav_base_url").first()
@@ -827,7 +823,6 @@ async def get_storage_addresses(
     cardav_base_url = db.query(Setting).filter(Setting.key == "cardav_base_url").first()
     
     logger.debug(f"Storage addresses request for {current_user.username}: "
-                 f"webdav_enabled={webdav_enabled.value if webdav_enabled else None}, "
                  f"caldav_enabled={caldav_enabled.value if caldav_enabled else None}, "
                  f"cardav_enabled={cardav_enabled.value if cardav_enabled else None}")
     
@@ -845,17 +840,6 @@ async def get_storage_addresses(
             # Use configured base URL (user can include port if needed for direct access)
             base = base_url_setting.value.rstrip('/')
             return f"{base}{path_suffix}"
-    
-    webdav_url = ""
-    if webdav_enabled:
-        logger.debug(f"WebDAV enabled setting value: '{webdav_enabled.value}' (type: {type(webdav_enabled.value)})")
-        if webdav_enabled.value and str(webdav_enabled.value).strip().lower() == "true":
-            webdav_url = build_dav_url(webdav_base_url, webdav_port, "8080", f"/webdav/{current_user.username}")
-            logger.debug(f"Built WebDAV URL: {webdav_url}")
-        else:
-            logger.debug(f"WebDAV not enabled (value: {webdav_enabled.value})")
-    else:
-        logger.debug("WebDAV setting not found in database")
     
     caldav_url = ""
     if caldav_enabled:
@@ -881,7 +865,6 @@ async def get_storage_addresses(
     
     result = {
         "username": current_user.username,
-        "webdav_url": webdav_url,
         "caldav_url": caldav_url,
         "carddav_url": cardav_url  # Use carddav_url (with 'd') to match JavaScript expectation
     }
