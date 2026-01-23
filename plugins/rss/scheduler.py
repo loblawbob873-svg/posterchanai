@@ -173,15 +173,25 @@ async def check_and_run_rss():
     try:
         rss_enabled = db.query(Setting).filter(Setting.key == "rss_enabled").first()
         if not rss_enabled or rss_enabled.value.lower() != "true":
+            logger.debug("RSS scheduler: RSS plugin is disabled in settings")
             return
 
         users = db.query(User).all()
-        for user in users:
-            if getattr(user, 'rss_enabled', False):
+        enabled_users = [u for u in users if getattr(u, 'rss_enabled', False)]
+        
+        if not enabled_users:
+            logger.debug("RSS scheduler: No users with RSS enabled")
+            return
+            
+        logger.info(f"RSS scheduler: Processing RSS for {len(enabled_users)} user(s)")
+        for user in enabled_users:
+            try:
                 await process_rss_for_user(user.id)
+            except Exception as e:
+                logger.error(f"Error processing RSS for user {user.username}: {e}", exc_info=True)
 
     except Exception as e:
-        logger.error(f"Error in RSS scheduler: {e}")
+        logger.error(f"Error in RSS scheduler: {e}", exc_info=True)
     finally:
         db.close()
 
@@ -210,27 +220,36 @@ def start_rss_scheduler():
     global rss_scheduler
 
     if rss_scheduler is not None:
+        logger.warning("RSS scheduler already running")
         return
 
     db = SessionLocal()
     try:
         enabled_setting = db.query(Setting).filter(Setting.key == "rss_enabled").first()
         if not enabled_setting or enabled_setting.value.lower() != "true":
-            logger.info("RSS plugin disabled")
+            logger.info("RSS plugin disabled in settings - scheduler not started")
             return
+        logger.info("RSS plugin enabled - starting scheduler")
+    except Exception as e:
+        logger.error(f"Error checking RSS enabled setting: {e}", exc_info=True)
+        return
     finally:
         db.close()
 
-    rss_scheduler = AsyncIOScheduler()
-    rss_scheduler.add_job(
-        check_and_run_rss,
-        CronTrigger(minute="0,30"),
-        id="rss_scheduler",
-        name="RSS News Scheduler",
-        replace_existing=True
-    )
-    rss_scheduler.start()
-    logger.info("RSS plugin scheduler started")
+    try:
+        rss_scheduler = AsyncIOScheduler()
+        rss_scheduler.add_job(
+            check_and_run_rss,
+            CronTrigger(minute="0,30"),
+            id="rss_scheduler",
+            name="RSS News Scheduler",
+            replace_existing=True
+        )
+        rss_scheduler.start()
+        logger.info("RSS plugin scheduler started - will run every 30 minutes (at :00 and :30)")
+    except Exception as e:
+        logger.error(f"Failed to start RSS scheduler: {e}", exc_info=True)
+        rss_scheduler = None
 
 
 def stop_rss_scheduler():

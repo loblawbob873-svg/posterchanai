@@ -19,10 +19,14 @@ async def generate_daily_news_for_user(user_id: int):
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.id == user_id).first()
-        if not user or not user.news_schedule_enabled:
+        if not user:
+            logger.warning(f"User {user_id} not found for daily news generation")
+            return
+        if not user.news_schedule_enabled:
+            logger.debug(f"Daily news disabled for user {user.username}")
             return
 
-        logger.info(f"Generating daily news for user {user.username}")
+        logger.info(f"Generating daily news for user {user.username} (scheduled time: {user.news_schedule_time})")
 
         # Get news sources (user's custom sources or admin defaults)
         sources = get_user_news_sources(user, db)
@@ -92,12 +96,24 @@ async def check_and_run_scheduled_news():
             User.news_schedule_time == current_time
         ).all()
 
-        for user in users:
-            logger.info(f"Running scheduled news for user {user.username} at {current_time}")
-            await generate_daily_news_for_user(user.id)
+        if users:
+            logger.info(f"Daily News scheduler: Found {len(users)} user(s) with scheduled time {current_time}")
+            for user in users:
+                logger.info(f"Running scheduled news for user {user.username} at {current_time}")
+                try:
+                    await generate_daily_news_for_user(user.id)
+                except Exception as e:
+                    logger.error(f"Error generating daily news for user {user.username}: {e}", exc_info=True)
+        else:
+            # Log debug info every 10 minutes to help diagnose issues
+            if now.minute % 10 == 0:
+                enabled_users = db.query(User).filter(User.news_schedule_enabled == True).all()
+                if enabled_users:
+                    times = [u.news_schedule_time for u in enabled_users if u.news_schedule_time]
+                    logger.debug(f"Daily News scheduler: Current time {current_time}, enabled users: {len(enabled_users)}, scheduled times: {times}")
 
     except Exception as e:
-        logger.error(f"Error checking scheduled news: {e}")
+        logger.error(f"Error checking scheduled news: {e}", exc_info=True)
     finally:
         db.close()
 
@@ -107,22 +123,38 @@ def start_scheduler():
     global scheduler
 
     if scheduler is not None:
-        logger.warning("Scheduler already running")
+        logger.warning("Daily News scheduler already running")
         return
 
-    scheduler = AsyncIOScheduler()
+    try:
+        scheduler = AsyncIOScheduler()
 
-    # Run every minute to check for users whose scheduled time matches
-    scheduler.add_job(
-        check_and_run_scheduled_news,
-        CronTrigger(minute="*"),  # Every minute
-        id="news_scheduler",
-        name="Daily News Scheduler",
-        replace_existing=True
-    )
+        # Run every minute to check for users whose scheduled time matches
+        scheduler.add_job(
+            check_and_run_scheduled_news,
+            CronTrigger(minute="*"),  # Every minute
+            id="news_scheduler",
+            name="Daily News Scheduler",
+            replace_existing=True
+        )
 
-    scheduler.start()
-    logger.info("News scheduler started - checking every minute for scheduled news")
+        scheduler.start()
+        
+        # Log enabled users on startup
+        db = SessionLocal()
+        try:
+            enabled_users = db.query(User).filter(User.news_schedule_enabled == True).all()
+            if enabled_users:
+                user_info = [(u.username, u.news_schedule_time or "not set") for u in enabled_users]
+                logger.info(f"Daily News scheduler started - {len(enabled_users)} user(s) enabled: {user_info}")
+            else:
+                logger.info("Daily News scheduler started - no users currently enabled")
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Failed to start Daily News scheduler: {e}", exc_info=True)
+        scheduler = None
 
 
 def stop_scheduler():

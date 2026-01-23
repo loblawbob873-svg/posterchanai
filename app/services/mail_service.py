@@ -1132,25 +1132,71 @@ def send_email(
             # Add attachments with size limits and filename sanitization
             if attachments:
                 total_size = 0
+                attachment_count = 0
                 for filename, data, content_type in attachments:
                     # Skip if data is None or empty
                     if not data:
                         logger.warning(f"Skipping attachment {filename}: empty data")
                         continue
                     
+                    # Validate data is bytes
+                    if not isinstance(data, bytes):
+                        logger.warning(f"Attachment {filename} is not bytes, converting...")
+                        try:
+                            if isinstance(data, str):
+                                data = data.encode('utf-8')
+                            else:
+                                data = bytes(data)
+                        except Exception as e:
+                            logger.error(f"Failed to convert attachment {filename} to bytes: {e}")
+                            continue
+                    
                     # No size limits - include all attachments
                     total_size += len(data)
                     safe_filename = sanitize_filename(filename)
+                    
+                    # Validate and parse content_type
+                    if not content_type or not isinstance(content_type, str):
+                        logger.warning(f"Invalid content_type for {filename}, defaulting to application/octet-stream")
+                        content_type = "application/octet-stream"
+                    
                     try:
-                        part = MIMEBase(*content_type.split("/", 1))
+                        # Parse content_type (e.g., "image/png" -> ("image", "png"))
+                        if "/" in content_type:
+                            main_type, sub_type = content_type.split("/", 1)
+                        else:
+                            # Fallback for invalid content types
+                            logger.warning(f"Invalid content_type format '{content_type}' for {filename}, using application/octet-stream")
+                            main_type, sub_type = "application", "octet-stream"
+                        
+                        part = MIMEBase(main_type, sub_type)
                         part.set_payload(data)
                         encoders.encode_base64(part)
-                        part.add_header("Content-Disposition", f'attachment; filename="{safe_filename}"')
+                        
+                        # Use RFC 2231 encoding for filenames with non-ASCII characters
+                        # This ensures proper handling of Unicode filenames
+                        try:
+                            safe_filename.encode('ascii')
+                            # ASCII filename - use simple format
+                            part.add_header("Content-Disposition", f'attachment; filename="{safe_filename}"')
+                        except UnicodeEncodeError:
+                            # Non-ASCII filename - use RFC 2231 encoding
+                            from email.header import Header
+                            encoded_filename = Header(safe_filename, 'utf-8').encode()
+                            part.add_header("Content-Disposition", f'attachment; filename*=UTF-8\'\'{encoded_filename}')
+                        
                         msg.attach(part)
+                        attachment_count += 1
+                        logger.debug(f"Attached {filename} ({len(data)} bytes, {content_type})")
                     except Exception as e:
-                        logger.error(f"Error attaching {filename}: {e}")
+                        logger.error(f"Error attaching {filename}: {e}", exc_info=True)
                         # Continue with other attachments
                         continue
+                
+                if attachment_count > 0:
+                    logger.info(f"Added {attachment_count} attachment(s) to email (total size: {total_size:,} bytes)")
+                else:
+                    logger.warning("No attachments were successfully added to email")
         else:
             msg = MIMEText(body, "plain", "utf-8")
 

@@ -454,44 +454,59 @@ class CommandService:
         return await self._search_files_internal(query)
     
     async def _search_files_internal(self, query: str) -> dict:
-        """Internal file search function."""
+        """Internal file search function - handles storage proxy correctly."""
         from pathlib import Path
         from app.services.storage_service import get_storage_service
         from app.models import Setting
-        import requests
+        import httpx
 
         # Check if using remote storage
         storage_setting = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
         if storage_setting and storage_setting.value and storage_setting.value.startswith(('http://', 'https://')):
-            # Use remote storage API
+            # Use remote storage API with async httpx (same as files router)
+            url = storage_setting.value.strip()
             try:
-                url = f"{storage_setting.value.rstrip('/')}/api/storage/search"
                 headers = {}
                 token_setting = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
                 if token_setting and token_setting.value:
                     headers["Authorization"] = f"Bearer {token_setting.value}"
-
-                params = {
-                    "username": self.user.username,
-                    "query": query
-                }
-
-                response = requests.get(url, headers=headers, params=params, timeout=30)
-                response.raise_for_status()
-                data = response.json()
-
-                results = data.get('results', [])
-                return {
-                    "type": "files",
-                    "content": f"Found {len(results)} file(s) matching '{query}'",
-                    "files": results[:50],  # Limit to 50 results
-                    "query": query
-                }
+                
+                # Try both endpoints (same as files router)
+                search_urls = [
+                    f"{url.rstrip('/')}/api/files/search",
+                    f"{url.rstrip('/')}/api/storage/search"
+                ]
+                
+                response = None
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    for search_url in search_urls:
+                        try:
+                            response = await client.get(
+                                search_url,
+                                params={"query": query, "username": self.user.username},
+                                headers=headers
+                            )
+                            if response.status_code == 200:
+                                break
+                        except Exception as e:
+                            logger.debug(f"Tried {search_url}, got error: {e}")
+                            continue
+                    
+                    if response and response.status_code == 200:
+                        data = response.json()
+                        results = data.get('results', [])
+                        return {
+                            "type": "files",
+                            "content": f"Found {len(results)} file(s) matching '{query}'",
+                            "files": results[:50],  # Limit to 50 results
+                            "query": query
+                        }
+                    else:
+                        logger.warning(f"Storage server search failed, falling back to local search")
             except Exception as e:
-                logger.error(f"Error searching remote files: {e}", exc_info=True)
-                return {"type": "text", "content": f"Error searching files: {str(e)}"}
+                logger.warning(f"Error searching remote files: {e}, falling back to local search")
 
-        # Local storage
+        # Local storage search (or fallback if remote search failed)
         storage = get_storage_service(self.db)
         user_path = storage.get_user_path(self.user.username)
 
@@ -530,7 +545,7 @@ class CommandService:
                 "query": query
             }
         except Exception as e:
-            logger.error(f"Error searching files: {e}", exc_info=True)
+            logger.error(f"Error searching files locally: {e}", exc_info=True)
             return {"type": "text", "content": f"Error searching files: {str(e)}"}
 
     async def _geni_command(self, prompt: str, stop_check: Optional[callable] = None) -> dict:
@@ -594,9 +609,20 @@ class CommandService:
             
             return {"type": "text", "content": error_msg}
 
+        # Save generated image to user storage (Generated Images folder)
+        saved_path = None
+        try:
+            from app.services.storage_service import get_storage_service
+            storage = get_storage_service(self.db)
+            saved_path = storage.save_generated_image(self.user.username, image_data, prompt)
+            logger.info(f"Saved generated image to user storage: {saved_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save generated image to user storage: {e}", exc_info=True)
+            # Continue anyway - image is still shown in chat
+        
         return {
             "type": "generated_image",
-            "content": f"Generated image for: {prompt}",
+            "content": f"Generated image for: {prompt}" + (f"\n\n💾 Saved to: `{saved_path}`" if saved_path else ""),
             "image": image_data,
             "prompt": prompt,
         }
@@ -3594,16 +3620,17 @@ Return ONLY valid JSON, no other text.""",
                         "content": f"❌ Error saving attachment: {str(e)}"
                     }
                 
-                # Generate URL to open in browser - URL-encode both username and filename
+                # Generate URL to open in browser - saved_filename is now a relative path like "Mail Attachments/filename.ext"
                 from urllib.parse import quote
                 encoded_username = quote(self.user.username, safe='')
-                encoded_filename = quote(saved_filename, safe='')
-                attachment_url = f"/api/mail/attachment/{encoded_username}/{encoded_filename}"
+                # saved_filename is now a relative path, so we need to encode it properly
+                encoded_path = quote(saved_filename, safe='')
+                attachment_url = f"/api/files/view/{encoded_username}/{encoded_path}"
                 
                 # Return HTML with clickable link that opens in new tab
                 return {
                     "type": "text",
-                    "content": f"📎 Saved: **{attachment.filename}** ({attachment.size / 1024:.1f} KB)\n\n<a href=\"{attachment_url}\" target=\"_blank\" rel=\"noopener noreferrer\">Open in browser</a>",
+                    "content": f"📎 Saved: **{attachment.filename}** ({attachment.size / 1024:.1f} KB)\n\n💾 Saved to: `{saved_filename}`\n\n<a href=\"{attachment_url}\" target=\"_blank\" rel=\"noopener noreferrer\">Open in browser</a>",
                 }
 
             elif subcommand == "send":

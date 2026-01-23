@@ -232,18 +232,31 @@ async def save_file(
 
 @router.post("/save-mail-attachment")
 async def save_mail_attachment(
+    request: FastAPIRequest,
     file: UploadFile = File(...),
     username: str = Form(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_optional)
 ):
     """
     Save a mail attachment file. Called by client nodes when proxying mail attachment saves.
     Only accessible on storage server node.
     """
-    # Verify username matches
-    if current_user.username != username:
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    storage_server_token = safe_query_setting(db, "storage_server_token")
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        auth_header = request.headers.get("Authorization", "") if request else ""
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
     
     # Read file content
     content = await file.read()
@@ -252,11 +265,53 @@ async def save_mail_attachment(
     original_name = file.filename or "attachment"
     
     # Run blocking file I/O in thread pool to prevent blocking other requests
+    # Use bypass_proxy=True since we're on the storage server node
     def _save_mail_attachment_sync():
         storage = StorageService(db)
         return storage.save_mail_attachment(username, content, original_name, bypass_proxy=True)
     
     filename = await asyncio.to_thread(_save_mail_attachment_sync)
+    
+    return {"filename": filename}
+
+
+@router.post("/save-generated-image")
+async def save_generated_image(
+    request: FastAPIRequest,
+    username: str = Form(...),
+    image_base64: str = Form(...),
+    prompt: str = Form(""),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
+    """
+    Save a generated image to user storage. Called by client nodes when proxying generated image saves.
+    Only accessible on storage server node.
+    Accepts form data (for compatibility with requests library).
+    """
+    # Check if this is a server-to-server request
+    from app.models import Setting
+    storage_server_token = safe_query_setting(db, "storage_server_token")
+    is_server_request = current_user is None
+    
+    if not is_server_request and storage_server_token and storage_server_token.value:
+        # Check if the request has the server token
+        auth_header = request.headers.get("Authorization", "") if request else ""
+        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
+            is_server_request = True
+    
+    if not is_server_request:
+        # Verify username matches for user requests
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Run blocking file I/O in thread pool to prevent blocking other requests
+    # Use bypass_proxy=True since we're on the storage server node
+    def _save_generated_image_sync():
+        storage = StorageService(db)
+        return storage.save_generated_image(username, image_base64, prompt, bypass_proxy=True)
+    
+    filename = await asyncio.to_thread(_save_generated_image_sync)
     
     return {"filename": filename}
 

@@ -640,7 +640,7 @@ class StorageService:
         return None
 
     def save_mail_attachment(self, username: str, file_data: bytes, original_name: str, bypass_proxy: bool = False) -> str:
-        """Save a mail attachment file to temp/mail_attachments and return the filename. Proxies to storage server if configured."""
+        """Save a mail attachment file to Mail Attachments folder and return the filename. Proxies to storage server if configured."""
         # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
         if not bypass_proxy:
             storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
@@ -665,7 +665,8 @@ class StorageService:
         # Local file saving (storage server node or when bypassing proxy)
         try:
             user_path = self.get_user_path(username)
-            mail_attachments_dir = user_path / "temp" / "mail_attachments"
+            # Save to "Mail Attachments" folder instead of temp/mail_attachments so it shows up in file manager
+            mail_attachments_dir = user_path / "Mail Attachments"
             mail_attachments_dir.mkdir(parents=True, exist_ok=True)
             
             # Use the original filename (already sanitized by caller)
@@ -674,7 +675,8 @@ class StorageService:
             with open(filepath, "wb") as f:
                 f.write(file_data)
             
-            return original_name
+            logger.info(f"[STORAGE] Saved mail attachment to: {filepath.relative_to(user_path)}")
+            return str(filepath.relative_to(user_path))
         except Exception as e:
             logger.error(f"[STORAGE] Error saving mail attachment locally: {e}", exc_info=True)
             raise
@@ -703,12 +705,118 @@ class StorageService:
             
             if response.status_code == 200:
                 result = response.json()
+                # Result now returns relative path like "Mail Attachments/filename.ext"
                 return result.get("filename", original_name)
             else:
                 logger.error(f"[STORAGE] Failed to proxy save_mail_attachment: {response.status_code} - {response.text}")
                 raise Exception(f"Storage server error: {response.status_code}")
         except Exception as e:
             logger.error(f"[STORAGE] Error proxying mail attachment: {e}", exc_info=True)
+            raise
+    
+    def _proxy_save_generated_image(self, storage_server_url: str, username: str, image_base64: str, prompt: str = "") -> str:
+        """Proxy generated image save to storage server - uses synchronous requests to avoid event loop issues"""
+        import requests
+        try:
+            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
+            
+            url = f"{storage_server_url.rstrip('/')}/api/storage/save-generated-image"
+            headers = {}
+            if storage_server_token and storage_server_token.value:
+                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            
+            data = {
+                "username": username,
+                "image_base64": image_base64,
+                "prompt": prompt or ""
+            }
+            
+            response = requests.post(url, headers=headers, data=data, timeout=60)
+            
+            if response.status_code == 200:
+                result = response.json()
+                # Result returns relative path like "Generated Images/generated_*.png"
+                return result.get("filename", "")
+            else:
+                logger.error(f"[STORAGE] Failed to proxy save_generated_image: {response.status_code} - {response.text}")
+                raise Exception(f"Storage server error: {response.status_code}")
+        except Exception as e:
+            logger.error(f"[STORAGE] Error proxying generated image: {e}", exc_info=True)
+            raise
+
+    def save_generated_image(self, username: str, image_base64: str, prompt: str = "", bypass_proxy: bool = False) -> str:
+        """Save a generated image to Generated Images folder. Proxies to storage server if configured."""
+        # Check if storage server is configured - proxy request if so (unless bypass_proxy is True)
+        if not bypass_proxy:
+            storage_server_url = self.db.query(Setting).filter(Setting.key == "storage_server_url").first()
+            if storage_server_url and storage_server_url.value:
+                # Validate URL has protocol before proxying
+                url = storage_server_url.value.strip()
+                if url.startswith(('http://', 'https://')):
+                    try:
+                        return self._proxy_save_generated_image(url, username, image_base64, prompt)
+                    except Exception as e:
+                        logger.error(f"[STORAGE] Failed to proxy save_generated_image to {url}: {e}")
+                        raise Exception(f"Failed to save generated image to storage server: {e}")
+                else:
+                    raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
+        
+        # Local file saving (storage server node or when bypassing proxy)
+        try:
+            user_path = self.get_user_path(username)
+            generated_images_dir = user_path / "Generated Images"
+            generated_images_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create filename with timestamp and sanitized prompt
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            if prompt:
+                # Sanitize prompt for filename (first 50 chars, alphanumeric + spaces/underscores only)
+                safe_prompt = "".join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in prompt[:50])
+                safe_prompt = safe_prompt.strip().replace(' ', '_')
+                filename = f"generated_{timestamp}_{safe_prompt}.png"
+            else:
+                filename = f"generated_{timestamp}.png"
+            
+            filepath = generated_images_dir / filename
+            
+            image_data = base64.b64decode(image_base64)
+            with open(filepath, "wb") as f:
+                f.write(image_data)
+            
+            logger.info(f"[STORAGE] Saved generated image to: {filepath.relative_to(user_path)}")
+            return str(filepath.relative_to(user_path))
+        except Exception as e:
+            logger.error(f"[STORAGE] Error saving generated image locally: {e}", exc_info=True)
+            raise
+    
+    def _proxy_save_generated_image(self, storage_server_url: str, username: str, image_base64: str, prompt: str = "") -> str:
+        """Proxy generated image save to storage server - uses synchronous requests to avoid event loop issues"""
+        import requests
+        try:
+            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
+            
+            url = f"{storage_server_url.rstrip('/')}/api/storage/save-generated-image"
+            headers = {}
+            if storage_server_token and storage_server_token.value:
+                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            
+            # Use form data (not JSON) to match the endpoint signature
+            data = {
+                "username": username,
+                "image_base64": image_base64,
+                "prompt": prompt or ""
+            }
+            
+            response = requests.post(url, headers=headers, data=data, timeout=60)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("filename", "")
+            else:
+                logger.error(f"[STORAGE] Failed to proxy save_generated_image: {response.status_code} - {response.text}")
+                raise Exception(f"Storage server error: {response.status_code}")
+        except Exception as e:
+            logger.error(f"[STORAGE] Error proxying generated image: {e}", exc_info=True)
             raise
 
     # Note attachment methods removed - notes feature was removed
