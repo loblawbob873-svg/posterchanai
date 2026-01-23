@@ -131,7 +131,13 @@ async def save_generated_image(
         saved_path = storage.save_generated_image(current_user.username, image_base64, prompt)
         logger.info(f"Saved generated image to user storage: {saved_path}")
         
-        return {"success": True, "path": saved_path}
+        # Generate viewable URL for the saved image
+        from urllib.parse import quote
+        encoded_username = quote(current_user.username, safe='')
+        encoded_path = quote(saved_path, safe='')
+        view_url = f"/api/files/view/{encoded_username}/{encoded_path}"
+        
+        return {"success": True, "path": saved_path, "view_url": view_url}
     except Exception as e:
         logger.error(f"Failed to save generated image: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

@@ -82,7 +82,6 @@ async def generate_image_with_load_balancing(
     # If remote image servers are configured, use load balancing
     if servers:
         from app.services.image_load_balancer import get_healthy_image_server
-        from app.services.load_balancer import is_self_url
         
         timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
         selected_server = await get_healthy_image_server(servers)
@@ -90,9 +89,9 @@ async def generate_image_with_load_balancing(
         if selected_server:
             # Always make HTTP request to selected server (even if it's "self")
             # This ensures proper load balancing and avoids self-detection issues
+            # Remote requests don't need GPU lock - they run on remote servers
             logger.info(f"Image load balancer: selected {selected_server} -> HTTP request")
             # Make direct HTTP request instead of using ImageLoadBalancer to avoid creating a new cycle
-            timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
             import httpx
             payload = {
                 "prompt": prompt,
@@ -130,6 +129,9 @@ async def generate_image_with_load_balancing(
                 else:
                     # No API key configured - endpoint should allow unauthenticated if no API key is set
                     logger.warning(f"[IMAGE] No API key configured - using unauthenticated request to {selected_server} (may fail if remote requires auth)")
+                
+                # Add header to indicate this is a load-balanced request (prevents loops)
+                headers["X-Posterchanai-Load-Balanced"] = "true"
                 
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     logger.info(f"Sending image generation request to {selected_server} with prompt: {prompt[:50]}...")
