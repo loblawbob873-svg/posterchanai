@@ -80,129 +80,87 @@ async def generate_image_with_load_balancing(
     force_remote = vram_mode == "llm_only"
 
     # If remote image servers are configured, use load balancing
-    # Send requests to ALL servers in parallel for true parallel processing
+    # Simple round-robin: select one server and make request
     if servers:
-        import httpx
-        import asyncio
+        from app.services.image_load_balancer import get_healthy_image_server
         
         timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
+        selected_server = await get_healthy_image_server(servers)
         
-        # Prepare payload
-        payload = {
-            "prompt": prompt,
-            "negative_prompt": negative_prompt,
-        }
-        if width is not None:
-            payload["width"] = width
-        if height is not None:
-            payload["height"] = height
-        if steps is not None:
-            payload["steps"] = steps
-        if cfg is not None:
-            payload["cfg"] = cfg
-        
-        # Get authentication token for server-to-server communication
-        headers = {}
-        # Use Global API Key (openai_api_key) for server-to-server image generation
-        global_api_key = settings.get("openai_api_key", "")
-        if global_api_key:
-            global_api_key = str(global_api_key).strip()
-        
-        # Fallback to storage_server_token if Global API Key is not set
-        if not global_api_key:
-            global_api_key = settings.get("storage_server_token", "")
+        if selected_server:
+            # Make HTTP request to selected server (round-robin)
+            logger.info(f"[IMAGE] Load balancer selected: {selected_server} (from {len(servers)} server(s))")
+            import httpx
+            payload = {
+                "prompt": prompt,
+                "negative_prompt": negative_prompt,
+            }
+            if width is not None:
+                payload["width"] = width
+            if height is not None:
+                payload["height"] = height
+            if steps is not None:
+                payload["steps"] = steps
+            if cfg is not None:
+                payload["cfg"] = cfg
+            
+            # Get authentication token for server-to-server communication
+            headers = {}
+            global_api_key = settings.get("openai_api_key", "")
             if global_api_key:
                 global_api_key = str(global_api_key).strip()
-                logger.info(f"Using storage_server_token for image server authentication")
-        
-        if global_api_key:
-            headers["X-API-Key"] = global_api_key
-            logger.info(f"[IMAGE] Using Global API Key for parallel requests (length: {len(global_api_key)})")
-        else:
-            logger.warning(f"[IMAGE] No API key configured - using unauthenticated requests (may fail if remote requires auth)")
-        
-        # Add header to indicate this is a load-balanced request (prevents loops)
-        headers["X-Posterchanai-Load-Balanced"] = "true"
-        
-        # Send parallel requests to ALL servers
-        logger.info(f"[IMAGE] Sending parallel requests to {len(servers)} server(s): {servers}")
-        
-        async def make_request(server: str) -> Optional[str]:
-            """Make a single image generation request to a server"""
+            
+            if not global_api_key:
+                global_api_key = settings.get("storage_server_token", "")
+                if global_api_key:
+                    global_api_key = str(global_api_key).strip()
+            
+            if global_api_key:
+                headers["X-API-Key"] = global_api_key
+            else:
+                logger.warning(f"[IMAGE] No API key configured")
+            
+            headers["X-Posterchanai-Load-Balanced"] = "true"
+            
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
-                    logger.info(f"[IMAGE] Request to {server} with prompt: {prompt[:50]}...")
+                    logger.info(f"[IMAGE] Request to {selected_server} with prompt: {prompt[:50]}...")
                     response = await client.post(
-                        f"{server}/api/generate-image",
+                        f"{selected_server}/api/generate-image",
                         json=payload,
                         headers=headers
                     )
                     
-                    logger.info(f"[IMAGE] Response from {server}: status={response.status_code}")
+                    logger.info(f"[IMAGE] Response from {selected_server}: status={response.status_code}")
                     
                     if response.status_code == 401:
-                        logger.error(f"[IMAGE] ERROR from {server} | Authentication failed")
+                        logger.error(f"[IMAGE] ERROR from {selected_server} | Authentication failed")
                         return None
                     
                     response.raise_for_status()
                     result = response.json()
                     
                     if result.get("error"):
-                        logger.error(f"[IMAGE] ERROR from {server} | error={result['error']}")
+                        logger.error(f"[IMAGE] ERROR from {selected_server} | error={result['error']}")
                         return None
                     
                     image_data = result.get("image")
                     if image_data:
-                        logger.info(f"[IMAGE] SUCCESS from {server} ({len(image_data)} chars)")
+                        logger.info(f"[IMAGE] SUCCESS from {selected_server} ({len(image_data)} chars)")
                         return image_data
                     else:
-                        logger.error(f"[IMAGE] ERROR from {server} | no image in response")
+                        logger.error(f"[IMAGE] ERROR from {selected_server} | no image in response")
                         return None
             except httpx.HTTPStatusError as e:
                 error_text = e.response.text[:500] if hasattr(e.response, 'text') else str(e)
-                logger.error(f"[IMAGE] HTTP error from {server}: {e.response.status_code} - {error_text}")
+                logger.error(f"[IMAGE] HTTP error from {selected_server}: {e.response.status_code} - {error_text}")
                 return None
             except httpx.TimeoutException:
-                logger.error(f"[IMAGE] Timeout from {server} (timeout={timeout}s)")
+                logger.error(f"[IMAGE] Timeout from {selected_server} (timeout={timeout}s)")
                 return None
             except Exception as e:
-                logger.error(f"[IMAGE] Failed from {server}: {type(e).__name__}: {e}", exc_info=True)
+                logger.error(f"[IMAGE] Failed from {selected_server}: {type(e).__name__}: {e}", exc_info=True)
                 return None
-        
-        # Create tasks for all servers (parallel execution)
-        tasks = [asyncio.create_task(make_request(server)) for server in servers]
-        
-        # Wait for first successful result
-        # Use asyncio.as_completed to get results as they arrive
-        try:
-            for coro in asyncio.as_completed(tasks):
-                result = await coro
-                if result:
-                    # Cancel remaining tasks to free resources
-                    for task in tasks:
-                        if not task.done():
-                            task.cancel()
-                            try:
-                                await task
-                            except asyncio.CancelledError:
-                                pass
-                    logger.info(f"[IMAGE] Got successful result from parallel request, cancelled other requests")
-                    return result
-        except Exception as e:
-            logger.error(f"[IMAGE] Error in parallel requests: {e}", exc_info=True)
-        finally:
-            # Ensure all tasks are cleaned up
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-        
-        # All requests failed
-        logger.error(f"[IMAGE] All {len(servers)} server(s) failed")
-        return None
 
     # Use local backend with GPU LOCK to prevent GPU overload
     # This handles both: no remote servers configured, and when "self" is selected by load balancer

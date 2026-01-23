@@ -292,47 +292,20 @@ class LoadBalancer:
     ) -> AsyncGenerator[str, None]:
         """
         Stream chat completion from a load-balanced server.
-        Tries all servers in sequence until one succeeds.
+        Simple round-robin: select one server and stream from it.
         Yields SSE-formatted chunks.
         """
         if not self.servers:
             raise ValueError("No servers configured for load balancing")
 
-        # Try each server until one succeeds
-        last_error = None
-        for server in self.servers:
-            try:
-                logger.info(f"[LOAD BALANCER] Trying server: {server} (from {len(self.servers)} server(s): {self.servers})")
-                async for chunk in self._stream_from_server(server, messages, temperature, top_p, max_tokens, stop):
-                    yield chunk
-                # If we get here, streaming succeeded
-                logger.info(f"[LOAD BALANCER] Successfully streamed from {server}")
-                return
-            except NoHealthyServersError as e:
-                last_error = e
-                logger.warning(f"[LOAD BALANCER] Server {server} failed: {e}, trying next server...")
-                continue
-            except Exception as e:
-                last_error = e
-                logger.warning(f"[LOAD BALANCER] Server {server} error: {e}, trying next server...")
-                continue
-        
-        # All servers failed
-        logger.error(f"[LOAD BALANCER] All {len(self.servers)} server(s) failed")
-        raise NoHealthyServersError(f"All servers failed. Last error: {last_error}")
+        # Simple round-robin selection
+        server = await get_healthy_server(self.servers, self.api_key)
+        if not server:
+            logger.warning("No healthy remote servers - signaling to use local")
+            raise NoHealthyServersError("No healthy remote servers available")
 
-    async def _stream_from_server(
-        self,
-        server: str,
-        messages: List[dict],
-        temperature: float,
-        top_p: float,
-        max_tokens: int,
-        stop: List[str]
-    ) -> AsyncGenerator[str, None]:
-        """Stream chat completion from a single server. Yields SSE-formatted chunks."""
         start_time = time.time()
-        logger.info(f"[LOAD BALANCER] STREAM REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature}")
+        logger.info(f"[LOAD BALANCER] STREAM REQUEST to {server} | model={self.model} | messages={len(messages)} | temp={temperature} | all_servers={self.servers}")
 
         request_body = {
             "model": self.model,
