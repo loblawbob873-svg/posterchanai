@@ -97,25 +97,68 @@ async def generate_image(
     try:
         logger.info(f"[IMAGE-API] Generating image: {request.prompt[:50]}...")
 
-        # Generate image with load balancing support
-        # Lock is handled inside for local generation only
-        result = await generate_image_with_load_balancing(
-            db=db,
-            prompt=request.prompt,
-            negative_prompt=request.negative_prompt or "",
-            width=request.width,
-            height=request.height,
-            steps=request.steps,
-            cfg=request.cfg
-        )
+        # Check if this is a server-to-server request (no user, just API key)
+        # In that case, we should use LOCAL generation only, not load balancing
+        # to avoid loops
+        from app.services.image_load_balancer import parse_image_server_urls
+        settings = {s.key: s.value for s in db.query(Setting).all()}
+        image_server_urls = settings.get("image_server_urls", "")
+        servers = parse_image_server_urls(image_server_urls)
+        
+        # If this is an API request (not from a logged-in user), force local generation
+        # to prevent proxy loops
+        user = None
+        try:
+            from app.auth import get_current_user_optional
+            user = get_current_user_optional(http_request, db)
+        except:
+            pass
+        
+        # If no user and we have remote servers configured, this might be a proxy request
+        # Force local generation to avoid loops
+        if not user and servers:
+            logger.info(f"[IMAGE-API] API request detected (no user) - forcing LOCAL generation to avoid proxy loop")
+            # Use local backend directly, bypassing load balancing
+            from app.services.image_factory import get_image_backend, prepare_vram_for_image
+            from app.services.locks import GPUResourceLock, image_generation_lock
+            
+            result = None
+            try:
+                async with GPUResourceLock("Image", f"prompt={request.prompt[:30]}..."):
+                    async with image_generation_lock:
+                        prepare_vram_for_image(db)
+                        backend = get_image_backend(db)
+                        result = await backend.generate_image(
+                            prompt=request.prompt,
+                            negative_prompt=request.negative_prompt or "",
+                            width=request.width,
+                            height=request.height,
+                            steps=request.steps,
+                            cfg=request.cfg,
+                        )
+            except Exception as e:
+                logger.error(f"[IMAGE-API] Local image generation failed: {e}", exc_info=True)
+                result = None
+        else:
+            # Generate image with load balancing support (for user requests)
+            # Lock is handled inside for local generation only
+            result = await generate_image_with_load_balancing(
+                db=db,
+                prompt=request.prompt,
+                negative_prompt=request.negative_prompt or "",
+                width=request.width,
+                height=request.height,
+                steps=request.steps,
+                cfg=request.cfg
+            )
 
         if result:
             logger.info(f"[IMAGE-API] Image generated successfully")
             return ImageResponse(image=result)
         else:
-            logger.info(f"[IMAGE-API] Image generation failed (no result)")
+            logger.error(f"[IMAGE-API] Image generation failed (no result) - check backend configuration and logs")
             return ImageResponse(error="Image generation failed")
 
     except Exception as e:
-        logger.info(f"[IMAGE-API] Image generation error: {e}")
+        logger.error(f"[IMAGE-API] Image generation error: {e}", exc_info=True)
         return ImageResponse(error=str(e))

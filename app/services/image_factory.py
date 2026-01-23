@@ -185,6 +185,7 @@ async def generate_image_with_load_balancing(
             async with image_generation_lock:
                 prepare_vram_for_image(db)
                 backend = get_image_backend(db)
+                logger.info(f"Calling backend.generate_image with prompt: {prompt[:50]}...")
                 result = await backend.generate_image(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
@@ -193,8 +194,12 @@ async def generate_image_with_load_balancing(
                     steps=steps,
                     cfg=cfg,
                 )
+                if result:
+                    logger.info(f"Local backend returned image ({len(result) if result else 0} chars)")
+                else:
+                    logger.warning(f"Local backend returned None (generation may have failed)")
     except Exception as e:
-        logger.error(f"Local image generation failed with exception: {e}")
+        logger.error(f"Local image generation failed with exception: {e}", exc_info=True)
         result = None
 
     # Fallback to remote if local failed and remote servers are available
