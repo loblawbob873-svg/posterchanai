@@ -121,6 +121,14 @@ async def generate_image_with_load_balancing(
                     if not image_api_key:
                         image_api_key = settings.get("image_api_key", "")
                     
+                    # For server-to-server communication, also try storage_server_token as fallback
+                    # This allows using the same token for both storage and image server communication
+                    if not image_api_key:
+                        storage_token = settings.get("storage_server_token", "")
+                        if storage_token:
+                            image_api_key = storage_token
+                            logger.debug(f"Using storage_server_token for image server authentication")
+                    
                     if image_api_key:
                         headers["X-API-Key"] = image_api_key
                         logger.debug(f"Using API key authentication for {selected_server}")
