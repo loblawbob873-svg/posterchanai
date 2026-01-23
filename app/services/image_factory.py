@@ -88,93 +88,89 @@ async def generate_image_with_load_balancing(
         selected_server = await get_healthy_image_server(servers)
         
         if selected_server:
-            # Check if selected server is THIS instance
-            if is_self_url(selected_server):
-                logger.info(f"Image load balancer: selected {selected_server} -> LOCAL inference (self detected)")
-                # Fall through to local inference below (with GPU lock)
-            else:
-                # Remote server - make HTTP request directly (don't create new ImageLoadBalancer to avoid cycle issues)
-                logger.info(f"Image load balancer: selected {selected_server} -> REMOTE")
-                # Make direct HTTP request instead of using ImageLoadBalancer to avoid creating a new cycle
-                timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
-                import httpx
-                payload = {
-                    "prompt": prompt,
-                    "negative_prompt": negative_prompt,
-                }
-                if width is not None:
-                    payload["width"] = width
-                if height is not None:
-                    payload["height"] = height
-                if steps is not None:
-                    payload["steps"] = steps
-                if cfg is not None:
-                    payload["cfg"] = cfg
+            # Always make HTTP request to selected server (even if it's "self")
+            # This ensures proper load balancing and avoids self-detection issues
+            logger.info(f"Image load balancer: selected {selected_server} -> HTTP request")
+            # Make direct HTTP request instead of using ImageLoadBalancer to avoid creating a new cycle
+            timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
+            import httpx
+            payload = {
+                "prompt": prompt,
+                "negative_prompt": negative_prompt,
+            }
+            if width is not None:
+                payload["width"] = width
+            if height is not None:
+                payload["height"] = height
+            if steps is not None:
+                payload["steps"] = steps
+            if cfg is not None:
+                payload["cfg"] = cfg
+            
+            try:
+                # Get authentication token for server-to-server communication
+                headers = {}
+                # Use Global API Key (openai_api_key) for server-to-server image generation
+                # This is the same key used for OpenAI API access
+                global_api_key = settings.get("openai_api_key", "")
+                if global_api_key:
+                    global_api_key = str(global_api_key).strip()  # Ensure it's a string and trim whitespace
                 
-                try:
-                    # Get authentication token for server-to-server communication
-                    headers = {}
-                    # Use Global API Key (openai_api_key) for server-to-server image generation
-                    # This is the same key used for OpenAI API access
-                    global_api_key = settings.get("openai_api_key", "")
+                # Fallback to storage_server_token if Global API Key is not set
+                # This allows using the same token for both storage and image server communication
+                if not global_api_key:
+                    global_api_key = settings.get("storage_server_token", "")
                     if global_api_key:
-                        global_api_key = str(global_api_key).strip()  # Ensure it's a string and trim whitespace
+                        global_api_key = str(global_api_key).strip()
+                        logger.info(f"Using storage_server_token for image server authentication to {selected_server}")
+                
+                if global_api_key:
+                    headers["X-API-Key"] = global_api_key
+                    logger.info(f"[IMAGE] Using Global API Key for {selected_server} (length: {len(global_api_key)})")
+                else:
+                    # No API key configured - endpoint should allow unauthenticated if no API key is set
+                    logger.warning(f"[IMAGE] No API key configured - using unauthenticated request to {selected_server} (may fail if remote requires auth)")
+                
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    logger.info(f"Sending image generation request to {selected_server} with prompt: {prompt[:50]}...")
+                    response = await client.post(
+                        f"{selected_server}/api/generate-image",
+                        json=payload,
+                        headers=headers
+                    )
                     
-                    # Fallback to storage_server_token if Global API Key is not set
-                    # This allows using the same token for both storage and image server communication
-                    if not global_api_key:
-                        global_api_key = settings.get("storage_server_token", "")
-                        if global_api_key:
-                            global_api_key = str(global_api_key).strip()
-                            logger.info(f"Using storage_server_token for image server authentication to {selected_server}")
+                    # Log response status for debugging
+                    logger.info(f"Response from {selected_server}: status={response.status_code}")
                     
-                    if global_api_key:
-                        headers["X-API-Key"] = global_api_key
-                        logger.info(f"[IMAGE] Using Global API Key for {selected_server} (length: {len(global_api_key)})")
+                    if response.status_code == 401:
+                        logger.error(f"IMAGE ERROR from {selected_server} | Authentication failed - check Global API Key (openai_api_key) setting")
+                        return None
+                    
+                    response.raise_for_status()
+                    result = response.json()
+                    
+                    if result.get("error"):
+                        logger.error(f"IMAGE ERROR from {selected_server} | error={result['error']}")
+                        logger.error(f"Full error response: {result}")
+                        return None
+                    
+                    image_data = result.get("image")
+                    if image_data:
+                        logger.info(f"IMAGE COMPLETE from {selected_server} ({len(image_data)} chars)")
+                        return image_data
                     else:
-                        # No API key configured - endpoint should allow unauthenticated if no API key is set
-                        logger.warning(f"[IMAGE] No API key configured - using unauthenticated request to {selected_server} (may fail if remote requires auth)")
-                    
-                    async with httpx.AsyncClient(timeout=timeout) as client:
-                        logger.info(f"Sending image generation request to {selected_server} with prompt: {prompt[:50]}...")
-                        response = await client.post(
-                            f"{selected_server}/api/generate-image",
-                            json=payload,
-                            headers=headers
-                        )
-                        
-                        # Log response status for debugging
-                        logger.info(f"Response from {selected_server}: status={response.status_code}")
-                        
-                        if response.status_code == 401:
-                            logger.error(f"IMAGE ERROR from {selected_server} | Authentication failed - check Global API Key (openai_api_key) setting")
-                            return None
-                        
-                        response.raise_for_status()
-                        result = response.json()
-                        
-                        if result.get("error"):
-                            logger.error(f"IMAGE ERROR from {selected_server} | error={result['error']}")
-                            logger.error(f"Full error response: {result}")
-                            return None
-                        
-                        image_data = result.get("image")
-                        if image_data:
-                            logger.info(f"IMAGE COMPLETE from {selected_server} ({len(image_data)} chars)")
-                            return image_data
-                        else:
-                            logger.error(f"IMAGE ERROR from {selected_server} | no image in response, result keys: {list(result.keys())}")
-                            return None
-                except httpx.HTTPStatusError as e:
-                    error_text = e.response.text[:500] if hasattr(e.response, 'text') else str(e)
-                    logger.error(f"Remote image generation HTTP error from {selected_server}: {e.response.status_code} - {error_text}")
-                    return None
-                except httpx.TimeoutException:
-                    logger.error(f"Remote image generation timeout from {selected_server} (timeout={timeout}s)")
-                    return None
-                except Exception as e:
-                    logger.error(f"Remote image generation failed from {selected_server}: {type(e).__name__}: {e}", exc_info=True)
-                    return None
+                        logger.error(f"IMAGE ERROR from {selected_server} | no image in response, result keys: {list(result.keys())}")
+                        return None
+            except httpx.HTTPStatusError as e:
+                error_text = e.response.text[:500] if hasattr(e.response, 'text') else str(e)
+                logger.error(f"Remote image generation HTTP error from {selected_server}: {e.response.status_code} - {error_text}")
+                return None
+            except httpx.TimeoutException:
+                logger.error(f"Remote image generation timeout from {selected_server} (timeout={timeout}s)")
+                return None
+            except Exception as e:
+                logger.error(f"Remote image generation failed from {selected_server}: {type(e).__name__}: {e}", exc_info=True)
+                return None
                 
                 # OLD CODE - creates new cycle, causing issues
                 # load_balancer = ImageLoadBalancer([selected_server], timeout=timeout)
