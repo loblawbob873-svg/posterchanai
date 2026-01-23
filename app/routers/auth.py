@@ -1147,6 +1147,60 @@ async def test_custom_image_connection(
         )
 
 
+@router.get("/webdav-debug")
+async def webdav_debug(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Debug endpoint to check WebDAV configuration and list files."""
+    from app.services.webdav_storage_client import WebDAVStorageClient
+    import asyncio
+    
+    webdav_client = WebDAVStorageClient(db, current_user.id)
+    
+    debug_info = {
+        "user_id": current_user.id,
+        "username": current_user.username,
+        "webdav_enabled": webdav_client.is_enabled(),
+        "base_url": webdav_client.base_url if hasattr(webdav_client, 'base_url') else None,
+        "username_set": bool(webdav_client.username) if hasattr(webdav_client, 'username') else None,
+        "password_set": bool(webdav_client.password) if hasattr(webdav_client, 'password') else None,
+    }
+    
+    if webdav_client.is_enabled():
+        try:
+            # Try to list files
+            async def _test_list():
+                return await webdav_client.list_files("", recursive=False)
+            
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_test_list())
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_new_loop)
+                    files = future.result()
+            else:
+                files = loop.run_until_complete(_test_list())
+            
+            debug_info["files_count"] = len(files)
+            debug_info["files"] = files[:10]  # First 10 files
+            debug_info["list_success"] = True
+        except Exception as e:
+            debug_info["list_success"] = False
+            debug_info["list_error"] = str(e)
+            import traceback
+            debug_info["list_traceback"] = traceback.format_exc()
+    
+    return debug_info
+
 @router.post("/test-webdav", response_model=TestConnectionResponse)
 async def test_webdav_connection(
     request: Request,

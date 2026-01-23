@@ -1260,7 +1260,12 @@ async def list_files(
         from app.services.webdav_storage_client import WebDAVStorageClient
         webdav_client = WebDAVStorageClient(db, current_user.id)
         
+        logger.info(f"[FILES] WebDAV client created for user {current_user.username} (ID: {current_user.id})")
+        logger.info(f"[FILES] WebDAV enabled check: {webdav_client.is_enabled()}")
+        logger.info(f"[FILES] WebDAV base_url: {webdav_client.base_url if hasattr(webdav_client, 'base_url') else 'N/A'}")
+        
         if not webdav_client.is_enabled():
+            logger.error(f"[FILES] WebDAV not enabled for user {current_user.username}")
             raise HTTPException(
                 status_code=500, 
                 detail=f"WebDAV storage not configured for user {current_user.username}. Please configure WebDAV storage in user settings."
@@ -1326,8 +1331,13 @@ async def list_files(
             cache.set(cache_key, result)
             
             return result
+        except HTTPException:
+            # Re-raise HTTP exceptions (like 500 errors)
+            raise
         except Exception as e:
             logger.error(f"[FILES] Failed to list files from WebDAV: {e}", exc_info=True)
+            import traceback
+            logger.error(f"[FILES] Full traceback: {traceback.format_exc()}")
             # Don't fall through to local filesystem - raise error instead
             raise HTTPException(status_code=500, detail=f"Failed to list files from WebDAV: {str(e)}")
     

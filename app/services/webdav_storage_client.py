@@ -83,7 +83,9 @@ class WebDAVStorageClient:
     
     def is_enabled(self) -> bool:
         """Check if WebDAV storage is enabled and configured."""
-        return self.enabled and self.base_url is not None
+        result = self.enabled and self.base_url is not None
+        logger.debug(f"[WebDAV] is_enabled() for user {self.user_id}: enabled={self.enabled}, base_url={self.base_url}, result={result}")
+        return result
     
     def _get_auth(self) -> httpx.BasicAuth:
         """Get HTTP basic auth for WebDAV requests."""
