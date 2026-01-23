@@ -226,8 +226,14 @@ class WebDAVStorageClient:
         if not self.is_enabled():
             raise ValueError("WebDAV storage is not enabled or configured")
         
-        dav_path = self._build_path(directory) if directory else "/"
+        # For root directory, use "/" directly (don't encode empty string)
+        if directory:
+            dav_path = self._build_path(directory)
+        else:
+            dav_path = "/"
         url = self._get_url(dav_path)
+        
+        logger.info(f"[WebDAV] list_files: directory='{directory}', dav_path='{dav_path}', url='{url}', base_url='{self.base_url}'")
         
         # PROPFIND request body
         depth = "infinity" if recursive else "1"
@@ -254,6 +260,7 @@ class WebDAVStorageClient:
                     auth=self._get_auth()
                 )
                 response.raise_for_status()
+                logger.debug(f"[WebDAV] PROPFIND response status: {response.status_code}, content length: {len(response.text)}")
                 
                 # Parse XML response
                 import xml.etree.ElementTree as ET
@@ -267,14 +274,39 @@ class WebDAVStorageClient:
                         continue
                     
                     href = href_elem.text
-                    # Extract relative path
-                    if href.startswith(self.base_url):
+                    logger.debug(f"[WebDAV] Processing href: '{href}'")
+                    
+                    # Extract relative path from href
+                    # href might be absolute URL or relative path
+                    if href.startswith('http://') or href.startswith('https://'):
+                        # Absolute URL - extract path part
+                        from urllib.parse import urlparse
+                        parsed = urlparse(href)
+                        rel_path = parsed.path
+                        # Remove base_url path if it matches
+                        if self.base_url and rel_path.startswith(self.base_url):
+                            rel_path = rel_path[len(self.base_url):]
+                    elif href.startswith(self.base_url):
+                        # Starts with base_url but not full URL
                         rel_path = href[len(self.base_url):]
                     else:
+                        # Relative path
                         rel_path = href
                     
-                    # Skip the directory itself
-                    if rel_path.rstrip('/') == dav_path.rstrip('/'):
+                    # Normalize path (remove leading/trailing slashes for comparison)
+                    rel_path_normalized = rel_path.strip('/')
+                    dav_path_normalized = dav_path.strip('/')
+                    
+                    logger.debug(f"[WebDAV] rel_path='{rel_path}' (normalized: '{rel_path_normalized}'), dav_path='{dav_path}' (normalized: '{dav_path_normalized}')")
+                    
+                    # Skip the directory itself (exact match after normalization)
+                    if rel_path_normalized == dav_path_normalized:
+                        logger.debug(f"[WebDAV] Skipping directory itself: '{rel_path}'")
+                        continue
+                    
+                    # For root listing, also skip if rel_path is empty or just "/"
+                    if not directory and (not rel_path_normalized or rel_path_normalized == ''):
+                        logger.debug(f"[WebDAV] Skipping empty path in root listing")
                         continue
                     
                     # Get properties
@@ -308,14 +340,17 @@ class WebDAVStorageClient:
                     # Extract filename
                     name = Path(rel_path).name
                     
-                    items.append({
+                    item_data = {
                         "name": name,
                         "path": rel_path.lstrip('/'),
                         "is_directory": is_directory,
                         "size": size,
                         "modified": modified
-                    })
+                    }
+                    logger.debug(f"[WebDAV] Adding item: {item_data}")
+                    items.append(item_data)
                 
+                logger.info(f"[WebDAV] list_files returning {len(items)} items")
                 return items
         except httpx.HTTPStatusError as e:
             logger.error(f"[WebDAV] Failed to list files {url}: {e.response.status_code}")
