@@ -1267,10 +1267,13 @@ async def list_files(
             )
         
         # Check cache AFTER confirming WebDAV is enabled (to avoid returning old local filesystem cache)
-        cached_result = cache.get(cache_key)
-        if cached_result:
-            logger.debug(f"[FileCache] Cache hit for {cache_key} (WebDAV)")
-            return cached_result
+        # IMPORTANT: Invalidate cache for user storage when WebDAV is enabled to prevent returning old local filesystem data
+        cache.invalidate(f"{current_user.username}:*:user")
+        logger.info(f"[FILES] Invalidated cache for user {current_user.username} (WebDAV enabled)")
+        
+        # Don't use cache for WebDAV - always fetch fresh data
+        # (Cache might contain old local filesystem data)
+        cached_result = None
         
         logger.debug(f"[FileCache] Cache miss for {cache_key}, fetching from WebDAV")
         
@@ -1325,9 +1328,15 @@ async def list_files(
             return result
         except Exception as e:
             logger.error(f"[FILES] Failed to list files from WebDAV: {e}", exc_info=True)
+            # Don't fall through to local filesystem - raise error instead
             raise HTTPException(status_code=500, detail=f"Failed to list files from WebDAV: {str(e)}")
     
     # External storage - use local filesystem (external storage is always local)
+    # NOTE: This code should ONLY run for external storage mounts, NOT for user storage
+    if not external_storage:
+        # This should never happen - if we get here, it's a logic error
+        logger.error(f"[FILES] ERROR: Reached external storage code path but external_storage is None for user {current_user.username}")
+        raise HTTPException(status_code=500, detail="Internal error: invalid storage path")
     # Determine which path to use
     target_path = external_path
     base_path = Path(external_storage.mount_path)
