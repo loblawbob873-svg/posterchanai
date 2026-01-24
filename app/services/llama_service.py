@@ -361,6 +361,9 @@ class LlamaService:
                         logger.error(f"  - Testing file: file {resolved_path}")
                         raise
             self._model_path = self.model_path
+            # Initialize last_used time when model loads
+            global _last_used
+            _last_used = time.time()
             logger.info("Model loaded successfully")
 
         except Exception as e:

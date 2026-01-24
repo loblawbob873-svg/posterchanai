@@ -233,6 +233,7 @@ class DiffusersService:
 
         # Idle timeout for automatic unloading (default 2 minutes)
         self._idle_timeout = int(settings.get("image_idle_timeout", str(DEFAULT_IDLE_TIMEOUT)))
+        logger.info(f"Loaded image_idle_timeout setting: {self._idle_timeout}")
 
         # Model settings
         self.model_path = settings.get("image_model_path", "")
@@ -867,6 +868,9 @@ class DiffusersService:
         If subprocess_mode is enabled, runs in separate process for guaranteed VRAM release.
         If image_idle_timeout is 0, unloads model immediately after generation.
         """
+        # Reload settings to ensure we have the latest idle_timeout value
+        self._load_settings()
+        
         loop = asyncio.get_event_loop()
 
         # Use subprocess mode for guaranteed VRAM release (recommended for Intel XPU)
