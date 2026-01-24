@@ -426,75 +426,69 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
 
         # Server-to-server requests don't need authentication
         try:
-            selected_server = await get_healthy_server(servers)
+            # Pass full server list to LoadBalancer - it will handle round-robin internally
+            # This ensures proper load balancing across all servers
+            timeout = int(settings.get("ollama_timeout", "120000")) / 1000
+            model = settings.get("ollama_model", "default")
+            load_balancer = LoadBalancer(servers, timeout=timeout, model=model)
 
-            if selected_server:
-                # Always make HTTP request to selected server (even if it's "self")
-                # This ensures proper load balancing and avoids self-detection issues
-                logger.info(f"Load balancer: selected {selected_server} -> HTTP request")
-                timeout = int(settings.get("ollama_timeout", "120000")) / 1000
-                model = settings.get("ollama_model", "default")
-                load_balancer = LoadBalancer([selected_server], timeout=timeout, model=model)
-
-                try:
-                    if request.stream:
-                        # Create a wrapper that catches NoHealthyServersError and re-raises it
-                        # so the outer handler can catch it and fall back to local
-                        lb_stream = load_balancer.chat_stream(
-                            messages=messages,
-                            temperature=temperature,
-                            top_p=top_p,
-                            max_tokens=max_tokens
-                        )
-                        
-                        # Wrap generator - if NoHealthyServersError is raised, stop silently
-                        # The outer exception handler will catch it when StreamingResponse fails
-                        # and fall back to local inference
-                        async def safe_stream():
-                            try:
-                                async for chunk in filter_thinking_stream(lb_stream):
-                                    yield chunk
-                            except NoHealthyServersError:
-                                # Remote server unavailable - stop generator silently
-                                # FastAPI will see an empty stream, but the outer handler
-                                # should catch the exception and fall back to local
-                                # For now, just stop - don't yield anything
-                                return
-                        
-                        return StreamingResponse(
-                            safe_stream(),
-                            media_type="text/event-stream",
-                            headers={
-                                "Cache-Control": "no-cache",
-                                "Connection": "keep-alive",
-                                "X-Accel-Buffering": "no",
-                            }
-                        )
-                    else:
-                        result = await load_balancer.chat(
-                            messages=messages,
-                            temperature=temperature,
-                            top_p=top_p,
-                            max_tokens=max_tokens
-                        )
-                        if "error" in result:
-                            logger.warning(f"Load balancer returned error, falling back to local: {result.get('error')}")
-                            # Fall through to local inference instead of raising exception
-                            raise NoHealthyServersError(f"Remote server returned error: {result.get('error')}")
-                        # Strip thinking tags from load balancer response
-                        if result.get("choices"):
-                            for choice in result["choices"]:
-                                if choice.get("message", {}).get("content"):
-                                    choice["message"]["content"] = strip_thinking_tags(choice["message"]["content"])
-                        return result
-                except (NoHealthyServersError, Exception) as e:
-                        # NoHealthyServersError is expected when remote returns empty stream - fallback is automatic
-                        # Don't log this as it's expected behavior - just silently fall back to local
-                        if not isinstance(e, NoHealthyServersError):
-                            logger.warning(f"Load balancer request failed ({type(e).__name__}: {e}), falling back to local inference")
-                        # Fall through to local inference (silent fallback for NoHealthyServersError)
-            else:
-                logger.info("No healthy servers from load balancer, using local inference")
+            try:
+                if request.stream:
+                    # Create a wrapper that catches NoHealthyServersError and re-raises it
+                    # so the outer handler can catch it and fall back to local
+                    lb_stream = load_balancer.chat_stream(
+                        messages=messages,
+                        temperature=temperature,
+                        top_p=top_p,
+                        max_tokens=max_tokens
+                    )
+                    
+                    # Wrap generator - if NoHealthyServersError is raised, stop silently
+                    # The outer exception handler will catch it when StreamingResponse fails
+                    # and fall back to local inference
+                    async def safe_stream():
+                        try:
+                            async for chunk in filter_thinking_stream(lb_stream):
+                                yield chunk
+                        except NoHealthyServersError:
+                            # Remote server unavailable - stop generator silently
+                            # FastAPI will see an empty stream, but the outer handler
+                            # should catch the exception and fall back to local
+                            # For now, just stop - don't yield anything
+                            return
+                    
+                    return StreamingResponse(
+                        safe_stream(),
+                        media_type="text/event-stream",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "Connection": "keep-alive",
+                            "X-Accel-Buffering": "no",
+                        }
+                    )
+                else:
+                    result = await load_balancer.chat(
+                        messages=messages,
+                        temperature=temperature,
+                        top_p=top_p,
+                        max_tokens=max_tokens
+                    )
+                    if "error" in result:
+                        logger.warning(f"Load balancer returned error, falling back to local: {result.get('error')}")
+                        # Fall through to local inference instead of raising exception
+                        raise NoHealthyServersError(f"Remote server returned error: {result.get('error')}")
+                    # Strip thinking tags from load balancer response
+                    if result.get("choices"):
+                        for choice in result["choices"]:
+                            if choice.get("message", {}).get("content"):
+                                choice["message"]["content"] = strip_thinking_tags(choice["message"]["content"])
+                    return result
+            except (NoHealthyServersError, Exception) as e:
+                # NoHealthyServersError is expected when remote returns empty stream - fallback is automatic
+                # Don't log this as it's expected behavior - just silently fall back to local
+                if not isinstance(e, NoHealthyServersError):
+                    logger.warning(f"Load balancer request failed ({type(e).__name__}: {e}), falling back to local inference")
+                # Fall through to local inference (silent fallback for NoHealthyServersError)
         except Exception as e:
             logger.error(f"Load balancer error: {e}, falling back to local inference", exc_info=True)
             # Fall through to local inference
