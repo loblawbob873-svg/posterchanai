@@ -187,16 +187,43 @@ def parse_server_urls(urls_string: str, exclude_self: bool = False, current_port
     # Get current port from env or default
     current_port = int(os.environ.get("POSTERCHANAI_PORT", str(current_port)))
 
-    # Get local IPs
+    # Get local IPs - include all network interfaces
     local_ips = {'127.0.0.1', 'localhost', '0.0.0.0'}
     if exclude_self:
         try:
             hostname = socket.gethostname()
             local_ips.add(hostname)
-            local_ips.add(socket.gethostbyname(hostname))
-            # Also get all local IPs
+            try:
+                local_ips.add(socket.gethostbyname(hostname))
+            except Exception:
+                pass
+            # Get all local IPs from all network interfaces
             for info in socket.getaddrinfo(hostname, None):
-                local_ips.add(info[4][0])
+                ip = info[4][0]
+                if ip and not ip.startswith('::'):  # Skip IPv6
+                    local_ips.add(ip)
+            # Also get all IPs from network interfaces using socket
+            try:
+                # Connect to a remote address to get local IP
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(('8.8.8.8', 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+                local_ips.add(local_ip)
+            except Exception:
+                pass
+            # Try to get all interface IPs using netifaces if available, or ip command
+            try:
+                import subprocess
+                # Try 'ip addr' command (works on most Linux systems)
+                result = subprocess.run(['ip', 'addr', 'show'], capture_output=True, text=True, timeout=2)
+                if result.returncode == 0:
+                    import re
+                    # Extract IPv4 addresses from ip addr output
+                    for match in re.finditer(r'inet (\d+\.\d+\.\d+\.\d+)', result.stdout):
+                        local_ips.add(match.group(1))
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -230,12 +257,12 @@ def parse_server_urls(urls_string: str, exclude_self: bool = False, current_port
 
                 # Only skip if SAME host AND SAME port (i.e., pointing to ourselves)
                 if host in local_ips and port == current_port:
-                    logger.debug(f"Skipping self URL: {url} (same host and port)")
+                    logger.info(f"[LOAD BALANCER] Skipping self URL: {url} (host={host} in local_ips={local_ips}, port={port} == current_port={current_port})")
                     continue
                 elif host in local_ips:
-                    logger.info(f"Allowing local URL on different port: {url}")
-            except Exception:
-                pass
+                    logger.info(f"[LOAD BALANCER] Allowing local URL on different port: {url} (host={host} in local_ips, but port {port} != {current_port})")
+            except Exception as e:
+                logger.debug(f"[LOAD BALANCER] Error checking if URL is self: {url}, error: {e}")
 
         servers.append(url)
 

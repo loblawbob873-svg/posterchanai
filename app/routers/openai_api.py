@@ -391,8 +391,9 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     # Load balancer ONLY uses what's configured in admin UI - no assumptions
     settings = {s.key: s.value for s in db.query(Setting).all()}
     chat_server_urls = settings.get("chat_server_urls", "")
-    # Parse server URLs from admin UI - only use what's configured
-    servers = parse_server_urls(chat_server_urls, exclude_self=True) if not skip_load_balancer and chat_server_urls else []
+    # Parse server URLs from admin UI - use exactly what's configured (don't exclude self)
+    # If user wants self in the list, they can include it - it will make HTTP request to itself
+    servers = parse_server_urls(chat_server_urls, exclude_self=False) if not skip_load_balancer and chat_server_urls else []
 
     # Convert messages to dict format
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
