@@ -169,6 +169,7 @@ def _ensure_llm_loaded(db: Session, settings: dict):
             from app.services.ipex_service import get_ipex_service
             service = get_ipex_service(db)
             service._ensure_model_loaded()
+        # Ollama backend - no local model to load, skip silently
     except Exception as e:
         logger.error(f"Error loading LLM: {e}")
         raise
