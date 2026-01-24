@@ -224,6 +224,7 @@ class ImageLoadBalancer:
         height: Optional[int] = None,
         steps: Optional[int] = None,
         cfg: Optional[float] = None,
+        api_key: Optional[str] = None,
     ) -> Optional[str]:
         """
         Generate image from a load-balanced server.
@@ -247,6 +248,13 @@ class ImageLoadBalancer:
         if cfg is not None:
             payload["cfg"] = cfg
 
+        # Build headers with authentication
+        headers = {}
+        if api_key:
+            headers["X-API-Key"] = api_key
+            logger.info(f"[IMAGE LB] Sending X-API-Key header (length: {len(api_key)})")
+        headers["X-Posterchanai-Load-Balanced"] = "true"
+
         # Try each server until one succeeds
         tried_servers = set()
         last_error = None
@@ -266,7 +274,8 @@ class ImageLoadBalancer:
                 try:
                     response = await client.post(
                         f"{server}/api/generate-image",
-                        json=payload
+                        json=payload,
+                        headers=headers
                     )
                     logger.info(f"IMAGE RESPONSE from {server} | status={response.status_code} | time={time.time()-start_time:.2f}s")
                     response.raise_for_status()

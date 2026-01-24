@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models import Setting
 from app.services.image_load_balancer import (
     ImageLoadBalancer,
+    NoHealthyImageServersError,
     parse_image_server_urls,
     should_use_remote_image,
 )
@@ -204,15 +205,34 @@ async def generate_image_with_load_balancing(
     if result is None and servers:
         logger.warning("Local image generation failed, falling back to remote server")
         timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
-        load_balancer = ImageLoadBalancer(servers, timeout=timeout)
-        return await load_balancer.generate_image(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            width=width,
-            height=height,
-            steps=steps,
-            cfg=cfg,
-        )
+        
+        # Get API key for authentication
+        global_api_key = settings.get("openai_api_key", "")
+        if global_api_key:
+            global_api_key = str(global_api_key).strip()
+        
+        if not global_api_key:
+            global_api_key = settings.get("storage_server_token", "")
+            if global_api_key:
+                global_api_key = str(global_api_key).strip()
+        
+        try:
+            load_balancer = ImageLoadBalancer(servers, timeout=timeout)
+            return await load_balancer.generate_image(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                steps=steps,
+                cfg=cfg,
+                api_key=global_api_key,
+            )
+        except NoHealthyImageServersError as e:
+            logger.error(f"[IMAGE] All remote servers failed in fallback: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"[IMAGE] Fallback to remote server failed: {e}", exc_info=True)
+            return None
 
     return result
 
