@@ -64,12 +64,13 @@ async def get_healthy_image_server(servers: List[str]) -> Optional[str]:
         if _image_server_cycle is None:
             _image_server_list = servers.copy()
             _image_server_cycle = cycle(servers)
-            logger.info(f"Image load balancer initialized with {len(servers)} server(s): {servers}")
+            logger.info(f"[IMAGE LB] INIT: Cycle was None, initialized with {len(servers)} server(s): {servers}")
         elif current_list_tuple != servers_tuple:
             # Server list changed - reset cycle
+            logger.warning(f"[IMAGE LB] RESET: Server list changed! Old: {current_list_tuple}, New: {servers_tuple}")
             _image_server_list = servers.copy()
             _image_server_cycle = cycle(servers)
-            logger.info(f"Image load balancer reinitialized with {len(servers)} server(s): {servers} (list changed)")
+            logger.info(f"[IMAGE LB] REINIT: Reinitialized with {len(servers)} server(s): {servers}")
 
         # Simple round-robin - get next server
         server = next(_image_server_cycle)

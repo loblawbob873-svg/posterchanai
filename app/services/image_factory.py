@@ -117,6 +117,7 @@ async def generate_image_with_load_balancing(
             
             if global_api_key:
                 headers["X-API-Key"] = global_api_key
+                logger.info(f"[IMAGE] Sending X-API-Key header (length: {len(global_api_key)}) to {selected_server}")
             else:
                 logger.warning(f"[IMAGE] No API key configured")
             
@@ -124,7 +125,7 @@ async def generate_image_with_load_balancing(
             
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
-                    logger.info(f"[IMAGE] Request to {selected_server} with prompt: {prompt[:50]}...")
+                    logger.info(f"[IMAGE] Request to {selected_server} with prompt: {prompt[:50]}... (headers: {list(headers.keys())})")
                     response = await client.post(
                         f"{selected_server}/api/generate-image",
                         json=payload,
@@ -134,23 +135,29 @@ async def generate_image_with_load_balancing(
                     logger.info(f"[IMAGE] Response from {selected_server}: status={response.status_code}")
                     
                     if response.status_code == 401:
-                        logger.error(f"[IMAGE] ERROR from {selected_server} | Authentication failed")
-                        return None
-                    
-                    response.raise_for_status()
-                    result = response.json()
-                    
-                    if result.get("error"):
-                        logger.error(f"[IMAGE] ERROR from {selected_server} | error={result['error']}")
-                        return None
-                    
-                    image_data = result.get("image")
-                    if image_data:
-                        logger.info(f"[IMAGE] SUCCESS from {selected_server} ({len(image_data)} chars)")
-                        return image_data
+                        error_body = response.text[:500] if hasattr(response, 'text') else ""
+                        logger.error(f"[IMAGE] ERROR from {selected_server} | Authentication failed (401) - Response: {error_body}")
+                        logger.error(f"[IMAGE] Sent X-API-Key header: {bool(headers.get('X-API-Key'))}, length: {len(headers.get('X-API-Key', ''))}")
+                        # Fall through to local backend
                     else:
-                        logger.error(f"[IMAGE] ERROR from {selected_server} | no image in response")
-                        return None
+                        try:
+                            response.raise_for_status()
+                            result = response.json()
+                            
+                            if result.get("error"):
+                                logger.error(f"[IMAGE] ERROR from {selected_server} | error={result['error']}")
+                                # Fall through to local backend
+                            else:
+                                image_data = result.get("image")
+                                if image_data:
+                                    logger.info(f"[IMAGE] SUCCESS from {selected_server} ({len(image_data)} chars)")
+                                    return image_data
+                                else:
+                                    logger.error(f"[IMAGE] ERROR from {selected_server} | no image in response")
+                                    # Fall through to local backend
+                        except httpx.HTTPStatusError:
+                            # Will be caught by outer exception handler
+                            raise
             except httpx.HTTPStatusError as e:
                 error_text = e.response.text[:500] if hasattr(e.response, 'text') else str(e)
                 logger.error(f"[IMAGE] HTTP error from {selected_server}: {e.response.status_code} - {error_text}")
