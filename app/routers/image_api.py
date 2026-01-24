@@ -166,6 +166,14 @@ async def generate_image(
     try:
         logger.info(f"[IMAGE-API] Generating image: {request.prompt[:50]}...")
 
+        # Extract API key from request headers for server-to-server authentication
+        api_key = None
+        auth_header = http_request.headers.get("X-API-Key") or http_request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            api_key = auth_header[7:]
+        elif auth_header and not auth_header.startswith("Bearer "):
+            api_key = auth_header
+
         # Generate image with load balancing support
         # The load balancer will detect if this server is selected and generate locally
         # Lock is handled inside for local generation only
@@ -176,7 +184,8 @@ async def generate_image(
             width=request.width,
             height=request.height,
             steps=request.steps,
-            cfg=request.cfg
+            cfg=request.cfg,
+            api_key=api_key
         )
 
         if result:
