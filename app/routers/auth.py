@@ -649,7 +649,18 @@ def update_user_settings(
 
         save_user_setting("mail_accounts", json.dumps(new_accounts))
 
-    db.commit()
+    try:
+        # Flush changes to database before commit
+        db.flush()
+        
+        # Commit the transaction - ensure this succeeds
+        db.commit()
+        logger.info(f"[Auth] Successfully saved user settings for user {current_user.username}")
+    except Exception as e:
+        # Rollback on any error during save
+        db.rollback()
+        logger.error(f"[Auth] Failed to save user settings for user {current_user.username}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}")
 
     return {"message": "Settings updated"}
 

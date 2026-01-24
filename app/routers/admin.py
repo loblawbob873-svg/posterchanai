@@ -317,19 +317,31 @@ def update_settings(
     cache_settings_changed = False
     cache_keys = {"file_cache_enabled", "file_cache_ttl", "file_cache_max_size"}
     
-    for key, value in data.settings.items():
-        setting = db.query(Setting).filter(Setting.key == key).first()
-        if setting:
-            setting.value = value
-        else:
-            db.add(Setting(key=key, value=value))
+    try:
+        for key, value in data.settings.items():
+            setting = db.query(Setting).filter(Setting.key == key).first()
+            if setting:
+                setting.value = value
+            else:
+                db.add(Setting(key=key, value=value))
+            
+            if key in cache_keys:
+                cache_settings_changed = True
         
-        if key in cache_keys:
-            cache_settings_changed = True
+        # Flush changes to database before commit
+        db.flush()
+        
+        # Commit the transaction - ensure this succeeds
+        db.commit()
+        logger.info(f"[Admin] Successfully saved {len(data.settings)} settings")
+        
+    except Exception as e:
+        # Rollback on any error during save
+        db.rollback()
+        logger.error(f"[Admin] Failed to save settings: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}")
     
-    db.commit()
-    
-    # Reload file cache if cache settings changed
+    # Reload file cache if cache settings changed (after successful commit)
     if cache_settings_changed:
         try:
             from app.routers.files import get_file_cache
@@ -338,7 +350,7 @@ def update_settings(
         except Exception as e:
             logger.warning(f"[Admin] Failed to reload file cache: {e}")
     
-    # Reload SQLite cache settings if changed
+    # Reload SQLite cache settings if changed (after successful commit)
     sqlite_cache_keys = {"sqlite_cache_mb", "sqlite_mmap_size_mb"}
     if any(key in data.settings for key in sqlite_cache_keys):
         try:
