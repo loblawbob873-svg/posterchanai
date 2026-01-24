@@ -88,9 +88,6 @@ class OllamaService:
         self.mirostat_tau = float(get_setting("ollama_mirostat_tau", "5.0"))
         self.tfs_z = float(get_setting("ollama_tfs_z", "1.0"))
 
-        # API key for external access
-        self.api_key = settings.get("openai_api_key", "")
-
     def get_model_options(self, **overrides) -> Dict[str, Any]:
         """Get model options, allowing overrides from request"""
         options = {

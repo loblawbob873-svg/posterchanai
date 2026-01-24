@@ -2409,22 +2409,34 @@ class ChatHandler {
                 </a>`;
             }
             html += '</div>';
-        } else if (data.type === 'generated_image' && data.image) {
-            html = contentHtml;
-            const imageId = 'img_' + Date.now();
-            const saveButtonId = 'save_img_' + Date.now();
-            html += `<div class="image-wrapper">
-                <img src="data:image/png;base64,${data.image}" alt="Generated image" class="generated-image" id="${imageId}">
-                <div class="image-actions">
-                    <button class="btn-action" onclick="window.chatHandler.saveGeneratedImage('${imageId}', '${this.escapeHtml(data.prompt || '')}', '${saveButtonId}')" id="${saveButtonId}" title="Save to storage">💾</button>
-                    <button class="btn-action" onclick="window.chatHandler.downloadImage('${imageId}')" title="Download">⬇️</button>
-                    <button class="btn-action" onclick="window.chatHandler.copyImage('${imageId}')" title="Copy to clipboard">📋</button>
-                </div>
-            </div>`;
+        } else if (data.type === 'generated_image') {
+            console.log('[IMAGE] Received generated_image response:', {
+                hasImage: !!data.image,
+                imageLength: data.image ? data.image.length : 0,
+                prompt: data.prompt,
+                content: data.content
+            });
+            
+            if (!data.image) {
+                console.error('[IMAGE] No image data in response!');
+                html = contentHtml || '<p>Image generation failed: No image data received</p>';
+            } else {
+                html = contentHtml;
+                const imageId = 'img_' + Date.now();
+                const saveButtonId = 'save_img_' + Date.now();
+                html += `<div class="image-wrapper">
+                    <img src="data:image/png;base64,${data.image}" alt="Generated image" class="generated-image" id="${imageId}">
+                    <div class="image-actions">
+                        <button class="btn-action" onclick="window.chatHandler.saveGeneratedImage('${imageId}', '${this.escapeHtml(data.prompt || '')}', '${saveButtonId}')" id="${saveButtonId}" title="Save to storage">💾</button>
+                        <button class="btn-action" onclick="window.chatHandler.downloadImage('${imageId}')" title="Download">⬇️</button>
+                        <button class="btn-action" onclick="window.chatHandler.copyImage('${imageId}')" title="Copy to clipboard">📋</button>
+                    </div>
+                </div>`;
 
-            // Notify mascot for image generation
-            if (window.mascotController) {
-                window.mascotController.onResponse(true);
+                // Notify mascot for image generation
+                if (window.mascotController) {
+                    window.mascotController.onResponse(true);
+                }
             }
         } else if (data.type === 'search' && data.results) {
             html = contentHtml;

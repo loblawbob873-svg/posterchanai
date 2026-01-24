@@ -864,6 +864,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                     pass
 
                         # Send response (with conn_id to ensure it goes to correct chat, queue if stale)
+                        # Log image generation responses for debugging
+                        if result.get("type") == "generated_image":
+                            image_len = len(result.get("image", "")) if result.get("image") else 0
+                            logger.info(f"[WEBSOCKET] Sending generated_image response: image_length={image_len}, has_prompt={bool(result.get('prompt'))}")
+                        
                         await manager.send_json(user.id, {
                             "type": "response",
                             "data": result

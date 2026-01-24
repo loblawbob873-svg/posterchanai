@@ -142,8 +142,6 @@ class SettingsResponse(BaseModel):
     ollama_mirostat_eta: str = "0.1"
     ollama_mirostat_tau: str = "5.0"
     ollama_tfs_z: str = "1.0"
-    # API settings
-    openai_api_key: str = ""
     # Registration settings
     allow_registration: str = "false"
     # Load balancing - proxy chat to external posterchanai servers
@@ -222,10 +220,8 @@ class SettingsResponse(BaseModel):
     # Built-in torrent client settings
     bt_enabled: str = "false"
     bt_server_url: str = ""  # Remote torrent server URL (empty = local)
-    bt_server_token: str = ""  # API token for remote torrent server auth
     bt_download_dir: str = "/var/lib/posterchanai/torrents"
     storage_server_url: str = ""  # Remote storage server URL (empty = local)
-    storage_server_token: str = ""  # API token for remote storage server auth
     # CalDAV/CardDAV server settings
     caldav_enabled: str = "false"  # Enable built-in CalDAV server
     caldav_port: str = "8081"  # CalDAV server port

@@ -30,15 +30,6 @@
     </fieldset>
 
     <fieldset>
-        <legend>API Access</legend>
-        <div class="form-group">
-            <label for="openai_api_key">Global API Key (optional)</label>
-            <input type="password" id="openai_api_key" name="openai_api_key" placeholder="sk-... (leave empty for user keys only)">
-            <small>Global key for /v1/chat/completions. Users can also generate their own keys.</small>
-        </div>
-    </fieldset>
-
-    <fieldset>
         <legend>LLM Health Check</legend>
         <div class="form-group">
             <label for="ollama_ping_enabled">
@@ -92,12 +83,7 @@
         <div class="form-group">
             <label for="storage_server_url">Storage Server URL</label>
             <input type="text" id="storage_server_url" name="storage_server_url" placeholder="http://storage-node:3051">
-            <small>Leave empty for local storage. Set URL to proxy file requests to a remote storage server (for load-balanced setups)</small>
-        </div>
-        <div class="form-group">
-            <label for="storage_server_token">Storage Server API Token</label>
-            <input type="password" id="storage_server_token" name="storage_server_token" placeholder="shared-secret-token">
-            <small>Optional: Shared token for server-to-server auth. Set same token on both storage server and client nodes</small>
+            <small>Leave empty for local storage. Set URL to proxy file requests to a remote storage server (for load-balanced setups). Server-to-server requests use load-balanced header authentication.</small>
         </div>
     </fieldset>
 
@@ -292,12 +278,7 @@ newsweek.com|Newsweek"></textarea>
         <div class="form-group">
             <label for="bt_server_url">Remote Torrent Server URL</label>
             <input type="text" id="bt_server_url" name="bt_server_url" placeholder="http://torrent-server:3051">
-            <small>Leave empty for local. Set URL to forward requests to a remote torrent server</small>
-        </div>
-        <div class="form-group">
-            <label for="bt_server_token">Server API Token</label>
-            <input type="password" id="bt_server_token" name="bt_server_token" placeholder="shared-secret-token">
-            <small>Shared token for server-to-server auth. Set same token on both servers</small>
+            <small>Leave empty for local. Set URL to forward requests to a remote torrent server. Server-to-server requests use load-balanced header authentication.</small>
         </div>
         <div class="form-group">
             <label for="bt_download_dir">Download Directory</label>

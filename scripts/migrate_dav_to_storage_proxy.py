@@ -21,14 +21,12 @@ def migrate_user_dav_data(username: str, dav_type: str, db: SessionLocal):
     """Migrate a user's DAV data to storage server."""
     # Get storage server config
     storage_url_setting = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-    storage_token_setting = db.query(Setting).filter(Setting.key == "storage_server_token").first()
     
     if not storage_url_setting or not storage_url_setting.value:
         logger.error("Storage server URL not configured")
         return False
     
     storage_url = storage_url_setting.value
-    storage_token = storage_token_setting.value if storage_token_setting else None
     
     # Get local storage path
     storage = get_storage_service(db)
@@ -45,10 +43,8 @@ def migrate_user_dav_data(username: str, dav_type: str, db: SessionLocal):
     
     logger.info(f"Migrating {dav_type} data for {username} from {dav_path} to {storage_url}")
     
-    # Get auth headers
-    headers = {}
-    if storage_token:
-        headers["Authorization"] = f"Bearer {storage_token}"
+    # Server-to-server requests use load-balanced header
+    headers = {"X-Posterchanai-Load-Balanced": "true"}
     
     # Count files to migrate
     total_files = 0

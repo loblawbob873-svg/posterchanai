@@ -354,8 +354,6 @@ When asked to write or modify code or files:
             "ollama_mirostat_eta": "0.1",
             "ollama_mirostat_tau": "5.0",
             "ollama_tfs_z": "1.0",
-            # API settings
-            "openai_api_key": "",
             # Registration settings
             "allow_registration": "false",
             # Load balancing - proxy chat to external posterchanai servers
@@ -440,9 +438,7 @@ When asked to write or modify code or files:
             # Built-in torrent client (libtorrent)
             "bt_enabled": "false",
             "bt_server_url": "",              # Remote torrent server URL (empty = local)
-            "bt_server_token": "",            # API token for remote torrent server auth
             "storage_server_url": "",         # Remote storage server URL (empty = local)
-            "storage_server_token": "",       # API token for remote storage server auth
             # CalDAV/CardDAV server settings
             "caldav_enabled": "false",         # Enable built-in CalDAV server
             "caldav_port": "8081",            # CalDAV server port

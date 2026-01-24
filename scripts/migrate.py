@@ -74,8 +74,6 @@ REQUIRED_SETTINGS = {
     "ollama_mirostat_eta": "0.1",
     "ollama_mirostat_tau": "5.0",
     "ollama_tfs_z": "1.0",
-    # API settings
-    "openai_api_key": "",
     # Registration settings
     "allow_registration": "false",
     # Load balancing

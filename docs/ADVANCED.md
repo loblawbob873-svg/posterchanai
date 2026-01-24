@@ -768,7 +768,7 @@ Proxy file requests to a designated storage node. This avoids requiring shared f
 
 - **Storage Node**: Leave `storage_server_url` empty, configure `upload_path` to local directory
 - **Client Nodes**: Set `storage_server_url` to storage node URL (e.g., `http://192.168.0.10:3051`)
-- **Optional**: Set `storage_server_token` on both nodes for server-to-server authentication
+- **Authentication**: Server-to-server requests use load-balanced header authentication (no tokens needed)
 
 **Setup:**
 1. Designate one node as the storage server
