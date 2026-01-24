@@ -388,9 +388,11 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     from app.services.load_balancer import LoadBalancer, parse_server_urls
 
     # Check for load balancer first (unless explicitly skipped to prevent loops)
+    # Load balancer ONLY uses what's configured in admin UI - no assumptions
     settings = {s.key: s.value for s in db.query(Setting).all()}
     chat_server_urls = settings.get("chat_server_urls", "")
-    servers = parse_server_urls(chat_server_urls) if not skip_load_balancer else []
+    # Parse server URLs from admin UI - only use what's configured
+    servers = parse_server_urls(chat_server_urls, exclude_self=True) if not skip_load_balancer and chat_server_urls else []
 
     # Convert messages to dict format
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
