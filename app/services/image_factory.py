@@ -186,25 +186,25 @@ async def generate_image_with_load_balancing(
         logger.info("Using local backend for image generation (serialized with GPU lock)")
         result = None
         try:
-        # Use shared GPU lock to prevent LLM and image from running simultaneously
-        from app.services.locks import GPUResourceLock, image_generation_lock
-        async with GPUResourceLock("Image", f"prompt={prompt[:30]}..."):
-            async with image_generation_lock:
-                prepare_vram_for_image(db)
-                backend = get_image_backend(db)
-                logger.info(f"Calling backend.generate_image with prompt: {prompt[:50]}...")
-                result = await backend.generate_image(
-                    prompt=prompt,
-                    negative_prompt=negative_prompt,
-                    width=width,
-                    height=height,
-                    steps=steps,
-                    cfg=cfg,
-                )
-                if result:
-                    logger.info(f"Local backend returned image ({len(result) if result else 0} chars)")
-                else:
-                    logger.warning(f"Local backend returned None (generation may have failed)")
+            # Use shared GPU lock to prevent LLM and image from running simultaneously
+            from app.services.locks import GPUResourceLock, image_generation_lock
+            async with GPUResourceLock("Image", f"prompt={prompt[:30]}..."):
+                async with image_generation_lock:
+                    prepare_vram_for_image(db)
+                    backend = get_image_backend(db)
+                    logger.info(f"Calling backend.generate_image with prompt: {prompt[:50]}...")
+                    result = await backend.generate_image(
+                        prompt=prompt,
+                        negative_prompt=negative_prompt,
+                        width=width,
+                        height=height,
+                        steps=steps,
+                        cfg=cfg,
+                    )
+                    if result:
+                        logger.info(f"Local backend returned image ({len(result) if result else 0} chars)")
+                    else:
+                        logger.warning(f"Local backend returned None (generation may have failed)")
         except Exception as e:
             logger.error(f"Local image generation failed with exception: {e}", exc_info=True)
             result = None
