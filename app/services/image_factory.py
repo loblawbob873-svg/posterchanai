@@ -62,7 +62,6 @@ async def generate_image_with_load_balancing(
     height: Optional[int] = None,
     steps: Optional[int] = None,
     cfg: Optional[float] = None,
-    api_key: Optional[str] = None,
 ) -> Optional[str]:
     """
     Generate image with load balancing support.
@@ -113,24 +112,23 @@ async def generate_image_with_load_balancing(
                 payload["cfg"] = cfg
             
             # Get authentication token for server-to-server communication
-            # Prefer the API key from the request, fall back to global settings
+            # For server-to-server requests, use global API key (not user's API key)
+            # The remote server needs a shared key configured, not individual user keys
             headers = {}
-            auth_key = api_key
-            if not auth_key:
-                auth_key = settings.get("openai_api_key", "")
-                if auth_key:
-                    auth_key = str(auth_key).strip()
+            server_api_key = settings.get("openai_api_key", "")
+            if server_api_key:
+                server_api_key = str(server_api_key).strip()
             
-            if not auth_key:
-                auth_key = settings.get("storage_server_token", "")
-                if auth_key:
-                    auth_key = str(auth_key).strip()
+            if not server_api_key:
+                server_api_key = settings.get("storage_server_token", "")
+                if server_api_key:
+                    server_api_key = str(server_api_key).strip()
             
-            if auth_key:
-                headers["X-API-Key"] = auth_key
-                logger.info(f"[IMAGE] Sending X-API-Key header (length: {len(auth_key)}) to {selected_server}")
+            if server_api_key:
+                headers["X-API-Key"] = server_api_key
+                logger.info(f"[IMAGE] Sending X-API-Key header (length: {len(server_api_key)}) to {selected_server}")
             else:
-                logger.warning(f"[IMAGE] No API key configured for server-to-server request")
+                logger.warning(f"[IMAGE] No global API key configured for server-to-server request - remote server may reject")
             
             headers["X-Posterchanai-Load-Balanced"] = "true"
             
@@ -226,17 +224,16 @@ async def generate_image_with_load_balancing(
         timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
         
         # Get API key for authentication
-        # Prefer the API key from the request, fall back to global settings
-        auth_key = api_key
-        if not auth_key:
-            auth_key = settings.get("openai_api_key", "")
-            if auth_key:
-                auth_key = str(auth_key).strip()
+        # For server-to-server fallback, use global API key (not user's API key)
+        # The remote server needs a shared key configured, not individual user keys
+        server_api_key = settings.get("openai_api_key", "")
+        if server_api_key:
+            server_api_key = str(server_api_key).strip()
         
-        if not auth_key:
-            auth_key = settings.get("storage_server_token", "")
-            if auth_key:
-                auth_key = str(auth_key).strip()
+        if not server_api_key:
+            server_api_key = settings.get("storage_server_token", "")
+            if server_api_key:
+                server_api_key = str(server_api_key).strip()
         
         try:
             load_balancer = ImageLoadBalancer(servers, timeout=timeout)
@@ -247,7 +244,7 @@ async def generate_image_with_load_balancing(
                 height=height,
                 steps=steps,
                 cfg=cfg,
-                api_key=auth_key,
+                api_key=server_api_key,
             )
         except NoHealthyImageServersError as e:
             logger.error(f"[IMAGE] All remote servers failed in fallback: {e}")
