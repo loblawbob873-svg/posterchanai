@@ -251,6 +251,14 @@ class DiffusersService:
             self._device = detect_device()
         else:
             self._device = device_setting
+            # Validate device is actually available
+            import torch
+            if self._device == "cuda" and not torch.cuda.is_available():
+                logger.warning(f"image_gpu_device is set to 'cuda' but CUDA is not available, falling back to auto-detection")
+                self._device = detect_device()
+            elif self._device == "xpu" and not (hasattr(torch, "xpu") and torch.xpu.is_available()):
+                logger.warning(f"image_gpu_device is set to 'xpu' but XPU is not available, falling back to auto-detection")
+                self._device = detect_device()
 
         # Backend setting
         self.backend = settings.get("image_backend", "comfyui")  # "native" or "comfyui"

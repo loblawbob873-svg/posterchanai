@@ -321,9 +321,16 @@ def update_settings(
         for key, value in data.settings.items():
             setting = db.query(Setting).filter(Setting.key == key).first()
             if setting:
-                setting.value = value
+                # Only update if value is not empty string - prevents accidental clearing
+                # This protects against admin UI sending partial updates with empty values
+                if value != "":
+                    setting.value = value
+                # If value is empty and setting exists, preserve existing value
+                # (prevents accidental erasure when admin UI sends all settings)
             else:
-                db.add(Setting(key=key, value=value))
+                # Only create new setting if value is not empty
+                if value != "":
+                    db.add(Setting(key=key, value=value))
             
             if key in cache_keys:
                 cache_settings_changed = True
