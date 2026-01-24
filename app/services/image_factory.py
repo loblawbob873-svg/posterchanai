@@ -154,15 +154,16 @@ async def generate_image_with_load_balancing(
             except httpx.HTTPStatusError as e:
                 error_text = e.response.text[:500] if hasattr(e.response, 'text') else str(e)
                 logger.error(f"[IMAGE] HTTP error from {selected_server}: {e.response.status_code} - {error_text}")
-                return None
+                # Fall through to local backend
             except httpx.TimeoutException:
                 logger.error(f"[IMAGE] Timeout from {selected_server} (timeout={timeout}s)")
-                return None
+                # Fall through to local backend
             except Exception as e:
                 logger.error(f"[IMAGE] Failed from {selected_server}: {type(e).__name__}: {e}", exc_info=True)
-                return None
+                # Fall through to local backend
 
     # Use local backend with GPU LOCK to prevent GPU overload
+    # This handles: no remote servers configured, remote request failed, or when "self" is selected by load balancer
     # This handles both: no remote servers configured, and when "self" is selected by load balancer
     logger.info("Using local backend for image generation (serialized with GPU lock)")
     result = None
