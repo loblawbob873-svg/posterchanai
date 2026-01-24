@@ -318,10 +318,29 @@ class LoadBalancer:
         if not self.servers:
             raise ValueError("No servers configured for load balancing")
 
-        # Simple round-robin selection
-        server = await get_healthy_server(self.servers)
+        # Simple round-robin selection - skip self URLs and get next server (same as images)
+        import os
+        current_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
+        max_attempts = len(self.servers) * 2
+        attempts = 0
+        server = None
+        
+        while attempts < max_attempts:
+            candidate = await get_healthy_server(self.servers)
+            if not candidate:
+                break
+            attempts += 1
+            
+            # Skip self URLs - select next server (same as images)
+            if is_self_url(candidate, current_port):
+                logger.debug(f"[LOAD BALANCER] Skipping self URL in round-robin: {candidate}")
+                continue
+            
+            server = candidate
+            break
+        
         if not server:
-            logger.warning("No healthy remote servers - signaling to use local")
+            logger.warning("No healthy remote servers (or all are self) - signaling to use local")
             raise NoHealthyServersError("No healthy remote servers available")
 
         start_time = time.time()
@@ -467,10 +486,29 @@ class LoadBalancer:
         if not self.servers:
             raise ValueError("No servers configured for load balancing")
 
-        # Always use round-robin selection, even for single server (for consistency)
-        server = await get_healthy_server(self.servers)
+        # Always use round-robin selection - skip self URLs and get next server (same as images)
+        import os
+        current_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
+        max_attempts = len(self.servers) * 2
+        attempts = 0
+        server = None
+        
+        while attempts < max_attempts:
+            candidate = await get_healthy_server(self.servers)
+            if not candidate:
+                break
+            attempts += 1
+            
+            # Skip self URLs - select next server (same as images)
+            if is_self_url(candidate, current_port):
+                logger.debug(f"[LOAD BALANCER] Skipping self URL in round-robin: {candidate}")
+                continue
+            
+            server = candidate
+            break
+        
         if not server:
-            logger.warning("No healthy remote servers - signaling to use local")
+            logger.warning("No healthy remote servers (or all are self) - signaling to use local")
             raise NoHealthyServersError("No healthy remote servers available")
 
         start_time = time.time()
