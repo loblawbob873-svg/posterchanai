@@ -49,25 +49,51 @@ async def save_image(
     username: str = Form(...),
     conversation_id: int = Form(...),
     prefix: str = Form("img"),
+    request: FastAPIRequest = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
     Save an image file. Called by client nodes when proxying file uploads.
     Only accessible on storage server node.
+    Supports load-balanced requests from other posterchanai nodes.
     """
-    # Verify user owns this conversation
-    from app.models import Conversation
-    conversation = db.query(Conversation).filter(
-        Conversation.id == conversation_id,
-        Conversation.user_id == current_user.id
-    ).first()
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+    # Allow load-balanced requests from other posterchanai nodes without authentication
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = load_balanced_header == "true"
     
-    # Verify username matches
-    if current_user.username != username:
-        raise HTTPException(status_code=403, detail="Access denied")
+    if is_server_request:
+        # For load-balanced requests, verify conversation exists but don't check ownership
+        from app.models import Conversation
+        conversation = db.query(Conversation).filter(
+            Conversation.id == conversation_id
+        ).first()
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Get user from username for load-balanced requests
+        user = db.query(User).filter(User.username == username).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+    else:
+        # For regular requests, require authentication and verify ownership
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        
+        # Verify user owns this conversation
+        from app.models import Conversation
+        conversation = db.query(Conversation).filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id
+        ).first()
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Verify username matches
+        if current_user.username != username:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        user = current_user
     
     # Read file content
     content = await file.read()

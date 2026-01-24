@@ -807,13 +807,18 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 pass
                             result = {"type": "text", "content": f"Error: {cmd_err}"}
 
-                        # Save generated image to disk
+                        # Save generated image to disk (non-blocking - don't fail if storage save fails)
                         generated_image_path = None
                         if result.get("type") == "generated_image" and result.get("prompt"):
                             manager.last_image_prompts[user.id] = result["prompt"]
                             # Save generated image to disk
                             if result.get("image"):
-                                generated_image_path = storage_service.save_image(user.username, conversation_id, result["image"], "generated")
+                                try:
+                                    generated_image_path = storage_service.save_image(user.username, conversation_id, result["image"], "generated")
+                                except Exception as save_err:
+                                    logger.warning(f"Failed to save generated image to storage (non-fatal): {save_err}")
+                                    # Continue without saving - image will still be displayed to user
+                                    generated_image_path = None
 
                         # Save assistant response with image path
                         assistant_msg = None
