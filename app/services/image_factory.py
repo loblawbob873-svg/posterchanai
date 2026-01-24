@@ -81,11 +81,13 @@ async def generate_image_with_load_balancing(
 
     # If remote image servers are configured, use load balancing
     # Simple round-robin: select one server and make request
+    logger.info(f"[IMAGE] Checking load balancing: servers={servers}, len={len(servers) if servers else 0}")
     if servers:
         from app.services.image_load_balancer import get_healthy_image_server
         
         timeout = int(settings.get("comfyui_timeout", "300000")) / 1000
         selected_server = await get_healthy_image_server(servers)
+        logger.info(f"[IMAGE] Load balancer returned: {selected_server}")
         
         if selected_server:
             # Make HTTP request to selected server (round-robin)
