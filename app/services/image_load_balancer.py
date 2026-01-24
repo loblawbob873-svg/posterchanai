@@ -305,8 +305,11 @@ class ImageLoadBalancer:
                     except Exception:
                         pass
                     logger.error(f"IMAGE ERROR from {server} | status={e.response.status_code} | body={error_body}")
+                    if e.response.status_code == 401:
+                        logger.error(f"IMAGE AUTH ERROR | API key sent: {bool(headers.get('X-API-Key'))}, length: {len(headers.get('X-API-Key', ''))}")
+                        logger.error(f"IMAGE AUTH ERROR | API key value (first 10 chars): {headers.get('X-API-Key', '')[:10]}...")
                     await mark_image_server_unhealthy(server)
-                    last_error = f"HTTP {e.response.status_code}"
+                    last_error = f"HTTP {e.response.status_code}: {error_body[:100]}"
                     continue  # Try next server
 
                 except Exception as e:

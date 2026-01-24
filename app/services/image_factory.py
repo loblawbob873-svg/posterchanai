@@ -76,6 +76,12 @@ async def generate_image_with_load_balancing(
     image_server_urls = settings.get("image_server_urls", "")
     vram_mode = settings.get("vram_mode", "shared")
     servers = parse_image_server_urls(image_server_urls)
+    
+    # Debug: Log API key configuration
+    global_api_key = settings.get("openai_api_key", "")
+    storage_token = settings.get("storage_server_token", "")
+    logger.debug(f"[IMAGE] Config check - openai_api_key exists: {bool(global_api_key)}, length: {len(global_api_key) if global_api_key else 0}")
+    logger.debug(f"[IMAGE] Config check - storage_server_token exists: {bool(storage_token)}, length: {len(storage_token) if storage_token else 0}")
 
     # If vram_mode is llm_only, always use remote servers (no local image generation)
     force_remote = vram_mode == "llm_only"
@@ -118,17 +124,26 @@ async def generate_image_with_load_balancing(
             server_api_key = settings.get("openai_api_key", "")
             if server_api_key:
                 server_api_key = str(server_api_key).strip()
+                # Check if it's actually empty after stripping
+                if not server_api_key:
+                    server_api_key = None
             
             if not server_api_key:
                 server_api_key = settings.get("storage_server_token", "")
                 if server_api_key:
                     server_api_key = str(server_api_key).strip()
+                    if not server_api_key:
+                        server_api_key = None
             
-            if server_api_key:
+            if server_api_key and len(server_api_key) > 0:
                 headers["X-API-Key"] = server_api_key
                 logger.info(f"[IMAGE] Sending X-API-Key header (length: {len(server_api_key)}) to {selected_server}")
             else:
-                logger.warning(f"[IMAGE] No global API key configured for server-to-server request - remote server may reject")
+                logger.error(f"[IMAGE] No valid global API key configured for server-to-server request!")
+                logger.error(f"[IMAGE] openai_api_key value: '{settings.get('openai_api_key', '')}'")
+                logger.error(f"[IMAGE] storage_server_token value: '{settings.get('storage_server_token', '')}'")
+                # Still try without auth - some servers might allow it
+                logger.warning(f"[IMAGE] Proceeding without API key - remote server may reject")
             
             headers["X-Posterchanai-Load-Balanced"] = "true"
             
@@ -147,6 +162,8 @@ async def generate_image_with_load_balancing(
                         error_body = response.text[:500] if hasattr(response, 'text') else ""
                         logger.error(f"[IMAGE] ERROR from {selected_server} | Authentication failed (401) - Response: {error_body}")
                         logger.error(f"[IMAGE] Sent X-API-Key header: {bool(headers.get('X-API-Key'))}, length: {len(headers.get('X-API-Key', ''))}")
+                        logger.error(f"[IMAGE] API key value (first 10 chars): {headers.get('X-API-Key', '')[:10]}...")
+                        logger.error(f"[IMAGE] Global API key from settings exists: {bool(settings.get('openai_api_key'))}, length: {len(settings.get('openai_api_key', ''))}")
                         # Fall through to local backend
                     else:
                         try:
@@ -229,11 +246,15 @@ async def generate_image_with_load_balancing(
         server_api_key = settings.get("openai_api_key", "")
         if server_api_key:
             server_api_key = str(server_api_key).strip()
+            if not server_api_key:
+                server_api_key = None
         
         if not server_api_key:
             server_api_key = settings.get("storage_server_token", "")
             if server_api_key:
                 server_api_key = str(server_api_key).strip()
+                if not server_api_key:
+                    server_api_key = None
         
         try:
             load_balancer = ImageLoadBalancer(servers, timeout=timeout)
