@@ -28,17 +28,14 @@ HEALTH_CHECK_INTERVAL = 30  # Re-check unhealthy servers after 30 seconds
 HEALTH_CHECK_TIMEOUT = 3.0  # Quick timeout for health checks
 
 
-async def check_server_health(server: str, api_key: Optional[str] = None) -> bool:
+async def check_server_health(server: str) -> bool:
     """
     Quick health check - verify server responds to /v1/models within timeout.
     Returns True if healthy, False otherwise.
+    Server-to-server requests use load-balanced header authentication.
     """
-    # Use X-API-Key header for server-to-server authentication (matches image API)
-    headers = {}
-    if api_key:
-        headers["X-API-Key"] = api_key
-        # Also support Bearer token for compatibility
-        headers["Authorization"] = f"Bearer {api_key}"
+    # Server-to-server requests use load-balanced header
+    headers = {"X-Posterchanai-Load-Balanced": "true"}
     try:
         async with httpx.AsyncClient(timeout=HEALTH_CHECK_TIMEOUT) as client:
             response = await client.get(f"{server}/v1/models", headers=headers)

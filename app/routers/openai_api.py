@@ -434,7 +434,7 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
                 logger.info(f"Load balancer: selected {selected_server} -> HTTP request")
                 timeout = int(settings.get("ollama_timeout", "120000")) / 1000
                 model = settings.get("ollama_model", "default")
-                load_balancer = LoadBalancer([selected_server], timeout=timeout, model=model, api_key=api_key if api_key else None)
+                load_balancer = LoadBalancer([selected_server], timeout=timeout, model=model)
 
                 try:
                     if request.stream:
