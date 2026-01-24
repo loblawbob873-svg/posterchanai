@@ -113,7 +113,8 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
     def _get_load_balancer(self) -> Optional[LoadBalancer]:
         """Get load balancer if chat servers are configured"""
         chat_server_urls = self._settings.get("chat_server_urls", "")
-        servers = parse_server_urls(chat_server_urls)
+        # Use all servers from admin UI - round-robin between all configured servers
+        servers = parse_server_urls(chat_server_urls, exclude_self=False)
         if servers:
             timeout_str = self._settings.get("ollama_timeout", "120000")
             timeout = int(timeout_str if timeout_str else "120000") / 1000
