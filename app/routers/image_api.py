@@ -58,11 +58,37 @@ async def get_image_auth(
         if global_api_key:
             global_api_key = str(global_api_key).strip()  # Ensure it's also trimmed
             if x_api_key == global_api_key:
-                logger.debug(f"[IMAGE-API] ✓ Authenticated via X-API-Key header")
+                logger.debug(f"[IMAGE-API] ✓ Authenticated via X-API-Key header (Global API Key)")
                 return True
             else:
+                logger.debug(f"[IMAGE-API] X-API-Key doesn't match Global API Key, checking user API keys...")
+                # Check user API keys from api_keys table (like chat API does)
+                try:
+                    from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
+                    api_key, user_id = query_api_key_with_retry(db, x_api_key)
+                    if api_key and user_id:
+                        user = get_user_from_api_key(db, user_id)
+                        if user:
+                            logger.debug(f"[IMAGE-API] ✓ Authenticated via X-API-Key header (User API Key: {user.username})")
+                            return True
+                except Exception as e:
+                    logger.debug(f"[IMAGE-API] Error checking user API key: {e}")
+                    pass
                 logger.warning(f"[IMAGE-API] ✗ X-API-Key mismatch - provided length: {len(x_api_key)}, expected length: {len(global_api_key)}")
         else:
+            logger.debug(f"[IMAGE-API] X-API-Key provided but no Global API Key configured - checking user API keys...")
+            # Check user API keys even if no global key is set
+            try:
+                from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
+                api_key, user_id = query_api_key_with_retry(db, x_api_key)
+                if api_key and user_id:
+                    user = get_user_from_api_key(db, user_id)
+                    if user:
+                        logger.debug(f"[IMAGE-API] ✓ Authenticated via X-API-Key header (User API Key: {user.username})")
+                        return True
+            except Exception as e:
+                logger.debug(f"[IMAGE-API] Error checking user API key: {e}")
+                pass
             logger.debug(f"[IMAGE-API] X-API-Key provided but no Global API Key configured - allowing request")
             # Allow if no key is configured (open access mode)
             return True
@@ -71,10 +97,24 @@ async def get_image_auth(
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:]
         if global_api_key and token == global_api_key:
-            logger.debug(f"[IMAGE-API] Authenticated via Bearer token")
+            logger.debug(f"[IMAGE-API] Authenticated via Bearer token (Global API Key)")
             return True
         elif global_api_key:
-            logger.warning(f"[IMAGE-API] Bearer token provided but doesn't match")
+            logger.warning(f"[IMAGE-API] Bearer token provided but doesn't match Global API Key")
+        
+        # Check user API keys from api_keys table (like chat API does)
+        if not global_api_key or token != global_api_key:
+            try:
+                from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
+                api_key, user_id = query_api_key_with_retry(db, token)
+                if api_key and user_id:
+                    user = get_user_from_api_key(db, user_id)
+                    if user:
+                        logger.debug(f"[IMAGE-API] Authenticated via Bearer token (User API Key: {user.username})")
+                        return True
+            except Exception as e:
+                logger.debug(f"[IMAGE-API] Error checking user API key: {e}")
+                pass
 
     # Try JWT auth (for logged-in users)
     try:

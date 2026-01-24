@@ -62,6 +62,7 @@ htmlcov/
 *.pem
 *.key
 test_load_balancing.py
+test_concurrent_requests.py
 
 # Claude Code
 .claude/
