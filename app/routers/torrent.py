@@ -26,23 +26,18 @@ def get_torrent_user(
     db: Session = Depends(get_db)
 ) -> Optional[User]:
     """
-    Get current user or validate server-to-server API token.
+    Get current user for torrent API.
+    Load-balanced requests from other posterchanai nodes are allowed without authentication.
     Accepts:
     - Normal user JWT auth (header or cookie)
-    - Server API token (bt_server_token) for server-to-server requests
+    - Load-balanced requests (X-Posterchanai-Load-Balanced header)
     """
     try:
-        # Check for server-to-server API token first
-        if credentials and credentials.credentials:
-            token = credentials.credentials
-            # Check if this is the server API token
-            server_token = db.query(Setting).filter(Setting.key == "bt_server_token").first()
-            if server_token and server_token.value and token == server_token.value:
-                # Valid server token - return None to indicate system access (no specific user)
-                logger.info("[TORRENT] Authenticated via server API token")
-                return None
-            else:
-                logger.warning(f"[TORRENT] Bearer token provided but doesn't match server token (token set: {bool(server_token and server_token.value)})")
+        # Allow load-balanced requests from other posterchanai nodes without authentication
+        load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower()
+        if load_balanced_header == "true":
+            logger.debug("[TORRENT] ✓ Load-balanced request from another posterchanai node - allowing without auth")
+            return None  # System access, no specific user
 
         # Fall back to normal user authentication
         return get_current_user(request, credentials, db)
@@ -68,24 +63,15 @@ async def forward_to_remote(
     if not server_url or not server_url.value:
         return None
 
-    # Get server-to-server API token
-    server_token = db.query(Setting).filter(Setting.key == "bt_server_token").first()
-
-    # Also try to forward the user's cookie (fallback)
-    access_token = request.cookies.get("access_token", "")
-
+    # Server-to-server requests don't need authentication
     url = f"{server_url.value.rstrip('/')}/api/torrent{endpoint}"
-    headers = {}
-
-    # Prefer server token for server-to-server auth
-    if server_token and server_token.value:
-        headers["Authorization"] = f"Bearer {server_token.value}"
-    elif access_token:
-        headers["Cookie"] = f"access_token={access_token}"
+    headers = {
+        "X-Posterchanai-Load-Balanced": "true"
+    }
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            logger.info(f"[TORRENT] Forwarding to {url} with auth: {'token' if server_token and server_token.value else 'cookie' if access_token else 'none'}")
+            logger.info(f"[TORRENT] Forwarding to {url} (load-balanced)")
             if method == "GET":
                 response = await client.get(url, headers=headers)
             else:

@@ -466,10 +466,9 @@ class CommandService:
             # Use remote storage API with async httpx (same as files router)
             url = storage_setting.value.strip()
             try:
-                headers = {}
-                token_setting = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
-                if token_setting and token_setting.value:
-                    headers["Authorization"] = f"Bearer {token_setting.value}"
+                headers = {
+                    "X-Posterchanai-Load-Balanced": "true"
+                }
                 
                 # Try both endpoints (same as files router)
                 search_urls = [
@@ -1065,21 +1064,15 @@ Example: `yt https://youtube.com/watch?v=...`""",
         if not server_url:
             return None
 
-        # Get server-to-server API token
-        server_token = self.db.query(Setting).filter(Setting.key == "bt_server_token").first()
-
+        # Server-to-server requests don't need authentication
         url = f"{server_url.rstrip('/')}/api/torrent{endpoint}"
-        headers = {}
-
-        # Use server token for authentication
-        if server_token and server_token.value:
-            headers["Authorization"] = f"Bearer {server_token.value}"
+        headers = {
+            "X-Posterchanai-Load-Balanced": "true"
+        }
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                logger.info(
-                    f"[TORRENT] TUI request to {url} with auth: {'token' if server_token and server_token.value else 'none'}"
-                )
+                logger.info(f"[TORRENT] TUI request to {url} (load-balanced)")
                 if method == "GET":
                     response = await client.get(url, headers=headers)
                 else:

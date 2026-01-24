@@ -51,10 +51,11 @@ async def check_server_health(server: str, api_key: Optional[str] = None) -> boo
         return False
 
 
-async def get_healthy_server(servers: List[str], api_key: Optional[str] = None) -> Optional[str]:
+async def get_healthy_server(servers: List[str]) -> Optional[str]:
     """
     Get next server using simple round-robin (50/50 distribution).
     No health checking - just pure round-robin alternation.
+    Server-to-server requests don't require authentication.
     """
     global _server_cycle, _server_list
 
@@ -268,19 +269,14 @@ async def mark_server_unhealthy_async(server: str):
 class LoadBalancer:
     """Simple round-robin load balancer for posterchanai servers with health checking"""
 
-    def __init__(self, servers: List[str], timeout: float = 120.0, model: str = "default", api_key: Optional[str] = None):
+    def __init__(self, servers: List[str], timeout: float = 120.0, model: str = "default"):
         self.servers = servers
         self.timeout = timeout
         self.model = model
-        self.api_key = api_key
-        # Use X-API-Key header for server-to-server authentication (matches image API)
-        self.headers = {}
-        if api_key:
-            self.headers["X-API-Key"] = api_key
-            # Also support Bearer token for compatibility
-            self.headers["Authorization"] = f"Bearer {api_key}"
-        # Add header to indicate this is a load-balanced request (prevents loops)
-        self.headers["X-Posterchanai-Load-Balanced"] = "true"
+        # Server-to-server requests don't need authentication - use load-balanced header
+        self.headers = {
+            "X-Posterchanai-Load-Balanced": "true"
+        }
 
     async def chat_stream(
         self,
@@ -299,7 +295,7 @@ class LoadBalancer:
             raise ValueError("No servers configured for load balancing")
 
         # Simple round-robin selection
-        server = await get_healthy_server(self.servers, self.api_key)
+        server = await get_healthy_server(self.servers)
         if not server:
             logger.warning("No healthy remote servers - signaling to use local")
             raise NoHealthyServersError("No healthy remote servers available")
@@ -448,7 +444,7 @@ class LoadBalancer:
             raise ValueError("No servers configured for load balancing")
 
         # Always use round-robin selection, even for single server (for consistency)
-        server = await get_healthy_server(self.servers, self.api_key)
+        server = await get_healthy_server(self.servers)
         if not server:
             logger.warning("No healthy remote servers - signaling to use local")
             raise NoHealthyServersError("No healthy remote servers available")

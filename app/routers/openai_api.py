@@ -191,46 +191,41 @@ async def filter_thinking_stream(stream: AsyncGenerator[str, None]) -> AsyncGene
 
 
 def verify_api_key(
+    request: Request,
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ) -> Optional[User]:
     """Verify API key from Authorization header or X-API-Key header. Returns the user if authenticated."""
-    # Get Global API Key from database
-    setting = db.query(Setting).filter(Setting.key == "openai_api_key").first()
-    global_api_key = str(setting.value).strip() if setting and setting.value else None
+    # Allow load-balanced requests from other posterchanai nodes without authentication
+    if request:
+        load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower()
+        if load_balanced_header == "true":
+            logger.debug(f"[OPENAI-API] ✓ Load-balanced request from another posterchanai node - allowing without auth")
+            return None  # Authenticated but no specific user
     
-    # Check X-API-Key header first (for server-to-server requests)
+    # Check X-API-Key header first (for user API keys)
     if x_api_key:
         x_api_key = str(x_api_key).strip()
-        if global_api_key and x_api_key == global_api_key:
-            logger.debug(f"[OPENAI-API] Authenticated via X-API-Key header (server-to-server)")
-            return None  # Global key, no specific user - authenticated but no user object
-        elif global_api_key:
-            logger.warning(f"[OPENAI-API] X-API-Key provided but doesn't match Global API Key")
-            raise HTTPException(status_code=401, detail="Invalid API key")
-        else:
-            logger.debug(f"[OPENAI-API] X-API-Key provided but no Global API Key configured - allowing")
-            # Allow if no key is configured (open access mode)
-            return None
+        # Check user API keys from api_keys table
+        api_key, user_id = query_api_key_with_retry(db, x_api_key)
+        if api_key and user_id:
+            user = get_user_from_api_key(db, user_id)
+            if user:
+                logger.debug(f"[OPENAI-API] Authenticated via X-API-Key header (User API Key: {user.username})")
+                return user
     
     # Check authorization header
     if not authorization:
-        if not global_api_key:
-            # No auth required if no global key set
-            return None
-        raise HTTPException(status_code=401, detail="Missing API key")
+        # Allow unauthenticated access (for load-balanced requests or open access)
+        logger.debug(f"[OPENAI-API] No authorization header - allowing unauthenticated access")
+        return None
 
     # Extract token from "Bearer <token>" format
     if authorization.startswith("Bearer "):
         token = authorization[7:]
     else:
         token = authorization
-
-    # First check global API key
-    if global_api_key and token == global_api_key:
-        logger.debug(f"[OPENAI-API] Authenticated via Bearer token (Global API Key)")
-        return None  # Global key, no specific user - authenticated but no user object
 
     # Check user API keys - get api_key AND user_id together to avoid lazy loading
     api_key, user_id = query_api_key_with_retry(db, token)
@@ -429,13 +424,9 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     if servers and not skip_load_balancer:
         from app.services.load_balancer import get_healthy_server, is_self_url, NoHealthyServersError
 
-        # Use Global API Key (openai_api_key) for server-to-server authentication
-        # Fallback to storage_server_token if Global API Key is not set
-        api_key = settings.get("openai_api_key", "")
-        if not api_key:
-            api_key = settings.get("storage_server_token", "")
+        # Server-to-server requests don't need authentication
         try:
-            selected_server = await get_healthy_server(servers, api_key if api_key else None)
+            selected_server = await get_healthy_server(servers)
 
             if selected_server:
                 # Always make HTTP request to selected server (even if it's "self")

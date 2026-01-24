@@ -224,12 +224,12 @@ class ImageLoadBalancer:
         height: Optional[int] = None,
         steps: Optional[int] = None,
         cfg: Optional[float] = None,
-        api_key: Optional[str] = None,
     ) -> Optional[str]:
         """
         Generate image from a load-balanced server.
         Returns base64 encoded image or None on error.
         Retries with other servers if one fails.
+        Server-to-server requests don't require authentication.
         """
         if not self.servers:
             raise ValueError("No servers configured for image load balancing")
@@ -248,12 +248,10 @@ class ImageLoadBalancer:
         if cfg is not None:
             payload["cfg"] = cfg
 
-        # Build headers with authentication
-        headers = {}
-        if api_key:
-            headers["X-API-Key"] = api_key
-            logger.info(f"[IMAGE LB] Sending X-API-Key header (length: {len(api_key)})")
-        headers["X-Posterchanai-Load-Balanced"] = "true"
+        # Server-to-server requests - no authentication needed
+        headers = {
+            "X-Posterchanai-Load-Balanced": "true"
+        }
 
         # Try each server until one succeeds
         tried_servers = set()

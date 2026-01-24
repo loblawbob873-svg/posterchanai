@@ -70,7 +70,6 @@ class DAVStorageProxy:
                     if test_result == 1:
                         # Session seems valid, use it
                         storage_url_setting = db.query(Setting).filter(Setting.key == "storage_server_url").first()
-                        storage_token_setting = db.query(Setting).filter(Setting.key == "storage_server_token").first()
                     else:
                         raise RuntimeError("Session test query failed")
                 else:
@@ -80,10 +79,8 @@ class DAVStorageProxy:
                 logger.debug(f"[{dav_type.upper()}] Session invalid, creating fresh session: {type(session_error).__name__}")
                 fresh_db = SessionLocal()
                 storage_url_setting = fresh_db.query(Setting).filter(Setting.key == "storage_server_url").first()
-                storage_token_setting = fresh_db.query(Setting).filter(Setting.key == "storage_server_token").first()
             
             self.storage_url = storage_url_setting.value if storage_url_setting and storage_url_setting.value else None
-            self.storage_token = storage_token_setting.value if storage_token_setting and storage_token_setting.value else None
             self.use_proxy = bool(self.storage_url)
             self.is_same_server = _is_same_server(self.storage_url) if self.storage_url else False
             
@@ -96,7 +93,6 @@ class DAVStorageProxy:
             logger.error(f"[{dav_type.upper()}] Error loading storage proxy config: {e}", exc_info=True)
             # Final fallback: disable proxy
             self.storage_url = None
-            self.storage_token = None
             self.use_proxy = False
         finally:
             # Always close fresh session if we created one
@@ -107,11 +103,10 @@ class DAVStorageProxy:
                     pass
     
     def _get_headers(self) -> Dict[str, str]:
-        """Get auth headers for storage server requests."""
-        headers = {}
-        if self.storage_token:
-            headers["Authorization"] = f"Bearer {self.storage_token}"
-        return headers
+        """Get headers for storage server requests (server-to-server, no auth needed)."""
+        return {
+            "X-Posterchanai-Load-Balanced": "true"
+        }
     
     def _get_local_dav_path(self, subpath: str = "") -> Path:
         """Get local filesystem path for DAV directory."""

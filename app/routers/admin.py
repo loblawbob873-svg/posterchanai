@@ -579,11 +579,9 @@ async def rescan_storage(
             logger.info(f"[ADMIN] Proxying storage rescan to storage server: {url}")
             try:
                 import httpx
-                storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
-                
-                headers = {}
-                if storage_server_token and storage_server_token.value:
-                    headers["Authorization"] = f"Bearer {storage_server_token.value}"
+                headers = {
+                    "X-Posterchanai-Load-Balanced": "true"
+                }
                 
                 # Proxy to storage server with long timeout for large scans
                 async with httpx.AsyncClient(timeout=600.0) as client:  # 10 minutes

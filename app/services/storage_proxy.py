@@ -77,15 +77,6 @@ async def proxy_storage_request(
             detail="Storage proxy error: Request URL is missing an 'http://' or 'https://' protocol. Please configure storage_server_url with a valid URL (e.g., https://storage.example.com)"
         )
     
-    # Get server-to-server API token (optional)
-    storage_server_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
-    
-    # Also try to forward the user's cookie (fallback)
-    access_token = request.cookies.get("access_token", "")
-    
-    # Forward Authorization header from original request (for API key auth)
-    auth_header = request.headers.get("Authorization", "")
-    
     # Sanitize endpoint to remove emojis and invalid characters
     sanitized_endpoint = sanitize_url_path(endpoint)
     if not sanitized_endpoint:
@@ -99,16 +90,10 @@ async def proxy_storage_request(
         sanitized_endpoint = '/' + sanitized_endpoint
     
     url = f"{base_url.rstrip('/')}{sanitized_endpoint}"
-    headers = {}
-    
-    # Prefer server token for server-to-server auth
-    if storage_server_token and storage_server_token.value:
-        headers["Authorization"] = f"Bearer {storage_server_token.value}"
-    elif auth_header:
-        # Forward the Authorization header from the original request
-        headers["Authorization"] = auth_header
-    elif access_token:
-        headers["Cookie"] = f"access_token={access_token}"
+    # Server-to-server requests don't need authentication - use load-balanced header
+    headers = {
+        "X-Posterchanai-Load-Balanced": "true"
+    }
     
     # Forward other headers that might be needed
     if "accept" in request.headers:
@@ -129,14 +114,7 @@ async def proxy_storage_request(
             transport=transport
         ) as client:
             # Determine auth method for logging
-            if storage_server_token and storage_server_token.value:
-                auth_method = 'server-token'
-            elif auth_header:
-                auth_method = 'forwarded-api-key'
-            elif access_token:
-                auth_method = 'cookie'
-            else:
-                auth_method = 'none'
+            auth_method = 'load-balanced'
             logger.info(f"[STORAGE] Proxying {method} {url} (auth: {auth_method})")
             
             if method == "GET":

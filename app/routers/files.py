@@ -181,10 +181,10 @@ async def search_files(
             else:
                 try:
                     import httpx
-                    storage_token = db.query(Setting).filter(Setting.key == "storage_server_token").first()
-                    headers = {"X-Username": current_user.username}
-                    if storage_token and storage_token.value:
-                        headers["Authorization"] = f"Bearer {storage_token.value}"
+                    headers = {
+                        "X-Username": current_user.username,
+                        "X-Posterchanai-Load-Balanced": "true"
+                    }
                     
                     async with httpx.AsyncClient(timeout=60.0) as client:
                         # Try /api/files/search first (if files_router is registered), then fall back to /api/storage/search
@@ -314,11 +314,9 @@ async def get_all_images(
                 # Proxy to storage server
                 try:
                     import httpx
-                    storage_server_token = safe_query_setting(db, "storage_server_token")
-                    
-                    headers = {}
-                    if storage_server_token and storage_server_token.value:
-                        headers["Authorization"] = f"Bearer {storage_server_token.value}"
+                    headers = {
+                        "X-Posterchanai-Load-Balanced": "true"
+                    }
                     
                     async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minutes for large scans
                         response = await client.get(
@@ -2438,13 +2436,11 @@ async def _proxy_upload_file(storage_server_url: str, username: str, filename: s
     from app.models import Setting
     
     try:
-        # Get server-to-server API token
-        storage_server_token = safe_query_setting(db, "storage_server_token")
-        
+        # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/upload-file"
-        headers = {}
-        if storage_server_token and storage_server_token.value:
-            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        headers = {
+            "X-Posterchanai-Load-Balanced": "true"
+        }
         
         files = {
             "file": (filename, content, content_type)
@@ -2477,13 +2473,11 @@ async def _proxy_list_files(storage_server_url: str, username: str, path: str, d
     import requests
     
     try:
-        # Get server-to-server API token
-        storage_server_token = safe_query_setting(db, "storage_server_token")
-        
+        # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/list-files"
-        headers = {}
-        if storage_server_token and storage_server_token.value:
-            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        headers = {
+            "X-Posterchanai-Load-Balanced": "true"
+        }
         
         params = {
             "username": username,
@@ -2511,13 +2505,11 @@ async def _proxy_delete_file(storage_server_url: str, username: str, file_path: 
     import requests
     
     try:
-        # Get server-to-server API token
-        storage_server_token = safe_query_setting(db, "storage_server_token")
-        
+        # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/delete-file"
-        headers = {}
-        if storage_server_token and storage_server_token.value:
-            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        headers = {
+            "X-Posterchanai-Load-Balanced": "true"
+        }
         
         params = {
             "username": username,
@@ -2545,13 +2537,11 @@ async def _proxy_mkdir(storage_server_url: str, username: str, path: str, db: Se
     import requests
     
     try:
-        # Get server-to-server API token
-        storage_server_token = safe_query_setting(db, "storage_server_token")
-        
+        # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/mkdir"
-        headers = {}
-        if storage_server_token and storage_server_token.value:
-            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        headers = {
+            "X-Posterchanai-Load-Balanced": "true"
+        }
         
         data = {
             "username": username,
@@ -2580,13 +2570,11 @@ async def _proxy_view_file(storage_server_url: str, username: str, file_path: st
     from fastapi.responses import Response
     
     try:
-        # Get server-to-server API token
-        storage_server_token = safe_query_setting(db, "storage_server_token")
-        
+        # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/view-file"
-        headers = {}
-        if storage_server_token and storage_server_token.value:
-            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        headers = {
+            "X-Posterchanai-Load-Balanced": "true"
+        }
         
         params = {
             "username": username,
@@ -2633,13 +2621,11 @@ async def _proxy_get_thumbnail(storage_server_url: str, username: str, file_path
     import requests
     
     try:
-        # Get server-to-server API token
-        storage_server_token = safe_query_setting(db, "storage_server_token")
-        
+        # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/thumbnail-file"
-        headers = {}
-        if storage_server_token and storage_server_token.value:
-            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        headers = {
+            "X-Posterchanai-Load-Balanced": "true"
+        }
         
         params = {
             "username": username,
@@ -2697,13 +2683,11 @@ async def _proxy_move_files(storage_server_url: str, username: str, file_paths: 
     import requests
     
     try:
-        # Get server-to-server API token
-        storage_server_token = safe_query_setting(db, "storage_server_token")
-        
+        # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/move-files"
-        headers = {}
-        if storage_server_token and storage_server_token.value:
-            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        headers = {
+            "X-Posterchanai-Load-Balanced": "true"
+        }
         
         data = {
             "username": username,
@@ -2732,13 +2716,11 @@ async def _proxy_delete_files_bulk(storage_server_url: str, username: str, file_
     import requests
     
     try:
-        # Get server-to-server API token
-        storage_server_token = safe_query_setting(db, "storage_server_token")
-        
+        # Server-to-server requests don't need authentication
         url = f"{storage_server_url.rstrip('/')}/api/storage/delete-files-bulk"
-        headers = {}
-        if storage_server_token and storage_server_token.value:
-            headers["Authorization"] = f"Bearer {storage_server_token.value}"
+        headers = {
+            "X-Posterchanai-Load-Balanced": "true"
+        }
         
         data = {
             "username": username,

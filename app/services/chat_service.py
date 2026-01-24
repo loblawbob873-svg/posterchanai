@@ -118,13 +118,9 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
             timeout_str = self._settings.get("ollama_timeout", "120000")
             timeout = int(timeout_str if timeout_str else "120000") / 1000
             model = self._settings.get("ollama_model", "default") or "default"
-            # Use Global API Key (openai_api_key) for server-to-server authentication
-            # Fallback to storage_server_token if Global API Key is not set
-            api_key = self._settings.get("openai_api_key", "")
-            if not api_key:
-                api_key = self._settings.get("storage_server_token", "")
+            # Server-to-server requests don't need authentication
             logger.info(f"[CHAT SERVICE] Creating LoadBalancer with {len(servers)} server(s): {servers}, model={model}, timeout={timeout}s")
-            return LoadBalancer(servers, timeout=timeout, model=model, api_key=api_key if api_key else None)
+            return LoadBalancer(servers, timeout=timeout, model=model)
         else:
             logger.debug(f"[CHAT SERVICE] No chat servers configured (chat_server_urls='{chat_server_urls}')")
         return None

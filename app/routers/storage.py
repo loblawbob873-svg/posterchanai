@@ -164,22 +164,12 @@ async def save_file(
     Save a text file. Called by client nodes when proxying file uploads.
     Only accessible on storage server node.
     
-    Note: For proxied requests, current_user may be None if using server token auth.
+    Note: For proxied requests, current_user may be None if using load-balanced requests.
     In that case, we trust the main server and skip conversation verification.
     """
-    # Check if this is a server-to-server request
-    # Either current_user is None OR we have a valid storage_server_token
-    is_server_request = current_user is None
-    if not is_server_request:
-        # Check if this is a server token request
-        from app.database import safe_query_settings
-        settings = safe_query_settings(db)
-        storage_server_token = settings.get("storage_server_token", "")
-        if storage_server_token:
-            # Check if the request has the server token
-            auth_header = request.headers.get("Authorization", "")
-            if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token:
-                is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower()
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify user owns this conversation (for user requests)
@@ -244,14 +234,9 @@ async def save_mail_attachment(
     """
     # Check if this is a server-to-server request
     from app.models import Setting
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "") if request else ""
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -291,14 +276,9 @@ async def save_generated_image(
     """
     # Check if this is a server-to-server request
     from app.models import Setting
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "") if request else ""
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -329,20 +309,18 @@ async def upload_file(
     Upload a file via file manager. Called by client nodes when proxying file uploads.
     Only accessible on storage server node.
     
-    Note: For proxied requests, current_user may be None if using server token auth.
+    Note: For proxied requests, current_user may be None if using load-balanced requests.
     In that case, we trust the main server and skip user verification.
     """
     # Check if this is a server-to-server request
     is_server_request = current_user is None
     if not is_server_request:
-        # Check if this is a server token request
+        # Check if this is a load-balanced request
         from app.models import Setting
-        storage_server_token = safe_query_setting(db, "storage_server_token")
-        if storage_server_token and storage_server_token.value:
-            # Check if the request has the server token
-            auth_header = request.headers.get("Authorization", "")
-            if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-                is_server_request = True
+        # Check if this is a load-balanced request from another posterchanai node
+        load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower()
+        if load_balanced_header == "true":
+            is_server_request = True
         
         if not is_server_request:
             # Verify username matches for user requests
@@ -503,16 +481,9 @@ async def list_files(
     List files in user's storage. Called by client nodes when proxying file listings.
     Only accessible on storage server node.
     """
-    # Check if this is a server-to-server request
-    from app.models import Setting
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -753,16 +724,9 @@ async def get_all_images(
     Called by client nodes when proxying image/video requests.
     Only accessible on storage server node.
     """
-    # Check if this is a server-to-server request
-    from app.models import Setting
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1334,16 +1298,9 @@ async def mkdir(
     Create a directory. Called by client nodes when proxying directory creation.
     Only accessible on storage server node.
     """
-    # Check if this is a server-to-server request
-    from app.models import Setting
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1409,16 +1366,9 @@ async def delete_file(
     Delete a file or directory. Called by client nodes when proxying file deletions.
     Only accessible on storage server node.
     """
-    # Check if this is a server-to-server request
-    from app.models import Setting
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1496,16 +1446,9 @@ async def delete_file(
     Delete a file or directory. Called by client nodes when proxying file deletions.
     Only accessible on storage server node.
     """
-    # Check if this is a server-to-server request
-    from app.models import Setting
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1578,18 +1521,9 @@ async def list_files(
     """
     logger.info(f"[Storage API] list_files called: username={username}, path={path}, depth={depth}")
 
-    # Check if this is a server-to-server request
-    from app.models import Setting
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        from fastapi import Request as FastAPIRequest
-        request = FastAPIRequest
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1741,16 +1675,9 @@ async def view_file(
     View/download a file. Called by client nodes when proxying file view requests.
     Only accessible on storage server node.
     """
-    # Check if this is a server-to-server request
-    from app.models import Setting
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1880,16 +1807,9 @@ async def thumbnail_file(
     Get thumbnail for an image file. Called by client nodes when proxying thumbnail requests.
     Only accessible on storage server node.
     """
-    # Check if this is a server-to-server request
-    from app.models import Setting
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -1972,14 +1892,9 @@ async def move_files(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
     
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -2084,16 +1999,9 @@ async def save_text_file(
     Save a text file to a specific path. Used by DAV storage proxy for .ics and .vcf files.
     Only accessible on storage server node.
     """
-    # Check if this is a server-to-server request
-    from app.models import Setting
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -2167,14 +2075,9 @@ async def delete_files_bulk(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
     
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests
@@ -2279,14 +2182,9 @@ async def search_files_storage(
 ):
     """Search for files by name or path on storage server. Returns matching files with metadata."""
     # Check if this is a server-to-server request
-    storage_server_token = safe_query_setting(db, "storage_server_token")
-    is_server_request = current_user is None
-    
-    if not is_server_request and storage_server_token and storage_server_token.value:
-        # Check if the request has the server token
-        auth_header = request.headers.get("Authorization", "") if request else ""
-        if auth_header.startswith("Bearer ") and auth_header[7:] == storage_server_token.value:
-            is_server_request = True
+    # Check if this is a server-to-server request (load-balanced from another posterchanai node)
+    load_balanced_header = request.headers.get("x-posterchanai-load-balanced", "").lower() if request else ""
+    is_server_request = current_user is None or load_balanced_header == "true"
     
     if not is_server_request:
         # Verify username matches for user requests

@@ -175,13 +175,11 @@ class StorageService:
         """Proxy image save to storage server"""
         import asyncio
         try:
-            # Get server-to-server API token
-            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
-            
+            # Server-to-server requests don't need authentication
             url = f"{storage_server_url.rstrip('/')}/api/storage/save-image"
-            headers = {}
-            if storage_server_token and storage_server_token.value:
-                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            headers = {
+                "X-Posterchanai-Load-Balanced": "true"
+            }
             
             image_data = base64.b64decode(image_base64)
             files = {
@@ -271,13 +269,11 @@ class StorageService:
         """Proxy avatar save to storage server"""
         import asyncio
         try:
-            # Get server-to-server API token
-            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
-            
+            # Server-to-server requests don't need authentication
             url = f"{storage_server_url.rstrip('/')}/api/storage/save-avatar"
-            headers = {}
-            if storage_server_token and storage_server_token.value:
-                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            headers = {
+                "X-Posterchanai-Load-Balanced": "true"
+            }
             
             files = {
                 "file": (f"avatar{ext}", image_data, f"image/{ext[1:]}")
@@ -373,13 +369,11 @@ class StorageService:
         """Proxy file save to storage server"""
         import asyncio
         try:
-            # Get server-to-server API token
-            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
-            
+            # Server-to-server requests don't need authentication
             url = f"{storage_server_url.rstrip('/')}/api/storage/save-file"
-            headers = {}
-            if storage_server_token and storage_server_token.value:
-                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            headers = {
+                "X-Posterchanai-Load-Balanced": "true"
+            }
             
             files = {
                 "file": (original_name, content.encode('utf-8'), "text/plain")
@@ -540,10 +534,9 @@ class StorageService:
                 try:
                     # Proxy the file request to storage server
                     import httpx
-                    storage_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
-                    headers = {}
-                    if storage_token and storage_token.value:
-                        headers["Authorization"] = f"Bearer {storage_token.value}"
+                    headers = {
+                        "X-Posterchanai-Load-Balanced": "true"
+                    }
                     
                     # If image_url is already a full URL, use it directly (but still sanitize)
                     if image_url.startswith(('http://', 'https://')):
@@ -686,12 +679,11 @@ class StorageService:
         import requests
         try:
             # Get server-to-server API token
-            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
-            
+            # Server-to-server requests don't need authentication
             url = f"{storage_server_url.rstrip('/')}/api/storage/save-mail-attachment"
-            headers = {}
-            if storage_server_token and storage_server_token.value:
-                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            headers = {
+                "X-Posterchanai-Load-Balanced": "true"
+            }
             
             files = {
                 "file": (original_name, file_data, "application/octet-stream")
@@ -718,12 +710,11 @@ class StorageService:
         """Proxy generated image save to storage server - uses synchronous requests to avoid event loop issues"""
         import requests
         try:
-            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
-            
+            # Server-to-server requests don't need authentication
             url = f"{storage_server_url.rstrip('/')}/api/storage/save-generated-image"
-            headers = {}
-            if storage_server_token and storage_server_token.value:
-                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            headers = {
+                "X-Posterchanai-Load-Balanced": "true"
+            }
             
             data = {
                 "username": username,
@@ -793,12 +784,11 @@ class StorageService:
         """Proxy generated image save to storage server - uses synchronous requests to avoid event loop issues"""
         import requests
         try:
-            storage_server_token = self.db.query(Setting).filter(Setting.key == "storage_server_token").first()
-            
+            # Server-to-server requests don't need authentication
             url = f"{storage_server_url.rstrip('/')}/api/storage/save-generated-image"
-            headers = {}
-            if storage_server_token and storage_server_token.value:
-                headers["Authorization"] = f"Bearer {storage_server_token.value}"
+            headers = {
+                "X-Posterchanai-Load-Balanced": "true"
+            }
             
             # Use form data (not JSON) to match the endpoint signature
             data = {
