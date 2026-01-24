@@ -79,10 +79,14 @@ async def generate_image_with_load_balancing(
 
     # If vram_mode is llm_only, always use remote servers (no local image generation)
     force_remote = vram_mode == "llm_only"
+    
+    if force_remote and not servers:
+        logger.error("[IMAGE] vram_mode is 'llm_only' but no image servers configured")
+        return None
 
     # If remote image servers are configured, use load balancing
     # Simple round-robin: select one server and make request
-    logger.info(f"[IMAGE] Checking load balancing: servers={servers}, len={len(servers) if servers else 0}")
+    logger.info(f"[IMAGE] Checking load balancing: servers={servers}, len={len(servers) if servers else 0}, force_remote={force_remote}")
     if servers:
         from app.services.image_load_balancer import get_healthy_image_server
         
@@ -174,10 +178,14 @@ async def generate_image_with_load_balancing(
 
     # Use local backend with GPU LOCK to prevent GPU overload
     # This handles: no remote servers configured, remote request failed, or when "self" is selected by load balancer
-    # This handles both: no remote servers configured, and when "self" is selected by load balancer
-    logger.info("Using local backend for image generation (serialized with GPU lock)")
-    result = None
-    try:
+    # Skip local if vram_mode is llm_only (force_remote)
+    if force_remote:
+        logger.warning("[IMAGE] vram_mode is 'llm_only' - skipping local generation, will try fallback to all remote servers")
+        result = None
+    else:
+        logger.info("Using local backend for image generation (serialized with GPU lock)")
+        result = None
+        try:
         # Use shared GPU lock to prevent LLM and image from running simultaneously
         from app.services.locks import GPUResourceLock, image_generation_lock
         async with GPUResourceLock("Image", f"prompt={prompt[:30]}..."):
@@ -197,9 +205,9 @@ async def generate_image_with_load_balancing(
                     logger.info(f"Local backend returned image ({len(result) if result else 0} chars)")
                 else:
                     logger.warning(f"Local backend returned None (generation may have failed)")
-    except Exception as e:
-        logger.error(f"Local image generation failed with exception: {e}", exc_info=True)
-        result = None
+        except Exception as e:
+            logger.error(f"Local image generation failed with exception: {e}", exc_info=True)
+            result = None
 
     # Fallback to remote if local failed and remote servers are available
     if result is None and servers:

@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.auth import get_current_user_optional
 from app.models import Setting
+from sqlalchemy.orm import Session
 from app.services.image_factory import generate_image_with_load_balancing
 # Lock moved to image_factory.py for fine-grained control (local only)
 
@@ -183,8 +184,22 @@ async def generate_image(
             return ImageResponse(image=result)
         else:
             logger.error(f"[IMAGE-API] Image generation failed (no result)")
-            return ImageResponse(error="Image generation failed")
+            # Check if it's a load balancing issue
+            settings = {s.key: s.value for s in db.query(Setting).all()}
+            image_server_urls = settings.get("image_server_urls", "")
+            vram_mode = settings.get("vram_mode", "shared")
+            
+            if vram_mode == "llm_only" and not image_server_urls:
+                return ImageResponse(error="Image generation failed: vram_mode is 'llm_only' but no image servers configured")
+            elif image_server_urls:
+                return ImageResponse(error="Image generation failed: All image servers failed or unavailable")
+            else:
+                return ImageResponse(error="Image generation failed: Local generation failed and no remote servers configured")
 
     except Exception as e:
         logger.error(f"[IMAGE-API] Image generation error: {e}", exc_info=True)
-        return ImageResponse(error=str(e))
+        error_msg = str(e)
+        # Provide more specific error messages
+        if "NoHealthyImageServersError" in error_msg or "No healthy image servers" in error_msg:
+            return ImageResponse(error=f"Image generation failed: All remote image servers are unavailable. {error_msg}")
+        return ImageResponse(error=f"Image generation error: {error_msg}")
