@@ -72,16 +72,23 @@ async def generate_image_with_load_balancing(
     """
     from app.services.locks import image_generation_lock
 
-    settings = {s.key: s.value for s in db.query(Setting).all()}
+    # Refresh session to ensure we get latest settings (not cached)
+    db.expire_all()
+    
+    # Query settings fresh from database
+    settings_query = db.query(Setting).all()
+    settings = {s.key: s.value for s in settings_query}
+    
+    # Log what we actually read for debugging
+    openai_key_setting = next((s for s in settings_query if s.key == "openai_api_key"), None)
+    if openai_key_setting:
+        logger.info(f"[IMAGE] Read openai_api_key from DB: length={len(openai_key_setting.value) if openai_key_setting.value else 0}, value_preview={openai_key_setting.value[:20] if openai_key_setting.value and len(openai_key_setting.value) > 20 else openai_key_setting.value}...")
+    else:
+        logger.warning(f"[IMAGE] openai_api_key setting not found in database!")
+    
     image_server_urls = settings.get("image_server_urls", "")
     vram_mode = settings.get("vram_mode", "shared")
     servers = parse_image_server_urls(image_server_urls)
-    
-    # Debug: Log API key configuration
-    global_api_key = settings.get("openai_api_key", "")
-    storage_token = settings.get("storage_server_token", "")
-    logger.debug(f"[IMAGE] Config check - openai_api_key exists: {bool(global_api_key)}, length: {len(global_api_key) if global_api_key else 0}")
-    logger.debug(f"[IMAGE] Config check - storage_server_token exists: {bool(storage_token)}, length: {len(storage_token) if storage_token else 0}")
 
     # If vram_mode is llm_only, always use remote servers (no local image generation)
     force_remote = vram_mode == "llm_only"
@@ -120,18 +127,26 @@ async def generate_image_with_load_balancing(
             # Get authentication token for server-to-server communication
             # For server-to-server requests, use global API key (not user's API key)
             # The remote server needs a shared key configured, not individual user keys
+            # Query directly from database to ensure we get latest value (bypass any caching)
             headers = {}
-            server_api_key = settings.get("openai_api_key", "")
+            db.expire_all()  # Ensure fresh data
+            openai_setting = db.query(Setting).filter(Setting.key == "openai_api_key").first()
+            server_api_key = openai_setting.value if openai_setting and openai_setting.value else None
+            
             if server_api_key:
                 server_api_key = str(server_api_key).strip()
+                logger.info(f"[IMAGE] Using openai_api_key from DB: length={len(server_api_key)}")
                 # Check if it's actually empty after stripping
                 if not server_api_key:
                     server_api_key = None
             
             if not server_api_key:
-                server_api_key = settings.get("storage_server_token", "")
+                db.expire_all()
+                storage_setting = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+                server_api_key = storage_setting.value if storage_setting and storage_setting.value else None
                 if server_api_key:
                     server_api_key = str(server_api_key).strip()
+                    logger.info(f"[IMAGE] Using storage_server_token from DB: length={len(server_api_key)}")
                     if not server_api_key:
                         server_api_key = None
             
@@ -243,16 +258,24 @@ async def generate_image_with_load_balancing(
         # Get API key for authentication
         # For server-to-server fallback, use global API key (not user's API key)
         # The remote server needs a shared key configured, not individual user keys
-        server_api_key = settings.get("openai_api_key", "")
+        # Query directly from database to ensure we get latest value (bypass any caching)
+        db.expire_all()  # Ensure fresh data
+        openai_setting = db.query(Setting).filter(Setting.key == "openai_api_key").first()
+        server_api_key = openai_setting.value if openai_setting and openai_setting.value else None
+        
         if server_api_key:
             server_api_key = str(server_api_key).strip()
+            logger.info(f"[IMAGE] Fallback using openai_api_key from DB: length={len(server_api_key)}")
             if not server_api_key:
                 server_api_key = None
         
         if not server_api_key:
-            server_api_key = settings.get("storage_server_token", "")
+            db.expire_all()
+            storage_setting = db.query(Setting).filter(Setting.key == "storage_server_token").first()
+            server_api_key = storage_setting.value if storage_setting and storage_setting.value else None
             if server_api_key:
                 server_api_key = str(server_api_key).strip()
+                logger.info(f"[IMAGE] Fallback using storage_server_token from DB: length={len(server_api_key)}")
                 if not server_api_key:
                     server_api_key = None
         
