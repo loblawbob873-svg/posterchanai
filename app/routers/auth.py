@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadF
 from starlette.requests import Request as StarletteRequest
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError
 from app.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -656,11 +657,26 @@ def update_user_settings(
         # Commit the transaction - ensure this succeeds
         db.commit()
         logger.info(f"[Auth] Successfully saved user settings for user {current_user.username}")
-    except Exception as e:
-        # Rollback on any error during save
+    except IntegrityError as e:
+        # Handle constraint violations (e.g., unique constraint, foreign key)
         db.rollback()
-        logger.error(f"[Auth] Failed to save user settings for user {current_user.username}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}")
+        logger.error(f"[Auth] Integrity error saving user settings for {current_user.username}: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Invalid data: {str(e)}")
+    except OperationalError as e:
+        # Handle database connection/operational errors
+        db.rollback()
+        logger.error(f"[Auth] Database operational error saving user settings for {current_user.username}: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable. Please try again.")
+    except SQLAlchemyError as e:
+        # Handle other database errors
+        db.rollback()
+        logger.error(f"[Auth] Database error saving user settings for {current_user.username}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    except Exception as e:
+        # Handle unexpected errors
+        db.rollback()
+        logger.error(f"[Auth] Unexpected error saving user settings for {current_user.username}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
     return {"message": "Settings updated"}
 

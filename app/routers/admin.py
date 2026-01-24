@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi import Query
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError, OperationalError
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
@@ -335,11 +335,26 @@ def update_settings(
         db.commit()
         logger.info(f"[Admin] Successfully saved {len(data.settings)} settings")
         
-    except Exception as e:
-        # Rollback on any error during save
+    except IntegrityError as e:
+        # Handle constraint violations (e.g., unique constraint, foreign key)
         db.rollback()
-        logger.error(f"[Admin] Failed to save settings: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}")
+        logger.error(f"[Admin] Integrity error saving settings: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Invalid data: {str(e)}")
+    except OperationalError as e:
+        # Handle database connection/operational errors
+        db.rollback()
+        logger.error(f"[Admin] Database operational error saving settings: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable. Please try again.")
+    except SQLAlchemyError as e:
+        # Handle other database errors
+        db.rollback()
+        logger.error(f"[Admin] Database error saving settings: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    except Exception as e:
+        # Handle unexpected errors
+        db.rollback()
+        logger.error(f"[Admin] Unexpected error saving settings: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
     
     # Reload file cache if cache settings changed (after successful commit)
     if cache_settings_changed:
