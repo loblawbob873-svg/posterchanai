@@ -327,18 +327,44 @@ class IPEXService:
                             f"llama-cpp-python not available: {e}. "
                             f"Install with: pip install llama-cpp-python"
                         )
+                    except Exception as e:
+                        # Catch any other errors during import/check (e.g., library loading issues)
+                        logger.error(f"Error checking llama-cpp-python: {e}")
+                        raise RuntimeError(f"Failed to initialize llama-cpp-python: {e}")
 
-                    self._model = Llama(
-                        model_path=self.model_path,
-                        n_ctx=self.num_ctx,
-                        n_gpu_layers=gpu_layers if not self.cpu_mode else 0,
-                        n_batch=self.n_batch,
-                        n_threads=self.n_threads,
-                        n_threads_batch=self.n_threads,
-                        use_mmap=self.use_mmap,
-                        use_mlock=self.use_mlock,
-                        verbose=False,
-                    )
+                    # Additional safety for DeepSeek and thinking models
+                    model_name_lower = self.model_path.lower()
+                    is_thinking_model = "deepseek" in model_name_lower or "qwen3" in model_name_lower or "reasoning" in model_name_lower
+                    
+                    # For thinking models, use more conservative settings to prevent crashes
+                    llama_kwargs = {
+                        "model_path": self.model_path,
+                        "n_ctx": self.num_ctx,
+                        "n_gpu_layers": gpu_layers if not self.cpu_mode else 0,
+                        "n_batch": self.n_batch,
+                        "n_threads": self.n_threads,
+                        "n_threads_batch": self.n_threads,
+                        "use_mmap": self.use_mmap,
+                        "use_mlock": self.use_mlock,
+                        "verbose": False,
+                    }
+                    
+                    # Add safety settings for thinking models
+                    if is_thinking_model:
+                        logger.info("Detected thinking model - using conservative settings")
+                        # Reduce batch size for thinking models to prevent crashes
+                        llama_kwargs["n_batch"] = min(self.n_batch, 512)
+                    
+                    try:
+                        self._model = Llama(**llama_kwargs)
+                    except Exception as load_error:
+                        error_msg = str(load_error)
+                        logger.error(f"Failed to load GGUF model: {error_msg}")
+                        # Provide specific guidance for DeepSeek models
+                        if "deepseek" in model_name_lower:
+                            logger.error("DeepSeek models may require specific llama-cpp-python builds.")
+                            logger.error("Try: CMAKE_ARGS='-DGGML_SYCL=ON' pip install llama-cpp-python --force-reinstall")
+                        raise RuntimeError(f"Model loading failed: {error_msg}")
                     self._tokenizer = None  # llama.cpp handles tokenization
                     self._is_gguf = True
                     logger.info("GGUF model loaded successfully")
@@ -412,7 +438,7 @@ class IPEXService:
                 # For Qwen3-abliterated and similar thinking models:
                 # Add strong system instruction + modify user message to reinforce
                 model_name = self.model_path.lower()
-                if "qwen3" in model_name or "deepseek-r1" in model_name or "reasoning" in model_name:
+                if "qwen3" in model_name or "deepseek" in model_name or "reasoning" in model_name:
                     logger.info(f"Detected thinking model: {self.model_path}")
                     logger.info("Adding instructions to suppress thinking mode")
 
@@ -453,13 +479,18 @@ class IPEXService:
                     )
                     content = response["choices"][0]["message"]["content"]
                     return self.strip_thinking_tags(content)
-                except IndexError as e:
-                    # Handle transient "index out of bounds" errors in llama-cpp-python
+                except (IndexError, RuntimeError, KeyError) as e:
+                    # Handle transient errors in llama-cpp-python (common with thinking models)
+                    error_msg = str(e)
                     last_error = e
                     if attempt < max_retries:
-                        logger.warning(f"Inference IndexError (attempt {attempt + 1}/{max_retries + 1}): {e}, retrying...")
+                        logger.warning(f"Inference error (attempt {attempt + 1}/{max_retries + 1}): {error_msg}, retrying...")
+                        # Small delay before retry to let system recover
+                        time.sleep(0.5)
                         continue
-                    raise
+                    # On final attempt, log the error but don't crash the service
+                    logger.error(f"Inference failed after {max_retries + 1} attempts: {error_msg}")
+                    raise RuntimeError(f"Inference failed: {error_msg}. This may be a model compatibility issue.")
 
             raise last_error
         else:
@@ -628,7 +659,7 @@ class IPEXService:
         messages_to_use = messages
         if self.disable_thinking:
             model_name_lower = self.model_path.lower()
-            if "qwen3" in model_name_lower or "deepseek-r1" in model_name_lower or "reasoning" in model_name_lower:
+            if "qwen3" in model_name_lower or "deepseek" in model_name_lower or "reasoning" in model_name_lower:
                 messages_to_use = messages.copy()
 
                 # Add/modify system message
@@ -796,7 +827,7 @@ class IPEXService:
             messages_to_use = messages
             if self.disable_thinking:
                 model_name_lower = self.model_path.lower()
-                if "qwen3" in model_name_lower or "deepseek-r1" in model_name_lower or "reasoning" in model_name_lower:
+                if "qwen3" in model_name_lower or "deepseek" in model_name_lower or "reasoning" in model_name_lower:
                     messages_to_use = messages.copy()
 
                     # Add/modify system message
@@ -849,12 +880,16 @@ class IPEXService:
                                 yield content
                     except Exception as stream_error:
                         error_msg = str(stream_error)
-                        # Handle llama_decode errors gracefully
-                        if "llama_decode" in error_msg or isinstance(stream_error, (RuntimeError, IndexError)):
+                        # Handle llama_decode and other inference errors gracefully
+                        # This prevents service crashes from propagating to the user
+                        if "llama_decode" in error_msg or isinstance(stream_error, (RuntimeError, IndexError, KeyError)):
                             logger.error(f"[STREAM-{request_id}] Inference error: {error_msg}")
                             yield f"\n\n[Generation error: {error_msg}]"
                             return
-                        raise
+                        # For unknown errors, log but don't crash
+                        logger.error(f"[STREAM-{request_id}] Unexpected error: {error_msg}")
+                        yield f"\n\n[Generation error: {error_msg}]"
+                        return
                 else:
                     # Use HuggingFace streaming
                     import torch
