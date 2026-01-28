@@ -148,14 +148,48 @@ def prepare_for_image(db: Session) -> bool:
                     logger.info("[VRAM] Unloading LLM to free VRAM for image generation...")
                     try:
                         service.unload_model()
+                        # Force CUDA cache clear to actually free memory
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                            torch.cuda.synchronize()
+                            # Additional aggressive cleanup
+                            import gc
+                            gc.collect()
+                            torch.cuda.empty_cache()
+                            logger.info("[VRAM] LLM unloaded and CUDA cache cleared")
                         logger.info("[VRAM] LLM unloaded successfully")
                     except Exception as unload_error:
-                        logger.warning(f"[VRAM] LLM unload had issues (may still be in use): {unload_error}")
+                        logger.warning(f"[VRAM] LLM unload had issues (may still be in use): {unload_error}", exc_info=True)
+                        # Try to clear CUDA cache anyway
+                        try:
+                            import torch
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                                import gc
+                                gc.collect()
+                                torch.cuda.empty_cache()
+                                logger.info("[VRAM] Attempted CUDA cache clear after unload error")
+                        except Exception:
+                            pass
                         # Continue anyway - model might still be in VRAM but we'll try to load image model
                     # Force reset current mode to ensure proper tracking
                     _current_mode = None
+                else:
+                    logger.info("[VRAM] LLM model is None, no need to unload")
             except Exception as e:
                 logger.error(f"[VRAM] Error unloading LLM: {e}", exc_info=True)
+                # Try to clear CUDA cache anyway
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        import gc
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                        logger.info("[VRAM] Attempted CUDA cache clear after error")
+                except Exception:
+                    pass
                 # Continue anyway - try to load image model
 
         # Load image model
