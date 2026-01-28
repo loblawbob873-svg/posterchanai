@@ -327,44 +327,30 @@ class IPEXService:
                             f"llama-cpp-python not available: {e}. "
                             f"Install with: pip install llama-cpp-python"
                         )
-                    except Exception as e:
-                        # Catch any other errors during import/check (e.g., library loading issues)
-                        logger.error(f"Error checking llama-cpp-python: {e}")
-                        raise RuntimeError(f"Failed to initialize llama-cpp-python: {e}")
 
-                    # Additional safety for DeepSeek and thinking models
+                    # Fix SYCL assertion failure for DeepSeek models
+                    # The assertion "block_num_y % num_subgroups == 0" fails with certain batch sizes
+                    # Reduce batch size for DeepSeek to avoid this SYCL backend bug
+                    batch_size = self.n_batch
                     model_name_lower = self.model_path.lower()
-                    is_thinking_model = "deepseek" in model_name_lower or "qwen3" in model_name_lower or "reasoning" in model_name_lower
+                    if "deepseek" in model_name_lower or "r1" in model_name_lower:
+                        # SYCL requires batch size to be divisible by subgroup size (typically 16 or 32)
+                        # Use a smaller, safe batch size to avoid the assertion failure
+                        batch_size = min(self.n_batch, 128)  # Cap at 128 for SYCL compatibility
+                        if batch_size != self.n_batch:
+                            logger.info(f"Reduced batch size from {self.n_batch} to {batch_size} for DeepSeek (SYCL compatibility)")
                     
-                    # For thinking models, use more conservative settings to prevent crashes
-                    llama_kwargs = {
-                        "model_path": self.model_path,
-                        "n_ctx": self.num_ctx,
-                        "n_gpu_layers": gpu_layers if not self.cpu_mode else 0,
-                        "n_batch": self.n_batch,
-                        "n_threads": self.n_threads,
-                        "n_threads_batch": self.n_threads,
-                        "use_mmap": self.use_mmap,
-                        "use_mlock": self.use_mlock,
-                        "verbose": False,
-                    }
-                    
-                    # Add safety settings for thinking models
-                    if is_thinking_model:
-                        logger.info("Detected thinking model - using conservative settings")
-                        # Reduce batch size for thinking models to prevent crashes
-                        llama_kwargs["n_batch"] = min(self.n_batch, 512)
-                    
-                    try:
-                        self._model = Llama(**llama_kwargs)
-                    except Exception as load_error:
-                        error_msg = str(load_error)
-                        logger.error(f"Failed to load GGUF model: {error_msg}")
-                        # Provide specific guidance for DeepSeek models
-                        if "deepseek" in model_name_lower:
-                            logger.error("DeepSeek models may require specific llama-cpp-python builds.")
-                            logger.error("Try: CMAKE_ARGS='-DGGML_SYCL=ON' pip install llama-cpp-python --force-reinstall")
-                        raise RuntimeError(f"Model loading failed: {error_msg}")
+                    self._model = Llama(
+                        model_path=self.model_path,
+                        n_ctx=self.num_ctx,
+                        n_gpu_layers=gpu_layers if not self.cpu_mode else 0,
+                        n_batch=batch_size,
+                        n_threads=self.n_threads,
+                        n_threads_batch=self.n_threads,
+                        use_mmap=self.use_mmap,
+                        use_mlock=self.use_mlock,
+                        verbose=False,
+                    )
                     self._tokenizer = None  # llama.cpp handles tokenization
                     self._is_gguf = True
                     logger.info("GGUF model loaded successfully")
@@ -438,7 +424,7 @@ class IPEXService:
                 # For Qwen3-abliterated and similar thinking models:
                 # Add strong system instruction + modify user message to reinforce
                 model_name = self.model_path.lower()
-                if "qwen3" in model_name or "deepseek" in model_name or "reasoning" in model_name:
+                if "qwen3" in model_name or "deepseek-r1" in model_name or "reasoning" in model_name:
                     logger.info(f"Detected thinking model: {self.model_path}")
                     logger.info("Adding instructions to suppress thinking mode")
 
@@ -479,18 +465,13 @@ class IPEXService:
                     )
                     content = response["choices"][0]["message"]["content"]
                     return self.strip_thinking_tags(content)
-                except (IndexError, RuntimeError, KeyError) as e:
-                    # Handle transient errors in llama-cpp-python (common with thinking models)
-                    error_msg = str(e)
+                except IndexError as e:
+                    # Handle transient "index out of bounds" errors in llama-cpp-python
                     last_error = e
                     if attempt < max_retries:
-                        logger.warning(f"Inference error (attempt {attempt + 1}/{max_retries + 1}): {error_msg}, retrying...")
-                        # Small delay before retry to let system recover
-                        time.sleep(0.5)
+                        logger.warning(f"Inference IndexError (attempt {attempt + 1}/{max_retries + 1}): {e}, retrying...")
                         continue
-                    # On final attempt, log the error but don't crash the service
-                    logger.error(f"Inference failed after {max_retries + 1} attempts: {error_msg}")
-                    raise RuntimeError(f"Inference failed: {error_msg}. This may be a model compatibility issue.")
+                    raise
 
             raise last_error
         else:
@@ -572,17 +553,7 @@ class IPEXService:
                         _current_request = f"REQ-{request_id}"
                         logger.info(f"[REQ-{request_id}] Processing started")
                         try:
-                            # Wrap in try-except to catch any low-level crashes
-                            # Note: C++ assertion failures may still crash the process
                             return self._generate_response(messages, **kwargs)
-                        except SystemExit:
-                            # Don't catch system exits
-                            raise
-                        except BaseException as e:
-                            # Catch all other exceptions including AssertionError from C++ code
-                            logger.error(f"[REQ-{request_id}] Critical error in inference: {type(e).__name__}: {e}", exc_info=True)
-                            # Re-raise as a regular exception so it can be handled
-                            raise RuntimeError(f"Inference failed: {str(e)}") from e
                         finally:
                             _current_request = None
 
@@ -669,7 +640,7 @@ class IPEXService:
         messages_to_use = messages
         if self.disable_thinking:
             model_name_lower = self.model_path.lower()
-            if "qwen3" in model_name_lower or "deepseek" in model_name_lower or "reasoning" in model_name_lower:
+            if "qwen3" in model_name_lower or "deepseek-r1" in model_name_lower or "reasoning" in model_name_lower:
                 messages_to_use = messages.copy()
 
                 # Add/modify system message
@@ -699,44 +670,34 @@ class IPEXService:
                     try:
                         if self._is_gguf:
                             # Use llama.cpp streaming for GGUF
-                            # Note: SYCL assertion failures in llama-cpp-python may cause process abort
-                            # This is a known issue with certain model/config combinations
-                            try:
-                                for chunk in self._model.create_chat_completion(
-                                    messages=messages_to_use,
-                                    max_tokens=kwargs.get("max_tokens", self.num_predict),
-                                    temperature=kwargs.get("temperature", self.temperature),
-                                    top_p=kwargs.get("top_p", self.top_p),
-                                    top_k=kwargs.get("top_k", self.top_k),
-                                    repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-                                    stop=stop if stop else None,
-                                    stream=True,
-                                ):
-                                    delta = chunk.get("choices", [{}])[0].get("delta", {})
-                                    content = delta.get("content", "")
-                                    if content:
-                                        sse_chunk = {
-                                            "id": completion_id,
-                                            "object": "chat.completion.chunk",
-                                            "created": created,
-                                            "model": model_name,
-                                            "choices": [{
-                                                "index": 0,
-                                                "delta": {"content": content},
-                                                "finish_reason": None
-                                            }]
-                                        }
-                                        loop.call_soon_threadsafe(
-                                            queue.put_nowait,
-                                            f"data: {json.dumps(sse_chunk)}\n\n"
-                                        )
-                            except SystemExit:
-                                raise
-                            except BaseException as e:
-                                logger.error(f"[STREAM-{request_id}] Critical error in GGUF streaming: {type(e).__name__}: {e}", exc_info=True)
-                                error_msg = f"data: {json.dumps({'error': {'message': f'Inference failed: {str(e)}', 'type': 'inference_error'}})}\n\n"
-                                loop.call_soon_threadsafe(queue.put_nowait, error_msg)
-                                raise RuntimeError(f"GGUF streaming failed: {str(e)}") from e
+                            for chunk in self._model.create_chat_completion(
+                                messages=messages_to_use,
+                                max_tokens=kwargs.get("max_tokens", self.num_predict),
+                                temperature=kwargs.get("temperature", self.temperature),
+                                top_p=kwargs.get("top_p", self.top_p),
+                                top_k=kwargs.get("top_k", self.top_k),
+                                repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                                stop=stop if stop else None,
+                                stream=True,
+                            ):
+                                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    sse_chunk = {
+                                        "id": completion_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": created,
+                                        "model": model_name,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"content": content},
+                                            "finish_reason": None
+                                        }]
+                                    }
+                                    loop.call_soon_threadsafe(
+                                        queue.put_nowait,
+                                        f"data: {json.dumps(sse_chunk)}\n\n"
+                                    )
                         else:
                             # Use HuggingFace streaming
                             import torch
@@ -847,7 +808,7 @@ class IPEXService:
             messages_to_use = messages
             if self.disable_thinking:
                 model_name_lower = self.model_path.lower()
-                if "qwen3" in model_name_lower or "deepseek" in model_name_lower or "reasoning" in model_name_lower:
+                if "qwen3" in model_name_lower or "deepseek-r1" in model_name_lower or "reasoning" in model_name_lower:
                     messages_to_use = messages.copy()
 
                     # Add/modify system message
@@ -900,16 +861,12 @@ class IPEXService:
                                 yield content
                     except Exception as stream_error:
                         error_msg = str(stream_error)
-                        # Handle llama_decode and other inference errors gracefully
-                        # This prevents service crashes from propagating to the user
-                        if "llama_decode" in error_msg or isinstance(stream_error, (RuntimeError, IndexError, KeyError)):
+                        # Handle llama_decode errors gracefully
+                        if "llama_decode" in error_msg or isinstance(stream_error, (RuntimeError, IndexError)):
                             logger.error(f"[STREAM-{request_id}] Inference error: {error_msg}")
                             yield f"\n\n[Generation error: {error_msg}]"
                             return
-                        # For unknown errors, log but don't crash
-                        logger.error(f"[STREAM-{request_id}] Unexpected error: {error_msg}")
-                        yield f"\n\n[Generation error: {error_msg}]"
-                        return
+                        raise
                 else:
                     # Use HuggingFace streaming
                     import torch

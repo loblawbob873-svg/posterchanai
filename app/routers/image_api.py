@@ -29,54 +29,6 @@ from app.services.image_factory import generate_image_with_load_balancing
 
 router = APIRouter(prefix="/api", tags=["image"])
 
-
-@router.get("/health")
-@router.get("/health/")
-async def health_check(db: Session = Depends(get_db)):
-    """
-    Health check endpoint for load balancer.
-    Returns 200 if the image generation service is available.
-    Lightweight check - only checks configuration, doesn't initialize services.
-    """
-    try:
-        # Check if image backend is configured
-        settings = {s.key: s.value for s in db.query(Setting).all()}
-        image_backend = settings.get("image_backend", "comfyui")
-        
-        if image_backend == "native":
-            # For native backend, just check device availability (don't initialize service)
-            try:
-                from app.services.diffusers_service import detect_device
-                device = detect_device()
-                logger.info(f"[HEALTH] Device detected: {device}")
-                
-                # Check if model path is configured
-                model_path = settings.get("image_model_path", "")
-                if not model_path:
-                    logger.warning("[HEALTH] Native backend configured but no model path set")
-                    return {"status": "ok", "device": device, "backend": "native", "warning": "no model path configured"}
-                
-                return {"status": "ok", "device": device, "backend": "native", "model_path": model_path}
-            except Exception as e:
-                logger.error(f"[HEALTH] Device detection failed: {e}", exc_info=True)
-                # Still return OK - service might work with CPU fallback
-                return {"status": "ok", "device": "unknown", "backend": "native", "warning": f"device detection failed: {str(e)}"}
-        else:
-            # ComfyUI backend - just check if URL is configured
-            comfyui_url = settings.get("comfyui_url", "")
-            if comfyui_url:
-                logger.info(f"[HEALTH] ComfyUI backend configured: {comfyui_url}")
-                return {"status": "ok", "backend": "comfyui", "url": comfyui_url}
-            else:
-                logger.warning("[HEALTH] ComfyUI backend configured but no URL set")
-                return {"status": "ok", "backend": "comfyui", "url": None, "warning": "no comfyui_url configured"}
-    except Exception as e:
-        # Catch all exceptions to prevent crashes
-        logger.error(f"[HEALTH] Health check failed with exception: {e}", exc_info=True)
-        # Return OK anyway - don't crash the server
-        return {"status": "ok", "error": str(e)}
-
-
 async def get_image_auth(
     request: Request,
     authorization: Optional[str] = Header(None),

@@ -134,7 +134,6 @@ def prepare_for_image(db: Session) -> bool:
             return True
 
         # Unload LLM if using native backend
-        # Note: This is called AFTER GPU lock is acquired, so LLM should be done generating
         if settings["llm_backend"] in ("native", "ipex"):
             try:
                 if settings["llm_backend"] == "native":
@@ -145,52 +144,12 @@ def prepare_for_image(db: Session) -> bool:
                     service = get_ipex_service(db)
 
                 if service._model is not None:
-                    logger.info("[VRAM] Unloading LLM to free VRAM for image generation...")
-                    try:
-                        service.unload_model()
-                        # Force CUDA cache clear to actually free memory
-                        import torch
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                            torch.cuda.synchronize()
-                            # Additional aggressive cleanup
-                            import gc
-                            gc.collect()
-                            torch.cuda.empty_cache()
-                            logger.info("[VRAM] LLM unloaded and CUDA cache cleared")
-                        logger.info("[VRAM] LLM unloaded successfully")
-                    except Exception as unload_error:
-                        logger.warning(f"[VRAM] LLM unload had issues (may still be in use): {unload_error}", exc_info=True)
-                        # Try to clear CUDA cache anyway
-                        try:
-                            import torch
-                            if torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-                                import gc
-                                gc.collect()
-                                torch.cuda.empty_cache()
-                                logger.info("[VRAM] Attempted CUDA cache clear after unload error")
-                        except Exception:
-                            pass
-                        # Continue anyway - model might still be in VRAM but we'll try to load image model
+                    logger.info("Unloading LLM to free VRAM for image generation...")
+                    service.unload_model()
                     # Force reset current mode to ensure proper tracking
                     _current_mode = None
-                else:
-                    logger.info("[VRAM] LLM model is None, no need to unload")
             except Exception as e:
-                logger.error(f"[VRAM] Error unloading LLM: {e}", exc_info=True)
-                # Try to clear CUDA cache anyway
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                        import gc
-                        gc.collect()
-                        torch.cuda.empty_cache()
-                        logger.info("[VRAM] Attempted CUDA cache clear after error")
-                except Exception:
-                    pass
-                # Continue anyway - try to load image model
+                logger.error(f"Error unloading LLM: {e}")
 
         # Load image model
         _ensure_image_loaded(db, settings)
@@ -221,13 +180,12 @@ def _ensure_image_loaded(db: Session, settings: dict):
     try:
         if settings["image_backend"] == "native":
             from app.services.diffusers_service import get_diffusers_service
-            # Just get the service instance (lazy initialization - won't crash on startup)
+            # Just initialize the service, don't pre-load model
             # Model will be loaded during generation based on prompt (anime vs default)
-            service = get_diffusers_service(db)
-            # Don't force initialization here - let it happen on first use
+            get_diffusers_service(db)
     except Exception as e:
-        logger.error(f"Error getting image service: {e}", exc_info=True)
-        # Don't raise - allow service to be used later
+        logger.error(f"Error initializing image service: {e}")
+        raise
 
 
 def get_vram_status(db: Session) -> dict:

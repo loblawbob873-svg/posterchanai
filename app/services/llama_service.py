@@ -717,20 +717,6 @@ class LlamaService:
             self._model = None
             self._model_path = None
             
-            # Force CUDA cache clear to actually free memory
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-                    import gc
-                    gc.collect()
-                    gc.collect()  # Run twice for thorough cleanup
-                    torch.cuda.empty_cache()
-                    logger.info("LLM unloaded and CUDA cache cleared")
-            except Exception as e:
-                logger.warning(f"Error clearing CUDA cache after LLM unload: {e}")
-            
             # Reset VRAM mode if unloaded outside of VRAM manager (e.g., idle timeout)
             try:
                 from app.services.vram_manager import reset_vram_mode

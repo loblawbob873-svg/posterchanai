@@ -51,38 +51,24 @@ def detect_device() -> str:
     """Auto-detect the best available device"""
     try:
         import torch
-    except ImportError:
-        logger.warning("PyTorch not available, using CPU")
-        return "cpu"
-    except Exception as e:
-        logger.warning(f"Error importing torch: {e}, falling back to CPU")
-        return "cpu"
 
-    try:
         # Check for CUDA (NVIDIA) or ROCm (AMD)
         # ROCm uses the torch.cuda API, so we check device name to distinguish
         if torch.cuda.is_available():
-            try:
-                device_name = torch.cuda.get_device_name(0)
-                logger.info(f"Detected GPU device: {device_name}")
-            except Exception as e:
-                logger.warning(f"CUDA available but get_device_name failed: {e}, using cuda anyway")
+            device_name = torch.cuda.get_device_name(0)
+            logger.info(f"Detected GPU device: {device_name}")
             # Both NVIDIA and AMD ROCm use "cuda" as the device string
             return "cuda"
 
         # Check for Intel XPU
-        if hasattr(torch, "xpu"):
-            try:
-                if torch.xpu.is_available():
-                    logger.info("Detected Intel XPU device")
-                    return "xpu"
-            except Exception as e:
-                logger.warning(f"XPU check failed: {e}, skipping XPU")
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            logger.info("Detected Intel XPU device")
+            return "xpu"
 
         logger.info("No GPU detected, using CPU")
         return "cpu"
     except Exception as e:
-        logger.warning(f"Error detecting device: {e}, falling back to CPU", exc_info=True)
+        logger.warning(f"Error detecting device: {e}, falling back to CPU")
         return "cpu"
 
 
@@ -216,15 +202,11 @@ def _idle_check_loop():
 def _start_idle_check():
     """Start the idle check background thread"""
     global _idle_check_thread
-    try:
-        if _idle_check_thread is None or not _idle_check_thread.is_alive():
-            _idle_check_stop.clear()
-            _idle_check_thread = threading.Thread(target=_idle_check_loop, daemon=True)
-            _idle_check_thread.start()
-            logger.info("Started idle timeout monitor")
-    except Exception as e:
-        # Don't crash if thread creation fails - idle timeout is optional
-        logger.warning(f"Failed to start idle timeout monitor: {e}")
+    if _idle_check_thread is None or not _idle_check_thread.is_alive():
+        _idle_check_stop.clear()
+        _idle_check_thread = threading.Thread(target=_idle_check_loop, daemon=True)
+        _idle_check_thread.start()
+        logger.info("Started idle timeout monitor")
 
 
 class DiffusersService:
@@ -242,39 +224,16 @@ class DiffusersService:
         self._device: Optional[str] = None
         self._last_used: float = time.time()
         self._idle_timeout: int = DEFAULT_IDLE_TIMEOUT
-        self._initialized: bool = False
-        # Don't initialize settings or threads here - defer until first use
-        # This prevents crashes during import/startup
-
-    def _ensure_initialized(self):
-        """Ensure service is initialized (load settings, start idle check)"""
-        if self._initialized:
-            return
-        try:
-            self._load_settings()
-            _start_idle_check()
-            self._initialized = True
-        except Exception as e:
-            logger.error(f"Failed to initialize DiffusersService: {e}", exc_info=True)
-            # Don't raise - allow service to be used but log the error
-            # Settings will use defaults
+        self._load_settings()
+        _start_idle_check()
 
     def _load_settings(self):
         """Load settings from database"""
-        try:
-            settings = {s.key: s.value for s in self.db.query(Setting).all()}
-        except Exception as e:
-            logger.error(f"Failed to query settings from database: {e}", exc_info=True)
-            # Use defaults if database query fails
-            settings = {}
+        settings = {s.key: s.value for s in self.db.query(Setting).all()}
 
         # Idle timeout for automatic unloading (default 2 minutes)
-        try:
-            self._idle_timeout = int(settings.get("image_idle_timeout", str(DEFAULT_IDLE_TIMEOUT)))
-            logger.info(f"Loaded image_idle_timeout setting: {self._idle_timeout}")
-        except (ValueError, TypeError):
-            self._idle_timeout = DEFAULT_IDLE_TIMEOUT
-            logger.warning(f"Invalid image_idle_timeout, using default: {DEFAULT_IDLE_TIMEOUT}")
+        self._idle_timeout = int(settings.get("image_idle_timeout", str(DEFAULT_IDLE_TIMEOUT)))
+        logger.info(f"Loaded image_idle_timeout setting: {self._idle_timeout}")
 
         # Model settings
         self.model_path = settings.get("image_model_path", "")
@@ -282,36 +241,25 @@ class DiffusersService:
         self.model_type = settings.get("image_model_type", "sdxl")  # sd15, sdxl, sd3, flux
 
         # Generation defaults
-        try:
-            self.default_steps = int(settings.get("image_default_steps", "20"))
-            self.default_cfg = float(settings.get("image_default_cfg", "7.0"))
-            self.default_width = int(settings.get("image_default_width", "1024"))
-            self.default_height = int(settings.get("image_default_height", "1024"))
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Invalid generation defaults, using defaults: {e}")
-            self.default_steps = 20
-            self.default_cfg = 7.0
-            self.default_width = 1024
-            self.default_height = 1024
+        self.default_steps = int(settings.get("image_default_steps", "20"))
+        self.default_cfg = float(settings.get("image_default_cfg", "7.0"))
+        self.default_width = int(settings.get("image_default_width", "1024"))
+        self.default_height = int(settings.get("image_default_height", "1024"))
 
         # Device settings
         device_setting = settings.get("image_gpu_device", "auto")
-        try:
-            if device_setting == "auto":
+        if device_setting == "auto":
+            self._device = detect_device()
+        else:
+            self._device = device_setting
+            # Validate device is actually available
+            import torch
+            if self._device == "cuda" and not torch.cuda.is_available():
+                logger.warning(f"image_gpu_device is set to 'cuda' but CUDA is not available, falling back to auto-detection")
                 self._device = detect_device()
-            else:
-                self._device = device_setting
-                # Validate device is actually available
-                import torch
-                if self._device == "cuda" and not torch.cuda.is_available():
-                    logger.warning(f"image_gpu_device is set to 'cuda' but CUDA is not available, falling back to auto-detection")
-                    self._device = detect_device()
-                elif self._device == "xpu" and not (hasattr(torch, "xpu") and torch.xpu.is_available()):
-                    logger.warning(f"image_gpu_device is set to 'xpu' but XPU is not available, falling back to auto-detection")
-                    self._device = detect_device()
-        except Exception as e:
-            logger.warning(f"Failed to detect device, using CPU: {e}")
-            self._device = "cpu"
+            elif self._device == "xpu" and not (hasattr(torch, "xpu") and torch.xpu.is_available()):
+                logger.warning(f"image_gpu_device is set to 'xpu' but XPU is not available, falling back to auto-detection")
+                self._device = detect_device()
 
         # Backend setting
         self.backend = settings.get("image_backend", "comfyui")  # "native" or "comfyui"
@@ -339,8 +287,6 @@ class DiffusersService:
 
     def _ensure_model_loaded(self, target_model: str = None):
         """Load model if not already loaded or if path changed"""
-        # Ensure service is initialized before loading model
-        self._ensure_initialized()
         # Use specified model or default
         model_to_load = target_model or self.model_path
 
@@ -366,23 +312,11 @@ class DiffusersService:
                     logger.info("ROCm memory cleanup complete")
 
             if not model_to_load:
-                error_msg = "No model path configured - cannot load image generation model"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
+                logger.warning("No model path configured")
+                return
 
             logger.info(f"Loading diffusers model: {model_to_load}")
             logger.info(f"  Device: {self._device}, Type: {self.model_type}")
-
-            # Verify device is actually available before attempting to load
-            import torch
-            if self._device == "cuda" and not torch.cuda.is_available():
-                error_msg = f"Device 'cuda' requested but CUDA is not available. Available: CPU"
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
-            elif self._device == "xpu" and not (hasattr(torch, "xpu") and torch.xpu.is_available()):
-                error_msg = f"Device 'xpu' requested but XPU is not available. Available: CPU"
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
 
             try:
                 import torch
@@ -521,11 +455,9 @@ class DiffusersService:
                 logger.info("Model loaded successfully")
 
             except Exception as e:
-                error_msg = f"Failed to load model '{model_to_load}' on device '{self._device}': {e}"
-                logger.error(error_msg, exc_info=True)
+                logger.error(f"Failed to load model: {e}")
                 self._pipe = None
-                # Re-raise with more context
-                raise RuntimeError(error_msg) from e
+                raise
 
     def _unload_model_internal(self):
         """Internal method to unload model (no lock)"""
@@ -603,7 +535,6 @@ class DiffusersService:
 
     def reload_model(self):
         """Reload the model (unload then load)"""
-        self._ensure_initialized()
         self.unload_model()
         self._load_settings()
         self._ensure_model_loaded()
@@ -614,7 +545,6 @@ class DiffusersService:
 
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the loaded model"""
-        self._ensure_initialized()
         return {
             "loaded": self._pipe is not None,
             "model_path": self._model_path,
@@ -653,16 +583,10 @@ class DiffusersService:
 
         # Select model based on prompt (anime vs default)
         target_model = self._get_model_for_prompt(prompt)
-        
-        # Try to load model - catch errors and log them clearly
-        try:
-            self._ensure_model_loaded(target_model)
-        except Exception as e:
-            logger.error(f"Failed to load model for generation: {e}", exc_info=True)
-            return None
+        self._ensure_model_loaded(target_model)
 
         if self._pipe is None:
-            logger.error("No model loaded after _ensure_model_loaded (this should not happen)")
+            logger.error("No model loaded")
             return None
 
         # Use defaults if not specified
@@ -944,8 +868,8 @@ class DiffusersService:
         If subprocess_mode is enabled, runs in separate process for guaranteed VRAM release.
         If image_idle_timeout is 0, unloads model immediately after generation.
         """
-        # Ensure service is initialized (lazy initialization)
-        self._ensure_initialized()
+        # Reload settings to ensure we have the latest idle_timeout value
+        self._load_settings()
         
         loop = asyncio.get_event_loop()
 
@@ -980,13 +904,11 @@ def get_diffusers_service(db: Session) -> DiffusersService:
     global _diffusers_instance
 
     if _diffusers_instance is None:
-        # Create instance without initializing (defer until first use)
-        # This prevents crashes during import/startup
         _diffusers_instance = DiffusersService(db)
     else:
         # Update db session
         _diffusers_instance.db = db
-        # Don't call _load_settings here - let it be lazy-loaded on first use
+        _diffusers_instance._load_settings()
 
     return _diffusers_instance
 

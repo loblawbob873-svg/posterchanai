@@ -29,33 +29,17 @@ IMAGE_HEALTH_CHECK_TIMEOUT = 5.0  # Quick timeout for health checks
 
 async def check_image_server_health(server: str) -> bool:
     """
-    Quick health check - verify server responds to /api/health endpoint.
+    Quick health check - verify server responds to /api/generate-image endpoint.
     Returns True if healthy, False otherwise.
     """
     try:
         async with httpx.AsyncClient(timeout=IMAGE_HEALTH_CHECK_TIMEOUT) as client:
+            # Just check if the endpoint exists (OPTIONS or quick GET)
             response = await client.get(f"{server}/api/health")
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    status = data.get("status", "unknown")
-                    if status == "ok":
-                        logger.debug(f"Image server {server} is healthy: {data}")
-                        return True
-                    else:
-                        error = data.get("error", "unknown error")
-                        logger.warning(f"Image server {server} reports unhealthy status: {error}")
-                        return False
-                except Exception:
-                    # If we can't parse JSON, but got 200, assume it's OK
-                    logger.debug(f"Image server {server} returned 200 but unparseable JSON")
-                    return True
-            else:
-                logger.warning(f"Image health check failed for {server}: status {response.status_code}")
-                return False
-    except httpx.TimeoutException:
-        logger.warning(f"Image health check timeout for {server}")
-        return False
+            if response.status_code in (200, 404, 405):  # 404/405 means endpoint exists but wrong method
+                return True
+            logger.warning(f"Image health check failed for {server}: status {response.status_code}")
+            return False
     except Exception as e:
         logger.warning(f"Image health check failed for {server}: {str(e)[:100]}")
         return False
