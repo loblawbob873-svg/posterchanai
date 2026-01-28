@@ -85,9 +85,22 @@ async def generate_image_with_load_balancing(
         logger.error("[IMAGE] vram_mode is 'llm_only' but no image servers configured")
         return None
 
+    # Check if local GPU is currently busy with LLM
+    # If so, prefer remote servers to avoid waiting
+    local_gpu_busy = False
+    try:
+        from app.services.locks import get_gpu_lock_status
+        lock_status = get_gpu_lock_status()
+        if lock_status.get('locked') and lock_status.get('holder', '').startswith('LLM'):
+            local_gpu_busy = True
+            logger.info(f"[IMAGE] Local GPU is busy with LLM ({lock_status.get('holder')}), will prefer remote servers")
+    except Exception:
+        pass  # If lock status check fails, continue normally
+
     # If remote image servers are configured, use load balancing
-    # Simple round-robin: select one server and make request
-    logger.info(f"[IMAGE] Checking load balancing: servers={servers}, len={len(servers) if servers else 0}, force_remote={force_remote}")
+    # Always try remote first if servers are configured (round-robin)
+    # But if local GPU is busy with LLM, definitely use remote to avoid waiting
+    logger.info(f"[IMAGE] Checking load balancing: servers={servers}, len={len(servers) if servers else 0}, force_remote={force_remote}, local_gpu_busy={local_gpu_busy}")
     if servers:
         from app.services.image_load_balancer import get_healthy_image_server
         
@@ -174,10 +187,16 @@ async def generate_image_with_load_balancing(
         result = None
         try:
             # Use shared GPU lock to prevent LLM and image from running simultaneously
+            # Acquire lock FIRST, then prepare VRAM (this ensures LLM has finished)
             from app.services.locks import GPUResourceLock, image_generation_lock
             async with GPUResourceLock("Image", f"prompt={prompt[:30]}..."):
+                # Now that we have the GPU lock, LLM should be done
+                # Prepare VRAM (unload LLM if needed, load image model)
+                logger.info("[IMAGE] Preparing VRAM for image generation...")
+                prepare_vram_for_image(db)
+                logger.info("[IMAGE] VRAM prepared, starting image generation...")
+                
                 async with image_generation_lock:
-                    prepare_vram_for_image(db)
                     backend = get_image_backend(db)
                     logger.info(f"Calling backend.generate_image with prompt: {prompt[:50]}...")
                     logger.info(f"Backend type: {type(backend).__name__}")

@@ -134,6 +134,7 @@ def prepare_for_image(db: Session) -> bool:
             return True
 
         # Unload LLM if using native backend
+        # Note: This is called AFTER GPU lock is acquired, so LLM should be done generating
         if settings["llm_backend"] in ("native", "ipex"):
             try:
                 if settings["llm_backend"] == "native":
@@ -144,12 +145,18 @@ def prepare_for_image(db: Session) -> bool:
                     service = get_ipex_service(db)
 
                 if service._model is not None:
-                    logger.info("Unloading LLM to free VRAM for image generation...")
-                    service.unload_model()
+                    logger.info("[VRAM] Unloading LLM to free VRAM for image generation...")
+                    try:
+                        service.unload_model()
+                        logger.info("[VRAM] LLM unloaded successfully")
+                    except Exception as unload_error:
+                        logger.warning(f"[VRAM] LLM unload had issues (may still be in use): {unload_error}")
+                        # Continue anyway - model might still be in VRAM but we'll try to load image model
                     # Force reset current mode to ensure proper tracking
                     _current_mode = None
             except Exception as e:
-                logger.error(f"Error unloading LLM: {e}")
+                logger.error(f"[VRAM] Error unloading LLM: {e}", exc_info=True)
+                # Continue anyway - try to load image model
 
         # Load image model
         _ensure_image_loaded(db, settings)
