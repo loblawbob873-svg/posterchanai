@@ -31,11 +31,13 @@ router = APIRouter(prefix="/api", tags=["image"])
 
 
 @router.get("/health")
+@router.get("/health/")
+async def health_check(db: Session = Depends(get_db)):
 async def health_check(db: Session = Depends(get_db)):
     """
     Health check endpoint for load balancer.
     Returns 200 if the image generation service is available.
-    Lightweight check - doesn't initialize services to avoid crashes.
+    Verifies GPU/device is available and backend can be initialized.
     """
     try:
         # Check if image backend is configured
@@ -43,35 +45,51 @@ async def health_check(db: Session = Depends(get_db)):
         image_backend = settings.get("image_backend", "comfyui")
         
         if image_backend == "native":
-            # For native backend, just check device availability (don't initialize service)
+            # For native backend, check device availability and verify backend can be created
             try:
                 from app.services.diffusers_service import detect_device
                 device = detect_device()
+                logger.info(f"[HEALTH] Device detected: {device}")
                 
                 # Check if model path is configured
                 model_path = settings.get("image_model_path", "")
                 if not model_path:
-                    # Still return OK - model might be loaded later
+                    logger.warning("[HEALTH] Native backend configured but no model path set")
                     return {"status": "ok", "device": device, "backend": "native", "warning": "no model path configured"}
                 
-                return {"status": "ok", "device": device, "backend": "native", "model_path": model_path}
+                # Try to verify backend can be initialized (but don't load model)
+                backend_type = None
+                try:
+                    from app.services.image_factory import get_image_backend
+                    backend = get_image_backend(db)
+                    backend_type = type(backend).__name__
+                    logger.info(f"[HEALTH] Backend initialized: {backend_type}")
+                except Exception as backend_error:
+                    logger.error(f"[HEALTH] Failed to initialize backend: {backend_error}", exc_info=True)
+                    return {"status": "error", "device": device, "backend": "native", "error": f"Backend init failed: {str(backend_error)}"}
+                
+                result = {"status": "ok", "device": device, "backend": "native", "model_path": model_path}
+                if backend_type:
+                    result["backend_type"] = backend_type
+                return result
             except Exception as e:
-                # Don't log as error - device detection might fail but service can still work
-                logger.debug(f"Health check: Device detection failed: {e}")
-                # Still return OK - service is running
-                return {"status": "ok", "device": "unknown", "backend": "native", "warning": "device detection failed"}
+                logger.error(f"[HEALTH] Device detection or backend check failed: {e}", exc_info=True)
+                # Return error status so load balancer knows this server is unhealthy
+                return {"status": "error", "device": "unknown", "backend": "native", "error": str(e)}
         else:
             # ComfyUI backend - just check if URL is configured
             comfyui_url = settings.get("comfyui_url", "")
             if comfyui_url:
+                logger.info(f"[HEALTH] ComfyUI backend configured: {comfyui_url}")
                 return {"status": "ok", "backend": "comfyui", "url": comfyui_url}
             else:
+                logger.warning("[HEALTH] ComfyUI backend configured but no URL set")
                 return {"status": "ok", "backend": "comfyui", "url": None, "warning": "no comfyui_url configured"}
     except Exception as e:
         # Catch all exceptions to prevent crashes
-        logger.error(f"Health check failed: {e}", exc_info=True)
-        # Return 200 anyway - service is running, just had an error checking config
-        return {"status": "ok", "error": str(e)}
+        logger.error(f"[HEALTH] Health check failed with exception: {e}", exc_info=True)
+        # Return error status so load balancer knows this server is unhealthy
+        return {"status": "error", "error": str(e)}
 
 
 async def get_image_auth(
