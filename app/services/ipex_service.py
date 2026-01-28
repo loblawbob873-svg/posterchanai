@@ -572,7 +572,17 @@ class IPEXService:
                         _current_request = f"REQ-{request_id}"
                         logger.info(f"[REQ-{request_id}] Processing started")
                         try:
+                            # Wrap in try-except to catch any low-level crashes
+                            # Note: C++ assertion failures may still crash the process
                             return self._generate_response(messages, **kwargs)
+                        except SystemExit:
+                            # Don't catch system exits
+                            raise
+                        except BaseException as e:
+                            # Catch all other exceptions including AssertionError from C++ code
+                            logger.error(f"[REQ-{request_id}] Critical error in inference: {type(e).__name__}: {e}", exc_info=True)
+                            # Re-raise as a regular exception so it can be handled
+                            raise RuntimeError(f"Inference failed: {str(e)}") from e
                         finally:
                             _current_request = None
 
@@ -689,34 +699,44 @@ class IPEXService:
                     try:
                         if self._is_gguf:
                             # Use llama.cpp streaming for GGUF
-                            for chunk in self._model.create_chat_completion(
-                                messages=messages_to_use,
-                                max_tokens=kwargs.get("max_tokens", self.num_predict),
-                                temperature=kwargs.get("temperature", self.temperature),
-                                top_p=kwargs.get("top_p", self.top_p),
-                                top_k=kwargs.get("top_k", self.top_k),
-                                repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
-                                stop=stop if stop else None,
-                                stream=True,
-                            ):
-                                delta = chunk.get("choices", [{}])[0].get("delta", {})
-                                content = delta.get("content", "")
-                                if content:
-                                    sse_chunk = {
-                                        "id": completion_id,
-                                        "object": "chat.completion.chunk",
-                                        "created": created,
-                                        "model": model_name,
-                                        "choices": [{
-                                            "index": 0,
-                                            "delta": {"content": content},
-                                            "finish_reason": None
-                                        }]
-                                    }
-                                    loop.call_soon_threadsafe(
-                                        queue.put_nowait,
-                                        f"data: {json.dumps(sse_chunk)}\n\n"
-                                    )
+                            # Note: SYCL assertion failures in llama-cpp-python may cause process abort
+                            # This is a known issue with certain model/config combinations
+                            try:
+                                for chunk in self._model.create_chat_completion(
+                                    messages=messages_to_use,
+                                    max_tokens=kwargs.get("max_tokens", self.num_predict),
+                                    temperature=kwargs.get("temperature", self.temperature),
+                                    top_p=kwargs.get("top_p", self.top_p),
+                                    top_k=kwargs.get("top_k", self.top_k),
+                                    repeat_penalty=kwargs.get("repeat_penalty", self.repeat_penalty),
+                                    stop=stop if stop else None,
+                                    stream=True,
+                                ):
+                                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                                    content = delta.get("content", "")
+                                    if content:
+                                        sse_chunk = {
+                                            "id": completion_id,
+                                            "object": "chat.completion.chunk",
+                                            "created": created,
+                                            "model": model_name,
+                                            "choices": [{
+                                                "index": 0,
+                                                "delta": {"content": content},
+                                                "finish_reason": None
+                                            }]
+                                        }
+                                        loop.call_soon_threadsafe(
+                                            queue.put_nowait,
+                                            f"data: {json.dumps(sse_chunk)}\n\n"
+                                        )
+                            except SystemExit:
+                                raise
+                            except BaseException as e:
+                                logger.error(f"[STREAM-{request_id}] Critical error in GGUF streaming: {type(e).__name__}: {e}", exc_info=True)
+                                error_msg = f"data: {json.dumps({'error': {'message': f'Inference failed: {str(e)}', 'type': 'inference_error'}})}\n\n"
+                                loop.call_soon_threadsafe(queue.put_nowait, error_msg)
+                                raise RuntimeError(f"GGUF streaming failed: {str(e)}") from e
                         else:
                             # Use HuggingFace streaming
                             import torch
