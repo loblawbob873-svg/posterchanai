@@ -187,12 +187,13 @@ def _ensure_image_loaded(db: Session, settings: dict):
     try:
         if settings["image_backend"] == "native":
             from app.services.diffusers_service import get_diffusers_service
-            # Just initialize the service, don't pre-load model
+            # Just get the service instance (lazy initialization - won't crash on startup)
             # Model will be loaded during generation based on prompt (anime vs default)
-            get_diffusers_service(db)
+            service = get_diffusers_service(db)
+            # Don't force initialization here - let it happen on first use
     except Exception as e:
-        logger.error(f"Error initializing image service: {e}")
-        raise
+        logger.error(f"Error getting image service: {e}", exc_info=True)
+        # Don't raise - allow service to be used later
 
 
 def get_vram_status(db: Session) -> dict:

@@ -51,24 +51,38 @@ def detect_device() -> str:
     """Auto-detect the best available device"""
     try:
         import torch
+    except ImportError:
+        logger.warning("PyTorch not available, using CPU")
+        return "cpu"
+    except Exception as e:
+        logger.warning(f"Error importing torch: {e}, falling back to CPU")
+        return "cpu"
 
+    try:
         # Check for CUDA (NVIDIA) or ROCm (AMD)
         # ROCm uses the torch.cuda API, so we check device name to distinguish
         if torch.cuda.is_available():
-            device_name = torch.cuda.get_device_name(0)
-            logger.info(f"Detected GPU device: {device_name}")
+            try:
+                device_name = torch.cuda.get_device_name(0)
+                logger.info(f"Detected GPU device: {device_name}")
+            except Exception as e:
+                logger.warning(f"CUDA available but get_device_name failed: {e}, using cuda anyway")
             # Both NVIDIA and AMD ROCm use "cuda" as the device string
             return "cuda"
 
         # Check for Intel XPU
-        if hasattr(torch, "xpu") and torch.xpu.is_available():
-            logger.info("Detected Intel XPU device")
-            return "xpu"
+        if hasattr(torch, "xpu"):
+            try:
+                if torch.xpu.is_available():
+                    logger.info("Detected Intel XPU device")
+                    return "xpu"
+            except Exception as e:
+                logger.warning(f"XPU check failed: {e}, skipping XPU")
 
         logger.info("No GPU detected, using CPU")
         return "cpu"
     except Exception as e:
-        logger.warning(f"Error detecting device: {e}, falling back to CPU")
+        logger.warning(f"Error detecting device: {e}, falling back to CPU", exc_info=True)
         return "cpu"
 
 
@@ -228,13 +242,22 @@ class DiffusersService:
         self._device: Optional[str] = None
         self._last_used: float = time.time()
         self._idle_timeout: int = DEFAULT_IDLE_TIMEOUT
+        self._initialized: bool = False
+        # Don't initialize settings or threads here - defer until first use
+        # This prevents crashes during import/startup
+
+    def _ensure_initialized(self):
+        """Ensure service is initialized (load settings, start idle check)"""
+        if self._initialized:
+            return
         try:
             self._load_settings()
             _start_idle_check()
+            self._initialized = True
         except Exception as e:
             logger.error(f"Failed to initialize DiffusersService: {e}", exc_info=True)
-            # Don't raise - allow service to be created but log the error
-            # Settings will be loaded on first use
+            # Don't raise - allow service to be used but log the error
+            # Settings will use defaults
 
     def _load_settings(self):
         """Load settings from database"""
@@ -316,6 +339,8 @@ class DiffusersService:
 
     def _ensure_model_loaded(self, target_model: str = None):
         """Load model if not already loaded or if path changed"""
+        # Ensure service is initialized before loading model
+        self._ensure_initialized()
         # Use specified model or default
         model_to_load = target_model or self.model_path
 
@@ -578,6 +603,7 @@ class DiffusersService:
 
     def reload_model(self):
         """Reload the model (unload then load)"""
+        self._ensure_initialized()
         self.unload_model()
         self._load_settings()
         self._ensure_model_loaded()
@@ -588,6 +614,7 @@ class DiffusersService:
 
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the loaded model"""
+        self._ensure_initialized()
         return {
             "loaded": self._pipe is not None,
             "model_path": self._model_path,
@@ -917,8 +944,8 @@ class DiffusersService:
         If subprocess_mode is enabled, runs in separate process for guaranteed VRAM release.
         If image_idle_timeout is 0, unloads model immediately after generation.
         """
-        # Reload settings to ensure we have the latest idle_timeout value
-        self._load_settings()
+        # Ensure service is initialized (lazy initialization)
+        self._ensure_initialized()
         
         loop = asyncio.get_event_loop()
 
@@ -953,26 +980,13 @@ def get_diffusers_service(db: Session) -> DiffusersService:
     global _diffusers_instance
 
     if _diffusers_instance is None:
-        try:
-            _diffusers_instance = DiffusersService(db)
-        except Exception as e:
-            logger.error(f"Failed to create DiffusersService: {e}", exc_info=True)
-            # Create a minimal instance to avoid None errors
-            _diffusers_instance = DiffusersService.__new__(DiffusersService)
-            _diffusers_instance.db = db
-            _diffusers_instance._pipe = None
-            _diffusers_instance._model_path = None
-            _diffusers_instance._model_type = None
-            _diffusers_instance._device = None
-            _diffusers_instance._last_used = time.time()
-            _diffusers_instance._idle_timeout = DEFAULT_IDLE_TIMEOUT
+        # Create instance without initializing (defer until first use)
+        # This prevents crashes during import/startup
+        _diffusers_instance = DiffusersService(db)
     else:
         # Update db session
         _diffusers_instance.db = db
-        try:
-            _diffusers_instance._load_settings()
-        except Exception as e:
-            logger.warning(f"Failed to reload settings in DiffusersService: {e}")
+        # Don't call _load_settings here - let it be lazy-loaded on first use
 
     return _diffusers_instance
 
