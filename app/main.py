@@ -148,7 +148,10 @@ app.include_router(chat.router)
 app.include_router(admin.router)
 app.include_router(tts.router)
 app.include_router(stt.router)
-app.include_router(openai_api.router)
+# OpenAI-compatible API: use OPENAI_API_PREFIX if app is behind a reverse proxy subpath
+# e.g. OPENAI_API_PREFIX=/posterchanai → base URL for OpenCode: https://host/posterchanai/v1
+_openai_prefix = os.getenv("OPENAI_API_PREFIX", "").strip().rstrip("/")
+app.include_router(openai_api.router, prefix=_openai_prefix)
 app.include_router(image_api.router)
 app.include_router(news.router)
 app.include_router(rag.router)

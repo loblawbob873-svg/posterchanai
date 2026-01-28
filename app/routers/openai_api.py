@@ -289,6 +289,18 @@ def verify_api_key(
 
 # ============== /v1 Endpoints ==============
 
+@router.get("/v1")
+async def v1_root():
+    """OpenAI-compatible API root. Use base URL https://your-host/v1 for OpenCode/OpenAI clients."""
+    return {
+        "message": "OpenAI-compatible API",
+        "endpoints": {
+            "models": "/v1/models",
+            "chat": "/v1/chat/completions",
+        },
+    }
+
+
 @router.post("/v1/chat/completions")
 async def v1_chat_completions(
     request: ChatCompletionRequest,

@@ -904,6 +904,7 @@ Posterchanai provides an OpenAI-compatible API for external applications.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
+| `/v1` | GET | API root (no auth); use to verify base URL for OpenCode |
 | `/v1/chat/completions` | POST | Chat completion (streaming supported) |
 | `/v1/models` | GET | List available models |
 | `/api/chat/completions` | POST | Alternative endpoint |
@@ -940,6 +941,19 @@ response = client.chat.completions.create(
 )
 print(response.choices[0].message.content)
 ```
+
+### OpenCode (and other OpenAI-compatible clients)
+
+Use posterchanai as the LLM backend for [OpenCode](https://opencode.ai):
+
+1. **Base URL** must end with `/v1`:
+   - Direct: `http://localhost:3051/v1` or `https://your-host/v1`
+   - Behind a subpath: set `OPENAI_API_PREFIX` and use `https://your-host/<prefix>/v1`  
+     Example: `OPENAI_API_PREFIX=/posterchanai` → base URL `https://your-host/posterchanai/v1`
+
+2. **API key**: Create one in posterchanai (user menu → API keys) and use it as the provider key in OpenCode.
+
+3. **Verify**: `GET https://your-base-url/v1` (no auth) returns a small JSON; if you get `{"detail":"Not found"}`, the base URL is wrong (missing `/v1` or wrong subpath).
 
 ### API Keys
 
