@@ -33,7 +33,6 @@ router = APIRouter(prefix="/api", tags=["image"])
 @router.get("/health")
 @router.get("/health/")
 async def health_check(db: Session = Depends(get_db)):
-async def health_check(db: Session = Depends(get_db)):
     """
     Health check endpoint for load balancer.
     Returns 200 if the image generation service is available.
