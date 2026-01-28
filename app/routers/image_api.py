@@ -35,7 +35,7 @@ async def health_check(db: Session = Depends(get_db)):
     """
     Health check endpoint for load balancer.
     Returns 200 if the image generation service is available.
-    Verifies that the backend can be initialized (but doesn't load models).
+    Lightweight check - doesn't initialize services to avoid crashes.
     """
     try:
         # Check if image backend is configured
@@ -43,30 +43,23 @@ async def health_check(db: Session = Depends(get_db)):
         image_backend = settings.get("image_backend", "comfyui")
         
         if image_backend == "native":
-            # For native backend, check if GPU is available and backend can be initialized
+            # For native backend, just check device availability (don't initialize service)
             try:
-                from app.services.diffusers_service import detect_device, get_diffusers_service
+                from app.services.diffusers_service import detect_device
                 device = detect_device()
-                
-                # Try to get the service instance (this will initialize it if needed)
-                # This verifies the backend can be created without loading models
-                service = get_diffusers_service(db)
                 
                 # Check if model path is configured
                 model_path = settings.get("image_model_path", "")
                 if not model_path:
-                    logger.warning("Health check: Native backend configured but no model path set")
+                    # Still return OK - model might be loaded later
                     return {"status": "ok", "device": device, "backend": "native", "warning": "no model path configured"}
                 
-                if device == "cpu":
-                    # CPU is fine, just slower
-                    return {"status": "ok", "device": "cpu", "backend": "native", "model_path": model_path}
-                else:
-                    return {"status": "ok", "device": device, "backend": "native", "model_path": model_path}
+                return {"status": "ok", "device": device, "backend": "native", "model_path": model_path}
             except Exception as e:
-                logger.warning(f"Health check: Native backend initialization failed: {e}")
-                # Still return OK - CPU fallback might be available
-                return {"status": "ok", "device": "unknown", "backend": "native", "warning": str(e)}
+                # Don't log as error - device detection might fail but service can still work
+                logger.debug(f"Health check: Device detection failed: {e}")
+                # Still return OK - service is running
+                return {"status": "ok", "device": "unknown", "backend": "native", "warning": "device detection failed"}
         else:
             # ComfyUI backend - just check if URL is configured
             comfyui_url = settings.get("comfyui_url", "")
@@ -75,6 +68,7 @@ async def health_check(db: Session = Depends(get_db)):
             else:
                 return {"status": "ok", "backend": "comfyui", "url": None, "warning": "no comfyui_url configured"}
     except Exception as e:
+        # Catch all exceptions to prevent crashes
         logger.error(f"Health check failed: {e}", exc_info=True)
         # Return 200 anyway - service is running, just had an error checking config
         return {"status": "ok", "error": str(e)}

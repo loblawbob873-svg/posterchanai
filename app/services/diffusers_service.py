@@ -202,11 +202,15 @@ def _idle_check_loop():
 def _start_idle_check():
     """Start the idle check background thread"""
     global _idle_check_thread
-    if _idle_check_thread is None or not _idle_check_thread.is_alive():
-        _idle_check_stop.clear()
-        _idle_check_thread = threading.Thread(target=_idle_check_loop, daemon=True)
-        _idle_check_thread.start()
-        logger.info("Started idle timeout monitor")
+    try:
+        if _idle_check_thread is None or not _idle_check_thread.is_alive():
+            _idle_check_stop.clear()
+            _idle_check_thread = threading.Thread(target=_idle_check_loop, daemon=True)
+            _idle_check_thread.start()
+            logger.info("Started idle timeout monitor")
+    except Exception as e:
+        # Don't crash if thread creation fails - idle timeout is optional
+        logger.warning(f"Failed to start idle timeout monitor: {e}")
 
 
 class DiffusersService:
@@ -224,16 +228,30 @@ class DiffusersService:
         self._device: Optional[str] = None
         self._last_used: float = time.time()
         self._idle_timeout: int = DEFAULT_IDLE_TIMEOUT
-        self._load_settings()
-        _start_idle_check()
+        try:
+            self._load_settings()
+            _start_idle_check()
+        except Exception as e:
+            logger.error(f"Failed to initialize DiffusersService: {e}", exc_info=True)
+            # Don't raise - allow service to be created but log the error
+            # Settings will be loaded on first use
 
     def _load_settings(self):
         """Load settings from database"""
-        settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        try:
+            settings = {s.key: s.value for s in self.db.query(Setting).all()}
+        except Exception as e:
+            logger.error(f"Failed to query settings from database: {e}", exc_info=True)
+            # Use defaults if database query fails
+            settings = {}
 
         # Idle timeout for automatic unloading (default 2 minutes)
-        self._idle_timeout = int(settings.get("image_idle_timeout", str(DEFAULT_IDLE_TIMEOUT)))
-        logger.info(f"Loaded image_idle_timeout setting: {self._idle_timeout}")
+        try:
+            self._idle_timeout = int(settings.get("image_idle_timeout", str(DEFAULT_IDLE_TIMEOUT)))
+            logger.info(f"Loaded image_idle_timeout setting: {self._idle_timeout}")
+        except (ValueError, TypeError):
+            self._idle_timeout = DEFAULT_IDLE_TIMEOUT
+            logger.warning(f"Invalid image_idle_timeout, using default: {DEFAULT_IDLE_TIMEOUT}")
 
         # Model settings
         self.model_path = settings.get("image_model_path", "")
@@ -241,25 +259,36 @@ class DiffusersService:
         self.model_type = settings.get("image_model_type", "sdxl")  # sd15, sdxl, sd3, flux
 
         # Generation defaults
-        self.default_steps = int(settings.get("image_default_steps", "20"))
-        self.default_cfg = float(settings.get("image_default_cfg", "7.0"))
-        self.default_width = int(settings.get("image_default_width", "1024"))
-        self.default_height = int(settings.get("image_default_height", "1024"))
+        try:
+            self.default_steps = int(settings.get("image_default_steps", "20"))
+            self.default_cfg = float(settings.get("image_default_cfg", "7.0"))
+            self.default_width = int(settings.get("image_default_width", "1024"))
+            self.default_height = int(settings.get("image_default_height", "1024"))
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid generation defaults, using defaults: {e}")
+            self.default_steps = 20
+            self.default_cfg = 7.0
+            self.default_width = 1024
+            self.default_height = 1024
 
         # Device settings
         device_setting = settings.get("image_gpu_device", "auto")
-        if device_setting == "auto":
-            self._device = detect_device()
-        else:
-            self._device = device_setting
-            # Validate device is actually available
-            import torch
-            if self._device == "cuda" and not torch.cuda.is_available():
-                logger.warning(f"image_gpu_device is set to 'cuda' but CUDA is not available, falling back to auto-detection")
+        try:
+            if device_setting == "auto":
                 self._device = detect_device()
-            elif self._device == "xpu" and not (hasattr(torch, "xpu") and torch.xpu.is_available()):
-                logger.warning(f"image_gpu_device is set to 'xpu' but XPU is not available, falling back to auto-detection")
-                self._device = detect_device()
+            else:
+                self._device = device_setting
+                # Validate device is actually available
+                import torch
+                if self._device == "cuda" and not torch.cuda.is_available():
+                    logger.warning(f"image_gpu_device is set to 'cuda' but CUDA is not available, falling back to auto-detection")
+                    self._device = detect_device()
+                elif self._device == "xpu" and not (hasattr(torch, "xpu") and torch.xpu.is_available()):
+                    logger.warning(f"image_gpu_device is set to 'xpu' but XPU is not available, falling back to auto-detection")
+                    self._device = detect_device()
+        except Exception as e:
+            logger.warning(f"Failed to detect device, using CPU: {e}")
+            self._device = "cpu"
 
         # Backend setting
         self.backend = settings.get("image_backend", "comfyui")  # "native" or "comfyui"
@@ -924,11 +953,26 @@ def get_diffusers_service(db: Session) -> DiffusersService:
     global _diffusers_instance
 
     if _diffusers_instance is None:
-        _diffusers_instance = DiffusersService(db)
+        try:
+            _diffusers_instance = DiffusersService(db)
+        except Exception as e:
+            logger.error(f"Failed to create DiffusersService: {e}", exc_info=True)
+            # Create a minimal instance to avoid None errors
+            _diffusers_instance = DiffusersService.__new__(DiffusersService)
+            _diffusers_instance.db = db
+            _diffusers_instance._pipe = None
+            _diffusers_instance._model_path = None
+            _diffusers_instance._model_type = None
+            _diffusers_instance._device = None
+            _diffusers_instance._last_used = time.time()
+            _diffusers_instance._idle_timeout = DEFAULT_IDLE_TIMEOUT
     else:
         # Update db session
         _diffusers_instance.db = db
-        _diffusers_instance._load_settings()
+        try:
+            _diffusers_instance._load_settings()
+        except Exception as e:
+            logger.warning(f"Failed to reload settings in DiffusersService: {e}")
 
     return _diffusers_instance
 
