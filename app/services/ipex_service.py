@@ -328,23 +328,11 @@ class IPEXService:
                             f"Install with: pip install llama-cpp-python"
                         )
 
-                    # Fix SYCL assertion failure for DeepSeek models
-                    # The assertion "block_num_y % num_subgroups == 0" fails with certain batch sizes
-                    # Reduce batch size for DeepSeek to avoid this SYCL backend bug
-                    batch_size = self.n_batch
-                    model_name_lower = self.model_path.lower()
-                    if "deepseek" in model_name_lower or "r1" in model_name_lower:
-                        # SYCL requires batch size to be divisible by subgroup size (typically 16 or 32)
-                        # Use a smaller, safe batch size to avoid the assertion failure
-                        batch_size = min(self.n_batch, 128)  # Cap at 128 for SYCL compatibility
-                        if batch_size != self.n_batch:
-                            logger.info(f"Reduced batch size from {self.n_batch} to {batch_size} for DeepSeek (SYCL compatibility)")
-                    
                     self._model = Llama(
                         model_path=self.model_path,
                         n_ctx=self.num_ctx,
                         n_gpu_layers=gpu_layers if not self.cpu_mode else 0,
-                        n_batch=batch_size,
+                        n_batch=self.n_batch,
                         n_threads=self.n_threads,
                         n_threads_batch=self.n_threads,
                         use_mmap=self.use_mmap,
