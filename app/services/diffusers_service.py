@@ -312,11 +312,23 @@ class DiffusersService:
                     logger.info("ROCm memory cleanup complete")
 
             if not model_to_load:
-                logger.warning("No model path configured")
-                return
+                error_msg = "No model path configured - cannot load image generation model"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
             logger.info(f"Loading diffusers model: {model_to_load}")
             logger.info(f"  Device: {self._device}, Type: {self.model_type}")
+
+            # Verify device is actually available before attempting to load
+            import torch
+            if self._device == "cuda" and not torch.cuda.is_available():
+                error_msg = f"Device 'cuda' requested but CUDA is not available. Available: CPU"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+            elif self._device == "xpu" and not (hasattr(torch, "xpu") and torch.xpu.is_available()):
+                error_msg = f"Device 'xpu' requested but XPU is not available. Available: CPU"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
             try:
                 import torch
@@ -455,9 +467,11 @@ class DiffusersService:
                 logger.info("Model loaded successfully")
 
             except Exception as e:
-                logger.error(f"Failed to load model: {e}")
+                error_msg = f"Failed to load model '{model_to_load}' on device '{self._device}': {e}"
+                logger.error(error_msg, exc_info=True)
                 self._pipe = None
-                raise
+                # Re-raise with more context
+                raise RuntimeError(error_msg) from e
 
     def _unload_model_internal(self):
         """Internal method to unload model (no lock)"""
@@ -583,10 +597,16 @@ class DiffusersService:
 
         # Select model based on prompt (anime vs default)
         target_model = self._get_model_for_prompt(prompt)
-        self._ensure_model_loaded(target_model)
+        
+        # Try to load model - catch errors and log them clearly
+        try:
+            self._ensure_model_loaded(target_model)
+        except Exception as e:
+            logger.error(f"Failed to load model for generation: {e}", exc_info=True)
+            return None
 
         if self._pipe is None:
-            logger.error("No model loaded")
+            logger.error("No model loaded after _ensure_model_loaded (this should not happen)")
             return None
 
         # Use defaults if not specified
