@@ -4545,15 +4545,25 @@ window.sendMessage = function(text) {
     if (threadOverlay) threadOverlay.addEventListener('click', function(e) { if (e.target === threadOverlay) closeFourchanThreadModal(); });
 
     if (threadSummarizeBtn) {
+        var summarizeBtnLabel = threadSummarizeBtn.textContent || 'Summarize';
         threadSummarizeBtn.addEventListener('click', function() {
             if (!currentThreadId) return;
             threadSummarizeBtn.disabled = true;
-            threadSummaryEl.textContent = 'Summarizing...';
+            threadSummarizeBtn.textContent = 'Summarizing…';
+            threadSummarizeBtn.classList.add('fourchan-summarize-loading');
             threadSummarySection.style.display = 'block';
+            threadSummaryEl.textContent = '';
+            threadSummaryEl.classList.add('fourchan-summary-loading');
+            threadSummaryEl.innerHTML = '<span class="fourchan-summary-spinner"></span> Working on it…';
+            threadSummarySection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             fetch('/api/4chan/summarize?board=' + encodeURIComponent(currentThreadBoard) + '&thread_id=' + encodeURIComponent(currentThreadId), { credentials: 'same-origin' })
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     threadSummarizeBtn.disabled = false;
+                    threadSummarizeBtn.textContent = summarizeBtnLabel;
+                    threadSummarizeBtn.classList.remove('fourchan-summarize-loading');
+                    threadSummaryEl.classList.remove('fourchan-summary-loading');
+                    threadSummaryEl.innerHTML = '';
                     if (data.error) {
                         threadSummaryEl.textContent = 'Error: ' + data.error;
                         return;
@@ -4562,6 +4572,10 @@ window.sendMessage = function(text) {
                 })
                 .catch(function(e) {
                     threadSummarizeBtn.disabled = false;
+                    threadSummarizeBtn.textContent = summarizeBtnLabel;
+                    threadSummarizeBtn.classList.remove('fourchan-summarize-loading');
+                    threadSummaryEl.classList.remove('fourchan-summary-loading');
+                    threadSummaryEl.innerHTML = '';
                     threadSummaryEl.textContent = 'Failed: ' + String(e);
                 });
         });

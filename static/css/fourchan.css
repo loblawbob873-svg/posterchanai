@@ -247,6 +247,33 @@
     white-space: pre-wrap;
 }
 
+.fourchan-thread-summary.fourchan-summary-loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 0;
+    color: var(--text-muted, #888);
+}
+
+.fourchan-summary-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border-color, #333);
+    border-top-color: var(--accent, #4a9eff);
+    border-radius: 50%;
+    animation: fourchan-spin 0.8s linear infinite;
+}
+
+@keyframes fourchan-spin {
+    to { transform: rotate(360deg); }
+}
+
+button.fourchan-summarize-loading {
+    opacity: 0.8;
+    cursor: wait;
+}
+
 @media (max-width: 768px) {
     .fourchan-modal.modal {
         padding: 10px;
