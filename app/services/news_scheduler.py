@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
@@ -14,17 +15,21 @@ logger = logging.getLogger(__name__)
 scheduler: AsyncIOScheduler = None
 
 
-async def generate_daily_news_for_user(user_id: int):
-    """Generate daily news conversation for a user"""
+async def generate_daily_news_for_user(user_id: int, force: bool = False) -> Optional[int]:
+    """
+    Generate daily news conversation for a user.
+    Returns conversation id (new or existing) or None on error/disabled/no sources.
+    If force=True, run even when news_schedule_enabled is False (for "Generate now" button).
+    """
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             logger.warning(f"User {user_id} not found for daily news generation")
-            return
-        if not user.news_schedule_enabled:
+            return None
+        if not force and not user.news_schedule_enabled:
             logger.debug(f"Daily news disabled for user {user.username}")
-            return
+            return None
 
         logger.info(f"Generating daily news for user {user.username} (scheduled time: {user.news_schedule_time})")
 
@@ -33,7 +38,7 @@ async def generate_daily_news_for_user(user_id: int):
 
         if not sources:
             logger.warning(f"No news sources configured for user {user.username}")
-            return
+            return None
 
         # Check if a conversation already exists for today
         today = datetime.now().strftime("%B %d, %Y")
@@ -44,7 +49,7 @@ async def generate_daily_news_for_user(user_id: int):
         ).first()
         if existing:
             logger.info(f"Daily news already exists for user {user.username} on {today}")
-            return
+            return existing.id
 
         # Create a new conversation titled "Daily News - [date]"
         conversation = Conversation(
@@ -75,10 +80,12 @@ async def generate_daily_news_for_user(user_id: int):
         db.commit()
 
         logger.info(f"Successfully generated daily news for user {user.username}")
+        return conversation.id
 
     except Exception as e:
         logger.error(f"Error generating daily news for user {user_id}: {e}")
         db.rollback()
+        return None
     finally:
         db.close()
 
@@ -90,10 +97,15 @@ async def check_and_run_scheduled_news():
 
     db = SessionLocal()
     try:
-        # Find users with news_schedule_enabled and matching time
+        # Find users with news_schedule_enabled and matching time.
+        # Treat NULL news_schedule_time as "12:00" so legacy users get news at noon.
+        from sqlalchemy import or_, and_
         users = db.query(User).filter(
             User.news_schedule_enabled == True,
-            User.news_schedule_time == current_time
+            or_(
+                User.news_schedule_time == current_time,
+                and_(User.news_schedule_time.is_(None), current_time == "12:00"),
+            ),
         ).all()
 
         if users:

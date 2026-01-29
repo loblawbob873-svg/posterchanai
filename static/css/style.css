@@ -347,10 +347,13 @@ body {
     display: flex;
     align-items: center;
     padding: 16px 20px;
+    padding-top: max(16px, env(safe-area-inset-top));
     background: linear-gradient(90deg, var(--bg-secondary), var(--bg-primary));
     border-bottom: 1px solid var(--border-color);
     gap: 12px;
     position: relative;
+    z-index: 10002;
+    flex-shrink: 0;
 }
 .chat-header::after {
     content: '';
@@ -361,9 +364,11 @@ body {
     height: 1px;
     background: linear-gradient(90deg, transparent, var(--accent), var(--accent-secondary), transparent);
     opacity: 0.5;
+    pointer-events: none;
 }
 .chat-title {
     flex: 1;
+    min-width: 0;
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
@@ -373,6 +378,12 @@ body {
 .header-actions {
     display: flex;
     gap: 8px;
+    flex-shrink: 0;
+}
+.chat-header .btn-icon {
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
 }
 .mobile-menu { display: none; }
 
@@ -1339,6 +1350,15 @@ fieldset legend {
     }
     .mobile-menu {
         display: block;
+    }
+    .chat-header {
+        touch-action: manipulation;
+    }
+    .chat-header .btn-icon,
+    .chat-header .header-actions .btn-icon {
+        min-width: 44px;
+        min-height: 44px;
+        padding: 10px;
     }
     .mascot-section {
         min-height: 100px;

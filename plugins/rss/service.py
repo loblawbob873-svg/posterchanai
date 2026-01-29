@@ -19,6 +19,30 @@ from app.services.proxy_utils import require_proxy
 
 logger = logging.getLogger(__name__)
 
+# YouTube URL patterns: watch?v=, youtu.be/, embed/, /v/
+_YOUTUBE_VIDEO_ID_RE = re.compile(
+    r"(?:youtube\.com/(?:watch\?v=|embed/|v/)|youtu\.be/)([a-zA-Z0-9_-]{11})"
+)
+
+
+def youtube_video_id(url: str) -> Optional[str]:
+    """Extract YouTube video ID from a URL. Returns None if not a YouTube URL."""
+    if not url:
+        return None
+    m = _YOUTUBE_VIDEO_ID_RE.search(url)
+    return m.group(1) if m else None
+
+
+def youtube_thumbnail_url(url: str) -> Optional[str]:
+    """
+    Return YouTube thumbnail URL for a video URL, or None if not a YouTube URL.
+    Uses hqdefault (480x360) which is available for all videos.
+    """
+    video_id = youtube_video_id(url)
+    if not video_id:
+        return None
+    return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+
 
 def html_to_text(html: str) -> str:
     """Convert HTML content to plain text"""

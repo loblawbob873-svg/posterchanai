@@ -1162,7 +1162,7 @@ Example: `yt https://youtube.com/watch?v=...`""",
 
         parts = arg.strip().split()
         subcommand = parts[0].lower() if parts else ""
-        categories = ("movies", "tv", "anime", "search")
+        categories = ("movies", "tv", "music", "anime", "search")
 
         # Get built-in service (None if disabled or not configured)
         bt_service, bt_error = self._get_bt_service()

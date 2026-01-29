@@ -8,7 +8,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.models import User
-from plugins.rss.service import RssService
+from plugins.rss.service import RssService, youtube_thumbnail_url
 from plugins.rss.scheduler import process_rss_for_user
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,10 @@ async def handle_rss_command(arg: str, user: User, db: Session) -> dict:
                 feed_name = entry.feed.display_name
                 published = entry.published_at.strftime("%Y-%m-%d") if entry.published_at else "Unknown date"
                 url_text = f" [{entry.url}]({entry.url})" if entry.url else ""
+                thumb = youtube_thumbnail_url(entry.url) if entry.url else None
                 lines.append(f"- **{entry.title}** ({feed_name}, {published}){url_text}")
+                if thumb:
+                    lines.append(f"  ![YouTube]({thumb})")
 
             return {"type": "text", "content": "\n".join(lines)}
 

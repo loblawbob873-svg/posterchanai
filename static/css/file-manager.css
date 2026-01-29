@@ -1,22 +1,35 @@
 /* File Manager Styles */
 /* File manager now uses modal styling - overlay handled by .modal class */
 
+/* File manager overlay: above chat (chat header is 10002) and align content to top */
+#fileManagerOverlay.modal {
+    z-index: 10050 !important;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 20px;
+    padding-bottom: 20px;
+    overflow: auto;
+}
+
 /* Override modal-content for file manager fullscreen */
 #fileManagerOverlay .modal-content.modal-fullscreen {
     width: 95%;
     height: 90%;
     max-width: 1400px;
-    max-height: 90vh;
+    max-height: min(90vh, calc(100vh - 40px)); /* Fit when overlay has top/bottom padding */
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    flex-shrink: 0; /* Don't shrink when overlay scrolls */
 }
 
-/* File Manager Header - Fixed Layout */
+/* File Manager Header - Fixed Layout, never shrink */
 #fileManagerOverlay .modal-content.modal-fullscreen .modal-header {
     overflow: visible;
     position: relative;
     z-index: 10;
+    flex-shrink: 0;
+    min-height: 60px;
 }
 
 /* Ensure modal header can accommodate actions */
@@ -29,6 +42,7 @@
     min-height: 60px;
     overflow: visible;
     position: relative;
+    flex-shrink: 0;
 }
 
 #fileManagerOverlay .modal-header h2 {
@@ -480,19 +494,27 @@
 
 /* Mobile-specific styles */
 @media (max-width: 768px) {
+    #fileManagerOverlay.modal {
+        padding-top: 10px;
+        padding-bottom: 10px;
+        align-items: flex-start;
+    }
+    
     #fileManagerOverlay .modal-content.modal-fullscreen {
         width: 100%;
         height: 100%;
         max-width: 100%;
-        max-height: 100%;
+        max-height: calc(100vh - 20px); /* Leave room for overlay padding so title bar visible */
         border-radius: 0;
     }
     
     #fileManagerOverlay .modal-header {
         padding: 10px 12px;
+        padding-top: max(10px, env(safe-area-inset-top));
         gap: 6px;
         grid-template-columns: 1fr auto;
         grid-template-rows: auto auto;
+        flex-shrink: 0;
     }
     
     #fileManagerOverlay .modal-header h2 {

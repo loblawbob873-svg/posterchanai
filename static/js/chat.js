@@ -3719,6 +3719,14 @@ class ChatHandler {
             processed = `\x00CODEBLOCK${index}\x00`;
         }
 
+        // Extract markdown images ![alt](url) before link processing (so link regex doesn't consume them)
+        const images = [];
+        processed = processed.replace(/!\[([^\]]*)\]\(\s*(https?:\/\/[^)\s]+)\s*\)/g, (match, alt, url) => {
+            const index = images.length;
+            images.push({ alt: alt.trim(), url: url.trim() });
+            return `\x00IMG${index}\x00`;
+        });
+
         // Extract and preserve HTML links BEFORE processing markdown (so they don't get escaped)
         const htmlLinks = [];
         processed = processed.replace(/<a\s+([^>]*?)href=["']([^"']+)["']([^>]*?)>(.*?)<\/a>/gi, (match, before, url, after, text) => {
@@ -3824,6 +3832,15 @@ class ChatHandler {
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
+
+        // Restore markdown images as <img> (before links so order is preserved)
+        html = html.replace(/\x00IMG(\d+)\x00/g, (match, index) => {
+            const img = images[parseInt(index)];
+            if (!img) return '';
+            const safeUrl = encodeURI(img.url);
+            const safeAlt = this.escapeHtml(img.alt);
+            return `<img src="${safeUrl}" alt="${safeAlt}" class="message-inline-image" loading="lazy" style="max-width:100%;height:auto;border-radius:8px;margin:8px 0;">`;
+        });
 
         // Restore HTML links first (before markdown links)
         html = html.replace(/\x00HTMLLINK(\d+)\x00/g, (match, index) => {

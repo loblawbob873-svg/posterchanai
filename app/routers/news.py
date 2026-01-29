@@ -215,6 +215,26 @@ async def get_sources(
     return {"sources": sources}
 
 
+@router.post("/generate-daily")
+async def generate_daily_news_now(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Generate today's daily news summary now (on demand).
+    Creates a "Daily News - [date]" conversation with AI summaries from configured sources.
+    Returns the conversation id so the client can open it. If today's summary already
+    exists, returns that conversation id.
+    """
+    from app.services.news_scheduler import generate_daily_news_for_user
+    conv_id = await generate_daily_news_for_user(current_user.id, force=True)
+    if conv_id is None:
+        return {
+            "conversation_id": None,
+            "error": "Could not generate daily news. Check that you have news sources (User Settings → News & RSS → News Sources) and that the server can fetch them (proxy may be required)."
+        }
+    return {"conversation_id": conv_id}
+
+
 @router.get("/headlines/{source_url:path}")
 async def get_headlines(
     source_url: str,

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import User, Conversation, Message, Setting
 from plugins.rss.models import RssFeed, RssEntry
-from plugins.rss.service import RssService
+from plugins.rss.service import RssService, youtube_thumbnail_url
 from app.services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
@@ -144,10 +144,13 @@ async def process_rss_for_user(user_id: int):
             entry.is_read = True  # Mark as read after summarizing
 
             feed = entry.feed
+            thumb = youtube_thumbnail_url(entry.url) if entry.url else None
             if entry.url:
                 summary_text = f"**[{entry.title}]({entry.url})**\n*Source: {feed.display_name}*\n\n{summary}"
             else:
                 summary_text = f"**{entry.title}**\n*Source: {feed.display_name}*\n\n{summary}"
+            if thumb:
+                summary_text = f"![YouTube]({thumb})\n\n{summary_text}"
 
             news_msg = Message(
                 conversation_id=rss_chat.id,
