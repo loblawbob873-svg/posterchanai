@@ -22,7 +22,7 @@ from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
 from app.models import User, VerificationToken, Setting
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, news, rag, plugins, mail, torrent, contacts, storage, files
-from app.routers import fourchan
+from app.routers import fourchan, youtube_thumb
 from app.routers.caldav import caldav_router, carddav_router
 from app.services.load_balancer import NoHealthyServersError
 from fastapi.responses import JSONResponse
@@ -163,6 +163,7 @@ app.include_router(caldav_router)
 app.include_router(carddav_router)
 app.include_router(torrent.router)
 app.include_router(fourchan.router)
+app.include_router(youtube_thumb.router)
 app.include_router(storage.router)
 # Also include files_router if it exists (for storage server compatibility)
 if hasattr(storage, 'files_router'):

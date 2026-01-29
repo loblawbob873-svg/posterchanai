@@ -16,7 +16,7 @@ from app.database import get_db
 from app.models import User
 from app.routers.auth import get_current_user
 from plugins.rss.models import RssFeed, RssEntry
-from plugins.rss.service import RssService, youtube_thumbnail_url
+from plugins.rss.service import RssService, youtube_thumbnail_proxy_path
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rss", tags=["rss"])
@@ -166,7 +166,7 @@ async def get_unread_entries(
             feed_name=e.feed.display_name,
             published_at=e.published_at.isoformat() if e.published_at else None,
             is_read=e.is_read,
-            thumbnail_url=youtube_thumbnail_url(e.url) if e.url else None
+            thumbnail_url=youtube_thumbnail_proxy_path(e.url) if e.url else None
         )
         for e in entries
     ]
@@ -213,7 +213,7 @@ async def get_unposted_entries(
             published_at=e.published_at.isoformat() if e.published_at else None,
             is_read=e.is_read,
             is_posted=e.is_posted,
-            thumbnail_url=youtube_thumbnail_url(e.url) if e.url else None
+            thumbnail_url=youtube_thumbnail_proxy_path(e.url) if e.url else None
         )
         for e in entries
     ]

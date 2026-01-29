@@ -3843,9 +3843,13 @@ class ChatHandler {
         html = html.replace(/\x00IMG(\d+)\x00/g, (match, index) => {
             const img = images[parseInt(index)];
             if (!img) return '';
-            const safeUrl = encodeURI(img.url);
+            let src = img.url;
+            // Use same-origin proxy for YouTube thumbnails so they load in RSS
+            const ytMatch = src.match(/^https?:\/\/img\.youtube\.com\/vi\/([a-zA-Z0-9_-]{11})\//);
+            if (ytMatch) src = '/api/youtube-thumbnail?video_id=' + encodeURIComponent(ytMatch[1]);
+            else src = encodeURI(src);
             const safeAlt = this.escapeHtml(img.alt);
-            return `<img src="${safeUrl}" alt="${safeAlt}" class="message-inline-image" loading="lazy" style="max-width:100%;height:auto;border-radius:8px;margin:8px 0;">`;
+            return `<img src="${src}" alt="${safeAlt}" class="message-inline-image" loading="lazy" style="max-width:100%;height:auto;border-radius:8px;margin:8px 0;">`;
         });
 
         // Restore HTML links first (before markdown links)

@@ -44,6 +44,17 @@ def youtube_thumbnail_url(url: str) -> Optional[str]:
     return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
 
 
+def youtube_thumbnail_proxy_path(url: str) -> Optional[str]:
+    """
+    Return same-origin proxy path for YouTube thumbnail so it loads in RSS/chat.
+    Use this when embedding the image in markdown (e.g. ![YouTube](path)).
+    """
+    video_id = youtube_video_id(url)
+    if not video_id:
+        return None
+    return f"/api/youtube-thumbnail?video_id={video_id}"
+
+
 def html_to_text(html: str) -> str:
     """Convert HTML content to plain text"""
     if not html:
