@@ -280,10 +280,7 @@ def verify_api_key(
         else:
             raise HTTPException(status_code=401, detail="Invalid API key")
 
-    # If global key is not set and user key not found, reject
-    if not setting or not setting.value:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-
+    # Token did not match any user API key
     raise HTTPException(status_code=401, detail="Invalid API key")
 
 

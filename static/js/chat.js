@@ -4405,13 +4405,26 @@ window.sendMessage = function(text) {
     }
 };
 
-// 4chan catalog modal
+// 4chan catalog modal + thread viewer
 (function() {
     const overlay = document.getElementById('fourchanOverlay');
     const grid = document.getElementById('fourchanGrid');
     const loading = document.getElementById('fourchanLoading');
     const closeBtn = document.getElementById('fourchanCloseBtn');
     const tabs = document.querySelectorAll('.fourchan-tab');
+
+    const threadOverlay = document.getElementById('fourchanThreadOverlay');
+    const threadTitleEl = document.getElementById('fourchanThreadTitle');
+    const threadOpenLink = document.getElementById('fourchanThreadOpenLink');
+    const threadSummarizeBtn = document.getElementById('fourchanSummarizeBtn');
+    const threadCloseBtn = document.getElementById('fourchanThreadCloseBtn');
+    const threadLoading = document.getElementById('fourchanThreadLoading');
+    const threadPostsEl = document.getElementById('fourchanThreadPosts');
+    const threadSummarySection = document.getElementById('fourchanThreadSummarySection');
+    const threadSummaryEl = document.getElementById('fourchanThreadSummary');
+
+    let currentThreadBoard = 'g';
+    let currentThreadId = '';
 
     function escapeHtml(s) {
         if (!s) return '';
@@ -4450,12 +4463,20 @@ window.sendMessage = function(text) {
                 card.href = t.link;
                 card.target = '_blank';
                 card.rel = 'noopener noreferrer';
+                card.dataset.board = board;
+                card.dataset.threadId = String(t.thread_id || t.no || '');
                 const title = escapeHtml(t.title);
                 const thumbSrc = t.thumb_url ? ('/api/4chan/proxy?url=' + encodeURIComponent(t.thumb_url)) : '';
                 const thumbPlaceholder = '<div class="fourchan-card-thumb" style="background:#222;"></div>';
                 const thumbPlaceholderForAttr = thumbPlaceholder.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                 const thumb = thumbSrc ? `<img class="fourchan-card-thumb" src="${escapeHtml(thumbSrc)}" alt="" loading="lazy" onerror="this.outerHTML='${thumbPlaceholderForAttr}'">` : thumbPlaceholder;
                 card.innerHTML = `${thumb}<div class="fourchan-card-title">${title}</div><div class="fourchan-card-meta">${t.replies || 0} replies · ${t.images || 0} images</div>`;
+                card.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const b = this.dataset.board || 'g';
+                    const tid = this.dataset.threadId;
+                    if (tid && window.openFourchanThreadModal) window.openFourchanThreadModal(b, tid);
+                });
                 grid.appendChild(card);
             });
         } catch (e) {
@@ -4479,6 +4500,73 @@ window.sendMessage = function(text) {
         if (overlay) overlay.style.display = 'none';
     }
 
+    function openFourchanThreadModal(board, threadId) {
+        currentThreadBoard = (board || 'g').toString().toLowerCase();
+        currentThreadId = String(threadId || '');
+        if (!threadOverlay || !currentThreadId) return;
+        threadSummarySection.style.display = 'none';
+        threadSummaryEl.textContent = '';
+        threadOverlay.style.display = 'flex';
+        threadTitleEl.textContent = 'Thread ' + currentThreadId;
+        threadOpenLink.href = 'https://boards.4chan.org/' + currentThreadBoard + '/thread/' + currentThreadId;
+        threadPostsEl.innerHTML = '';
+        if (threadLoading) threadLoading.style.display = 'block';
+        fetch('/api/4chan/thread?board=' + encodeURIComponent(currentThreadBoard) + '&thread_id=' + encodeURIComponent(currentThreadId))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (threadLoading) threadLoading.style.display = 'none';
+                if (data.error) {
+                    threadPostsEl.innerHTML = '<div class="fourchan-error">' + escapeHtml(data.error) + '</div>';
+                    return;
+                }
+                threadTitleEl.textContent = data.title || ('Thread ' + currentThreadId);
+                if (data.link) threadOpenLink.href = data.link;
+                threadPostsEl.innerHTML = (data.posts || []).map(function(p) {
+                    const name = escapeHtml(p.name || 'Anonymous');
+                    const com = escapeHtml(p.com || '');
+                    const thumb = p.thumb_url ? '<img src="' + escapeHtml(p.thumb_url) + '" alt="" class="fourchan-thread-post-thumb" loading="lazy">' : '';
+                    return '<div class="fourchan-thread-post">' +
+                        '<div class="fourchan-thread-post-header"><strong>#' + escapeHtml(String(p.no)) + '</strong> ' + name + '</div>' +
+                        (thumb ? '<div class="fourchan-thread-post-thumb-wrap">' + thumb + '</div>' : '') +
+                        '<div class="fourchan-thread-post-body">' + com + '</div></div>';
+                }).join('');
+            })
+            .catch(function(e) {
+                if (threadLoading) threadLoading.style.display = 'none';
+                threadPostsEl.innerHTML = '<div class="fourchan-error">Failed to load thread: ' + escapeHtml(String(e)) + '</div>';
+            });
+    }
+
+    function closeFourchanThreadModal() {
+        if (threadOverlay) threadOverlay.style.display = 'none';
+    }
+
+    if (threadCloseBtn) threadCloseBtn.addEventListener('click', closeFourchanThreadModal);
+    if (threadOverlay) threadOverlay.addEventListener('click', function(e) { if (e.target === threadOverlay) closeFourchanThreadModal(); });
+
+    if (threadSummarizeBtn) {
+        threadSummarizeBtn.addEventListener('click', function() {
+            if (!currentThreadId) return;
+            threadSummarizeBtn.disabled = true;
+            threadSummaryEl.textContent = 'Summarizing...';
+            threadSummarySection.style.display = 'block';
+            fetch('/api/4chan/summarize?board=' + encodeURIComponent(currentThreadBoard) + '&thread_id=' + encodeURIComponent(currentThreadId), { credentials: 'same-origin' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    threadSummarizeBtn.disabled = false;
+                    if (data.error) {
+                        threadSummaryEl.textContent = 'Error: ' + data.error;
+                        return;
+                    }
+                    threadSummaryEl.textContent = data.summary || '';
+                })
+                .catch(function(e) {
+                    threadSummarizeBtn.disabled = false;
+                    threadSummaryEl.textContent = 'Failed: ' + String(e);
+                });
+        });
+    }
+
     if (closeBtn) closeBtn.addEventListener('click', closeFourchanModal);
     (tabs || []).forEach(t => {
         t.addEventListener('click', () => {
@@ -4493,4 +4581,6 @@ window.sendMessage = function(text) {
 
     window.openFourchanModal = openFourchanModal;
     window.closeFourchanModal = closeFourchanModal;
+    window.openFourchanThreadModal = openFourchanThreadModal;
+    window.closeFourchanThreadModal = closeFourchanThreadModal;
 })();

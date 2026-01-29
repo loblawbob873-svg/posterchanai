@@ -15,3 +15,25 @@
         </div>
     </div>
 </div>
+
+<!-- 4chan Thread Viewer Modal -->
+<div class="modal fourchan-modal" id="fourchanThreadOverlay" style="display: none;">
+    <div class="modal-content fourchan-thread-modal-content">
+        <div class="modal-header fourchan-thread-header">
+            <h2 id="fourchanThreadTitle">Thread</h2>
+            <div class="fourchan-thread-actions">
+                <a id="fourchanThreadOpenLink" href="#" target="_blank" rel="noopener noreferrer" class="btn-secondary btn-small">Open on 4chan</a>
+                <button type="button" class="btn-primary btn-small" id="fourchanSummarizeBtn">Summarize</button>
+            </div>
+            <button type="button" class="btn-icon modal-close" id="fourchanThreadCloseBtn" title="Close">✕</button>
+        </div>
+        <div class="fourchan-thread-body">
+            <div class="fourchan-thread-loading" id="fourchanThreadLoading" style="display: none;">Loading thread...</div>
+            <div class="fourchan-thread-posts" id="fourchanThreadPosts"></div>
+            <div class="fourchan-thread-summary-section" id="fourchanThreadSummarySection" style="display: none;">
+                <h4>Summary</h4>
+                <div class="fourchan-thread-summary" id="fourchanThreadSummary"></div>
+            </div>
+        </div>
+    </div>
+</div>
