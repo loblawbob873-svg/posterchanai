@@ -4453,7 +4453,8 @@ window.sendMessage = function(text) {
                 const title = escapeHtml(t.title);
                 const thumbSrc = t.thumb_url ? ('/api/4chan/proxy?url=' + encodeURIComponent(t.thumb_url)) : '';
                 const thumbPlaceholder = '<div class="fourchan-card-thumb" style="background:#222;"></div>';
-                const thumb = thumbSrc ? `<img class="fourchan-card-thumb" src="${escapeHtml(thumbSrc)}" alt="" loading="lazy" onerror="this.outerHTML='${thumbPlaceholder.replace(/'/g, "\\'")}'">` : thumbPlaceholder;
+                const thumbPlaceholderForAttr = thumbPlaceholder.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                const thumb = thumbSrc ? `<img class="fourchan-card-thumb" src="${escapeHtml(thumbSrc)}" alt="" loading="lazy" onerror="this.outerHTML='${thumbPlaceholderForAttr}'">` : thumbPlaceholder;
                 card.innerHTML = `${thumb}<div class="fourchan-card-title">${title}</div><div class="fourchan-card-meta">${t.replies || 0} replies · ${t.images || 0} images</div>`;
                 grid.appendChild(card);
             });
