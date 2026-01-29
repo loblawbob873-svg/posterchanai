@@ -170,6 +170,7 @@ class CommandService:
         "mail": "Email: mail <to> [subject] <body>",
         "todo": "Todo list: todo | todo add <task>",
         "translate": "Translate: translate <text> to <lang>",
+        "4chan": "4chan browser: 4chan [g|pol] - view catalog",
     }
     # Command aliases (alias -> canonical command)
     COMMAND_ALIASES = {
@@ -367,6 +368,8 @@ class CommandService:
             return await self._todo_command(arg)
         elif command == "translate":
             return await self._translate_command(arg)
+        elif command == "4chan":
+            return await self._4chan_command(arg)
         else:
             return {"type": "text", "content": f"Unknown command: {command}"}
 
@@ -3923,6 +3926,17 @@ Return ONLY valid JSON, no other text.""",
         except Exception as e:
             logger.error(f"Translation error: {e}")
             return {"type": "text", "content": f"Translation failed: {str(e)}"}
+
+    async def _4chan_command(self, arg: str) -> dict:
+        """Open 4chan catalog browser. Optional board: g or pol."""
+        board = (arg or "g").strip().lower()
+        if board not in ("g", "pol"):
+            board = "g"
+        return {
+            "type": "4chan",
+            "content": f"Opening 4chan /{board}/ catalog.",
+            "board": board,
+        }
 
 
 def get_command_service(db: Session) -> CommandService:

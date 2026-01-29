@@ -63,7 +63,7 @@ class ChatHandler {
         this.historyIndex = -1;
 
         // Available commands for tab autocomplete
-        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'rss', 'cal', 'contacts', 'mail', 'todo', 'files'];
+        this.commands = ['help', 'search', 'images', 'geni', 'yt', 'ytdl', 'torrents', 'nyaa', 'budget', 'firewall', 'news', 'dailynews', 'logs', 'rss', 'cal', 'contacts', 'mail', 'todo', 'files', '4chan'];
         this.pluginActions = []; // Will be populated with plugin action hints
 
         // Load plugins and mail accounts for autocomplete
@@ -2558,12 +2558,18 @@ class ChatHandler {
             html = contentHtml;
         } else if (data.type === 'music_next' || data.type === 'music_prev' || data.type === 'music_stop') {
             // Music player controls removed
+        } else if (data.type === '4chan') {
+            html = contentHtml || '<p>Opening 4chan catalog.</p>';
         } else {
             // Default: just use formatted content
             html = contentHtml;
         }
 
         const messageEl = this.addMessage('assistant', html, true);
+
+        if (data.type === '4chan' && data.board && typeof window.openFourchanModal === 'function') {
+            setTimeout(() => window.openFourchanModal(data.board), 100);
+        }
         
         // Attach event listeners to file action buttons using event delegation
         // This is more reliable than attaching to individual buttons
@@ -4221,7 +4227,9 @@ class ChatHandler {
         // RSS subcommands
         'rss': ['sync', 'add', 'remove', 'list', 'search'],
         // YouTube download subcommands
-        'ytdl': ['video']
+        'ytdl': ['video'],
+        // 4chan catalog boards
+        '4chan': ['g', 'pol']
     };
 
     // Tab autocomplete for commands
@@ -4396,3 +4404,90 @@ window.sendMessage = function(text) {
         window.chatHandler.sendMessage();
     }
 };
+
+// 4chan catalog modal
+(function() {
+    const overlay = document.getElementById('fourchanOverlay');
+    const grid = document.getElementById('fourchanGrid');
+    const loading = document.getElementById('fourchanLoading');
+    const closeBtn = document.getElementById('fourchanCloseBtn');
+    const tabs = document.querySelectorAll('.fourchan-tab');
+
+    function escapeHtml(s) {
+        if (!s) return '';
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+    }
+
+    function setLoading(show) {
+        if (loading) loading.style.display = show ? 'block' : 'none';
+    }
+
+    function setActiveBoard(board) {
+        (tabs || []).forEach(t => {
+            t.classList.toggle('active', (t.dataset.board || '') === board);
+        });
+    }
+
+    async function loadCatalog(board) {
+        if (!grid) return;
+        setLoading(true);
+        if (grid) grid.innerHTML = '';
+        try {
+            const r = await fetch(`/api/4chan/catalog?board=${encodeURIComponent(board)}`);
+            const data = await r.json();
+            setLoading(false);
+            if (data.error) {
+                grid.innerHTML = `<div class="fourchan-error">${escapeHtml(data.error)}</div>`;
+                return;
+            }
+            const threads = data.threads || [];
+            grid.innerHTML = '';
+            threads.forEach(t => {
+                const card = document.createElement('a');
+                card.className = 'fourchan-card';
+                card.href = t.link;
+                card.target = '_blank';
+                card.rel = 'noopener noreferrer';
+                const title = escapeHtml(t.title);
+                const thumb = t.thumb_url ? `<img class="fourchan-card-thumb" src="${escapeHtml(t.thumb_url)}" alt="" loading="lazy">` : '<div class="fourchan-card-thumb" style="display:flex;align-items:center;justify-content:center;color:#666;">No image</div>';
+                card.innerHTML = `${thumb}<div class="fourchan-card-title">${title}</div><div class="fourchan-card-meta">${t.replies || 0} replies · ${t.images || 0} images</div>`;
+                grid.appendChild(card);
+            });
+        } catch (e) {
+            setLoading(false);
+            loading.style.display = 'none';
+            grid.innerHTML = `<div class="fourchan-error">Failed to load catalog: ${escapeHtml(String(e))}</div>`;
+        }
+    }
+
+    function openFourchanModal(board) {
+        board = (board || 'g').toString().toLowerCase();
+        if (board !== 'g' && board !== 'pol') board = 'g';
+        if (overlay) {
+            overlay.style.display = 'flex';
+            setActiveBoard(board);
+            loadCatalog(board);
+        }
+    }
+
+    function closeFourchanModal() {
+        if (overlay) overlay.style.display = 'none';
+    }
+
+    if (closeBtn) closeBtn.addEventListener('click', closeFourchanModal);
+    (tabs || []).forEach(t => {
+        t.addEventListener('click', () => {
+            const board = t.dataset.board || 'g';
+            setActiveBoard(board);
+            loadCatalog(board);
+        });
+    });
+    if (overlay) {
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) closeFourchanModal(); });
+    }
+
+    window.openFourchanModal = openFourchanModal;
+    window.closeFourchanModal = closeFourchanModal;
+})();
