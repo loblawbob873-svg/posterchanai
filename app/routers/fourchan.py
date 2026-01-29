@@ -58,7 +58,8 @@ def _build_thread(thread: dict, board: str) -> dict:
     ext = thread.get("ext") or ".jpg"
     replies = thread.get("replies", 0) or 0
     images_count = thread.get("images", 0) or 0
-    last_modified = thread.get("last_modified") or 0
+    # time = OP post creation (Unix timestamp); use for newest-first by creation
+    time_created = thread.get("time") or 0
 
     thumb_url = None
     image_url = None
@@ -75,7 +76,7 @@ def _build_thread(thread: dict, board: str) -> dict:
         "replies": replies,
         "images": images_count,
         "link": f"https://boards.4chan.org/{board}/thread/{no}",
-        "last_modified": last_modified,
+        "time_created": time_created,
     }
 
 
@@ -113,8 +114,8 @@ async def get_catalog(
         for t in page_obj.get("threads", []):
             threads.append(_build_thread(t, board))
 
-    # Newest first: sort by last_modified descending (last bump time)
-    threads.sort(key=lambda x: x["last_modified"], reverse=True)
+    # Newest first: sort by creation date (OP post time)
+    threads.sort(key=lambda x: x["time_created"], reverse=True)
 
     return {"board": board, "threads": threads}
 
