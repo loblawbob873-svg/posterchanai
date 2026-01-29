@@ -4426,6 +4426,10 @@ window.sendMessage = function(text) {
     const threadPostsEl = document.getElementById('fourchanThreadPosts');
     const threadSummarySection = document.getElementById('fourchanThreadSummarySection');
     const threadSummaryEl = document.getElementById('fourchanThreadSummary');
+    const fourchanImageOverlay = document.getElementById('fourchanImageOverlay');
+    const fourchanImageOverlayClose = document.getElementById('fourchanImageOverlayClose');
+    const fourchanImageOverlayImg = document.getElementById('fourchanImageOverlayImg');
+    const fourchanImageOverlayVideo = document.getElementById('fourchanImageOverlayVideo');
 
     let currentThreadBoard = 'g';
     let currentThreadId = '';
@@ -4532,7 +4536,7 @@ window.sendMessage = function(text) {
                     if (p.thumb_url) {
                         const img = '<img src="' + escapeHtml(p.thumb_url) + '" alt="" class="fourchan-thread-post-thumb" loading="lazy">';
                         thumb = p.image_url
-                            ? '<a href="' + escapeHtml(p.image_url) + '" target="_blank" rel="noopener noreferrer" class="fourchan-thread-post-thumb-link" title="Open full image">' + img + '</a>'
+                            ? '<a href="#" class="fourchan-thread-post-thumb-link" data-image-url="' + escapeHtml(p.image_url) + '" title="Open full image">' + img + '</a>'
                             : img;
                     }
                     return '<div class="fourchan-thread-post">' +
@@ -4553,6 +4557,60 @@ window.sendMessage = function(text) {
 
     if (threadCloseBtn) threadCloseBtn.addEventListener('click', closeFourchanThreadModal);
     if (threadOverlay) threadOverlay.addEventListener('click', function(e) { if (e.target === threadOverlay) closeFourchanThreadModal(); });
+
+    function isVideoUrl(url) {
+        return /\.(webm|mp4|mov|ogg|webm\?|mp4\?|mov\?|ogg\?)/i.test(url || '');
+    }
+    function openFourchanImage(url) {
+        if (!fourchanImageOverlay) return;
+        if (isVideoUrl(url)) {
+            if (fourchanImageOverlayImg) fourchanImageOverlayImg.style.display = 'none';
+            if (fourchanImageOverlayVideo) {
+                fourchanImageOverlayVideo.src = url;
+                fourchanImageOverlayVideo.style.display = 'block';
+            }
+        } else {
+            if (fourchanImageOverlayVideo) {
+                fourchanImageOverlayVideo.pause();
+                fourchanImageOverlayVideo.removeAttribute('src');
+                fourchanImageOverlayVideo.style.display = 'none';
+            }
+            if (fourchanImageOverlayImg) {
+                fourchanImageOverlayImg.src = url;
+                fourchanImageOverlayImg.style.display = 'block';
+            }
+        }
+        fourchanImageOverlay.style.display = 'flex';
+    }
+    function closeFourchanImageOverlay() {
+        if (fourchanImageOverlay) fourchanImageOverlay.style.display = 'none';
+        if (fourchanImageOverlayImg) {
+            fourchanImageOverlayImg.src = '';
+            fourchanImageOverlayImg.style.display = 'none';
+        }
+        if (fourchanImageOverlayVideo) {
+            fourchanImageOverlayVideo.pause();
+            fourchanImageOverlayVideo.removeAttribute('src');
+            fourchanImageOverlayVideo.style.display = 'none';
+        }
+    }
+    if (threadPostsEl) {
+        threadPostsEl.addEventListener('click', function(e) {
+            const link = e.target.closest('a.fourchan-thread-post-thumb-link');
+            if (!link) return;
+            e.preventDefault();
+            const url = link.getAttribute('data-image-url');
+            if (url) openFourchanImage(url);
+        });
+    }
+    if (fourchanImageOverlayClose) fourchanImageOverlayClose.addEventListener('click', function(e) { e.stopPropagation(); closeFourchanImageOverlay(); });
+    if (fourchanImageOverlay) {
+        fourchanImageOverlay.addEventListener('click', function(e) {
+            if (e.target === fourchanImageOverlay) closeFourchanImageOverlay();
+        });
+    }
+    if (fourchanImageOverlayImg) fourchanImageOverlayImg.addEventListener('click', function(e) { e.stopPropagation(); });
+    if (fourchanImageOverlayVideo) fourchanImageOverlayVideo.addEventListener('click', function(e) { e.stopPropagation(); });
 
     if (threadSummarizeBtn) {
         var summarizeBtnLabel = threadSummarizeBtn.textContent || 'Summarize';
