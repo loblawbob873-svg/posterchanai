@@ -148,10 +148,13 @@ async def _fetch_thread_posts(board: str, thread_id: int) -> dict:
         com = p.get("com") or ""
         com_plain = _strip_post_html(com)
         tim = p.get("tim")
+        ext = p.get("ext") or ".jpg"
         thumb_url = None
+        image_url = None
         if tim is not None:
             thumb_url = f"/api/4chan/proxy?url={quote(f'https://i.4cdn.org/{board}/{tim}s.jpg', safe='')}"
-        posts.append({"no": no, "name": name, "com": com_plain, "thumb_url": thumb_url})
+            image_url = f"/api/4chan/proxy?url={quote(f'https://i.4cdn.org/{board}/{tim}{ext}', safe='')}"
+        posts.append({"no": no, "name": name, "com": com_plain, "thumb_url": thumb_url, "image_url": image_url})
         if i == 0 and com_plain:
             title = com_plain[:80] + ("..." if len(com_plain) > 80 else "")
     return {"title": title, "posts": posts}

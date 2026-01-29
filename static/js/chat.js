@@ -4528,7 +4528,13 @@ window.sendMessage = function(text) {
                 threadPostsEl.innerHTML = (data.posts || []).map(function(p) {
                     const name = escapeHtml(p.name || 'Anonymous');
                     const com = escapeHtml(p.com || '');
-                    const thumb = p.thumb_url ? '<img src="' + escapeHtml(p.thumb_url) + '" alt="" class="fourchan-thread-post-thumb" loading="lazy">' : '';
+                    let thumb = '';
+                    if (p.thumb_url) {
+                        const img = '<img src="' + escapeHtml(p.thumb_url) + '" alt="" class="fourchan-thread-post-thumb" loading="lazy">';
+                        thumb = p.image_url
+                            ? '<a href="' + escapeHtml(p.image_url) + '" target="_blank" rel="noopener noreferrer" class="fourchan-thread-post-thumb-link" title="Open full image">' + img + '</a>'
+                            : img;
+                    }
                     return '<div class="fourchan-thread-post">' +
                         '<div class="fourchan-thread-post-header"><strong>#' + escapeHtml(String(p.no)) + '</strong> ' + name + '</div>' +
                         (thumb ? '<div class="fourchan-thread-post-thumb-wrap">' + thumb + '</div>' : '') +

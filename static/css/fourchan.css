@@ -221,6 +221,17 @@
     margin: 8px 0;
 }
 
+.fourchan-thread-post-thumb-link {
+    display: inline-block;
+    cursor: pointer;
+    line-height: 0;
+}
+
+.fourchan-thread-post-thumb-link:hover .fourchan-thread-post-thumb {
+    outline: 2px solid var(--accent, #4a9eff);
+    outline-offset: 2px;
+}
+
 .fourchan-thread-post-thumb {
     max-width: 120px;
     max-height: 120px;
