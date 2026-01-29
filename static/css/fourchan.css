@@ -113,10 +113,10 @@
     padding: 8px;
     font-size: 12px;
     line-height: 1.3;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+    flex: 1;
+    min-height: 2.6em;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
 .fourchan-card-meta {
