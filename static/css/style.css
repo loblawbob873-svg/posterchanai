@@ -1404,6 +1404,15 @@ fieldset legend {
     .message-content {
         max-width: 90%;
     }
+    /* User Settings: scrollable tab bar on mobile */
+    .user-tabs {
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+    .user-tab-btn {
+        padding: 12px 14px;
+        font-size: 13px;
+    }
 }
 
 /* Scrollbar */
@@ -2051,11 +2060,17 @@ fieldset legend {
     display: flex;
     gap: 4px;
     padding: 0 24px;
+    padding-right: 16px;
     border-bottom: 2px solid var(--border-color);
     background: var(--bg-secondary);
     flex-shrink: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
 }
 .user-tab-btn {
+    flex-shrink: 0;
     padding: 14px 24px;
     background: transparent;
     border: none;

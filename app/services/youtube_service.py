@@ -396,40 +396,34 @@ def _download_with_binary(url: str, output_dir: str) -> DownloadResult:
         return DownloadResult(success=False, error=str(e))
 
 
+async def _upload_file_to_storage_proxy(
+    storage_server_url: str,
+    username: str,
+    path: str,
+    filename: str,
+    content: bytes,
+    content_type: str,
+) -> str:
+    """Upload file to storage server via proxy. Returns relative path on success."""
+    import asyncio
 
-    music_dir = Path(config['directory'])
-    if not music_dir.exists() or not music_dir.is_dir():
-        return DownloadResult(
-            success=False,
-            error="Music directory does not exist or is not accessible."
-        )
+    def _sync_upload():
+        import requests
+        url = f"{storage_server_url.rstrip('/')}/api/storage/upload-file"
+        headers = {"X-Posterchanai-Load-Balanced": "true"}
+        files = {"file": (filename, content, content_type)}
+        data = {"username": username, "path": path}
+        response = requests.post(url, headers=headers, files=files, data=data, timeout=300)
+        if response.status_code != 200:
+            try:
+                err = response.json().get("detail", response.text)
+            except Exception:
+                err = response.text
+            raise RuntimeError(f"Storage proxy upload failed: {err}")
+        out = response.json()
+        return out.get("path") or f"{path}/{filename}" if path else filename
 
-    # Check yt-dlp available
-    if not check_ytdlp_available():
-        return DownloadResult(
-            success=False,
-            error="yt-dlp not installed. Install with: pip install yt-dlp"
-        )
-
-    # Create subfolder if needed
-    target_dir = music_dir / subfolder
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        # Download video directly to target directory
-        logger.info(f"Downloading YouTube video to: {target_dir}")
-        result = download_as_video(url, str(target_dir), quality)
-
-        if result.success:
-            # Update path to be relative to music directory
-            result.storage_path = f"{subfolder}/{result.filename}"
-            logger.info(f"Successfully saved: {result.storage_path}")
-
-        return result
-
-    except Exception as e:
-        logger.error(f"Download error: {e}")
-        return DownloadResult(success=False, error=str(e))
+    return await asyncio.to_thread(_sync_upload)
 
 
 async def download_video_and_save_to_storage(
@@ -440,7 +434,8 @@ async def download_video_and_save_to_storage(
     quality: str = "best"
 ) -> DownloadResult:
     """
-    Download YouTube video and save to user's storage (local filesystem).
+    Download YouTube video and save to user's storage.
+    Uses storage proxy when storage_server_url is configured; otherwise saves to local upload_path.
 
     Args:
         url: YouTube video URL
@@ -468,6 +463,12 @@ async def download_video_and_save_to_storage(
     if not user:
         return DownloadResult(success=False, error="User not found")
 
+    # Check if storage proxy is configured
+    storage_server_setting = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    storage_server_url = storage_server_setting.value if storage_server_setting and storage_server_setting.value else None
+    if storage_server_url and not storage_server_url.strip().startswith(("http://", "https://")):
+        storage_server_url = None
+
     # Download to temp directory first
     temp_dir = tempfile.mkdtemp(prefix='ytdl_video_')
     
@@ -478,27 +479,46 @@ async def download_video_and_save_to_storage(
         if not result.success:
             return result
 
-        # Save to local storage
-        upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
-        upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
-        
-        upload_base = Path(upload_path)
-        if not upload_base.exists() or not upload_base.is_dir():
-            return DownloadResult(
-                success=False,
-                error="Storage path does not exist or is not accessible."
-            )
-        
-        user_storage = upload_base / user.username / subfolder
-        user_storage.mkdir(parents=True, exist_ok=True)
+        if storage_server_url:
+            # Save via storage proxy
+            try:
+                with open(result.local_path, "rb") as f:
+                    content = f.read()
+                ext = os.path.splitext(result.filename or "")[1].lower()
+                content_type = "video/mp4" if ext in (".mp4",) else "video/x-matroska" if ext == ".mkv" else "application/octet-stream"
+                relative_path = await _upload_file_to_storage_proxy(
+                    storage_server_url=storage_server_url.strip(),
+                    username=user.username,
+                    path=subfolder,
+                    filename=result.filename or "video.mp4",
+                    content=content,
+                    content_type=content_type,
+                )
+                result.storage_path = relative_path
+                logger.info(f"Successfully saved via storage proxy: {result.storage_path}")
+            except Exception as e:
+                logger.error(f"Storage proxy upload error: {e}", exc_info=True)
+                return DownloadResult(success=False, error=f"Storage proxy upload failed: {e}")
+        else:
+            # Save to local storage
+            upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
+            upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
+            
+            upload_base = Path(upload_path)
+            if not upload_base.exists() or not upload_base.is_dir():
+                return DownloadResult(
+                    success=False,
+                    error="Storage path does not exist or is not accessible."
+                )
+            
+            user_storage = upload_base / user.username / subfolder
+            user_storage.mkdir(parents=True, exist_ok=True)
 
-        # Copy file to storage directory
-        import shutil
-        target_file = user_storage / result.filename
-        shutil.copy2(result.local_path, target_file)
-        
-        result.storage_path = f"{subfolder}/{result.filename}"
-        logger.info(f"Successfully saved to local: {result.storage_path}")
+            target_file = user_storage / result.filename
+            shutil.copy2(result.local_path, target_file)
+            
+            result.storage_path = f"{subfolder}/{result.filename}"
+            logger.info(f"Successfully saved to local: {result.storage_path}")
 
         return result
 
@@ -508,9 +528,8 @@ async def download_video_and_save_to_storage(
     finally:
         # Clean up temp directory
         try:
-            import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
-        except:
+        except Exception:
             pass
 
 
