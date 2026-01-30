@@ -186,13 +186,12 @@ def download_as_video(
 
         ydl_opts = {
             'format': format_selector,
-            'merge_output_format': 'mp4',  # When merging; ignored when format is single "best"
+            'merge_output_format': 'mp4',
             'outtmpl': output_template,
             'quiet': True,
             'no_warnings': True,
-            'restrictfilenames': True,  # Sanitize filenames
-            # Try web/android client first to reduce 403 Forbidden from YouTube
-            'extractor_args': {'youtube': {'player_client': ['web', 'android']}},
+            'restrictfilenames': True,
+            # Don't set extractor_args - use yt-dlp default client so format list matches CLI
         }
         if cookies_path and os.path.isfile(cookies_path):
             ydl_opts['cookiefile'] = cookies_path
@@ -258,9 +257,8 @@ def _download_video_with_binary(
         if cookies_path and os.path.isfile(cookies_path):
             cmd.extend(['--cookies', cookies_path])
             logger.info(f"[ytdl] Using cookies file: {cookies_path}")
-        # Reduce 403: try web client
-        cmd.extend(['--extractor-args', 'youtube:player_client=web,android'])
-        
+        # Don't pass --extractor-args so behavior matches regular yt-dlp CLI
+
         # Add quality/format options (single "best" = most compatible)
         if quality == "best":
             cmd.extend(['-f', 'best'])
