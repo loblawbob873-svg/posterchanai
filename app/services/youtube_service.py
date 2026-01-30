@@ -141,7 +141,12 @@ def check_ytdlp_available() -> bool:
     return shutil.which('yt-dlp') is not None
 
 
-def download_as_video(url: str, output_dir: Optional[str] = None, quality: str = "best") -> DownloadResult:
+def download_as_video(
+    url: str,
+    output_dir: Optional[str] = None,
+    quality: str = "best",
+    cookies_path: Optional[str] = None,
+) -> DownloadResult:
     """
     Download YouTube video (not just audio).
 
@@ -149,6 +154,7 @@ def download_as_video(url: str, output_dir: Optional[str] = None, quality: str =
         url: YouTube video URL
         output_dir: Directory to save video (default: temp directory)
         quality: Video quality preference (default: "best", options: "best", "worst", "720p", "1080p", etc.)
+        cookies_path: Optional path to Netscape-format cookies file (helps avoid YouTube 403).
 
     Returns:
         DownloadResult with success status and file info
@@ -188,7 +194,12 @@ def download_as_video(url: str, output_dir: Optional[str] = None, quality: str =
             'quiet': True,
             'no_warnings': True,
             'restrictfilenames': True,  # Sanitize filenames
+            # Try web/android client first to reduce 403 Forbidden from YouTube
+            'extractor_args': {'youtube': {'player_client': ['web', 'android']}},
         }
+        if cookies_path and os.path.isfile(cookies_path):
+            ydl_opts['cookiefile'] = cookies_path
+            logger.info(f"[ytdl] Using cookies file: {cookies_path}")
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -230,18 +241,28 @@ def download_as_video(url: str, output_dir: Optional[str] = None, quality: str =
     except ImportError:
         # Fall back to binary
         logger.info("[ytdl] yt_dlp library not available, using yt-dlp binary")
-        return _download_video_with_binary(url, output_dir, quality)
+        return _download_video_with_binary(url, output_dir, quality, cookies_path)
     except Exception as e:
         logger.error(f"[ytdl] YouTube video download error: {e}", exc_info=True)
         return DownloadResult(success=False, error=str(e))
 
 
-def _download_video_with_binary(url: str, output_dir: str, quality: str = "best") -> DownloadResult:
+def _download_video_with_binary(
+    url: str,
+    output_dir: str,
+    quality: str = "best",
+    cookies_path: Optional[str] = None,
+) -> DownloadResult:
     """Download video using yt-dlp binary."""
     try:
         output_template = os.path.join(output_dir, '%(title)s.%(ext)s')
 
         cmd = ['yt-dlp', '-o', output_template, '--restrict-filenames']
+        if cookies_path and os.path.isfile(cookies_path):
+            cmd.extend(['--cookies', cookies_path])
+            logger.info(f"[ytdl] Using cookies file: {cookies_path}")
+        # Reduce 403: try web client
+        cmd.extend(['--extractor-args', 'youtube:player_client=web,android'])
         
         # Add quality/format options
         if quality == "best":
@@ -484,13 +505,19 @@ async def download_video_and_save_to_storage(
     if storage_server_url and not storage_server_url.strip().startswith(("http://", "https://")):
         storage_server_url = None
 
+    # Optional cookies file for YouTube 403 workaround (Netscape format from browser export)
+    cookies_setting = db.query(Setting).filter(Setting.key == "ytdl_cookies_path").first()
+    cookies_path = str(cookies_setting.value).strip() if cookies_setting and cookies_setting.value else None
+    if cookies_path and not os.path.isfile(cookies_path):
+        cookies_path = None
+
     # Download to temp directory first (run in thread - yt-dlp can take minutes)
     temp_dir = tempfile.mkdtemp(prefix='ytdl_video_')
     
     try:
         logger.info(f"[ytdl] Starting download url={url!r} user={user.username!r} temp_dir={temp_dir}")
         import asyncio
-        result = await asyncio.to_thread(download_as_video, url, temp_dir, quality)
+        result = await asyncio.to_thread(download_as_video, url, temp_dir, quality, cookies_path)
 
         if not result.success:
             logger.warning(f"[ytdl] Download failed: {result.error}")

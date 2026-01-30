@@ -48,7 +48,7 @@ chromadb>=0.4.0
 sentence-transformers>=2.2.0
 mcp
 youtube-transcript-api
-yt-dlp>=2024.1.0
+yt-dlp  # no version pin: always use latest (YouTube changes often)
 # Native RSS support
 feedparser>=6.0.0
 

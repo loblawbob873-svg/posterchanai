@@ -222,6 +222,7 @@ class SettingsResponse(BaseModel):
     bt_server_url: str = ""  # Remote torrent server URL (empty = local)
     bt_download_dir: str = "/var/lib/posterchanai/torrents"
     storage_server_url: str = ""  # Remote storage server URL (empty = local)
+    ytdl_cookies_path: str = ""  # Optional Netscape cookies file for yt-dlp (YouTube 403 workaround)
     # CalDAV/CardDAV server settings
     caldav_enabled: str = "false"  # Enable built-in CalDAV server
     caldav_port: str = "8081"  # CalDAV server port
