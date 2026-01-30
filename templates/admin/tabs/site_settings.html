@@ -90,6 +90,12 @@
             <input type="text" id="ytdl_cookies_path" name="ytdl_cookies_path" placeholder="/path/to/cookies.txt">
             <small>Path to a Netscape-format cookies file exported from your browser. Use if YouTube returns 403 Forbidden (e.g. export with &quot;Get cookies.txt&quot; extension). Leave empty to try without cookies.</small>
         </div>
+        <div class="form-group">
+            <label for="ytdl_no_ssl_verify">
+                <input type="checkbox" id="ytdl_no_ssl_verify" name="ytdl_no_ssl_verify"> yt-dlp: skip SSL certificate verification
+            </label>
+            <small>Enable if you get SSL CERTIFICATE_VERIFY_FAILED or hostname mismatch (e.g. behind a proxy/firewall). Less secure; use only when needed.</small>
+        </div>
     </fieldset>
 
     <fieldset>

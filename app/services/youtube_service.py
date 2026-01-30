@@ -146,6 +146,7 @@ def download_as_video(
     output_dir: Optional[str] = None,
     quality: str = "best",
     cookies_path: Optional[str] = None,
+    no_ssl_verify: bool = False,
 ) -> DownloadResult:
     """
     Download YouTube video (not just audio).
@@ -155,6 +156,7 @@ def download_as_video(
         output_dir: Directory to save video (default: temp directory)
         quality: Video quality preference (default: "best", options: "best", "worst", "720p", "1080p", etc.)
         cookies_path: Optional path to Netscape-format cookies file (helps avoid YouTube 403).
+        no_ssl_verify: If True, skip SSL certificate verification (for proxy/firewall hostname mismatch).
 
     Returns:
         DownloadResult with success status and file info
@@ -191,7 +193,7 @@ def download_as_video(
             'quiet': True,
             'no_warnings': True,
             'restrictfilenames': True,
-            # Don't set extractor_args - use yt-dlp default client so format list matches CLI
+            'nocheckcertificate': no_ssl_verify,
         }
         if cookies_path and os.path.isfile(cookies_path):
             ydl_opts['cookiefile'] = cookies_path
@@ -237,7 +239,7 @@ def download_as_video(
     except ImportError:
         # Fall back to binary
         logger.info("[ytdl] yt_dlp library not available, using yt-dlp binary")
-        return _download_video_with_binary(url, output_dir, quality, cookies_path)
+        return _download_video_with_binary(url, output_dir, quality, cookies_path, no_ssl_verify)
     except Exception as e:
         logger.error(f"[ytdl] YouTube video download error: {e}", exc_info=True)
         return DownloadResult(success=False, error=str(e))
@@ -248,16 +250,18 @@ def _download_video_with_binary(
     output_dir: str,
     quality: str = "best",
     cookies_path: Optional[str] = None,
+    no_ssl_verify: bool = False,
 ) -> DownloadResult:
     """Download video using yt-dlp binary."""
     try:
         output_template = os.path.join(output_dir, '%(title)s.%(ext)s')
 
         cmd = ['yt-dlp', '-o', output_template, '--restrict-filenames']
+        if no_ssl_verify:
+            cmd.append('--no-check-certificate')
         if cookies_path and os.path.isfile(cookies_path):
             cmd.extend(['--cookies', cookies_path])
             logger.info(f"[ytdl] Using cookies file: {cookies_path}")
-        # Don't pass --extractor-args so behavior matches regular yt-dlp CLI
 
         # Add quality/format options (single "best" = most compatible)
         if quality == "best":
@@ -504,13 +508,22 @@ async def download_video_and_save_to_storage(
     if cookies_path and not os.path.isfile(cookies_path):
         cookies_path = None
 
+    # Skip SSL verification when proxy/firewall causes CERTIFICATE_VERIFY_FAILED / hostname mismatch
+    ssl_setting = db.query(Setting).filter(Setting.key == "ytdl_no_ssl_verify").first()
+    no_ssl_verify = (
+        str(ssl_setting.value).strip().lower() in ("true", "1", "yes")
+        if ssl_setting and ssl_setting.value else False
+    )
+
     # Download to temp directory first (run in thread - yt-dlp can take minutes)
     temp_dir = tempfile.mkdtemp(prefix='ytdl_video_')
     
     try:
         logger.info(f"[ytdl] Starting download url={url!r} user={user.username!r} temp_dir={temp_dir}")
         import asyncio
-        result = await asyncio.to_thread(download_as_video, url, temp_dir, quality, cookies_path)
+        result = await asyncio.to_thread(
+            download_as_video, url, temp_dir, quality, cookies_path, no_ssl_verify
+        )
 
         if not result.success:
             logger.warning(f"[ytdl] Download failed: {result.error}")
