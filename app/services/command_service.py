@@ -1033,6 +1033,7 @@ Example: `yt https://youtube.com/watch?v=...`""",
             return {"type": "text", "content": "Could not find a valid YouTube URL. Please provide a YouTube URL."}
 
         target_url = urls[0]
+        logger.info(f"[ytdl] Command: video url={target_url!r} user_id={self.user.id}")
 
         # Download and save: video to Storage
         if not is_video:

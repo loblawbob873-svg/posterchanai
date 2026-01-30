@@ -213,13 +213,15 @@ def download_as_video(url: str, output_dir: Optional[str] = None, quality: str =
                         duration=duration
                     )
 
+            logger.warning("[ytdl] Video file not found in output_dir after yt-dlp run")
             return DownloadResult(success=False, error="Video file not found after download")
 
     except ImportError:
         # Fall back to binary
+        logger.info("[ytdl] yt_dlp library not available, using yt-dlp binary")
         return _download_video_with_binary(url, output_dir, quality)
     except Exception as e:
-        logger.error(f"YouTube video download error: {e}")
+        logger.error(f"[ytdl] YouTube video download error: {e}", exc_info=True)
         return DownloadResult(success=False, error=str(e))
 
 
@@ -261,7 +263,9 @@ def _download_video_with_binary(url: str, output_dir: str, quality: str = "best"
         )
 
         if result.returncode != 0:
-            return DownloadResult(success=False, error=result.stderr or "Download failed")
+            err = result.stderr or result.stdout or "Download failed"
+            logger.warning(f"[ytdl] yt-dlp binary failed exit={result.returncode} stderr={err[:500]}")
+            return DownloadResult(success=False, error=err)
 
         # Find the video file
         for f in os.listdir(output_dir):
@@ -469,15 +473,18 @@ async def download_video_and_save_to_storage(
     if storage_server_url and not storage_server_url.strip().startswith(("http://", "https://")):
         storage_server_url = None
 
-    # Download to temp directory first
+    # Download to temp directory first (run in thread - yt-dlp can take minutes)
     temp_dir = tempfile.mkdtemp(prefix='ytdl_video_')
     
     try:
-        logger.info(f"Downloading YouTube video to temp: {temp_dir}")
-        result = download_as_video(url, temp_dir, quality)
+        logger.info(f"[ytdl] Starting download url={url!r} user={user.username!r} temp_dir={temp_dir}")
+        import asyncio
+        result = await asyncio.to_thread(download_as_video, url, temp_dir, quality)
 
         if not result.success:
+            logger.warning(f"[ytdl] Download failed: {result.error}")
             return result
+        logger.info(f"[ytdl] Download finished title={result.title!r} file={result.filename!r}")
 
         if storage_server_url:
             # Save via storage proxy
@@ -495,9 +502,9 @@ async def download_video_and_save_to_storage(
                     content_type=content_type,
                 )
                 result.storage_path = relative_path
-                logger.info(f"Successfully saved via storage proxy: {result.storage_path}")
+                logger.info(f"[ytdl] Saved via storage proxy: {result.storage_path}")
             except Exception as e:
-                logger.error(f"Storage proxy upload error: {e}", exc_info=True)
+                logger.error(f"[ytdl] Storage proxy upload error: {e}", exc_info=True)
                 return DownloadResult(success=False, error=f"Storage proxy upload failed: {e}")
         else:
             # Save to local storage
@@ -518,12 +525,12 @@ async def download_video_and_save_to_storage(
             shutil.copy2(result.local_path, target_file)
             
             result.storage_path = f"{subfolder}/{result.filename}"
-            logger.info(f"Successfully saved to local: {result.storage_path}")
+            logger.info(f"[ytdl] Saved to local: {result.storage_path}")
 
         return result
 
     except Exception as e:
-        logger.error(f"Download error: {e}", exc_info=True)
+        logger.error(f"[ytdl] Download error: {e}", exc_info=True)
         return DownloadResult(success=False, error=str(e))
     finally:
         # Clean up temp directory
