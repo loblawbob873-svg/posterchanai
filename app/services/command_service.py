@@ -159,7 +159,7 @@ class CommandService:
         "budget": "Check system budget/usage",
         "firewall": "Toggle network firewall",
         "yt": "YouTube search: yt <query>",
-        "ytdl": "Download YouTube: ytdl <url> (MP3) or ytdl video <url> (video)",
+        "ytdl": "Download YouTube: ytdl <url> (MP3 default), ytdl mp3/video <url>",
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
         "news": "RSS news (alias for rss sync)",
@@ -981,7 +981,9 @@ class CommandService:
 `yt <url>` - Get AI summary of video transcript
 
 **Download:**
-- `ytdl video <url>` - Download as video (MP4) to your Storage folder
+- `ytdl <url>` - Download as MP3 to Music (default)
+- `ytdl mp3 <url>` - Download as MP3 to Music
+- `ytdl video <url>` - Download as video (MP4) to YouTube Videos
 
 Example: `yt https://youtube.com/watch?v=...`""",
             }

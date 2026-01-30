@@ -115,6 +115,18 @@ async def summarize_youtube(url: str, chat_service) -> Tuple[bool, str]:
 # YouTube Download Functionality (yt-dlp)
 # ============================================================================
 
+# Retry with Android player client when YouTube returns 403 Forbidden (bot detection)
+_YOUTUBE_403_EXTRACTOR_ARGS = {'youtube': {'player_client': ['android']}}
+
+
+def _is_403_error(err_text: str) -> bool:
+    """Return True if the error looks like YouTube 403 Forbidden."""
+    if not err_text:
+        return False
+    t = str(err_text).lower()
+    return '403' in t or 'forbidden' in t
+
+
 @dataclass
 class DownloadResult:
     """Result of a YouTube download operation."""
@@ -199,42 +211,52 @@ def download_as_video(
             ydl_opts['cookiefile'] = cookies_path
             logger.info(f"[ytdl] Using cookies file: {cookies_path}")
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        def _do_download(opts: dict):
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=True)
 
-            # Find the downloaded video file
-            title = info.get('title', 'Unknown')
-            artist = info.get('artist') or info.get('uploader') or info.get('channel')
-            duration = info.get('duration')
+        try:
+            info = _do_download(ydl_opts)
+        except Exception as e:
+            if _is_403_error(str(e)):
+                logger.info("[ytdl] Got 403, retrying with Android player client")
+                ydl_opts = {**ydl_opts, 'extractor_args': _YOUTUBE_403_EXTRACTOR_ARGS}
+                try:
+                    info = _do_download(ydl_opts)
+                except Exception as retry_e:
+                    logger.error(f"[ytdl] Retry after 403 failed: {retry_e}", exc_info=True)
+                    return DownloadResult(success=False, error=str(retry_e))
+            else:
+                raise
 
-            # yt-dlp sanitizes the filename, find the actual file
-            video_extensions = ('.mp4', '.webm', '.mkv', '.flv', '.avi')
-            for f in os.listdir(output_dir):
-                if f.endswith(video_extensions):
-                    video_path = os.path.join(output_dir, f)
-                    # Build a clean filename
-                    clean_title = title
-                    if artist:
-                        clean_filename = f"{artist} - {clean_title}"
-                    else:
-                        clean_filename = clean_title
-                    
-                    # Preserve extension from downloaded file
-                    ext = os.path.splitext(f)[1]
-                    if not clean_filename.endswith(ext):
-                        clean_filename = clean_filename + ext
+        # Find the downloaded video file
+        title = info.get('title', 'Unknown')
+        artist = info.get('artist') or info.get('uploader') or info.get('channel')
+        duration = info.get('duration')
 
-                    return DownloadResult(
-                        success=True,
-                        title=title,
-                        artist=artist,
-                        filename=clean_filename,
-                        local_path=video_path,
-                        duration=duration
-                    )
+        video_extensions = ('.mp4', '.webm', '.mkv', '.flv', '.avi')
+        for f in os.listdir(output_dir):
+            if f.endswith(video_extensions):
+                video_path = os.path.join(output_dir, f)
+                clean_title = title
+                if artist:
+                    clean_filename = f"{artist} - {clean_title}"
+                else:
+                    clean_filename = clean_title
+                ext = os.path.splitext(f)[1]
+                if not clean_filename.endswith(ext):
+                    clean_filename = clean_filename + ext
+                return DownloadResult(
+                    success=True,
+                    title=title,
+                    artist=artist,
+                    filename=clean_filename,
+                    local_path=video_path,
+                    duration=duration
+                )
 
-            logger.warning("[ytdl] Video file not found in output_dir after yt-dlp run")
-            return DownloadResult(success=False, error="Video file not found after download")
+        logger.warning("[ytdl] Video file not found in output_dir after yt-dlp run")
+        return DownloadResult(success=False, error="Video file not found after download")
 
     except ImportError:
         # Fall back to binary
@@ -293,8 +315,22 @@ def _download_video_with_binary(
 
         if result.returncode != 0:
             err = result.stderr or result.stdout or "Download failed"
-            logger.warning(f"[ytdl] yt-dlp binary failed exit={result.returncode} stderr={err[:500]}")
-            return DownloadResult(success=False, error=err)
+            if _is_403_error(err):
+                logger.info("[ytdl] Got 403 from binary, retrying with Android player client")
+                retry_cmd = cmd.copy()
+                # Insert --extractor-args before URL (last element)
+                retry_cmd.insert(-1, 'youtube:player_client=android')
+                retry_cmd.insert(-1, '--extractor-args')
+                result = subprocess.run(
+                    retry_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=1800
+                )
+            if result.returncode != 0:
+                err = result.stderr or result.stdout or "Download failed"
+                logger.warning(f"[ytdl] yt-dlp binary failed exit={result.returncode} stderr={err[:500]}")
+                return DownloadResult(success=False, error=err)
 
         # Find the video file
         for f in os.listdir(output_dir):
@@ -361,35 +397,47 @@ def download_as_mp3(
             ydl_opts['cookiefile'] = cookies_path
             logger.info(f"[ytdl] Using cookies file: {cookies_path}")
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        def _do_mp3_download(opts: dict):
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=True)
 
-            # Find the downloaded MP3 file
-            title = info.get('title', 'Unknown')
-            artist = info.get('artist') or info.get('uploader') or info.get('channel')
-            duration = info.get('duration')
+        try:
+            info = _do_mp3_download(ydl_opts)
+        except Exception as e:
+            if _is_403_error(str(e)):
+                logger.info("[ytdl] Got 403, retrying with Android player client")
+                ydl_opts = {**ydl_opts, 'extractor_args': _YOUTUBE_403_EXTRACTOR_ARGS}
+                try:
+                    info = _do_mp3_download(ydl_opts)
+                except Exception as retry_e:
+                    logger.error(f"[ytdl] MP3 retry after 403 failed: {retry_e}", exc_info=True)
+                    return DownloadResult(success=False, error=str(retry_e))
+            else:
+                raise
 
-            # yt-dlp sanitizes the filename, find the actual file
-            for f in os.listdir(output_dir):
-                if f.endswith('.mp3'):
-                    mp3_path = os.path.join(output_dir, f)
-                    # Build a clean filename for storage
-                    clean_title = title
-                    if artist:
-                        clean_filename = f"{artist} - {clean_title}.mp3"
-                    else:
-                        clean_filename = f"{clean_title}.mp3"
+        # Find the downloaded MP3 file
+        title = info.get('title', 'Unknown')
+        artist = info.get('artist') or info.get('uploader') or info.get('channel')
+        duration = info.get('duration')
 
-                    return DownloadResult(
-                        success=True,
-                        title=title,
-                        artist=artist,
-                        filename=clean_filename,
-                        local_path=mp3_path,
-                        duration=duration
-                    )
+        for f in os.listdir(output_dir):
+            if f.endswith('.mp3'):
+                mp3_path = os.path.join(output_dir, f)
+                clean_title = title
+                if artist:
+                    clean_filename = f"{artist} - {clean_title}.mp3"
+                else:
+                    clean_filename = f"{clean_title}.mp3"
+                return DownloadResult(
+                    success=True,
+                    title=title,
+                    artist=artist,
+                    filename=clean_filename,
+                    local_path=mp3_path,
+                    duration=duration
+                )
 
-            return DownloadResult(success=False, error="MP3 file not found after download")
+        return DownloadResult(success=False, error="MP3 file not found after download")
 
     except ImportError:
         return _download_with_binary(url, output_dir, cookies_path, no_ssl_verify)
@@ -425,7 +473,15 @@ def _download_with_binary(
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
         if result.returncode != 0:
-            return DownloadResult(success=False, error=result.stderr or "Download failed")
+            err = result.stderr or result.stdout or "Download failed"
+            if _is_403_error(err):
+                logger.info("[ytdl] Got 403 from binary (MP3), retrying with Android player client")
+                retry_cmd = cmd.copy()
+                retry_cmd.insert(-1, 'youtube:player_client=android')
+                retry_cmd.insert(-1, '--extractor-args')
+                result = subprocess.run(retry_cmd, capture_output=True, text=True, timeout=600)
+            if result.returncode != 0:
+                return DownloadResult(success=False, error=result.stderr or result.stdout or "Download failed")
 
         for f in os.listdir(output_dir):
             if f.endswith('.mp3'):

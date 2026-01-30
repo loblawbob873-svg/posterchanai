@@ -971,6 +971,7 @@ Type these commands in the chat (or use the mode buttons):
 | `img2img <prompt>` | Transform an uploaded image with your prompt |
 | `regen` | Regenerate the last image with a new seed |
 | `yt <url>` | Summarize a YouTube video transcript |
+| `ytdl [mp3\|video] <url>` | Download YouTube: MP3 to Music (default) or video (MP4) to YouTube Videos |
 | `torrents` | Built-in torrent client: browse, download, pause, resume, delete |
 | `nyaa <query>` | Search nyaa.si for anime torrents |
 | `budget` | Budget manager (summary, bills, add, pay) |
@@ -984,6 +985,20 @@ Type these commands in the chat (or use the mode buttons):
 | `news` | Fetch and summarize RSS feeds (alias for rss sync) |
 | `rss` | Native RSS: list feeds, sync, add/remove (plugin) |
 | `logs` | System logs analysis (admin only) |
+
+### YouTube Download (ytdl)
+
+Download YouTube videos or audio via yt-dlp. Requires `yt-dlp` and (for MP3) `ffmpeg` in PATH.
+
+| Usage | Description |
+|-------|--------------|
+| `ytdl <url>` | Download as MP3 to Music folder (default) |
+| `ytdl mp3 <url>` | Download as MP3 to Music folder |
+| `ytdl video <url>` | Download as video (MP4) to YouTube Videos folder |
+
+**Tab autocomplete:** Type `ytdl ` and press Tab for `mp3` / `video` subcommands.
+
+Files are saved to local storage or to the configured storage server (Admin > Site Settings). Optional: set `ytdl_cookies_path` for age-restricted or region-locked videos, and `ytdl_no_ssl_verify` if you see certificate errors.
 
 ## Voice Input
 

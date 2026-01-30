@@ -4239,7 +4239,7 @@ class ChatHandler {
         // RSS subcommands
         'rss': ['sync', 'add', 'remove', 'list', 'search'],
         // YouTube download subcommands
-        'ytdl': ['video'],
+        'ytdl': ['mp3', 'video'],
         // 4chan catalog boards
         '4chan': ['g', 'pol']
     };
