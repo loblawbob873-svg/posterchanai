@@ -168,28 +168,25 @@ def download_as_video(
         # Output template - sanitize filename
         output_template = os.path.join(output_dir, '%(title)s.%(ext)s')
 
-        # Format selection: use / fallbacks so we get something even when preferred format isn't available
+        # Format selection: use single "best" by default (most compatible; some videos have no separate streams)
         if quality == "best":
-            # Prefer merge; fall back to single best (some videos have no separate streams)
-            format_selector = "bestvideo+bestaudio/best/best"
+            format_selector = "best"
         elif quality == "worst":
-            format_selector = "worstvideo+worstaudio/worst"
+            format_selector = "worst"
         else:
-            # Try to match quality (e.g., "720p", "1080p")
             height_str = quality.replace('p', '').replace('P', '').strip()
             try:
                 height = int(height_str)
                 if height <= 0:
                     raise ValueError("Height must be positive")
-                # Fallback to best at that height or any best
                 format_selector = f"bestvideo[height<={height}]+bestaudio/best[height<={height}]/best"
             except (ValueError, AttributeError):
                 logger.warning(f"Invalid quality '{quality}', using 'best'")
-                format_selector = "bestvideo+bestaudio/best"
+                format_selector = "best"
 
         ydl_opts = {
             'format': format_selector,
-            'merge_output_format': 'mp4',  # Merge video and audio into MP4
+            'merge_output_format': 'mp4',  # When merging; ignored when format is single "best"
             'outtmpl': output_template,
             'quiet': True,
             'no_warnings': True,
@@ -264,11 +261,11 @@ def _download_video_with_binary(
         # Reduce 403: try web client
         cmd.extend(['--extractor-args', 'youtube:player_client=web,android'])
         
-        # Add quality/format options (with /best fallback when preferred format unavailable)
+        # Add quality/format options (single "best" = most compatible)
         if quality == "best":
-            cmd.extend(['-f', 'bestvideo+bestaudio/best/best'])
+            cmd.extend(['-f', 'best'])
         elif quality == "worst":
-            cmd.extend(['-f', 'worstvideo+worstaudio/worst'])
+            cmd.extend(['-f', 'worst'])
         else:
             height_str = quality.replace('p', '').replace('P', '').strip()
             try:
