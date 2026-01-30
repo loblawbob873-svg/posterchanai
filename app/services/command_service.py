@@ -1015,32 +1015,25 @@ Example: `yt https://youtube.com/watch?v=...`""",
         if not check_ytdlp_available():
             return {"type": "text", "content": "❌ yt-dlp not installed. Install with: `pip install yt-dlp`"}
 
-        # Check for "video" subcommand
+        # Accept "ytdl video <url>" or "ytdl <url>" (video is the only supported type)
         parts = arg.strip().split(maxsplit=1)
-        is_video = parts[0].lower() == "video"
-        url_arg = parts[1] if len(parts) > 1 and is_video else arg
+        if parts[0].lower() == "video":
+            url_arg = parts[1] if len(parts) > 1 else ""
+            if not url_arg:
+                return {
+                    "type": "text",
+                    "content": "Usage: `ytdl video <url>`\n\nExample: `ytdl video https://youtube.com/watch?v=...`"
+                }
+        else:
+            url_arg = arg
 
-        # If "video" subcommand but no URL provided
-        if is_video and len(parts) == 1:
-            return {
-                "type": "text",
-                "content": "Usage: `ytdl video <url>`\n\nExample: `ytdl video https://youtube.com/watch?v=...`"
-            }
-
-        # Extract URL
+        # Extract URL (handles m.youtube.com and strips trailing emojis)
         urls = extract_youtube_urls(url_arg)
         if not urls:
             return {"type": "text", "content": "Could not find a valid YouTube URL. Please provide a YouTube URL."}
 
         target_url = urls[0]
         logger.info(f"[ytdl] Command: video url={target_url!r} user_id={self.user.id}")
-
-        # Download and save: video to Storage
-        if not is_video:
-            return {
-                "type": "text",
-                "content": "Usage: `ytdl video <url>`\n\nExample: `ytdl video https://youtube.com/watch?v=...`\n\nNote: Audio downloads are no longer supported. Use video downloads instead."
-            }
         
         result = await download_video_and_save_to_storage(
             url=target_url,
