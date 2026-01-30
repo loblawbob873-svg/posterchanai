@@ -298,8 +298,8 @@ Type=simple
 User=$(whoami)
 WorkingDirectory=$SCRIPT_DIR
 
-# Minimal environment - the run script sets up oneAPI and IPEX environment
-Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+# Include venv so yt-dlp, ffmpeg and other pip-installed binaries are found
+Environment="PATH=$VENV_PATH/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="HOME=$HOME"
 
 # The run script (run-intel.sh) handles:

@@ -24,7 +24,8 @@ fi
 # This is more reliable than 'source oneapi-vars.sh' in systemd contexts
 export ONEAPI_ROOT
 export LD_LIBRARY_PATH="$SCRIPT_DIR/venv-ipex/lib:$ONEAPI_ROOT/lib:${LD_LIBRARY_PATH:-/usr/local/lib}"
-export PATH="$ONEAPI_ROOT/bin:$PATH"
+# Include venv-ipex/bin so yt-dlp, ffmpeg (if pip-installed) and other venv binaries are found
+export PATH="$SCRIPT_DIR/venv-ipex/bin:$ONEAPI_ROOT/bin:$PATH"
 export OCL_ICD_FILENAMES="$ONEAPI_ROOT/lib/libintelocl.so"
 
 # Also source the vars script for any additional setup (if running interactively)

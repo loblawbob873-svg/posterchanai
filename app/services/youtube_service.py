@@ -60,10 +60,21 @@ def get_transcript(video_id: str) -> Optional[str]:
         return None
 
 
+# Characters allowed in a URL (strip emojis and other paste garbage)
+_URL_SAFE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~:/?#[]@!$&'()*+,;=%")
+
+
+def _sanitize_youtube_url(url: str) -> str:
+    """Remove trailing emojis/symbols from pasted URLs so only valid URL chars remain."""
+    return "".join(c for c in url if c in _URL_SAFE_CHARS)
+
+
 def extract_youtube_urls(text: str) -> list[str]:
-    """Extract all YouTube URLs from text"""
-    pattern = r'(https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)[a-zA-Z0-9_-]+[^\s]*)'
-    return re.findall(pattern, text)
+    """Extract all YouTube URLs from text. Supports www/m subdomains and strips trailing emojis."""
+    # Allow www. or m. (mobile) subdomain; capture URL then sanitize to drop emojis
+    pattern = r'(https?://(?:www\.|m\.)?(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)[a-zA-Z0-9_-]+[^\s]*)'
+    raw = re.findall(pattern, text)
+    return [u for u in (_sanitize_youtube_url(x) for x in raw) if u]
 
 
 async def summarize_youtube(url: str, chat_service) -> Tuple[bool, str]:

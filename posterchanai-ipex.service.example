@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 User=YOUR_USERNAME
 WorkingDirectory=/path/to/posterchanai
+# venv-ipex/bin required for yt-dlp, ffmpeg (if in venv) and other pip binaries
 Environment="PATH=/path/to/posterchanai/venv-ipex/bin:/usr/local/bin:/usr/bin"
 Environment="VIRTUAL_ENV=/path/to/posterchanai/venv-ipex"
 

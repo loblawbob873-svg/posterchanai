@@ -15,16 +15,16 @@ Type=simple
 User=YOUR_USER
 WorkingDirectory=/path/to/posterchanai
 
-# Minimal environment - the run script sets up oneAPI and IPEX environment
-Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+# Include venv-ipex/bin so yt-dlp, ffmpeg and other pip-installed binaries are findable
+Environment="PATH=/path/to/posterchanai/venv-ipex/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="HOME=/home/YOUR_USER"
 
-# The run script (run-intel.sh) handles:
+# The run script (run-ipex.sh) handles:
 # - Detecting and configuring Intel oneAPI
 # - Setting LD_LIBRARY_PATH with all required library paths
 # - IPEX-LLM optimization environment variables
 # - Sourcing oneapi-vars.sh for SYCL compiler support
-ExecStart=/path/to/posterchanai/run-intel.sh
+ExecStart=/path/to/posterchanai/run-ipex.sh
 
 Restart=always
 RestartSec=5

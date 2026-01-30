@@ -3,7 +3,7 @@ File Manager Router - Web-based file manager with image thumbnails and viewer.
 Includes configurable memory cache for file listings, email, and public sharing.
 All blocking I/O operations are run in thread pools to prevent blocking.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, JSONResponse
 import json
 from sqlalchemy.orm import Session
@@ -23,7 +23,7 @@ import secrets
 import asyncio
 
 from app.database import get_db
-from app.auth import get_current_user
+from app.auth import get_current_user, get_current_user_optional
 from app.models import User, Setting, SharedFile, ExternalStorage
 from app.services.storage_service import get_storage_service, _sanitize_path_component, _validate_path_within_base
 from app.utils.image_validation import validate_and_clean_image_data, validate_and_filter_images, ensure_serializable_image
@@ -164,11 +164,27 @@ def get_file_cache(db: Session, force_reload: bool = False) -> FileListingCache:
 
 @router.get("/search")
 async def search_files(
+    request: Request,
     query: str = Query(..., description="Search query (filename or path)"),
+    username: Optional[str] = Query(None, description="Username (for load-balanced storage server requests)"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
-    """Search for files by name or path. Returns matching files with metadata."""
+    """Search for files by name or path. Returns matching files with metadata.
+    Accepts load-balanced requests from other posterchanai nodes (X-Posterchanai-Load-Balanced + username param).
+    """
+    # Resolve effective user: authenticated user or load-balanced request with username param
+    load_balanced = (request.headers.get("x-posterchanai-load-balanced", "").lower() == "true") if request else False
+    if current_user is not None:
+        effective_username = current_user.username
+    elif load_balanced and username:
+        user = db.query(User).filter(User.username == username).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        effective_username = username
+    else:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
     # Check if storage server is configured - proxy search if so
     storage_server_url = db.query(Setting).filter(Setting.key == "storage_server_url").first()
     if storage_server_url and storage_server_url.value:
@@ -182,7 +198,7 @@ async def search_files(
                 try:
                     import httpx
                     headers = {
-                        "X-Username": current_user.username,
+                        "X-Username": effective_username,
                         "X-Posterchanai-Load-Balanced": "true"
                     }
                     
@@ -197,7 +213,7 @@ async def search_files(
                             try:
                                 response = await client.get(
                                     search_url,
-                                    params={"query": query, "username": current_user.username},
+                                    params={"query": query, "username": effective_username},
                                     headers=headers
                                 )
                                 if response.status_code == 200:
@@ -218,7 +234,7 @@ async def search_files(
     
     # Fall through to local search if proxy fails or storage server doesn't have search endpoint
     storage = get_storage_service(db)
-    user_path = storage.get_user_path(current_user.username)
+    user_path = storage.get_user_path(effective_username)
     
     # Run file search in thread pool to prevent blocking
     def _search_files_sync():
