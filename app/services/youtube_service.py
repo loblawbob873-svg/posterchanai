@@ -318,13 +318,20 @@ def _download_video_with_binary(
         return DownloadResult(success=False, error=str(e))
 
 
-def download_as_mp3(url: str, output_dir: Optional[str] = None) -> DownloadResult:
+def download_as_mp3(
+    url: str,
+    output_dir: Optional[str] = None,
+    cookies_path: Optional[str] = None,
+    no_ssl_verify: bool = False,
+) -> DownloadResult:
     """
     Download YouTube video and convert to MP3.
 
     Args:
         url: YouTube video URL
         output_dir: Directory to save MP3 (default: temp directory)
+        cookies_path: Optional path to Netscape-format cookies file.
+        no_ssl_verify: If True, skip SSL certificate verification.
 
     Returns:
         DownloadResult with success status and file info
@@ -335,7 +342,6 @@ def download_as_mp3(url: str, output_dir: Optional[str] = None) -> DownloadResul
     try:
         import yt_dlp
 
-        # Output template - sanitize filename
         output_template = os.path.join(output_dir, '%(title)s.%(ext)s')
 
         ydl_opts = {
@@ -348,8 +354,12 @@ def download_as_mp3(url: str, output_dir: Optional[str] = None) -> DownloadResul
             'outtmpl': output_template,
             'quiet': True,
             'no_warnings': True,
-            'restrictfilenames': True,  # Sanitize filenames
+            'restrictfilenames': True,
+            'nocheckcertificate': no_ssl_verify,
         }
+        if cookies_path and os.path.isfile(cookies_path):
+            ydl_opts['cookiefile'] = cookies_path
+            logger.info(f"[ytdl] Using cookies file: {cookies_path}")
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -366,9 +376,9 @@ def download_as_mp3(url: str, output_dir: Optional[str] = None) -> DownloadResul
                     # Build a clean filename for storage
                     clean_title = title
                     if artist:
-                        clean_filename = f"{artist} - {clean_title}"
+                        clean_filename = f"{artist} - {clean_title}.mp3"
                     else:
-                        clean_filename = clean_title
+                        clean_filename = f"{clean_title}.mp3"
 
                     return DownloadResult(
                         success=True,
@@ -382,42 +392,49 @@ def download_as_mp3(url: str, output_dir: Optional[str] = None) -> DownloadResul
             return DownloadResult(success=False, error="MP3 file not found after download")
 
     except ImportError:
-        # Fall back to binary
-        return _download_with_binary(url, output_dir)
+        return _download_with_binary(url, output_dir, cookies_path, no_ssl_verify)
     except Exception as e:
         logger.error(f"YouTube download error: {e}")
         return DownloadResult(success=False, error=str(e))
 
 
-def _download_with_binary(url: str, output_dir: str) -> DownloadResult:
-    """Download using yt-dlp binary."""
+def _download_with_binary(
+    url: str,
+    output_dir: str,
+    cookies_path: Optional[str] = None,
+    no_ssl_verify: bool = False,
+) -> DownloadResult:
+    """Download as MP3 using yt-dlp binary."""
     try:
         output_template = os.path.join(output_dir, '%(title)s.%(ext)s')
 
-        result = subprocess.run([
+        cmd = [
             'yt-dlp',
-            '-x',  # Extract audio
+            '-x',
             '--audio-format', 'mp3',
             '--audio-quality', '192K',
             '-o', output_template,
             '--restrict-filenames',
-            url
-        ], capture_output=True, text=True, timeout=600)  # 10 min timeout
+        ]
+        if no_ssl_verify:
+            cmd.append('--no-check-certificate')
+        if cookies_path and os.path.isfile(cookies_path):
+            cmd.extend(['--cookies', cookies_path])
+        cmd.append(url)
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
         if result.returncode != 0:
             return DownloadResult(success=False, error=result.stderr or "Download failed")
 
-        # Find the MP3 file
         for f in os.listdir(output_dir):
             if f.endswith('.mp3'):
                 mp3_path = os.path.join(output_dir, f)
-                # Extract title from filename
                 title = os.path.splitext(f)[0].replace('_', ' ')
-
                 return DownloadResult(
                     success=True,
                     title=title,
-                    filename=title,
+                    filename=f"{title}.mp3",
                     local_path=mp3_path
                 )
 
@@ -577,7 +594,105 @@ async def download_video_and_save_to_storage(
         logger.error(f"[ytdl] Download error: {e}", exc_info=True)
         return DownloadResult(success=False, error=str(e))
     finally:
-        # Clean up temp directory
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+async def download_mp3_and_save_to_storage(
+    url: str,
+    user_id: int,
+    db,
+    subfolder: str = "Music",
+) -> DownloadResult:
+    """
+    Download YouTube as MP3 and save to user's storage.
+    Uses storage proxy when storage_server_url is configured; otherwise saves to local upload_path.
+    """
+    from app.models import User
+    from pathlib import Path
+    from app.models import Setting
+    import tempfile
+
+    if not check_ytdlp_available():
+        return DownloadResult(
+            success=False,
+            error="yt-dlp not installed. Install with: pip install yt-dlp"
+        )
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return DownloadResult(success=False, error="User not found")
+
+    storage_server_setting = db.query(Setting).filter(Setting.key == "storage_server_url").first()
+    storage_server_url = storage_server_setting.value if storage_server_setting and storage_server_setting.value else None
+    if storage_server_url and not storage_server_url.strip().startswith(("http://", "https://")):
+        storage_server_url = None
+
+    cookies_setting = db.query(Setting).filter(Setting.key == "ytdl_cookies_path").first()
+    cookies_path = str(cookies_setting.value).strip() if cookies_setting and cookies_setting.value else None
+    if cookies_path and not os.path.isfile(cookies_path):
+        cookies_path = None
+
+    ssl_setting = db.query(Setting).filter(Setting.key == "ytdl_no_ssl_verify").first()
+    no_ssl_verify = (
+        str(ssl_setting.value).strip().lower() in ("true", "1", "yes")
+        if ssl_setting and ssl_setting.value else False
+    )
+
+    temp_dir = tempfile.mkdtemp(prefix='ytdl_mp3_')
+    try:
+        logger.info(f"[ytdl] Starting MP3 download url={url!r} user={user.username!r} temp_dir={temp_dir}")
+        import asyncio
+        result = await asyncio.to_thread(
+            download_as_mp3, url, temp_dir, cookies_path, no_ssl_verify
+        )
+
+        if not result.success:
+            logger.warning(f"[ytdl] MP3 download failed: {result.error}")
+            return result
+        logger.info(f"[ytdl] MP3 download finished title={result.title!r} file={result.filename!r}")
+
+        if storage_server_url:
+            try:
+                with open(result.local_path, "rb") as f:
+                    content = f.read()
+                relative_path = await _upload_file_to_storage_proxy(
+                    storage_server_url=storage_server_url.strip(),
+                    username=user.username,
+                    path=subfolder,
+                    filename=result.filename or "audio.mp3",
+                    content=content,
+                    content_type="audio/mpeg",
+                )
+                result.storage_path = relative_path
+                logger.info(f"[ytdl] Saved MP3 via storage proxy: {result.storage_path}")
+            except Exception as e:
+                logger.error(f"[ytdl] Storage proxy upload error: {e}", exc_info=True)
+                return DownloadResult(success=False, error=f"Storage proxy upload failed: {e}")
+        else:
+            upload_path_setting = db.query(Setting).filter(Setting.key == "upload_path").first()
+            upload_path = upload_path_setting.value if upload_path_setting and upload_path_setting.value else "/var/lib/posterchanai"
+            upload_base = Path(upload_path)
+            if not upload_base.exists() or not upload_base.is_dir():
+                return DownloadResult(
+                    success=False,
+                    error="Storage path does not exist or is not accessible."
+                )
+            user_storage = upload_base / user.username / subfolder
+            user_storage.mkdir(parents=True, exist_ok=True)
+            target_file = user_storage / result.filename
+            shutil.copy2(result.local_path, target_file)
+            result.storage_path = f"{subfolder}/{result.filename}"
+            logger.info(f"[ytdl] Saved MP3 to local: {result.storage_path}")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"[ytdl] MP3 download error: {e}", exc_info=True)
+        return DownloadResult(success=False, error=str(e))
+    finally:
         try:
             shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception:
@@ -602,7 +717,5 @@ def format_download_result(result: DownloadResult) -> str:
 
     if result.storage_path:
         lines.append(f"\n**Saved to:** `{result.storage_path}`")
-        # Add play button
-        lines.append(f"\n[▶ Browse Downloads](cmd:music browse YouTube)")
 
     return "\n".join(lines)

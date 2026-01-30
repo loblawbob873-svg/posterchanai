@@ -62,6 +62,7 @@ from app.services.torrent_service import (
 from app.services.youtube_service import (
     check_ytdlp_available,
     download_video_and_save_to_storage,
+    download_mp3_and_save_to_storage,
     extract_youtube_urls,
     format_download_result,
     is_youtube_url,
@@ -158,7 +159,7 @@ class CommandService:
         "budget": "Check system budget/usage",
         "firewall": "Toggle network firewall",
         "yt": "YouTube search: yt <query>",
-        "ytdl": "Download YouTube: ytdl video <url> (video to Storage)",
+        "ytdl": "Download YouTube: ytdl <url> (MP3) or ytdl video <url> (video)",
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
         "news": "RSS news (alias for rss sync)",
@@ -1003,44 +1004,59 @@ Example: `yt https://youtube.com/watch?v=...`""",
                 "content": """## YouTube Download
 
 **Usage:**
-- `ytdl video <url>` - Download as video (MP4) to Storage
+- `ytdl <url>` - Download as MP3 to Music (default)
+- `ytdl mp3 <url>` - Download as MP3 to Music
+- `ytdl video <url>` - Download as video (MP4) to YouTube Videos
 
 **Examples:**
-- `ytdl video https://youtube.com/watch?v=dQw4w9WgXcQ` - Download video
+- `ytdl https://youtube.com/watch?v=...` - Download as MP3
+- `ytdl video https://youtube.com/watch?v=...` - Download as video
 
-**Note:** Videos are saved to Storage.""",
+Files are saved to your Storage.""",
             }
 
         # Check if yt-dlp is available
         if not check_ytdlp_available():
             return {"type": "text", "content": "❌ yt-dlp not installed. Install with: `pip install yt-dlp`"}
 
-        # Accept "ytdl video <url>" or "ytdl <url>" (video is the only supported type)
+        # Parse: "ytdl video <url>" | "ytdl mp3 <url>" | "ytdl <url>" (default = MP3)
         parts = arg.strip().split(maxsplit=1)
-        if parts[0].lower() == "video":
+        first = parts[0].lower()
+        if first == "video":
             url_arg = parts[1] if len(parts) > 1 else ""
             if not url_arg:
-                return {
-                    "type": "text",
-                    "content": "Usage: `ytdl video <url>`\n\nExample: `ytdl video https://youtube.com/watch?v=...`"
-                }
+                return {"type": "text", "content": "Usage: `ytdl video <url>`\n\nExample: `ytdl video https://youtube.com/watch?v=...`"}
+            as_mp3 = False
+        elif first == "mp3":
+            url_arg = parts[1] if len(parts) > 1 else ""
+            if not url_arg:
+                return {"type": "text", "content": "Usage: `ytdl mp3 <url>`\n\nExample: `ytdl mp3 https://youtube.com/watch?v=...`"}
+            as_mp3 = True
         else:
             url_arg = arg
+            as_mp3 = True  # default: MP3
 
-        # Extract URL (handles m.youtube.com and strips trailing emojis)
         urls = extract_youtube_urls(url_arg)
         if not urls:
             return {"type": "text", "content": "Could not find a valid YouTube URL. Please provide a YouTube URL."}
 
         target_url = urls[0]
-        logger.info(f"[ytdl] Command: video url={target_url!r} user_id={self.user.id}")
-        
-        result = await download_video_and_save_to_storage(
-            url=target_url,
-            user_id=self.user.id,
-            db=self.db,
-            subfolder="YouTube Videos"
-        )
+        if as_mp3:
+            logger.info(f"[ytdl] Command: mp3 url={target_url!r} user_id={self.user.id}")
+            result = await download_mp3_and_save_to_storage(
+                url=target_url,
+                user_id=self.user.id,
+                db=self.db,
+                subfolder="Music",
+            )
+        else:
+            logger.info(f"[ytdl] Command: video url={target_url!r} user_id={self.user.id}")
+            result = await download_video_and_save_to_storage(
+                url=target_url,
+                user_id=self.user.id,
+                db=self.db,
+                subfolder="YouTube Videos",
+            )
 
         return {"type": "text", "content": format_download_result(result)}
 
