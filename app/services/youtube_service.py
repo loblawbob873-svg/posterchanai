@@ -168,22 +168,22 @@ def download_as_video(
         # Output template - sanitize filename
         output_template = os.path.join(output_dir, '%(title)s.%(ext)s')
 
-        # Format selection based on quality preference
+        # Format selection: use / fallbacks so we get something even when preferred format isn't available
         if quality == "best":
-            format_selector = "bestvideo+bestaudio/best"
+            # Prefer merge; fall back to single best (some videos have no separate streams)
+            format_selector = "bestvideo+bestaudio/best/best"
         elif quality == "worst":
             format_selector = "worstvideo+worstaudio/worst"
         else:
             # Try to match quality (e.g., "720p", "1080p")
-            # Extract numeric height value
             height_str = quality.replace('p', '').replace('P', '').strip()
             try:
                 height = int(height_str)
                 if height <= 0:
                     raise ValueError("Height must be positive")
-                format_selector = f"bestvideo[height<={height}]+bestaudio/best[height<={height}]"
+                # Fallback to best at that height or any best
+                format_selector = f"bestvideo[height<={height}]+bestaudio/best[height<={height}]/best"
             except (ValueError, AttributeError):
-                # Invalid quality, fall back to best
                 logger.warning(f"Invalid quality '{quality}', using 'best'")
                 format_selector = "bestvideo+bestaudio/best"
 
@@ -264,21 +264,19 @@ def _download_video_with_binary(
         # Reduce 403: try web client
         cmd.extend(['--extractor-args', 'youtube:player_client=web,android'])
         
-        # Add quality/format options
+        # Add quality/format options (with /best fallback when preferred format unavailable)
         if quality == "best":
-            cmd.extend(['-f', 'bestvideo+bestaudio/best'])
+            cmd.extend(['-f', 'bestvideo+bestaudio/best/best'])
         elif quality == "worst":
             cmd.extend(['-f', 'worstvideo+worstaudio/worst'])
         else:
-            # Try quality-specific format
             height_str = quality.replace('p', '').replace('P', '').strip()
             try:
                 height = int(height_str)
                 if height <= 0:
                     raise ValueError("Height must be positive")
-                cmd.extend(['-f', f'bestvideo[height<={height}]+bestaudio/best[height<={height}]'])
+                cmd.extend(['-f', f'bestvideo[height<={height}]+bestaudio/best[height<={height}]/best'])
             except (ValueError, AttributeError):
-                # Invalid quality, fall back to best
                 logger.warning(f"Invalid quality '{quality}', using 'best'")
                 cmd.extend(['-f', 'bestvideo+bestaudio/best'])
         
