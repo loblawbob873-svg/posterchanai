@@ -11,6 +11,9 @@ class App {
         this.quickActions = document.getElementById('quickActions');
         this.messageInput = document.getElementById('messageInput');
 
+        this.conversationPollInterval = null;
+        this.conversationPollIntervalMs = 25000;
+
         this.init();
     }
 
@@ -21,6 +24,8 @@ class App {
 
         // Load conversations
         await this.loadConversations();
+
+        this.startConversationPolling();
 
         // Check for search engine query parameter (?q=...)
         const urlParams = new URLSearchParams(window.location.search);
@@ -222,10 +227,67 @@ class App {
             const response = await fetch('/api/conversations');
             if (response.ok) {
                 this.conversations = await response.json();
+                this.syncCurrentConversationFromList();
                 this.renderConversationList();
             }
         } catch (err) {
             console.error('Failed to load conversations:', err);
+        }
+    }
+
+    /** Sync currentConversation with the latest from this.conversations (e.g. after refresh). */
+    syncCurrentConversationFromList() {
+        if (!this.currentConversation) return;
+        const updated = this.conversations.find(c => c.id === this.currentConversation.id);
+        if (updated) {
+            this.currentConversation = updated;
+            this.chatTitle.textContent = updated.title;
+        }
+    }
+
+    /** Background refresh: fetch conversations and update list without disrupting selection. */
+    async refreshConversationsInBackground() {
+        if (document.hidden) return;
+        try {
+            const response = await fetch('/api/conversations');
+            if (!response.ok) return;
+            const list = await response.json();
+            this.conversations = list;
+            this.syncCurrentConversationFromList();
+            this.renderConversationList();
+        } catch (err) {
+            console.error('Background conversation refresh failed:', err);
+        }
+    }
+
+    startConversationPolling() {
+        if (this.conversationPollInterval) clearInterval(this.conversationPollInterval);
+        this.conversationPollInterval = setInterval(() => {
+            this.refreshConversationsInBackground();
+        }, this.conversationPollIntervalMs);
+        if (this._conversationPollVisibilityBound) return;
+        this._conversationPollVisibilityBound = () => {
+            if (document.hidden) {
+                if (this.conversationPollInterval) {
+                    clearInterval(this.conversationPollInterval);
+                    this.conversationPollInterval = null;
+                }
+            } else {
+                if (!this.conversationPollInterval) {
+                    this.conversationPollInterval = setInterval(() => {
+                        this.refreshConversationsInBackground();
+                    }, this.conversationPollIntervalMs);
+                    this.refreshConversationsInBackground();
+                }
+            }
+        };
+        document.addEventListener('visibilitychange', this._conversationPollVisibilityBound);
+    }
+
+    stopConversationPolling() {
+        if (this.conversationPollInterval) {
+            clearInterval(this.conversationPollInterval);
+            this.conversationPollInterval = null;
         }
     }
 
