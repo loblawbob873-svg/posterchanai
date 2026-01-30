@@ -34,9 +34,13 @@
                 <button class="dropdown-item cmd-item" data-cmd="todo">✅ Todo List</button>
             </div>
         </div>
-        <button class="quick-btn" id="fileManagerBtn" title="File Manager" onclick="if(window.fileManager){window.fileManager.open();}else{console.error('FileManager not initialized');}">📁 Files</button>
-        <button class="quick-btn" id="fourchanBtn" title="4chan Catalog" onclick="if(window.openFourchanModal){window.openFourchanModal();}else{console.error('4chan not loaded');}">📋 4chan</button>
-        <button class="quick-btn" id="photoGalleryBtn" title="Photo Gallery" onclick="openPhotoGalleryNow();">🖼️ Photos</button>
+        <div class="quick-btn-dropdown">
+            <button class="quick-btn dropdown-toggle" id="filesDropdownBtn">📁 Files ▾</button>
+            <div class="dropdown-menu" id="filesDropdownMenu">
+                <button class="dropdown-item" id="fileManagerBtn" title="File Manager" onclick="if(window.fileManager){window.fileManager.open();}else{console.error('FileManager not initialized');}">📁 File Manager</button>
+                <button class="dropdown-item" id="photoGalleryBtn" title="Photo Gallery" onclick="openPhotoGalleryNow();">🖼️ Photos</button>
+            </div>
+        </div>
 <script>
 function openPhotoGalleryNow() {
     var v = document.getElementById('cyberpunkPictureViewer');
@@ -96,6 +100,7 @@ function openPhotoGalleryNow() {
                 <button class="dropdown-item mode-btn" data-mode="search">🔍 Web Search</button>
                 <button class="dropdown-item mode-btn" data-mode="images">🖼️ Images</button>
                 <button class="dropdown-item" id="newsDropdownBtn">📰 News</button>
+                <button class="dropdown-item" id="fourchanBtn" title="4chan Catalog" onclick="if(window.openFourchanModal){window.openFourchanModal();}else{console.error('4chan not loaded');}">📋 4chan</button>
                 <button class="dropdown-item cmd-item" data-cmd="torrents">🧲 Torrents</button>
                 <button class="dropdown-item cmd-item" data-cmd="torrents list">⬇️ Downloading</button>
             </div>

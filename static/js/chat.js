@@ -3727,7 +3727,14 @@ class ChatHandler {
 
         // Extract markdown images ![alt](url) before link processing (so link regex doesn't consume them)
         const images = [];
+        // Absolute URLs (http/https) - e.g. https://img.youtube.com/vi/xyz/hqdefault.jpg
         processed = processed.replace(/!\[([^\]]*)\]\(\s*(https?:\/\/[^)\s]+)\s*\)/g, (match, alt, url) => {
+            const index = images.length;
+            images.push({ alt: alt.trim(), url: url.trim() });
+            return `\x00IMG${index}\x00`;
+        });
+        // Relative URLs (e.g. /api/youtube-thumbnail?video_id=...) used by RSS YouTube thumbnails
+        processed = processed.replace(/!\[([^\]]*)\]\(\s*(\/[^)\s]+)\s*\)/g, (match, alt, url) => {
             const index = images.length;
             images.push({ alt: alt.trim(), url: url.trim() });
             return `\x00IMG${index}\x00`;
@@ -3847,6 +3854,7 @@ class ChatHandler {
             // Use same-origin proxy for YouTube thumbnails so they load in RSS
             const ytMatch = src.match(/^https?:\/\/img\.youtube\.com\/vi\/([a-zA-Z0-9_-]{11})\//);
             if (ytMatch) src = '/api/youtube-thumbnail?video_id=' + encodeURIComponent(ytMatch[1]);
+            else if (src.startsWith('/')) src = src;  // Same-origin (e.g. /api/youtube-thumbnail?video_id=...)
             else src = encodeURI(src);
             const safeAlt = this.escapeHtml(img.alt);
             return `<img src="${src}" alt="${safeAlt}" class="message-inline-image" loading="lazy" style="max-width:100%;height:auto;border-radius:8px;margin:8px 0;">`;
