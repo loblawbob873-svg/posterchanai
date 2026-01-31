@@ -1656,10 +1656,11 @@ async def get_external_storage_mounts(
 @router.get("/view/{file_path:path}")
 async def view_file(
     file_path: str,
+    download: bool = Query(False, description="If true, return file as attachment (download) instead of inline/viewer"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """View/download a file. Returns image viewer HTML for images. Supports external storage. Proxies to storage server if configured (NO FALLBACK)."""
+    """View/download a file. Returns image viewer HTML for images (unless download=1). Supports external storage. Proxies to storage server if configured (NO FALLBACK)."""
     # Handle URL format: /api/files/view/{username}/{file_path} or /api/files/view/{file_path}
     # Extract username if present in path
     from urllib.parse import unquote
@@ -1710,7 +1711,7 @@ async def view_file(
             if url.startswith(('http://', 'https://')):
                 logger.info(f"[FILES] Proxying view_file to storage server: {url}, username: {target_username}, path: {actual_file_path}")
                 # Proxy to storage server - NO FALLBACK
-                return await _proxy_view_file(url, target_username, actual_file_path, db)
+                return await _proxy_view_file(url, target_username, actual_file_path, db, download=download)
             else:
                 raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
         else:
@@ -1745,32 +1746,10 @@ async def view_file(
             
             file_data = await asyncio.to_thread(_read_file_sync)
             
-            # Check if it's an image (for image viewer)
-            if content_type.startswith('image/'):
-                # Return image viewer HTML
-                from fastapi.responses import HTMLResponse
-                import base64
-                image_base64 = base64.b64encode(file_data).decode('utf-8')
-                html_content = f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>{file_path_obj.name}</title>
-                    <style>
-                        body {{ margin: 0; padding: 20px; background: #1a1a1a; color: #fff; text-align: center; }}
-                        img {{ max-width: 100%; max-height: 90vh; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }}
-                    </style>
-                </head>
-                <body>
-                    <img src="data:{content_type};base64,{image_base64}" alt="{file_path_obj.name}" />
-                </body>
-                </html>
-                """
-                return HTMLResponse(content=html_content)
-            else:
-                # Return file download
-                from fastapi.responses import Response
-                filename = file_path_obj.name
+            # When download=1 or non-image: return file as attachment
+            from fastapi.responses import Response
+            filename = file_path_obj.name
+            if download or not content_type.startswith('image/'):
                 return Response(
                     content=file_data,
                     media_type=content_type,
@@ -1778,6 +1757,26 @@ async def view_file(
                         "Content-Disposition": f'attachment; filename="{filename}"'
                     }
                 )
+            # Image and not download: return image viewer HTML
+            from fastapi.responses import HTMLResponse
+            import base64
+            image_base64 = base64.b64encode(file_data).decode('utf-8')
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>{file_path_obj.name}</title>
+                <style>
+                    body {{ margin: 0; padding: 20px; background: #1a1a1a; color: #fff; text-align: center; }}
+                    img {{ max-width: 100%; max-height: 90vh; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }}
+                </style>
+            </head>
+            <body>
+                <img src="data:{content_type};base64,{image_base64}" alt="{file_path_obj.name}" />
+            </body>
+            </html>
+            """
+            return HTMLResponse(content=html_content)
     
     # Handle external storage (external storage is always local filesystem)
     storage = get_storage_service(db)
@@ -1838,9 +1837,11 @@ async def view_file(
     }
     media_type = media_types.get(suffix, 'application/octet-stream')
     
-    # For images, set headers to display inline instead of triggering download
+    # When download=1 use attachment; otherwise inline for images
     headers = {}
-    if suffix in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
+    if download or suffix not in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
+        headers['Content-Disposition'] = f'attachment; filename="{full_path.name}"'
+    else:
         headers['Content-Disposition'] = 'inline'
     
     return FileResponse(
@@ -2239,10 +2240,28 @@ async def get_shared_file(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
+    # When using remote storage, proxy to storage server (file is not on local disk)
+    storage_server_url = safe_query_setting(db, "storage_server_url")
+    if storage_server_url and storage_server_url.value:
+        url = storage_server_url.value.strip()
+        if url.startswith(('http://', 'https://')):
+            try:
+                response = await _proxy_view_file(url, user.username, share.file_path, db)
+                share.access_count += 1
+                db.commit()
+                # Override Content-Disposition to use stored filename for download
+                response.headers["Content-Disposition"] = f'inline; filename="{share.filename}"'
+                return response
+            except Exception as e:
+                logger.warning(f"[FILES] Shared file proxy failed, file may not exist on storage: {e}")
+                raise HTTPException(status_code=404, detail="File not found")
+        else:
+            raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
+    
+    # Local storage: serve file from disk
     storage = get_storage_service(db)
     user_path = storage.get_user_path(user.username)
     
-    # Validate and serve file
     try:
         safe_path = Path(*[_sanitize_path_component(p) for p in share.file_path.split('/') if p])
         full_path = user_path / safe_path
@@ -2253,7 +2272,6 @@ async def get_shared_file(
         if not full_path.exists() or not full_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
         
-        # Increment access count
         share.access_count += 1
         db.commit()
         
@@ -2579,7 +2597,7 @@ async def _proxy_mkdir(storage_server_url: str, username: str, path: str, db: Se
         raise
 
 
-async def _proxy_view_file(storage_server_url: str, username: str, file_path: str, db: Session):
+async def _proxy_view_file(storage_server_url: str, username: str, file_path: str, db: Session, download: bool = False):
     """Proxy file view/download to storage server - uses synchronous requests to avoid event loop issues"""
     from app.models import Setting
     import requests
@@ -2596,6 +2614,8 @@ async def _proxy_view_file(storage_server_url: str, username: str, file_path: st
             "username": username,
             "file_path": file_path
         }
+        if download:
+            params["download"] = "1"
         
         # Use synchronous requests in thread pool
         def _sync_proxy():

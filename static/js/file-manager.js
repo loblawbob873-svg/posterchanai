@@ -743,6 +743,7 @@ class FileManager {
                         ${isVideo ? `<button class="file-action-btn file-play-btn" title="Play Video" onclick="if(window.fileManager && window.fileManager.openVideoPlayer){window.fileManager.openVideoPlayer('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Video player not available');}">▶</button>` : ''}
                         <button class="file-action-btn" title="Email" onclick="if(window.fileManager && window.fileManager.emailFile){window.fileManager.emailFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Email functionality not available');}">📧</button>
                         <button class="file-action-btn" title="Share" onclick="if(window.fileManager && window.fileManager.shareFile){window.fileManager.shareFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Share functionality not available');}">🔗</button>
+                        <button class="file-action-btn" title="Download" onclick="if(window.fileManager && window.fileManager.downloadFile){window.fileManager.downloadFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Download not available');}">⬇</button>
                     </div>
                 ` : '';
                 return `
@@ -793,6 +794,7 @@ class FileManager {
                                     ${isVideo ? `<button class="file-action-btn file-play-btn" title="Play Video" onclick="if(window.fileManager && window.fileManager.openVideoPlayer){window.fileManager.openVideoPlayer('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Video player not available');}">▶</button>` : ''}
                                     <button class="file-action-btn" title="Email" onclick="if(window.fileManager && window.fileManager.emailFile){window.fileManager.emailFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Email functionality not available');}">📧</button>
                                     <button class="file-action-btn" title="Share" onclick="if(window.fileManager && window.fileManager.shareFile){window.fileManager.shareFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Share functionality not available');}">🔗</button>
+                                    <button class="file-action-btn" title="Download" onclick="if(window.fileManager && window.fileManager.downloadFile){window.fileManager.downloadFile('${this.escapeJs(item.path)}', '${this.escapeJs(item.name)}');}else{alert('Download not available');}">⬇</button>
                                 </td>
                             ` : '<td></td>';
                             return `
@@ -1272,6 +1274,13 @@ class FileManager {
                     alert('Cannot share directories');
                 }
                 break;
+            case 'download':
+                if (!isDirectory) {
+                    await this.downloadFile(filePath, fileName);
+                } else {
+                    alert('Cannot download directories');
+                }
+                break;
             case 'preview':
                 if (!isDirectory) {
                     await this.previewUrl(filePath, fileName);
@@ -1330,6 +1339,29 @@ class FileManager {
         } catch (error) {
             console.error('Error deleting file:', error);
             alert('Error deleting file. Please try again.');
+        }
+    }
+    
+    async downloadFile(filePath, fileName) {
+        try {
+            const url = `/api/files/view/${encodeURIComponent(filePath)}?download=1`;
+            const response = await csrfFetch(url);
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data.detail || `Download failed: ${response.status}`);
+            }
+            const blob = await response.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = fileName || filePath.split('/').pop() || 'download';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+        } catch (error) {
+            console.error('Error downloading file:', error);
+            alert('Error: ' + (error.message || 'Failed to download file'));
         }
     }
     

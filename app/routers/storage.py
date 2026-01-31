@@ -1713,6 +1713,7 @@ async def view_file(
     request: FastAPIRequest,
     username: str = Query(...),
     file_path: str = Query(...),
+    download: bool = Query(False, description="If true, return as attachment (download) instead of inline"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_optional)
 ):
@@ -1794,12 +1795,13 @@ async def view_file(
                     process.stdout.close()
                     process.wait()
             
+            content_disp = f'attachment; filename="{full_path.stem}.mp4"' if download else f'inline; filename="{full_path.stem}.mp4"'
             return StreamingResponse(
                 stream_transcoded(),
                 media_type='video/mp4',
                 headers={
                     'Accept-Ranges': 'none',  # No range requests for transcoded stream
-                    'Content-Disposition': f'inline; filename="{full_path.stem}.mp4"'
+                    'Content-Disposition': content_disp
                 }
             )
         except Exception as transcode_err:
@@ -1822,9 +1824,11 @@ async def view_file(
     }
     media_type = media_types.get(suffix, 'application/octet-stream')
     
-    # For images and videos, set headers to display inline instead of triggering download
+    # When download=1 use attachment; otherwise inline for images/videos
     headers = {}
-    if suffix in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
+    if download:
+        headers['Content-Disposition'] = f'attachment; filename="{full_path.name}"'
+    elif suffix in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
         headers['Content-Disposition'] = 'inline'
     elif suffix in ['.mp4', '.webm', '.mov', '.avi', '.mkv']:
         headers['Content-Disposition'] = 'inline'
