@@ -63,6 +63,7 @@ from app.services.youtube_service import (
     check_ytdlp_available,
     download_video_and_save_to_storage,
     download_mp3_and_save_to_storage,
+    extract_download_urls,
     extract_youtube_urls,
     format_download_result,
     is_youtube_url,
@@ -159,7 +160,7 @@ class CommandService:
         "budget": "Check system budget/usage",
         "firewall": "Toggle network firewall",
         "yt": "YouTube search: yt <query>",
-        "ytdl": "Download YouTube: ytdl <url> (MP3 default), ytdl mp3/video <url>",
+        "ytdl": "Download YouTube or X: ytdl <url> (MP3 default), ytdl mp3/video <url>",
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
         "news": "RSS news (alias for rss sync)",
@@ -1004,16 +1005,19 @@ Example: `yt https://youtube.com/watch?v=...`""",
         if not arg:
             return {
                 "type": "text",
-                "content": """## YouTube Download
+                "content": """## YouTube / X (Twitter) Download
 
 **Usage:**
 - `ytdl <url>` - Download as MP3 to Music (default)
 - `ytdl mp3 <url>` - Download as MP3 to Music
-- `ytdl video <url>` - Download as video (MP4) to YouTube Videos
+- `ytdl video <url>` - Download as video (MP4) to folder
+
+**Supported:** YouTube, X.com (Twitter) links.
 
 **Examples:**
 - `ytdl https://youtube.com/watch?v=...` - Download as MP3
-- `ytdl video https://youtube.com/watch?v=...` - Download as video
+- `ytdl video https://x.com/i/status/123...` - Download X video
+- `ytdl https://x.com/user/status/123...` - Download as MP3
 
 Files are saved to your Storage.""",
             }
@@ -1039,9 +1043,9 @@ Files are saved to your Storage.""",
             url_arg = arg
             as_mp3 = True  # default: MP3
 
-        urls = extract_youtube_urls(url_arg)
+        urls = extract_download_urls(url_arg)
         if not urls:
-            return {"type": "text", "content": "Could not find a valid YouTube URL. Please provide a YouTube URL."}
+            return {"type": "text", "content": "Could not find a valid YouTube or X (Twitter) URL. Example: `ytdl https://x.com/i/status/123` or `ytdl https://youtube.com/watch?v=...`"}
 
         target_url = urls[0]
         if as_mp3:

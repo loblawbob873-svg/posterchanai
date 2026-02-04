@@ -77,6 +77,26 @@ def extract_youtube_urls(text: str) -> list[str]:
     return [u for u in (_sanitize_youtube_url(x) for x in raw) if u]
 
 
+def _sanitize_url(url: str) -> str:
+    """Remove trailing emojis/symbols from pasted URLs so only valid URL chars remain."""
+    return "".join(c for c in url if c in _URL_SAFE_CHARS)
+
+
+def extract_download_urls(text: str) -> list[str]:
+    """Extract YouTube and X (Twitter) URLs from text for yt-dlp download. Supports ytdl/ytdlp for both."""
+    urls = []
+    # YouTube (same as extract_youtube_urls)
+    urls.extend(extract_youtube_urls(text))
+    # X.com / Twitter (status and i/status links; yt-dlp supports these)
+    x_pattern = r'(https?://(?:www\.|mobile\.)?(?:x\.com|twitter\.com)/(?:\w+/status/|i/status/)[0-9]+[^\s]*)'
+    raw_x = re.findall(x_pattern, text)
+    for u in raw_x:
+        sanitized = _sanitize_url(u)
+        if sanitized and sanitized not in urls:
+            urls.append(sanitized)
+    return urls
+
+
 async def summarize_youtube(url: str, chat_service) -> Tuple[bool, str]:
     """
     Fetch transcript and summarize a YouTube video.
