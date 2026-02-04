@@ -57,7 +57,7 @@ REQUIRED_SETTINGS = {
     "ollama_url": "http://localhost:11434",
     "ollama_api_format": "ollama",
     "ollama_model": "",
-    "ollama_timeout": "120000",
+    "ollama_timeout": "300000",
     "ollama_max_concurrent": "1",
     "ollama_system_prompt": "",
     # Advanced model settings

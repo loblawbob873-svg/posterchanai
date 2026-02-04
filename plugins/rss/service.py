@@ -106,7 +106,7 @@ class RssService:
             async with aiohttp.ClientSession() as session:
                 headers = {"User-Agent": "Mozilla/5.0 (compatible; Posterchanai/1.0)"}
                 try:
-                    async with session.get(url, headers=headers, proxy=proxy_config, timeout=aiohttp.ClientTimeout(total=30), ssl=False) as resp:
+                    async with session.get(url, headers=headers, proxy=proxy_config, timeout=aiohttp.ClientTimeout(total=60), ssl=False) as resp:
                         if resp.status != 200:
                             try:
                                 error_text = await resp.text()
@@ -326,7 +326,7 @@ class RssService:
             async with aiohttp.ClientSession() as session:
                 headers = {"User-Agent": "Mozilla/5.0 (compatible; Posterchanai/1.0)"}
                 try:
-                    async with session.get(url, headers=headers, proxy=proxy_config, timeout=aiohttp.ClientTimeout(total=30), ssl=False) as resp:
+                    async with session.get(url, headers=headers, proxy=proxy_config, timeout=aiohttp.ClientTimeout(total=60), ssl=False) as resp:
                         if resp.status != 200:
                             logger.warning(f"Article fetch returned status {resp.status} for {url}")
                             return None

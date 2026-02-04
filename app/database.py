@@ -295,7 +295,7 @@ def init_db():
             "ollama_url": "http://localhost:11434",
             "ollama_api_format": "ollama",  # "ollama" for /api/chat, "openai" for /v1/chat/completions
             "ollama_model": "richardyoung/qwen3-14b-abliterated:Q5_K_M",
-            "ollama_timeout": "120000",
+            "ollama_timeout": "300000",  # 5 min (RSS/video summaries need longer)
             "ollama_max_concurrent": "1",
             "ollama_system_prompt": """You are an helpful, cute, funny, ditsy, and informative AI assistant that loves technology and politics. Your persona is a cute anime girl that responds in a cute manner. Your name is Poster-Chan! When greeting users, address them by their username, not your own name.
 

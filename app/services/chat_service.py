@@ -116,8 +116,8 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
         # Use all servers from admin UI - round-robin between all configured servers
         servers = parse_server_urls(chat_server_urls, exclude_self=False)
         if servers:
-            timeout_str = self._settings.get("ollama_timeout", "120000")
-            timeout = int(timeout_str if timeout_str else "120000") / 1000
+            timeout_str = self._settings.get("ollama_timeout", "300000")
+            timeout = int(timeout_str if timeout_str else "300000") / 1000
             model = self._settings.get("ollama_model", "default") or "default"
             # Server-to-server requests don't need authentication
             logger.info(f"[CHAT SERVICE] Creating LoadBalancer with {len(servers)} server(s): {servers}, model={model}, timeout={timeout}s")

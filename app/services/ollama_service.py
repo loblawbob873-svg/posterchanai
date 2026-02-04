@@ -62,7 +62,7 @@ class OllamaService:
         self.ollama_url = get_setting("ollama_url", "http://localhost:11434").rstrip('/')
 
         self.default_model = get_setting("ollama_model", "llama3")
-        self.timeout = int(get_setting("ollama_timeout", "120000")) / 1000
+        self.timeout = int(get_setting("ollama_timeout", "300000")) / 1000
         self.max_concurrent = int(get_setting("ollama_max_concurrent", "1"))
         self.system_prompt = get_setting("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
         # API format: "ollama" for /api/chat, "openai" for /v1/chat/completions

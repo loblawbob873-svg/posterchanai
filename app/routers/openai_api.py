@@ -439,7 +439,7 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
         try:
             # Pass full server list to LoadBalancer - it will handle round-robin internally
             # This ensures proper load balancing across all servers
-            timeout = int(settings.get("ollama_timeout", "120000")) / 1000
+            timeout = int(settings.get("ollama_timeout", "300000")) / 1000
             model = settings.get("ollama_model", "default")
             load_balancer = LoadBalancer(servers, timeout=timeout, model=model)
 

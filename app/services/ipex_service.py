@@ -265,7 +265,7 @@ class IPEXService:
         self.token_timeout = int(get_setting("llm_token_timeout", "600"))
 
         # Inference timeout (seconds) - prevents hung requests
-        self.inference_timeout = int(get_setting("ollama_timeout", "120000")) // 1000  # Convert ms to seconds
+        self.inference_timeout = int(get_setting("ollama_timeout", "300000")) // 1000  # Convert ms to seconds
 
         # Thinking mode control
         self.disable_thinking = get_setting("llm_disable_thinking", "false").lower() == "true"
