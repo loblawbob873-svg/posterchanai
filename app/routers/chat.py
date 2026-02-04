@@ -393,7 +393,8 @@ class ConnectionManager:
         self._conn_lock = asyncio.Lock()  # Protect connection ID increment
 
     async def connect(self, user_id: int, conversation_id: int, websocket: WebSocket) -> int:
-        await websocket.accept()
+        if websocket.client_state.name != "CONNECTED":
+            await websocket.accept()
         # Stop any previous streaming for this user (prevents messages going to wrong chat)
         self.stop_flags[user_id] = True
         self.active_connections[user_id] = websocket
