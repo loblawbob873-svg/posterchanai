@@ -1,5 +1,7 @@
 # Poster-chan AI – Android app
 
+**Main project README:** [../README.md](../README.md) (repo root)
+
 Native Android app for Poster-chan AI: **native login**, **conversation list**, **native chat** (with streaming), and an optional **Web app** screen that loads the full web UI. Battery-friendly: no background services; WebView is paused when not visible.
 
 ---
