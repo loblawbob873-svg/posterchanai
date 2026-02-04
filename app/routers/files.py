@@ -25,7 +25,7 @@ import asyncio
 from app.database import get_db
 from app.auth import get_current_user, get_current_user_optional
 from app.models import User, Setting, SharedFile, ExternalStorage
-from app.services.storage_service import get_storage_service, _sanitize_path_component, _validate_path_within_base
+from app.services.storage_service import get_storage_service, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
 from app.utils.image_validation import validate_and_clean_image_data, validate_and_filter_images, ensure_serializable_image
 
 logger = logging.getLogger(__name__)
@@ -1750,11 +1750,12 @@ async def view_file(
             from fastapi.responses import Response
             filename = file_path_obj.name
             if download or not content_type.startswith('image/'):
+                safe_name = ascii_safe_header_filename(filename)
                 return Response(
                     content=file_data,
                     media_type=content_type,
                     headers={
-                        "Content-Disposition": f'attachment; filename="{filename}"'
+                        "Content-Disposition": f'attachment; filename="{safe_name}"'
                     }
                 )
             # Image and not download: return image viewer HTML
@@ -1837,17 +1838,18 @@ async def view_file(
     }
     media_type = media_types.get(suffix, 'application/octet-stream')
     
-    # When download=1 use attachment; otherwise inline for images
+    # When download=1 use attachment; otherwise inline for images (ASCII-safe filename for headers)
     headers = {}
+    safe_filename = ascii_safe_header_filename(full_path.name)
     if download or suffix not in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
-        headers['Content-Disposition'] = f'attachment; filename="{full_path.name}"'
+        headers['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
     else:
         headers['Content-Disposition'] = 'inline'
     
     return FileResponse(
         full_path,
         media_type=media_type,
-        filename=full_path.name,
+        filename=safe_filename,
         headers=headers
     )
 
@@ -2249,8 +2251,9 @@ async def get_shared_file(
                 response = await _proxy_view_file(url, user.username, share.file_path, db)
                 share.access_count += 1
                 db.commit()
-                # Override Content-Disposition to use stored filename for download
-                response.headers["Content-Disposition"] = f'inline; filename="{share.filename}"'
+                # Override Content-Disposition to use stored filename for download (ASCII-safe for headers)
+                safe_name = ascii_safe_header_filename(share.filename)
+                response.headers["Content-Disposition"] = f'inline; filename="{safe_name}"'
                 return response
             except Exception as e:
                 logger.warning(f"[FILES] Shared file proxy failed, file may not exist on storage: {e}")
@@ -2286,10 +2289,12 @@ async def get_shared_file(
         }
         media_type = media_types.get(suffix, 'application/octet-stream')
         
+        safe_name = ascii_safe_header_filename(share.filename)
         return FileResponse(
             full_path,
             media_type=media_type,
-            filename=share.filename
+            filename=safe_name,
+            headers={"Content-Disposition": f'inline; filename="{safe_name}"'}
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid path: {e}")

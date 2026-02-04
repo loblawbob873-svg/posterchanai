@@ -84,6 +84,19 @@ def _sanitize_path_component(component: str) -> str:
     return component
 
 
+def ascii_safe_header_filename(name: str) -> str:
+    """
+    Return a filename safe for HTTP headers (Content-Disposition).
+    Headers are often encoded as latin-1; Unicode (e.g. U+2019) causes 500.
+    """
+    if not name or not name.strip():
+        return "download"
+    out = []
+    for c in str(name).strip():
+        out.append(c if ord(c) < 128 else "_")
+    return "".join(out) or "download"
+
+
 def _validate_path_within_base(file_path: Path, base_path: Path) -> bool:
     """
     Validate that a resolved path is within the expected base directory.

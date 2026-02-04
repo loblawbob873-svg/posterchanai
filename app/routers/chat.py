@@ -261,7 +261,7 @@ async def serve_file(
         )
 
     # On storage server: Use local filesystem
-    from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
+    from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
     storage = StorageService(db)
     user_path = storage.get_conversation_path(current_user.username, conversation_id)
     
@@ -308,13 +308,14 @@ async def serve_file(
     
     file_data = await asyncio.to_thread(_read_file_sync)
     
-    # Return file response
+    # Return file response (ASCII-safe filename for Content-Disposition header)
     from fastapi.responses import Response
+    safe_name = ascii_safe_header_filename(filename)
     return Response(
         content=file_data,
         media_type=content_type,
         headers={
-            "Content-Disposition": f'inline; filename="{filename}"'
+            "Content-Disposition": f'inline; filename="{safe_name}"'
         }
     )
 

@@ -17,7 +17,7 @@ import time
 from app.database import get_db
 from app.auth import get_current_user, get_current_user_optional
 from app.models import User, Setting
-from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
+from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
 from app.utils.image_validation import validate_and_clean_image_data, ensure_serializable_image
 from typing import Optional
 import logging
@@ -1795,7 +1795,8 @@ async def view_file(
                     process.stdout.close()
                     process.wait()
             
-            content_disp = f'attachment; filename="{full_path.stem}.mp4"' if download else f'inline; filename="{full_path.stem}.mp4"'
+            safe_name = ascii_safe_header_filename(full_path.stem + ".mp4")
+            content_disp = f'attachment; filename="{safe_name}"' if download else f'inline; filename="{safe_name}"'
             return StreamingResponse(
                 stream_transcoded(),
                 media_type='video/mp4',
@@ -1825,9 +1826,11 @@ async def view_file(
     media_type = media_types.get(suffix, 'application/octet-stream')
     
     # When download=1 use attachment; otherwise inline for images/videos
+    # Use ASCII-safe filename in headers to avoid latin-1 encode errors (e.g. U+2019)
     headers = {}
+    safe_filename = ascii_safe_header_filename(full_path.name)
     if download:
-        headers['Content-Disposition'] = f'attachment; filename="{full_path.name}"'
+        headers['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
     elif suffix in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
         headers['Content-Disposition'] = 'inline'
     elif suffix in ['.mp4', '.webm', '.mov', '.avi', '.mkv']:
@@ -1838,7 +1841,7 @@ async def view_file(
     return FileResponse(
         video_path_to_serve,
         media_type=media_type,
-        filename=full_path.name,  # Keep original filename for download
+        filename=safe_filename,
         headers=headers
     )
 
