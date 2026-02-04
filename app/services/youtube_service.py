@@ -97,6 +97,26 @@ def extract_download_urls(text: str) -> list[str]:
     return urls
 
 
+def _sanitize_filename_for_storage(filename: str) -> str:
+    """
+    Sanitize a filename so it passes storage _sanitize_path_component checks.
+    Removes '..' (path traversal), path separators, and null bytes so upload doesn't fail.
+    """
+    if not filename or not filename.strip():
+        return "download"
+    s = str(filename).strip()
+    # Remove path separators (storage rejects these)
+    s = s.replace("/", "").replace("\\", "")
+    # Collapse ".." to "." so path traversal check doesn't reject (e.g. "supr....mp4" from ellipsis)
+    while ".." in s:
+        s = s.replace("..", ".")
+    # Remove null bytes
+    s = s.replace("\x00", "")
+    if not s:
+        return "download"
+    return s
+
+
 async def summarize_youtube(url: str, chat_service) -> Tuple[bool, str]:
     """
     Fetch transcript and summarize a YouTube video.
@@ -270,7 +290,7 @@ def download_as_video(
                     success=True,
                     title=title,
                     artist=artist,
-                    filename=clean_filename,
+                    filename=_sanitize_filename_for_storage(clean_filename),
                     local_path=video_path,
                     duration=duration
                 )
@@ -362,7 +382,7 @@ def _download_video_with_binary(
                 return DownloadResult(
                     success=True,
                     title=title,
-                    filename=title + os.path.splitext(f)[1],
+                    filename=_sanitize_filename_for_storage(title + os.path.splitext(f)[1]),
                     local_path=video_path
                 )
 
@@ -452,7 +472,7 @@ def download_as_mp3(
                     success=True,
                     title=title,
                     artist=artist,
-                    filename=clean_filename,
+                    filename=_sanitize_filename_for_storage(clean_filename),
                     local_path=mp3_path,
                     duration=duration
                 )
@@ -510,7 +530,7 @@ def _download_with_binary(
                 return DownloadResult(
                     success=True,
                     title=title,
-                    filename=f"{title}.mp3",
+                    filename=_sanitize_filename_for_storage(f"{title}.mp3"),
                     local_path=mp3_path
                 )
 
