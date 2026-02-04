@@ -207,10 +207,10 @@ class ChatActivity : AppCompatActivity() {
     private fun speakIfEnabled(text: String?) {
         if (text.isNullOrBlank() || !Prefs.getTtsEnabled(this)) return
         val cleaned = text
-            .replace(Regex("\\*\\*|__|##+|```[\\s\\S]*?```"), " ")
-            .replace(Regex("\\[([^]]+)\]\\([^)]+\\)"), "$1")
+            .replace(Regex("""\*\*|__|##+|```[\s\S]*?```"""), " ")
+            .replace(Regex("""\[([^]]+)\]\([^)]+\)"""), "$1")
             .replace(Regex("<[^>]+>"), " ")
-            .replace(Regex("\\s+"), " ")
+            .replace(Regex("""\s+"""), " ")
             .trim()
         if (cleaned.length > 5000) return
         if (cleaned.isNotEmpty()) {
