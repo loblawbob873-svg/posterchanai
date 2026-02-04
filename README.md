@@ -1,11 +1,55 @@
 # Poster-chan AI
 
-AI chat application with a **Python/FastAPI backend**, **web UI**, optional local LLM and image generation, and an **Android app**. The server provides chat, RAG, calendar/contacts (CalDAV/CardDAV), file storage, and plugins.
+**Poster-chan AI** is a self-hosted AI assistant and chat platform with a modern web UI, optional local LLM and image generation, and a native Android app. Run it on your own hardware and connect your calendars, contacts, email, notes, and codebases so one assistant can help with chat, search, scheduling, and more.
+
+The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-compatible) or local backends (Ollama, llama.cpp, IPEX-LLM for Intel Arc). Image generation supports ComfyUI or a built-in diffusers backend. Everything is configurable via the web admin and optional install script.
+
+---
+
+## Features
+
+### Chat & AI
+
+- **Streaming chat** with multiple conversations, history, and optional markdown/formatting
+- **OpenAI-compatible API** at `/v1/` for compatible clients and tools
+- **Local or remote LLM**: Ollama, llama-cpp-python (CPU/CUDA/HIP), or IPEX-LLM (Intel Arc)
+- **Load balancing**: round-robin across multiple chat servers
+- **Intent detection** and slash-style **commands** (e.g. `/notes`, `/image`, `/mail`)
+
+### Voice & media
+
+- **Text-to-speech (TTS)** and **speech-to-text (STT)**; Edge TTS and configurable backends
+- **Image generation**: ComfyUI (external) or native diffusers (SDXL); multiple image servers supported
+- **YouTube** summarization and thumbnails in chat
+
+### Knowledge & code
+
+- **RAG (retrieval-augmented generation)** with ChromaDB and sentence-transformers: index git repos, folders, or zip uploads; code-aware chunking (Python, JS/TS, Go, Rust, etc.)
+- **MCP server** (Model Context Protocol) for Continue.dev, Claude Desktop, and other clients—expose RAG search to your IDE
+- **Notes**: searchable notes with folders, tags, and attachments; natural-language and voice commands
+
+### PIM & productivity
+
+- **CalDAV** and **CardDAV** built in: use your own calendars and contacts; iOS/macOS discovery supported
+- **Email**: read and send mail; optional bill extraction and summaries
+- **News**: RSS-style news sources with summaries
+- **File storage** per user and per conversation; file manager in the UI
+
+### Extensibility & admin
+
+- **Plugins** system for custom commands and integrations
+- **4chan** and **torrent** integrations (optional)
+- **Admin panel**: users, API keys, LLM/image/RAG/email settings, systemd service setup
+- **Multi-user** with registration (optional), email verification, and quotas
+
+---
 
 ## Requirements
 
 - **Python 3.10+**
-- (Optional) GPU and backends for local LLM (llama-cpp, Ollama, IPEX) and image generation (ComfyUI or native)
+- (Optional) **GPU** and backends for local LLM (Ollama, llama-cpp-python, IPEX-LLM) and image generation (ComfyUI or native diffusers)
+
+---
 
 ## Quick start (backend and web UI)
 
@@ -27,40 +71,58 @@ AI chat application with a **Python/FastAPI backend**, **web UI**, optional loca
    ```
    Default: **http://0.0.0.0:3051**
 
-4. **Open the web UI** in a browser: **http://localhost:3051** (or your machine’s IP and port). Log in or register if enabled.
+4. **Open the web UI** in a browser: **http://localhost:3051**. Log in or register if enabled.
 
 ### Other ways to run
 
 - **Port:** `python run.py --port 8080` or set `POSTERCHANAI_PORT=8080`
-- **Install script (Linux):** `./install.sh` for interactive setup (GPU detection, LLM/image backends, systemd service). Use `./install.sh --help` and `./install.sh --packages` for options.
+- **Install script (Linux):** `./install.sh` for interactive setup (GPU detection, LLM/image backends, systemd). Use `./install.sh --help` and `./install.sh --packages` for options.
 - **Start script:** `./start.sh` (if present) to launch the server.
+
+---
+
+## Configuration
+
+- Copy **`.env.example`** to **`.env`** and adjust (optional).
+- First run creates a **SQLite** database; use the **web UI** and **Admin** panel to configure:
+  - LLM backend (Ollama, llama-cpp, IPEX) and model
+  - Image generation (ComfyUI URL or native)
+  - RAG, TTS/STT, email, CalDAV/CardDAV, plugins
+- See **`docs/`** for detailed setup (CalDAV, IPEX, nginx, RAG/MCP, etc.).
+
+---
 
 ## Project layout
 
 | Path | Description |
 |------|-------------|
-| `app/` | FastAPI app, routers (auth, chat, admin, TTS/STT, RAG, mail, etc.), services |
+| `app/` | FastAPI app, routers (auth, chat, admin, TTS, STT, RAG, mail, torrent, CalDAV/CardDAV, etc.), services |
 | `templates/` | Jinja2 HTML (login, chat, admin, modals) |
 | `static/` | CSS, JS, icons, mascot assets |
 | `run.py` | Server entry (uvicorn) |
 | `requirements.txt` | Python dependencies |
 | `install.sh` | Interactive installer (Linux) |
-| `docs/` | Extra docs (CalDAV, IPEX, nginx, etc.) |
+| `docs/` | [ADVANCED.md](docs/ADVANCED.md) (RAG, MCP, LLM, image, load balancing), CalDAV, IPEX, nginx, notes, etc. |
+
+---
 
 ## Android app
 
-The **Android app** (native login, conversation list, chat with streaming) lives in **[`android/`](android/)** and talks to this backend.
+The **Android app** (native login, conversation list, streaming chat, optional “Web app” view) lives in **[`android/`](android/)** and talks to this backend.
 
-- **Run the Android project:** Open the **`android`** folder in **Android Studio**, then use **Run** (▶).  
+- **Run:** Open the **`android`** folder in **Android Studio**, then **Run** (▶).
 - Full instructions: **[android/README.md](android/README.md)**.
 
-Configure the app with your server URL (e.g. `http://YOUR_IP:3051`).
+Set the app’s server URL to your instance (e.g. `http://YOUR_IP:3051`).
 
-## Configuration
+---
 
-- Copy `.env.example` to `.env` and adjust (optional).
-- First run creates a SQLite DB; use the web UI or admin to set backends, API keys, and options.
-- See `docs/` for advanced setup (CalDAV, IPEX, nginx, etc.).
+## Documentation
+
+- **[docs/ADVANCED.md](docs/ADVANCED.md)** — RAG, MCP server, LLM backends, image generation, load balancing, Intel IPEX
+- **docs/** — CalDAV/iPhone setup, email, Joplin, nginx, notes features, music controls, etc.
+
+---
 
 ## License and contributing
 
