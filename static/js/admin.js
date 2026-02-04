@@ -77,7 +77,7 @@ document.getElementById('resetNewsSourcesBtn').addEventListener('click', () => {
     document.getElementById('news_sources').value = DEFAULT_NEWS_SOURCES;
 });
 
-// Save settings
+// Save settings - send all named form values so DB stays in sync (fixes missed updates when only "changed" fields were sent)
 document.getElementById('settingsForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const form = e.target;
@@ -90,23 +90,13 @@ document.getElementById('settingsForm').addEventListener('submit', async (e) => 
             } else {
                 currentValue = el.value || '';
             }
-            
-            // Only send value if it's different from what was loaded from database
-            // This prevents overwriting database values with HTML defaults
             const loadedValue = loadedValues.get(el.name);
-            if (loadedValue === undefined) {
-                // Field not in loadedValues - include it (new field or wasn't loaded)
+            // Send field if: we have a value from DB (so form was populated and we persist current state), or it's a new/changed value
+            if (loadedValue !== undefined) {
                 settings[el.name] = currentValue;
-            } else if (loadedValue === '' && el.type === 'number') {
-                // Database had no value (empty string) - only save if user entered something
-                // This prevents saving HTML default values when database is empty
-                if (currentValue !== '' && currentValue !== el.getAttribute('value')) {
-                    // User entered a value (and it's not the HTML default), save it
-                    settings[el.name] = currentValue;
-                }
-                // Otherwise, don't save (keeps database empty/null)
-            } else if (currentValue !== loadedValue) {
-                // Value changed from what was loaded, save it
+            } else if (el.type === 'number' && currentValue !== '' && currentValue !== el.getAttribute('value')) {
+                settings[el.name] = currentValue;
+            } else if (loadedValue === undefined && currentValue !== '') {
                 settings[el.name] = currentValue;
             }
         }

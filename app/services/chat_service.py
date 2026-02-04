@@ -118,9 +118,9 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
         if servers:
             timeout_str = self._settings.get("ollama_timeout", "300000")
             timeout = int(timeout_str if timeout_str else "300000") / 1000
-            model = self._settings.get("ollama_model", "default") or "default"
-            # Server-to-server requests don't need authentication
-            logger.info(f"[CHAT SERVICE] Creating LoadBalancer with {len(servers)} server(s): {servers}, model={model}, timeout={timeout}s")
+            # Use admin setting "Default Model" (ollama_model) - each instance has its own DB, so set it on the instance that receives chat
+            model = (self._settings.get("ollama_model") or "").strip() or "default"
+            logger.info(f"[CHAT SERVICE] Creating LoadBalancer with {len(servers)} server(s): {servers}, model={model!r} (from ollama_model), timeout={timeout}s")
             return LoadBalancer(servers, timeout=timeout, model=model)
         else:
             logger.debug(f"[CHAT SERVICE] No chat servers configured (chat_server_urls='{chat_server_urls}')")

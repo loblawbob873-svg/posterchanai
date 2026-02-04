@@ -10,6 +10,7 @@ import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.ProgressBar
@@ -110,7 +111,26 @@ class WebViewActivity : AppCompatActivity() {
             ) {
                 progressBar.visibility = View.GONE
                 if (request?.isForMainFrame == true && error?.errorCode != -2) {
-                    Toast.makeText(this@WebViewActivity, getString(R.string.load_error), Toast.LENGTH_SHORT).show()
+                    val msg = error?.description?.toString()?.takeIf { it.isNotBlank() }
+                        ?: getString(R.string.load_error)
+                    Toast.makeText(this@WebViewActivity, msg, Toast.LENGTH_LONG).show()
+                }
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?
+            ) {
+                if (request?.isForMainFrame == true) {
+                    progressBar.visibility = View.GONE
+                    val code = errorResponse?.statusCode ?: 0
+                    val msg = if (code > 0) {
+                        getString(R.string.load_error) + " (HTTP $code)"
+                    } else {
+                        getString(R.string.load_error)
+                    }
+                    Toast.makeText(this@WebViewActivity, msg, Toast.LENGTH_LONG).show()
                 }
             }
         }

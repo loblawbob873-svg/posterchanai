@@ -18,7 +18,7 @@
         <div class="form-group">
             <label for="llm_model_path">Model Path (GGUF)</label>
             <input type="text" id="llm_model_path" name="llm_model_path" placeholder="/path/to/model.gguf">
-            <small>Full path to the GGUF model file. Supports all major models. <strong>Recommended:</strong> Qwen2.5, Llama-3, Mistral. Thinking models (Qwen3-abliterated, DeepSeek-R1) have ~50% success rate due to instruction resistance.</small>
+            <small>Full path to the GGUF model file. <strong>This is the file that is actually loaded</strong> for Native/IPEX inference. If you see the wrong model in logs, set this to your .gguf path (e.g. /path/to/DeepSeek-R1-Distill-Qwen-7B-abliterated-Q5_K_M.gguf). &quot;Default Model&quot; below is the name sent when load-balancing.</small>
         </div>
         <div class="form-row">
             <div class="form-group">
@@ -107,6 +107,7 @@
         <div class="form-group">
             <label for="ollama_model">Default Model</label>
             <input type="text" id="ollama_model" name="ollama_model" placeholder="llama3">
+            <small>Model name for API responses and when load-balancing to other servers. For Native/IPEX, also set <strong>Model Path (GGUF)</strong> above to the actual .gguf file path.</small>
         </div>
         <div class="form-group">
             <label for="ollama_timeout">Timeout (ms)</label>
