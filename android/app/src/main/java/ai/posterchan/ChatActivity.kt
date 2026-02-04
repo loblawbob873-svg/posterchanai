@@ -20,6 +20,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import okhttp3.WebSocket
 import ai.posterchan.api.ApiClient
+import ai.posterchan.MessageAdapter
 import java.util.Locale
 
 class ChatActivity : AppCompatActivity() {
