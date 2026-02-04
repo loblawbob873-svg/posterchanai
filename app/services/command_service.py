@@ -181,6 +181,7 @@ class CommandService:
         "torrent": "torrents",  # Allow singular form
         "bt": "torrents",  # Short alias for torrents
         "yt-dlp": "ytdl",  # YouTube download alias
+        "ytdlp": "ytdl",  # Common typo/variant for yt-dlp
         "youtube": "yt",  # YouTube summarize alias
     }
 

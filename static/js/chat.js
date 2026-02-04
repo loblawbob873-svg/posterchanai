@@ -2328,7 +2328,7 @@ class ChatHandler {
     }
 
     escapeHtml(text) {
-        if (!text) return '';
+        if (text == null || typeof text !== 'string') return '';
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
@@ -2385,6 +2385,11 @@ class ChatHandler {
         // Ensure we're not in streaming mode
         this.isStreaming = false;
         this.streamingMessage = null;
+
+        if (!data || typeof data !== 'object') {
+            this.addMessage('assistant', 'No response data received.');
+            return;
+        }
 
         let html = '';
         let contentHtml = '';
@@ -2932,8 +2937,11 @@ class ChatHandler {
         const contentEl = document.createElement('div');
         contentEl.className = 'message-content';
 
-        const bodyHtml = isHtml ? content : this.formatMessage(content);
-        contentEl.innerHTML = `<div class="message-body">${bodyHtml}</div>`;
+        // Ensure we never insert undefined (would render as literal "undefined")
+        const safeContent = content != null && typeof content === 'string' ? content : (content != null ? String(content) : '');
+        const bodyHtml = isHtml ? safeContent : this.formatMessage(safeContent);
+        const safeBodyHtml = bodyHtml != null && typeof bodyHtml === 'string' ? bodyHtml : '';
+        contentEl.innerHTML = `<div class="message-body">${safeBodyHtml}</div>`;
 
         // Add stored image if present
         if (imagePath) {
@@ -3925,7 +3933,8 @@ class ChatHandler {
         html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (match, index) => {
             const block = codeBlocks[parseInt(index)];
             if (!block) return '';
-            const escapedCode = block.code
+            const blockCode = block.code != null && typeof block.code === 'string' ? block.code : '';
+            const escapedCode = blockCode
                 .replace(/&/g, '&amp;')
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;');
