@@ -146,6 +146,7 @@ templates = Jinja2Templates(directory=templates_path)
 app.include_router(auth.router)
 app.include_router(files.router)  # Register files router first to avoid conflicts
 app.include_router(chat.router)
+app.include_router(chat.ws_only_router)  # /ws/chat/{id} for clients that omit /api prefix
 app.include_router(admin.router)
 app.include_router(tts.router)
 app.include_router(stt.router)

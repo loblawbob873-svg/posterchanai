@@ -460,8 +460,12 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Router with no prefix so /ws/chat/{id} works (some clients connect without /api)
+ws_only_router = APIRouter(tags=["chat"])
+
 
 @router.websocket("/ws/chat/{conversation_id}")
+@ws_only_router.websocket("/ws/chat/{conversation_id}")
 async def websocket_chat(websocket: WebSocket, conversation_id: int):
     """Chat WebSocket. Accept immediately so we never return HTTP 403 (avoids proxy/WAF issues)."""
     conn_id = None
