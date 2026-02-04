@@ -2172,7 +2172,7 @@ class ChatHandler {
     handleMessage(data) {
         switch (data.type) {
             case 'stream':
-                this.handleStreamChunk(data.data?.content ?? data.content ?? '');
+                this.handleStreamChunk(typeof (data.data?.content ?? data.content) === 'string' ? (data.data?.content ?? data.content) : '');
                 break;
             case 'stream_clear':
                 // Clear current streaming content for follow-up (e.g., after plugin execution)
@@ -2206,8 +2206,8 @@ class ChatHandler {
             this.thinkingMode = null; // null=unknown, true=in thinking, false=not thinking
         }
 
-        // Buffer content
-        this.fullStreamContent += content;
+        // Buffer content (ensure string to avoid "undefined" when chunk is missing)
+        this.fullStreamContent += (content != null && typeof content === 'string' ? content : '');
 
         // Strip thinking tags from display
         let displayContent = this.stripThinkingTags(this.fullStreamContent);
@@ -2389,9 +2389,9 @@ class ChatHandler {
         let html = '';
         let contentHtml = '';
 
-        // Format content separately - don't mix with structured data
-        if (data.content) {
-            contentHtml = this.formatMessage(data.content);
+        // Format content separately - don't mix with structured data (guard non-string to avoid "undefined" in output)
+        if (data.content != null) {
+            contentHtml = this.formatMessage(typeof data.content === 'string' ? data.content : String(data.content));
         }
 
         // Handle different response types
@@ -2442,9 +2442,9 @@ class ChatHandler {
             html = contentHtml;
             html += '<div class="search-results">';
             for (const r of data.results) {
-                const safeUrl = this.escapeUrl(r.url);
-                const safeTitle = this.escapeHtml(r.title);
-                const safeContent = this.escapeHtml(r.content);
+                const safeUrl = this.escapeUrl(r.url ?? '');
+                const safeTitle = this.escapeHtml(r.title ?? '');
+                const safeContent = this.escapeHtml(r.content ?? '');
                 html += `<div class="search-result">
                     <a href="${safeUrl}" target="_blank">${safeTitle}</a>
                     <p>${safeContent}</p>
@@ -3691,7 +3691,7 @@ class ChatHandler {
     }
 
     formatMessage(text) {
-        if (!text) return '';
+        if (text == null || typeof text !== 'string') return '';
 
         // Strip LLM thinking tags (Qwen and other models use <think>...</think>)
         // First remove complete think blocks
@@ -3850,13 +3850,14 @@ class ChatHandler {
         html = html.replace(/\x00IMG(\d+)\x00/g, (match, index) => {
             const img = images[parseInt(index)];
             if (!img || !img.url) return '';
+            const imgAlt = img.alt ?? '';
             let src = img.url;
             // Use same-origin proxy for YouTube thumbnails so they load in RSS
             const ytMatch = src.match(/^https?:\/\/img\.youtube\.com\/vi\/([a-zA-Z0-9_-]{11})\//);
             if (ytMatch) src = '/api/youtube-thumbnail?video_id=' + encodeURIComponent(ytMatch[1]);
             else if (src.startsWith('/')) src = src;  // Same-origin (e.g. /api/youtube-thumbnail?video_id=...)
             else src = encodeURI(src);
-            const safeAlt = this.escapeHtml(img.alt);
+            const safeAlt = this.escapeHtml(imgAlt);
             return `<img src="${src}" alt="${safeAlt}" class="message-inline-image" loading="lazy" style="max-width:100%;height:auto;border-radius:8px;margin:8px 0;">`;
         });
 
@@ -3867,31 +3868,32 @@ class ChatHandler {
             const target = htmlLink.target ? ` target="${htmlLink.target}"` : '';
             const rel = htmlLink.rel ? ` rel="${htmlLink.rel}"` : '';
             const safeUrl = htmlLink.url.startsWith('/') ? htmlLink.url : encodeURI(htmlLink.url);
-            return `<a href="${safeUrl}"${target}${rel}>${this.escapeHtml(htmlLink.text)}</a>`;
+            return `<a href="${safeUrl}"${target}${rel}>${this.escapeHtml(htmlLink.text ?? '')}</a>`;
         });
         
         // Restore markdown links as HTML
         html = html.replace(/\x00LINK(\d+)\x00/g, (match, index) => {
             const link = links[parseInt(index)];
             if (!link) return '';
+            const linkText = link.text ?? '';
             if (link.isCommand) {
                 // Command button - clicking executes the command
-                const escapedCmd = this.escapeHtml(link.cmd);
-                return `<button class="cmd-btn" data-cmd="${escapedCmd}" onclick="window.chatHandler.executeCommand('${escapedCmd.replace(/'/g, "\\'")}')">${this.escapeHtml(link.text)}</button>`;
+                const escapedCmd = this.escapeHtml(link.cmd ?? '');
+                return `<button class="cmd-btn" data-cmd="${escapedCmd}" onclick="window.chatHandler.executeCommand('${escapedCmd.replace(/'/g, "\\'")}')">${this.escapeHtml(linkText)}</button>`;
             }
             if (link.isEditEvent) {
                 // Edit event button - opens calendar modal
-                const escapedUid = this.escapeHtml(link.uid);
-                return `<button class="cmd-btn" onclick="window.chatHandler.openEditEventModal('${escapedUid.replace(/'/g, "\\'")}')">${this.escapeHtml(link.text)}</button>`;
+                const escapedUid = this.escapeHtml(link.uid ?? '');
+                return `<button class="cmd-btn" onclick="window.chatHandler.openEditEventModal('${escapedUid.replace(/'/g, "\\'")}')">${this.escapeHtml(linkText)}</button>`;
             }
             if (link.isCopy) {
                 // Copy button - copies content to clipboard
-                const escapedContent = this.escapeHtml(link.content).replace(/'/g, "\\'").replace(/\n/g, '\\n');
-                return `<button class="cmd-btn copy-btn" onclick="window.chatHandler.copyToClipboard('${escapedContent}')">${this.escapeHtml(link.text)}</button>`;
+                const escapedContent = this.escapeHtml(link.content ?? '').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                return `<button class="cmd-btn copy-btn" onclick="window.chatHandler.copyToClipboard('${escapedContent}')">${this.escapeHtml(linkText)}</button>`;
             }
             const target = link.external ? ' target="_blank"' : '';
             const download = link.download ? ' download' : '';
-            if (!link.url) return this.escapeHtml(link.text || '');
+            if (!link.url) return this.escapeHtml(linkText);
             // Don't encode mailto: or tel: URLs, they use different escaping
             let safeUrl = link.url;
             if (link.url.startsWith('/')) {
@@ -3901,7 +3903,7 @@ class ChatHandler {
             } else {
                 safeUrl = encodeURI(link.url);
             }
-            return `<a href="${safeUrl}"${target}${download}>${this.escapeHtml(link.text)}</a>`;
+            return `<a href="${safeUrl}"${target}${download}>${this.escapeHtml(linkText)}</a>`;
         });
 
         // Bold **text**
