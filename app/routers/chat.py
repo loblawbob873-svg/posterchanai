@@ -462,14 +462,16 @@ manager = ConnectionManager()
 
 @router.websocket("/ws/chat/{conversation_id}")
 async def websocket_chat(websocket: WebSocket, conversation_id: int):
+    """Chat WebSocket. Accept immediately so we never return HTTP 403 (avoids proxy/WAF issues)."""
     conn_id = None
     user = None
     db = None
+    logger.info("WebSocket /ws/chat/%s connection attempt", conversation_id)
+    await websocket.accept()
     try:
         db = SessionLocal()
         user = await get_user_from_websocket(websocket, db)
         if not user:
-            await websocket.accept()
             await websocket.send_json({"type": "error", "message": "Please log in again"})
             await websocket.close(code=4001)
             return
@@ -482,7 +484,6 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             Conversation.user_id == user.id
         ).first()
         if not conversation:
-            await websocket.accept()
             await websocket.send_json({"type": "error", "message": "Conversation not found"})
             await websocket.close(code=4004)
             return
@@ -492,12 +493,6 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             conn_id = await manager.connect(user.id, conversation_id, websocket)
         except Exception as connect_err:
             logger.error(f"Failed to connect websocket: {connect_err}", exc_info=True)
-            # Ensure websocket is accepted before trying to send error
-            if websocket.client_state.name != "CONNECTED":
-                try:
-                    await websocket.accept()
-                except Exception:
-                    pass
             try:
                 await websocket.send_json({"type": "error", "message": "Failed to establish connection"})
                 await websocket.close(code=4000)
