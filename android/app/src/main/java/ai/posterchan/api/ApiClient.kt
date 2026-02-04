@@ -1,6 +1,7 @@
 package ai.posterchan.api
 
 import android.util.Log
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -23,7 +24,20 @@ class ApiClient(
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        .addInterceptor(Interceptor { chain ->
+            val request = chain.request().newBuilder()
+                .addHeader("User-Agent", USER_AGENT)
+                .addHeader("Accept", "application/json")
+                .build()
+            chain.proceed(request)
+        })
         .build()
+
+    companion object {
+        /** Browser-like User-Agent to avoid 403 from proxies/WAF that block non-browser clients. */
+        private const val USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 PosterchanAI/1.0"
+    }
 
     private fun url(path: String): String {
         val base = baseUrl.trimEnd('/')

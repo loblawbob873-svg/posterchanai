@@ -14,7 +14,6 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="?attr/colorPrimary"
             app:title="@string/conversations" />
 
         <FrameLayout
@@ -34,8 +33,8 @@
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
                 android:text="@string/no_conversations"
-                android:visibility="gone"
-                android:alpha="0.7" />
+                android:textColor="@color/cyberpunk_text_secondary"
+                android:visibility="gone" />
 
             <com.google.android.material.floatingactionbutton.FloatingActionButton
                 android:id="@+id/fab_new_chat"

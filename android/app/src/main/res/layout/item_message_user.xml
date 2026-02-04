@@ -6,13 +6,12 @@
     android:gravity="end"
     android:padding="8dp">
 
-    <com.google.android.material.card.MaterialCardView
+    <FrameLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginStart="64dp"
-        app:cardBackgroundColor="?attr/colorPrimary"
-        app:cardCornerRadius="12dp"
-        app:cardElevation="2dp">
+        android:background="@drawable/bg_message_user"
+        android:elevation="4dp">
 
         <TextView
             android:id="@+id/item_content"
@@ -21,5 +20,5 @@
             android:padding="12dp"
             android:textColor="@android:color/white"
             android:textSize="15sp" />
-    </com.google.android.material.card.MaterialCardView>
+    </FrameLayout>
 </LinearLayout>

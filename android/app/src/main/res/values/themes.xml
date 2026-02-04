@@ -1,10 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.PosterchanAI" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">#1a1a2e</item>
-        <item name="colorPrimaryDark">#16213e</item>
-        <item name="android:statusBarColor">#1a1a2e</item>
-        <item name="android:navigationBarColor">#1a1a2e</item>
-        <item name="android:windowBackground">#1a1a2e</item>
+        <!-- Cyberpunk: dark backgrounds -->
+        <item name="android:windowBackground">@color/cyberpunk_bg_primary</item>
+        <item name="android:statusBarColor">@color/cyberpunk_bg_secondary</item>
+        <item name="android:navigationBarColor">@color/cyberpunk_bg_primary</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <!-- Primary = cyan accent (buttons, toolbar, FAB, links) -->
+        <item name="colorPrimary">@color/cyberpunk_accent</item>
+        <item name="colorPrimaryVariant">@color/cyberpunk_accent_hover</item>
+        <item name="colorOnPrimary">@color/cyberpunk_bg_primary</item>
+        <!-- Secondary = magenta for variety -->
+        <item name="colorSecondary">@color/cyberpunk_accent_magenta</item>
+        <item name="colorSecondaryVariant">@color/cyberpunk_accent_pink</item>
+        <item name="colorOnSecondary">@android:color/white</item>
+        <!-- Surface and text -->
+        <item name="colorSurface">@color/cyberpunk_bg_secondary</item>
+        <item name="colorOnSurface">@color/cyberpunk_text_primary</item>
+        <item name="android:textColorPrimary">@color/cyberpunk_text_primary</item>
+        <item name="android:textColorSecondary">@color/cyberpunk_text_secondary</item>
+        <!-- Error -->
+        <item name="colorError">@color/cyberpunk_danger</item>
+        <!-- Toolbar: dark bar with cyan icon/title -->
+        <item name="toolbarStyle">@style/Widget.PosterchanAI.Toolbar</item>
+        <!-- Buttons -->
+        <item name="materialButtonStyle">@style/Widget.PosterchanAI.Button</item>
+    </style>
+
+    <style name="Widget.PosterchanAI.Toolbar" parent="Widget.MaterialComponents.Toolbar">
+        <item name="android:background">@color/cyberpunk_bg_secondary</item>
+        <item name="android:theme">@style/ThemeOverlay.PosterchanAI.Toolbar</item>
+    </style>
+
+    <style name="ThemeOverlay.PosterchanAI.Toolbar" parent="ThemeOverlay.MaterialComponents.Dark.ActionBar">
+        <item name="colorControlNormal">@color/cyberpunk_accent</item>
+        <item name="android:textColorPrimary">@color/cyberpunk_accent</item>
+    </style>
+
+    <style name="Widget.PosterchanAI.Button" parent="Widget.MaterialComponents.Button">
+        <item name="backgroundTint">@color/cyberpunk_accent</item>
+        <item name="android:textColor">@color/cyberpunk_bg_primary</item>
     </style>
 </resources>

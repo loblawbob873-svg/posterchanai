@@ -10,16 +10,18 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginEnd="64dp"
-        app:cardBackgroundColor="#2d2d44"
+        app:cardBackgroundColor="@color/cyberpunk_bg_tertiary"
         app:cardCornerRadius="12dp"
-        app:cardElevation="2dp">
+        app:cardElevation="4dp"
+        app:strokeColor="@color/cyberpunk_border"
+        app:strokeWidth="1dp">
 
         <TextView
             android:id="@+id/item_content"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:padding="12dp"
-            android:textColor="@android:color/white"
+            android:textColor="@color/cyberpunk_text_primary"
             android:textSize="15sp" />
     </com.google.android.material.card.MaterialCardView>
 </LinearLayout>

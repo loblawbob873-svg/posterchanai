@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cyberpunk theme (matches web UI style.css) -->
+    <color name="cyberpunk_bg_primary">#0a0a0f</color>
+    <color name="cyberpunk_bg_secondary">#12121a</color>
+    <color name="cyberpunk_bg_tertiary">#1a1a2a</color>
+    <color name="cyberpunk_accent">#00ffff</color>
+    <color name="cyberpunk_accent_hover">#00cccc</color>
+    <color name="cyberpunk_accent_magenta">#ff00ff</color>
+    <color name="cyberpunk_accent_pink">#ff3366</color>
+    <color name="cyberpunk_text_primary">#e0e0e0</color>
+    <color name="cyberpunk_text_secondary">#8888aa</color>
+    <color name="cyberpunk_border">#2a2a3a</color>
+    <color name="cyberpunk_success">#00ff88</color>
+    <color name="cyberpunk_danger">#ff3366</color>
+    <!-- User message bubble (web: gradient #6366f1 -> #8b5cf6) -->
+    <color name="cyberpunk_message_user_start">#6366f1</color>
+    <color name="cyberpunk_message_user_end">#8b5cf6</color>
+</resources>
