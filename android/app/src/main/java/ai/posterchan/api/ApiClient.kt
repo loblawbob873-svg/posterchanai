@@ -203,9 +203,25 @@ class ApiClient(
     }
 
     fun sendChatMessage(webSocket: WebSocket, content: String) {
+        sendChatMessage(webSocket, content, imageData = null, pdfData = null, fileContent = null)
+    }
+
+    /**
+     * Send a chat message with optional attachments (matches web UI payload).
+     */
+    fun sendChatMessage(
+        webSocket: WebSocket,
+        content: String,
+        imageData: String? = null,
+        pdfData: String? = null,
+        fileContent: String? = null
+    ) {
         val json = JSONObject().apply {
             put("type", "message")
             put("content", content)
+            if (!imageData.isNullOrBlank()) put("image_data", imageData)
+            if (!pdfData.isNullOrBlank()) put("pdf_data", pdfData)
+            if (!fileContent.isNullOrBlank()) put("file_content", fileContent)
         }.toString()
         webSocket.send(json)
     }

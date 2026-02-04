@@ -9,6 +9,27 @@ import androidx.core.text.HtmlCompat
  */
 object MarkdownUtils {
 
+    /**
+     * Strip LLM thinking tags from response text (e.g. <think>...</think>, <thinking>...</thinking>).
+     * Matches backend app.services.text_utils.strip_thinking_tags behavior.
+     */
+    fun stripThinkingTags(response: String): String {
+        var cleaned = response
+        // Closed blocks (case-insensitive)
+        cleaned = Regex("""<think(?:ing)?[^>]*>[\s\S]*?</think(?:ing)?>""", RegexOption.IGNORE_CASE).replace(cleaned, "")
+        cleaned = Regex("""<thought[^>]*>[\s\S]*?</thought>""", RegexOption.IGNORE_CASE).replace(cleaned, "")
+        cleaned = Regex("""<reasoning[^>]*>[\s\S]*?</reasoning>""", RegexOption.IGNORE_CASE).replace(cleaned, "")
+        cleaned = Regex("""<internal[_-]?thought[^>]*>[\s\S]*?</internal[_-]?thought>""", RegexOption.IGNORE_CASE).replace(cleaned, "")
+        // Unclosed at end
+        cleaned = Regex("""<think(?:ing)?[^>]*>[\s\S]*$""", RegexOption.IGNORE_CASE).replace(cleaned, "")
+        cleaned = Regex("""<thought[^>]*>[\s\S]*$""", RegexOption.IGNORE_CASE).replace(cleaned, "")
+        cleaned = Regex("""<reasoning[^>]*>[\s\S]*$""", RegexOption.IGNORE_CASE).replace(cleaned, "")
+        cleaned = Regex("""<internal[_-]?thought[^>]*>[\s\S]*$""", RegexOption.IGNORE_CASE).replace(cleaned, "")
+        val result = cleaned.trim()
+        if (result.isEmpty()) return ""
+        return result
+    }
+
     fun toSpannable(markdown: String): Spannable {
         if (markdown.isBlank()) return Spannable.Factory.getInstance().newSpannable("…")
         var html = escapeHtml(markdown)

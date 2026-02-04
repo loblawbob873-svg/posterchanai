@@ -31,4 +31,7 @@
     <string name="copy_toast">Copied to clipboard</string>
     <string name="edit_message">Edit message</string>
     <string name="save_resubmit">Save &amp; resubmit</string>
+    <string name="attach_file">Attach file</string>
+    <string name="take_photo">Take photo</string>
+    <string name="voice_input">Voice input</string>
 </resources>
