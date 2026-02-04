@@ -53,6 +53,35 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 
 ## Quick start (backend and web UI)
 
+### Option A: Installer (Linux, recommended)
+
+The **installer** sets up the virtual environment, dependencies, optional GPU backends (LLM and image), and can configure a systemd service.
+
+1. **Clone and enter the project:**
+   ```bash
+   git clone <your-repo-url> posterchanai
+   cd posterchanai
+   ```
+
+2. **Run the installer:**
+   ```bash
+   chmod +x install.sh
+   ./install.sh
+   ```
+   Follow the prompts: it checks dependencies, detects your GPU, lets you choose LLM backend (Ollama, llama-cpp, etc.) and image backend (ComfyUI or native), creates the venv, installs Python deps, and optionally sets up a systemd service.
+
+3. **Start the server** (if not using systemd):
+   ```bash
+   ./start.sh
+   ```
+   Or with systemd: `sudo systemctl start posterchanai-cpu` (or the service name chosen during install).
+
+4. **Open the web UI** at **http://localhost:3051** (or your machine’s IP). Log in or register if enabled.
+
+**Installer options:** `./install.sh --help` for usage; `./install.sh --packages` to print required system packages for your distro.
+
+### Option B: Manual setup (all platforms)
+
 1. **Clone and enter the project:**
    ```bash
    cd posterchanai
@@ -73,11 +102,10 @@ The backend is **Python 3.10+** and **FastAPI**. You can use cloud APIs (OpenAI-
 
 4. **Open the web UI** in a browser: **http://localhost:3051**. Log in or register if enabled.
 
-### Other ways to run
+### Other options
 
 - **Port:** `python run.py --port 8080` or set `POSTERCHANAI_PORT=8080`
-- **Install script (Linux):** `./install.sh` for interactive setup (GPU detection, LLM/image backends, systemd). Use `./install.sh --help` and `./install.sh --packages` for options.
-- **Start script:** `./start.sh` (if present) to launch the server.
+- **Start script:** `./start.sh` (if present) to launch the server after manual or installer setup.
 
 ---
 
