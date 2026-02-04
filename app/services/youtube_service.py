@@ -786,9 +786,10 @@ def format_download_result(result: DownloadResult) -> str:
         lines.append(f"**Title:** {result.title}")
     if result.artist:
         lines.append(f"**Artist:** {result.artist}")
-    if result.duration:
-        mins = result.duration // 60
-        secs = result.duration % 60
+    if result.duration is not None:
+        duration_secs = int(result.duration)  # yt-dlp may return float
+        mins = duration_secs // 60
+        secs = duration_secs % 60
         lines.append(f"**Duration:** {mins}:{secs:02d}")
 
     if result.storage_path:
