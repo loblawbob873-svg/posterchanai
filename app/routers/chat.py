@@ -395,16 +395,20 @@ class ConnectionManager:
     async def connect(self, user_id: int, conversation_id: int, websocket: WebSocket) -> int:
         if websocket.client_state.name != "CONNECTED":
             await websocket.accept()
-        # Stop any previous streaming for this user (prevents messages going to wrong chat)
-        self.stop_flags[user_id] = True
+        # If same user reconnects to same conversation, don't kill the stream - just switch socket
+        prev_conv = self.conversation_ids.get(user_id)
+        same_conversation = prev_conv == conversation_id
+        if not same_conversation:
+            self.stop_flags[user_id] = True
         self.active_connections[user_id] = websocket
         self.conversation_ids[user_id] = conversation_id
-        # Increment connection ID atomically so old streams know they're stale
         async with self._conn_lock:
-            self._next_conn_id += 1
-            conn_id = self._next_conn_id
-        self.connection_ids[user_id] = conn_id
-        # Reset stop flag for new connection
+            if same_conversation and user_id in self.connection_ids:
+                conn_id = self.connection_ids[user_id]
+            else:
+                self._next_conn_id += 1
+                conn_id = self._next_conn_id
+                self.connection_ids[user_id] = conn_id
         self.stop_flags[user_id] = False
         return conn_id
 
