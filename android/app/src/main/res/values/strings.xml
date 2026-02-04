@@ -27,4 +27,8 @@
     <string name="delete">Delete</string>
     <string name="tts_mute">Mute TTS</string>
     <string name="tts_unmute">Unmute TTS</string>
+    <string name="stop">Stop</string>
+    <string name="copy_toast">Copied to clipboard</string>
+    <string name="edit_message">Edit message</string>
+    <string name="save_resubmit">Save &amp; resubmit</string>
 </resources>

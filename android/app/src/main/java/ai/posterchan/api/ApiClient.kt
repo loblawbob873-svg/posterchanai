@@ -210,6 +210,10 @@ class ApiClient(
         webSocket.send(json)
     }
 
+    fun sendStop(webSocket: WebSocket) {
+        webSocket.send(JSONObject().apply { put("type", "stop") }.toString())
+    }
+
     data class TokenResponse(val accessToken: String, val tokenType: String)
     data class UserResponse(val id: Int, val username: String, val email: String?, val isAdmin: Boolean)
     data class ConversationItem(val id: Int, val title: String, val createdAt: String, val updatedAt: String)
