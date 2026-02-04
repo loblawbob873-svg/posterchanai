@@ -2215,7 +2215,7 @@ class ChatHandler {
         // Only show content after thinking is done
         if (displayContent) {
             const contentEl = this.streamingMessage.querySelector('.message-content');
-            contentEl.innerHTML = this.formatMessage(displayContent);
+            contentEl.innerHTML = `<div class="message-body">${this.formatMessage(displayContent)}</div>`;
             this.scrollToBottom();
         }
     }
@@ -2251,9 +2251,9 @@ class ChatHandler {
             if (content || this.fullStreamContent.trim()) {
                 // If stripThinkingTags returned empty but we have content, show it anyway
                 const displayContent = content || this.fullStreamContent.trim();
-                contentEl.innerHTML = this.formatMessage(displayContent);
+                contentEl.innerHTML = `<div class="message-body">${this.formatMessage(displayContent)}</div>`;
             } else {
-                contentEl.innerHTML = this.formatMessage('');
+                contentEl.innerHTML = `<div class="message-body">${this.formatMessage('')}</div>`;
             }
 
             // Add copy button
@@ -2865,7 +2865,7 @@ class ChatHandler {
         // Update the message content in the UI
         const contentEl = messageEl.querySelector('.message-content');
         contentEl.classList.remove('editing');
-        contentEl.innerHTML = this.formatMessage(newContent);
+        contentEl.innerHTML = `<div class="message-body">${this.formatMessage(newContent)}</div>`;
 
         // Add action buttons back
         const editBtn = document.createElement('button');
@@ -2932,11 +2932,8 @@ class ChatHandler {
         const contentEl = document.createElement('div');
         contentEl.className = 'message-content';
 
-        if (isHtml) {
-            contentEl.innerHTML = content;
-        } else {
-            contentEl.innerHTML = this.formatMessage(content);
-        }
+        const bodyHtml = isHtml ? content : this.formatMessage(content);
+        contentEl.innerHTML = `<div class="message-body">${bodyHtml}</div>`;
 
         // Add stored image if present
         if (imagePath) {
@@ -2967,7 +2964,10 @@ class ChatHandler {
             copyBtn.className = 'btn-copy';
             copyBtn.innerHTML = '📋';
             copyBtn.title = 'Copy to clipboard';
-            copyBtn.onclick = () => this.copyText(contentEl.textContent);
+            copyBtn.onclick = () => {
+                const body = contentEl.querySelector('.message-body');
+                this.copyText(body ? body.textContent : contentEl.textContent);
+            };
             contentEl.appendChild(copyBtn);
 
             // Add edit button for user messages (only when loading history, not when sending)
@@ -3849,7 +3849,7 @@ class ChatHandler {
         // Restore markdown images as <img> (before links so order is preserved)
         html = html.replace(/\x00IMG(\d+)\x00/g, (match, index) => {
             const img = images[parseInt(index)];
-            if (!img) return '';
+            if (!img || !img.url) return '';
             let src = img.url;
             // Use same-origin proxy for YouTube thumbnails so they load in RSS
             const ytMatch = src.match(/^https?:\/\/img\.youtube\.com\/vi\/([a-zA-Z0-9_-]{11})\//);
@@ -3873,6 +3873,7 @@ class ChatHandler {
         // Restore markdown links as HTML
         html = html.replace(/\x00LINK(\d+)\x00/g, (match, index) => {
             const link = links[parseInt(index)];
+            if (!link) return '';
             if (link.isCommand) {
                 // Command button - clicking executes the command
                 const escapedCmd = this.escapeHtml(link.cmd);
@@ -3890,6 +3891,7 @@ class ChatHandler {
             }
             const target = link.external ? ' target="_blank"' : '';
             const download = link.download ? ' download' : '';
+            if (!link.url) return this.escapeHtml(link.text || '');
             // Don't encode mailto: or tel: URLs, they use different escaping
             let safeUrl = link.url;
             if (link.url.startsWith('/')) {
@@ -3920,6 +3922,7 @@ class ChatHandler {
         // Restore code blocks with proper formatting
         html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (match, index) => {
             const block = codeBlocks[parseInt(index)];
+            if (!block) return '';
             const escapedCode = block.code
                 .replace(/&/g, '&amp;')
                 .replace(/</g, '&lt;')

@@ -1,5 +1,6 @@
 package ai.posterchan
 
+import ai.posterchan.R
 import android.text.method.LinkMovementMethod
 import android.view.LayoutInflater
 import android.view.View
