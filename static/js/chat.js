@@ -2172,7 +2172,7 @@ class ChatHandler {
     handleMessage(data) {
         switch (data.type) {
             case 'stream':
-                this.handleStreamChunk(data.content);
+                this.handleStreamChunk(data.data?.content ?? data.content ?? '');
                 break;
             case 'stream_clear':
                 // Clear current streaming content for follow-up (e.g., after plugin execution)

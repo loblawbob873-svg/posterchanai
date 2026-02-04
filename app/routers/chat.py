@@ -1086,7 +1086,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                                     logger.info(f"[STREAM] Sending chunk, len={len(to_send)}")
                                                     await manager.send_json(user.id, {
                                                         "type": "stream",
-                                                        "content": to_send
+                                                        "data": {"content": to_send}
                                                     }, conn_id)
                                             # If buffer is small but we have content, send it immediately
                                             elif len(buffer) > 0:
@@ -1095,7 +1095,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                                 logger.info(f"[STREAM] Sending small chunk immediately, len={len(to_send)}")
                                                 await manager.send_json(user.id, {
                                                     "type": "stream",
-                                                    "content": to_send
+                                                    "data": {"content": to_send}
                                                 }, conn_id)
                                             break
                                         else:
@@ -1103,7 +1103,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                             if think_start > 0:
                                                 await manager.send_json(user.id, {
                                                     "type": "stream",
-                                                    "content": buffer[:think_start]
+                                                    "data": {"content": buffer[:think_start]}
                                                 }, conn_id)
                                             open_tag, close_tag = tag_pair
                                             buffer = buffer[think_start + len(open_tag):]
@@ -1128,7 +1128,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                 logger.info(f"[STREAM] Sending final buffer, len={len(buffer)}")
                                 await manager.send_json(user.id, {
                                     "type": "stream",
-                                    "content": buffer
+                                    "data": {"content": buffer}
                                 }, conn_id)
 
                             # Ensure we always send stream_end, even if there was an error or stop request
@@ -1181,7 +1181,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                         follow_up_response += chunk
                                         await manager.send_json(user.id, {
                                             "type": "stream",
-                                            "content": chunk
+                                            "data": {"content": chunk}
                                         }, conn_id)
 
                                     # Save combined response
@@ -1206,7 +1206,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                             try:
                                 await manager.send_json(user.id, {
                                     "type": "stream",
-                                    "content": f"\n\n[Error: {str(stream_err)}]"
+                                    "data": {"content": f"\n\n[Error: {str(stream_err)}]"}
                                 }, conn_id)
                             except Exception:
                                 pass
