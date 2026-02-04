@@ -650,11 +650,12 @@ async def download_video_and_save_to_storage(
                     content = f.read()
                 ext = os.path.splitext(result.filename or "")[1].lower()
                 content_type = "video/mp4" if ext in (".mp4",) else "video/x-matroska" if ext == ".mkv" else "application/octet-stream"
+                safe_name = _sanitize_filename_for_storage(result.filename or "video.mp4")
                 relative_path = await _upload_file_to_storage_proxy(
                     storage_server_url=storage_server_url.strip(),
                     username=user.username,
                     path=subfolder,
-                    filename=result.filename or "video.mp4",
+                    filename=safe_name,
                     content=content,
                     content_type=content_type,
                 )
@@ -754,11 +755,12 @@ async def download_mp3_and_save_to_storage(
             try:
                 with open(result.local_path, "rb") as f:
                     content = f.read()
+                safe_name = _sanitize_filename_for_storage(result.filename or "audio.mp3")
                 relative_path = await _upload_file_to_storage_proxy(
                     storage_server_url=storage_server_url.strip(),
                     username=user.username,
                     path=subfolder,
-                    filename=result.filename or "audio.mp3",
+                    filename=safe_name,
                     content=content,
                     content_type="audio/mpeg",
                 )

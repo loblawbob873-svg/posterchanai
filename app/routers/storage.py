@@ -1747,13 +1747,13 @@ async def view_file(
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     
-    # Check if this is a video file - transcode on-the-fly for bandwidth savings
+    # Check if this is a video file - transcode on-the-fly for bandwidth savings (inline only)
     from app.services.thumbnail_service import is_video_file
     import subprocess
     from starlette.responses import StreamingResponse
     
-    # For videos, stream transcoded version on-the-fly (don't save to disk)
-    if is_video_file(full_path):
+    # For videos: only transcode when streaming inline. For download=1 serve original to avoid ffmpeg failures.
+    if is_video_file(full_path) and not download:
         logger.info(f"[STORAGE] Streaming transcoded video on-the-fly: {full_path.name}")
         
         # Transcode to stdout and stream directly to client

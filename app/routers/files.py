@@ -2636,8 +2636,15 @@ async def _proxy_view_file(storage_server_url: str, username: str, file_path: st
                     "headers": response_headers
                 }
             else:
-                logger.error(f"[FILES] Failed to proxy view_file: {response.status_code} - {response.text}")
-                raise Exception(f"Storage server error: {response.status_code}")
+                try:
+                    err_body = response.json().get("detail", response.text)
+                    if isinstance(err_body, list):
+                        err_body = str(err_body)
+                except Exception:
+                    err_body = response.text[:500] if response.text else ""
+                logger.error(f"[FILES] Failed to proxy view_file: {response.status_code} - {err_body}")
+                detail = err_body if err_body else str(response.status_code)
+                raise Exception(f"Storage server error: {response.status_code} - {detail}")
         
         result = await asyncio.to_thread(_sync_proxy)
         # Return Response with the content
