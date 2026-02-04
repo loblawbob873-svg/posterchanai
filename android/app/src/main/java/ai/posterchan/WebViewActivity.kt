@@ -68,7 +68,7 @@ class WebViewActivity : AppCompatActivity() {
             builtInZoomControls = false
             displayZoomControls = false
             setSupportZoom(true)
-            userAgentString = userAgentString + " PosterchanAI/1.0"
+            // Use default Chrome mobile UA only; appending "PosterchanAI/1.0" can trigger 403 from some proxies when opening /ws/chat
             safeBrowsingEnabled = false
         }
         CookieManager.getInstance().apply {
