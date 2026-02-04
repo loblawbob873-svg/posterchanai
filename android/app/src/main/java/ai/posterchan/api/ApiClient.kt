@@ -34,9 +34,9 @@ class ApiClient(
         .build()
 
     companion object {
-        /** Browser-like User-Agent to avoid 403 from proxies/WAF that block non-browser clients. */
+        /** Browser-like User-Agent; no app suffix to avoid 403 from proxies that block PosterchanAI UA on /ws/chat. */
         private const val USER_AGENT =
-            "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 PosterchanAI/1.0"
+            "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
     }
 
     private fun url(path: String): String {
