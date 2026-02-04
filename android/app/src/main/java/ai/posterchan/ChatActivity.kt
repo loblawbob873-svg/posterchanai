@@ -3,7 +3,9 @@ package ai.posterchan
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.View
+import android.speech.tts.TextToSpeech
+import android.view.Menu
+import android.view.MenuItem
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -12,6 +14,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import okhttp3.WebSocket
 import ai.posterchan.api.ApiClient
+import java.util.Locale
 
 class ChatActivity : AppCompatActivity() {
 
@@ -26,6 +29,7 @@ class ChatActivity : AppCompatActivity() {
     private var webSocket: WebSocket? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var streamingMessageId = -1L
+    private var tts: TextToSpeech? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,13 +59,47 @@ class ChatActivity : AppCompatActivity() {
             sendMessage(text)
         }
 
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.getDefault()
+            }
+        }
+
         loadMessages()
     }
 
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.chat_menu, menu)
+        return true
+    }
+
+    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+        val item = menu.findItem(R.id.action_tts_mute)
+        val enabled = Prefs.getTtsEnabled(this)
+        item?.setIcon(if (enabled) R.drawable.ic_volume_24 else R.drawable.ic_volume_off_24)
+        item?.setTitle(if (enabled) getString(R.string.tts_mute) else getString(R.string.tts_unmute))
+        return super.onPrepareOptionsMenu(menu)
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (item.itemId == R.id.action_tts_mute) {
+            val newState = !Prefs.getTtsEnabled(this)
+            Prefs.setTtsEnabled(this, newState)
+            invalidateOptionsMenu()
+            tts?.stop()
+            Toast.makeText(this, if (newState) getString(R.string.tts_unmute) else getString(R.string.tts_mute), Toast.LENGTH_SHORT).show()
+            return true
+        }
+        return super.onOptionsItemSelected(item)
+    }
+
     override fun onDestroy() {
-        super.onDestroy()
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
         webSocket?.close(1000, null)
         webSocket = null
+        super.onDestroy()
     }
 
     private fun loadMessages() {
@@ -128,6 +166,7 @@ class ChatActivity : AppCompatActivity() {
                         if (idx >= 0) {
                             messages[idx] = messages[idx].copy(isStreaming = false)
                             adapter.submitList(messages.toList())
+                            speakIfEnabled(messages[idx].content)
                         }
                     }
                 }
@@ -138,6 +177,7 @@ class ChatActivity : AppCompatActivity() {
                             messages[idx] = messages[idx].copy(content = fullContent, isStreaming = false)
                             adapter.submitList(messages.toList())
                             scrollToBottom()
+                            speakIfEnabled(fullContent)
                         }
                     }
                 }
@@ -161,6 +201,21 @@ class ChatActivity : AppCompatActivity() {
         val list = findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.messages_list) ?: return
         list.post {
             if (adapter.itemCount > 0) list.smoothScrollToPosition(adapter.itemCount - 1)
+        }
+    }
+
+    private fun speakIfEnabled(text: String?) {
+        if (text.isNullOrBlank() || !Prefs.getTtsEnabled(this)) return
+        val cleaned = text
+            .replace(Regex("\\*\\*|__|##+|```[\\s\\S]*?```"), " ")
+            .replace(Regex("\\[([^]]+)\]\\([^)]+\\)"), "$1")
+            .replace(Regex("<[^>]+>"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (cleaned.length > 5000) return
+        if (cleaned.isNotEmpty()) {
+            tts?.stop()
+            tts?.speak(cleaned, TextToSpeech.QUEUE_FLUSH, null, null)
         }
     }
 }

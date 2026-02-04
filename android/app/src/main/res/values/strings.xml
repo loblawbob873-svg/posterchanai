@@ -7,7 +7,7 @@
     <string name="server_url_hint">Server URL (e.g. http://192.168.1.10:3051)</string>
     <string name="server_url_required">Enter your Poster-chan AI server URL</string>
     <string name="server_url_help">Use the URL where your Poster-chan AI server is running. Default port is 3051. For same device use http://10.0.2.2:3051 (emulator) or http://127.0.0.1:3051 (device).</string>
-    <string name="load_error">Could not load page</string>
+    <string name="load_error">Could not load page. Check server URL in Settings and your connection.</string>
     <string name="cannot_open_link">Cannot open link</string>
     <string name="server_url_invalid">Enter a valid URL with host (e.g. http://192.168.1.10:3051)</string>
     <string name="login">Log in</string>
@@ -22,4 +22,9 @@
     <string name="no_conversations">No conversations yet. Start a new chat.</string>
     <string name="send">Send</string>
     <string name="message_hint">Message…</string>
+    <string name="delete_conversation">Delete conversation</string>
+    <string name="delete_conversation_confirm">Delete \"%1$s\"? This cannot be undone.</string>
+    <string name="delete">Delete</string>
+    <string name="tts_mute">Mute TTS</string>
+    <string name="tts_unmute">Unmute TTS</string>
 </resources>

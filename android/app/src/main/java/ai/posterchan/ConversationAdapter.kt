@@ -10,12 +10,13 @@ import androidx.recyclerview.widget.RecyclerView
 import ai.posterchan.api.ApiClient
 
 class ConversationAdapter(
-    private val onItemClick: (ApiClient.ConversationItem) -> Unit
+    private val onItemClick: (ApiClient.ConversationItem) -> Unit,
+    private val onItemLongClick: (ApiClient.ConversationItem) -> Unit
 ) : ListAdapter<ApiClient.ConversationItem, ConversationAdapter.ViewHolder>(DiffCallback()) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         val v = LayoutInflater.from(parent.context).inflate(R.layout.item_conversation, parent, false)
-        return ViewHolder(v, onItemClick)
+        return ViewHolder(v, onItemClick, onItemLongClick)
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -24,7 +25,8 @@ class ConversationAdapter(
 
     class ViewHolder(
         itemView: View,
-        private val onItemClick: (ApiClient.ConversationItem) -> Unit
+        private val onItemClick: (ApiClient.ConversationItem) -> Unit,
+        private val onItemLongClick: (ApiClient.ConversationItem) -> Unit
     ) : RecyclerView.ViewHolder(itemView) {
         private val title: TextView = itemView.findViewById(R.id.item_title)
         private val updated: TextView = itemView.findViewById(R.id.item_updated)
@@ -33,6 +35,10 @@ class ConversationAdapter(
             title.text = item.title.ifBlank { "New Chat" }
             updated.text = formatDate(item.updatedAt)
             itemView.setOnClickListener { onItemClick(item) }
+            itemView.setOnLongClickListener {
+                onItemLongClick(item)
+                true
+            }
         }
 
         private fun formatDate(iso: String): String {

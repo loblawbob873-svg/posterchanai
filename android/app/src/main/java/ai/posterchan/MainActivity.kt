@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.appbar.MaterialToolbar
@@ -52,13 +53,35 @@ class MainActivity : AppCompatActivity() {
         }
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
-        adapter = ConversationAdapter { item ->
-            startActivity(Intent(this, ChatActivity::class.java).apply {
-                putExtra(ChatActivity.EXTRA_CONVERSATION_ID, item.id)
-                putExtra(ChatActivity.EXTRA_TITLE, item.title)
-            })
-            drawerLayout.closeDrawers()
-        }
+        adapter = ConversationAdapter(
+            onItemClick = { item ->
+                startActivity(Intent(this, ChatActivity::class.java).apply {
+                    putExtra(ChatActivity.EXTRA_CONVERSATION_ID, item.id)
+                    putExtra(ChatActivity.EXTRA_TITLE, item.title)
+                })
+                drawerLayout.closeDrawers()
+            },
+            onItemLongClick = { item ->
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.delete_conversation)
+                    .setMessage(getString(R.string.delete_conversation_confirm, item.title.ifBlank { "New Chat" }))
+                    .setPositiveButton(R.string.delete) { _, _ ->
+                        Thread {
+                            try {
+                                val client = ApiClient(Prefs.getServerUrl(this), Prefs.getAccessToken(this))
+                                client.deleteConversation(item.id)
+                                runOnUiThread { loadConversations() }
+                            } catch (_: Exception) {
+                                runOnUiThread {
+                                    Toast.makeText(this, getString(R.string.load_error), Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }.start()
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            }
+        )
         recyclerView.layoutManager = LinearLayoutManager(this)
         recyclerView.adapter = adapter
 

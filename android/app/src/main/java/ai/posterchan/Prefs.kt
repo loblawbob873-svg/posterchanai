@@ -7,6 +7,7 @@ import androidx.core.content.edit
 private const val PREFS_NAME = "posterchan_prefs"
 private const val KEY_SERVER_URL = "server_url"
 private const val KEY_ACCESS_TOKEN = "access_token"
+private const val KEY_TTS_ENABLED = "tts_enabled"
 
 object Prefs {
 
@@ -29,5 +30,13 @@ object Prefs {
 
     fun clearToken(context: Context) {
         prefs(context).edit { remove(KEY_ACCESS_TOKEN) }
+    }
+
+    /** TTS (read aloud) enabled; default true. Mute button toggles this. */
+    fun getTtsEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_TTS_ENABLED, true)
+
+    fun setTtsEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit { putBoolean(KEY_TTS_ENABLED, enabled) }
     }
 }
