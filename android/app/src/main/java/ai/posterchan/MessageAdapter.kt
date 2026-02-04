@@ -1,5 +1,7 @@
 package ai.posterchan
 
+import ai.posterchan.ChatMessage
+import ai.posterchan.MarkdownUtils
 import ai.posterchan.R
 import android.text.method.LinkMovementMethod
 import android.view.LayoutInflater
@@ -47,7 +49,7 @@ class MessageAdapter(
 
     private class AssistantViewHolder(
         itemView: View,
-        lastAssistantMessageId: () -> Long?,
+        private val lastAssistantMessageId: () -> Long?,
         private val onCopy: (String) -> Unit,
         private val onShare: (String) -> Unit,
         private val onRegenerateAssistant: () -> Unit,
