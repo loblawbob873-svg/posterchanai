@@ -712,7 +712,8 @@ async def proxy_carddav(request: Request, path: str, db: Session = Depends(get_d
     import httpx
     from app.database import safe_query_settings
     dav_settings = safe_query_settings(db)
-    carddav_port = int(dav_settings.get("carddav_port", "8082"))
+    # Use cardav_port (DB key); fallback to carddav_port for backwards compat - must not use caldav port
+    carddav_port = int(dav_settings.get("cardav_port", dav_settings.get("carddav_port", "8082")))
     carddav_url = f"http://127.0.0.1:{carddav_port}/carddav/{path}"
     if request.url.query:
         carddav_url += f"?{request.url.query}"
@@ -840,7 +841,7 @@ async def proxy_webdav_carddav(request: Request, path: str, db: Session = Depend
     import httpx
     from app.database import safe_query_settings
     dav_settings = safe_query_settings(db)
-    carddav_port = int(dav_settings.get("carddav_port", "8082"))
+    carddav_port = int(dav_settings.get("cardav_port", dav_settings.get("carddav_port", "8082")))
     carddav_url = f"http://127.0.0.1:{carddav_port}/carddav/{path}"
     if request.url.query:
         carddav_url += f"?{request.url.query}"

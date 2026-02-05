@@ -75,6 +75,17 @@ def create_cardav_response(multistatus_items: List[Dict]) -> str:
             elif prop_name == 'getctag':
                 # CTag is like ETag but for collections (addressbooks)
                 xml += f'                <CS:getctag xmlns:CS="http://calendarserver.org/ns/">{html.escape(str(prop_value))}</CS:getctag>\n'
+            elif prop_name == 'supported-report-set':
+                # CardDAV report types so clients (e.g. DAVx5) recognize this as addressbook, not calendar
+                xml += '''                <D:supported-report-set xmlns:D="DAV:">
+                    <D:supported-report>
+                        <D:report><C:addressbook-query xmlns:C="urn:ietf:params:xml:ns:carddav"/></D:report>
+                    </D:supported-report>
+                    <D:supported-report>
+                        <D:report><C:addressbook-multiget xmlns:C="urn:ietf:params:xml:ns:carddav"/></D:report>
+                    </D:supported-report>
+                </D:supported-report-set>
+'''
         xml += '            </D:prop>\n            <D:status>HTTP/1.1 200 OK</D:status>\n        </D:propstat>\n    </D:response>\n'
     xml += '</D:multistatus>'
     return xml
@@ -128,14 +139,15 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
     # iPhone expects this to return the principal URL
     if not path or path == '':
         # Return the principal URL (user's addressbook home)
-        # iPhone needs addressbook-home-set property
+        # Include supported-report-set so clients (DAVx5) recognize this as CardDAV, not CalDAV
         items.append({
             "href": f"{base_url}/",
             "props": {
                 "resourcetype": "collection",
                 "displayname": f"{user.username}'s Addressbooks",
                 "current-user-principal": f"{base_url}/",  # Principal URL for iPhone
-                "addressbook-home-set": f"{base_url}/"  # Addressbook home set for iPhone
+                "addressbook-home-set": f"{base_url}/",  # Addressbook home set for iPhone
+                "supported-report-set": True
             }
         })
         
@@ -156,10 +168,10 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
             # If no subdirectories, check for loose .vcf files (legacy mode)
             has_loose_vcf = len(vcf_files) > 0
             
+            import hashlib
             if not addressbook_dirs and has_loose_vcf:
                 # Legacy mode: show root as default addressbook
                 # iPhone needs sync-token and getctag for addressbooks
-                import hashlib
                 sync_token = hashlib.md5(f"contacts_{user.username}".encode()).hexdigest()[:16]
                 ctag = hashlib.md5(f"contacts_{user.username}_ctag".encode()).hexdigest()[:16]
                 items.append({
@@ -168,14 +180,13 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                         "resourcetype": "addressbook",
                         "displayname": "Contacts",
                         "sync-token": f"http://ai.poster.place/carddav/{quote(user.username, safe='')}/contacts/sync-token-{sync_token}",
-                        "getctag": ctag
+                        "getctag": ctag,
+                        "supported-report-set": True
                     }
                 })
-            else:
+            elif addressbook_dirs:
                 # New mode: show actual addressbook subdirectories
                 for abook_name in sorted(addressbook_dirs):
-                    # iPhone needs sync-token and getctag for addressbooks
-                    import hashlib
                     sync_token = hashlib.md5(f"{abook_name}_{user.username}".encode()).hexdigest()[:16]
                     ctag = hashlib.md5(f"{abook_name}_{user.username}_ctag".encode()).hexdigest()[:16]
                     items.append({
@@ -184,9 +195,24 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                             "resourcetype": "addressbook",
                             "displayname": abook_name.replace('_', ' ').title(),
                             "sync-token": f"http://ai.poster.place/carddav/{quote(user.username, safe='')}/{quote(abook_name, safe='')}/sync-token-{sync_token}",
-                            "getctag": ctag
+                            "getctag": ctag,
+                            "supported-report-set": True
                         }
                     })
+            else:
+                # Empty account: always expose one "Contacts" addressbook so DAVx5 sees addressbooks, not empty/calendar
+                sync_token = hashlib.md5(f"contacts_{user.username}".encode()).hexdigest()[:16]
+                ctag = hashlib.md5(f"contacts_{user.username}_ctag".encode()).hexdigest()[:16]
+                items.append({
+                    "href": f"{base_url}/contacts/",
+                    "props": {
+                        "resourcetype": "addressbook",
+                        "displayname": "Contacts",
+                        "sync-token": f"http://ai.poster.place/carddav/{quote(user.username, safe='')}/contacts/sync-token-{sync_token}",
+                        "getctag": ctag,
+                        "supported-report-set": True
+                    }
+                })
     
     # Individual addressbook
     elif '/' not in path:
@@ -208,7 +234,8 @@ async def handle_propfind(path: str, user: User, db: Session, request: Starlette
                 "resourcetype": "addressbook",
                 "displayname": abook_name.replace('_', ' ').title() if abook_name != 'contacts' else "Contacts",
                 "sync-token": f"http://ai.poster.place/carddav/{quote(user.username, safe='')}/{quote(abook_name, safe='')}/sync-token-{sync_token}",
-                "getctag": ctag
+                "getctag": ctag,
+                "supported-report-set": True
             }
         })
         
