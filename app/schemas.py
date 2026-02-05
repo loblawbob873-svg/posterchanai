@@ -325,6 +325,9 @@ class ModelInfo(BaseModel):
     object: str = "model"
     created: int = 0
     owned_by: str = "ollama"
+    # Context size for OpenAI-compatible clients (e.g. OpenClaw); minimum 16000 for agent use
+    root_context_length: Optional[int] = None
+    context_length: Optional[int] = None
 
 
 class ModelsResponse(BaseModel):

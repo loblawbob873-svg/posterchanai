@@ -571,21 +571,30 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
 
 
 async def _handle_list_models(db: Session):
-    """Handle models list request"""
+    """Handle models list request.
+    Model id is the backend's model name (e.g. .gguf filename for native).
+    Context size is from server settings, minimum 16000 for OpenClaw compatibility.
+    """
     from app.services.inference_factory import get_backend_type
 
     service = get_inference_service(db)
     models = await service.list_models()
     backend = get_backend_type(db)
 
-    # Convert to OpenAI format
+    # Use actual server context size; minimum 16000 so OpenClaw and other clients accept it
+    setting = db.query(Setting).filter(Setting.key == "ollama_num_ctx").first()
+    ctx = int(setting.value) if setting and setting.value.isdigit() else 4096
+    ctx = max(ctx, 16000)
+
     model_list = []
     for model in models:
         model_list.append(ModelInfo(
             id=model.get("name", "unknown"),
             object="model",
             created=0,
-            owned_by="native" if backend == "native" else "ollama"
+            owned_by="native" if backend == "native" else "ollama",
+            root_context_length=ctx,
+            context_length=ctx,
         ))
 
     return ModelsResponse(object="list", data=model_list)
