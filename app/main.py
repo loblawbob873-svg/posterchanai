@@ -183,10 +183,55 @@ async def caldav_discovery(request: Request, db: Session = Depends(get_db)):
 
 @app.api_route("/.well-known/carddav", methods=["GET", "PROPFIND"])
 async def carddav_discovery(request: Request, db: Session = Depends(get_db)):
-    """CardDAV autodiscovery - redirect to CardDAV server."""
-    # When behind nginx reverse proxy, redirect to the proxied path (same host/port)
-    # Nginx will proxy /carddav/ to the actual CardDAV server on port 8082
-    # Use X-Forwarded-Proto header to determine if original request was HTTPS
+    """CardDAV autodiscovery - PROPFIND returns principal/addressbook-home-set; GET redirects to CardDAV."""
+    # PROPFIND: return principal so DAVx5 and other clients get addressbook-home-set without following redirects
+    if request.method == "PROPFIND":
+        import base64
+        from app.auth import verify_password
+        from urllib.parse import quote
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Basic "):
+            return Response(
+                content="Unauthorized",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+            )
+        try:
+            credentials = base64.b64decode(auth_header[6:]).decode('utf-8')
+            username, password = credentials.split(':', 1)
+        except Exception:
+            return Response(
+                content="Invalid credentials",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+            )
+        user = db.query(User).filter(User.username == username.strip()).first()
+        if not user and '@' in username:
+            user = db.query(User).filter(User.username.like(f"{username.strip().split('@')[0]}@%")).first()
+        if not user or not verify_password(password.strip(), user.password_hash):
+            return Response(
+                content="Invalid credentials",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Posterchanai CardDAV"'}
+            )
+        encoded_username = quote(user.username, safe='')
+        principal_url = f"/carddav/{encoded_username}/"
+        xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+    <D:response>
+        <D:href>/.well-known/carddav</D:href>
+        <D:propstat>
+            <D:prop>
+                <D:resourcetype><D:collection/></D:resourcetype>
+                <D:current-user-principal><D:href>{principal_url}</D:href></D:current-user-principal>
+                <C:addressbook-home-set xmlns:C="urn:ietf:params:xml:ns:carddav"><D:href>{principal_url}</D:href></C:addressbook-home-set>
+            </D:prop>
+            <D:status>HTTP/1.1 200 OK</D:status>
+        </D:propstat>
+    </D:response>
+</D:multistatus>'''
+        return Response(content=xml, media_type="application/xml", status_code=207)
+    # GET/HEAD: redirect to CardDAV root
     scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
     base_url = f"{scheme}://{request.url.hostname}"
     if request.url.port and request.url.port not in (80, 443):
@@ -249,11 +294,12 @@ async def root_propfind(request: Request, db: Session = Depends(get_db)):
 
 @app.api_route("/principals/", methods=["PROPFIND"])
 async def principals_propfind(request: Request, db: Session = Depends(get_db)):
-    """Handle PROPFIND on /principals/ - redirect to user's calendar."""
-    # CalDAV clients use Basic Auth, not session auth
+    """Handle PROPFIND on /principals/ - return user's calendar and addressbook home sets."""
+    # CalDAV/CardDAV clients use Basic Auth, not session auth
     import base64
     from app.auth import verify_password
-    
+    from urllib.parse import quote
+
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Basic "):
         return Response(
@@ -282,16 +328,12 @@ async def principals_propfind(request: Request, db: Session = Depends(get_db)):
             headers={"WWW-Authenticate": 'Basic realm="Posterchanai CalDAV"'}
         )
     
-    scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
-    base_url = f"{scheme}://{request.url.hostname}"
-    if request.url.port and request.url.port not in (80, 443):
-        base_url += f":{request.url.port}"
-    
-    # Return principal info pointing to user's calendar
+    encoded_username = quote(user.username, safe='')
+    # Return principal info with BOTH calendar-home-set and addressbook-home-set so DAVx5 and other clients discover contacts
     xml = f'''<?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CARD="urn:ietf:params:xml:ns:carddav">
     <D:response>
-        <D:href>/principals/{user.username}/</D:href>
+        <D:href>/principals/{encoded_username}/</D:href>
         <D:propstat>
             <D:prop>
                 <D:resourcetype>
@@ -300,8 +342,11 @@ async def principals_propfind(request: Request, db: Session = Depends(get_db)):
                 </D:resourcetype>
                 <D:displayname>{user.username}</D:displayname>
                 <C:calendar-home-set>
-                    <D:href>/caldav/{user.username}/</D:href>
+                    <D:href>/caldav/{encoded_username}/</D:href>
                 </C:calendar-home-set>
+                <CARD:addressbook-home-set>
+                    <D:href>/carddav/{encoded_username}/</D:href>
+                </CARD:addressbook-home-set>
             </D:prop>
             <D:status>HTTP/1.1 200 OK</D:status>
         </D:propstat>
@@ -393,7 +438,7 @@ async def principals_options(username: str):
     return Response(
         status_code=200,
         headers={
-            "DAV": "1, 3, calendar-access",
+            "DAV": "1, 3, calendar-access, addressbook",
             "Allow": "OPTIONS, PROPFIND",
             "Content-Length": "0"
         }
