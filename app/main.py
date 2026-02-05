@@ -90,13 +90,11 @@ async def http_exception_handler(request: FastAPIRequest, exc: StarletteHTTPExce
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: FastAPIRequest, exc: RequestValidationError):
-    """Ensure validation errors return JSON"""
+    """Ensure validation errors return JSON with a body (never empty)."""
     errors = exc.errors()
     cleaned_errors = _clean_error_detail(errors)
-    return JSONResponse(
-        status_code=422,
-        content={"detail": cleaned_errors}
-    )
+    body = {"detail": cleaned_errors, "message": "Request validation failed (422). Check 'detail' for field errors."}
+    return JSONResponse(status_code=422, content=body)
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: FastAPIRequest, exc: Exception):

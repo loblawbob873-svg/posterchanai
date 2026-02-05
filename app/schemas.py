@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, field_validator
+from typing import Optional, List, Union, Any
 from datetime import datetime
 
 
@@ -278,12 +278,37 @@ class ImageGenResponse(BaseModel):
 
 
 # OpenAI-compatible API schemas
+def _normalize_message_content(value: Union[str, List[Any], None]) -> str:
+    """Accept OpenAI-style content: string or list of parts (e.g. {"type": "text", "text": "..."})."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, dict):
+                if item.get("type") == "text" and "text" in item:
+                    parts.append(str(item["text"]))
+                elif "text" in item:
+                    parts.append(str(item["text"]))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(parts) if parts else ""
+    return str(value)
+
+
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    content: Union[str, List[Any]] = ""
 
     class Config:
         extra = "ignore"  # Ignore extra fields like image_path
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def normalize_content(cls, v: Union[str, List[Any], None]) -> str:
+        return _normalize_message_content(v)
 
 
 class ChatCompletionRequest(BaseModel):
@@ -297,6 +322,9 @@ class ChatCompletionRequest(BaseModel):
     presence_penalty: Optional[float] = None
     frequency_penalty: Optional[float] = None
     user: Optional[str] = None
+
+    class Config:
+        extra = "ignore"  # Ignore tools, tool_choice, etc. from OpenClaw/OpenAI clients
 
 
 class ChatCompletionChoice(BaseModel):
