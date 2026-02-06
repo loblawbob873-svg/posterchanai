@@ -494,7 +494,8 @@ class LibtorrentService:
                 elif 'error' in alert_type.lower() or 'fail' in alert_type.lower():
                     logger.warning(f"[BT] {alert_type}: {alert.message()}")
 
-            time.sleep(0.5)
+            # 2s sleep to avoid burning a full CPU core when many torrents/alerts
+            time.sleep(2.0)
 
     def add_magnet(self, magnet: str) -> str:
         """Add a magnet link. Returns info_hash. Requires proxy."""

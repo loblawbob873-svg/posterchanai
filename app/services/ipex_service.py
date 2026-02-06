@@ -103,7 +103,8 @@ def _check_and_setup_oneapi():
     os.environ.setdefault("ENABLE_SDP_FUSION", "1")
     os.environ.setdefault("SYCL_CACHE_PERSISTENT", "1")
     os.environ.setdefault("BIGDL_LLM_XMX_DISABLED", "1")
-    os.environ.setdefault("ZES_ENABLE_SYSMAN", "1")
+    # Disable Level Zero Sysman to avoid background GPU polling that maxes a CPU core
+    os.environ.setdefault("ZES_ENABLE_SYSMAN", "0")
 
     _oneapi_available = True
     return True
