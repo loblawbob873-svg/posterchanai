@@ -34,4 +34,60 @@
     <string name="attach_file">Attach file</string>
     <string name="take_photo">Take photo</string>
     <string name="voice_input">Voice input</string>
+    <string name="invalid_conversation">Invalid conversation. Please go back and try again.</string>
+    <string name="file_too_large">File is too large. Maximum size is %1$d MB.</string>
+    <!-- Quick actions (match web UI labels) -->
+    <string name="quick_chat">💬 Chat</string>
+    <string name="quick_pim">📋 PIM ▾</string>
+    <string name="quick_files">📁 Files ▾</string>
+    <string name="quick_web">🌐 Web ▾</string>
+    <string name="quick_generate">✨ Generate</string>
+    <string name="quick_translate">🌍 Translate</string>
+    <string name="quick_rag">🗂️ RAG</string>
+    <!-- PIM menu -->
+    <string name="pim_mail">📧 Mail</string>
+    <string name="pim_mail_folders">📬 Mail Folders</string>
+    <string name="pim_calendar">📅 Calendar</string>
+    <string name="pim_add_event">➕ Add Event</string>
+    <string name="pim_contacts">👥 Contacts</string>
+    <string name="pim_todo">✅ Todo List</string>
+    <!-- Files menu -->
+    <string name="files_manager">📁 File Manager</string>
+    <string name="files_photos">🖼️ Photos</string>
+    <!-- Web menu -->
+    <string name="web_search">🔍 Web Search</string>
+    <string name="web_images">🖼️ Images</string>
+    <string name="web_news">📰 News</string>
+    <string name="web_fourchan">📋 4chan</string>
+    <string name="web_torrents">🧲 Torrents</string>
+    <string name="web_downloading">⬇️ Downloading</string>
+    <string name="open_web_app">Open Web app for this feature</string>
+    <string name="quick_generate_hint">Describe what to generate…</string>
+    <string name="quick_search_hint">Search the web for…</string>
+    <string name="quick_images_hint">Describe image to search…</string>
+    <!-- File Manager -->
+    <string name="file_manager_title">File Manager</string>
+    <string name="file_manager_loading">Loading…</string>
+    <string name="file_manager_error">Could not load files. Check connection.</string>
+    <string name="file_manager_error_no_server">Could not load files. Set server URL in Settings.</string>
+    <string name="file_manager_error_login">Could not load files. Please log in again.</string>
+    <string name="file_manager_error_server">Could not load files. Check server URL and try again.</string>
+    <string name="file_manager_empty">This folder is empty</string>
+    <string name="file_manager_downloading">Downloading…</string>
+    <string name="file_manager_open_error">Could not open file</string>
+    <string name="file_manager_download_failed">Download failed.</string>
+    <string name="file_manager_download_login">Download failed. Please log in again.</string>
+    <string name="file_manager_download_not_found">Download failed. File not found.</string>
+    <string name="file_manager_download_server">Download failed. Check server URL in Settings and network, then try again.</string>
+    <string name="file_manager_current_server">Current server: %1$s</string>
+    <string name="file_manager_server_not_set">(not set)</string>
+    <string name="file_manager_error_code">Error: HTTP %1$d</string>
+    <string name="file_manager_error_connection">Error: Connection failed or timeout</string>
+    <string name="file_manager_error_detail">Detail: %1$s</string>
+    <string name="file_manager_open_settings">Open Settings</string>
+    <string name="file_manager_copy_url">Copy URL</string>
+    <string name="file_manager_url_copied">URL copied. Paste in browser to test.</string>
+    <string name="file_manager_server_help">Set Server URL to the same address you use in the browser:\n• Domain with nginx: https://your-domain.com (no port)\n• Local: http://192.168.1.5:3051\nSame Wi‑Fi or network; server must be running.</string>
+    <string name="file_manager_refresh">Refresh</string>
+    <string name="file_manager_folder_subtitle">—</string>
 </resources>

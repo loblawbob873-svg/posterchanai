@@ -9,8 +9,15 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
+import java.io.File
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.X509TrustManager
+import java.security.cert.X509Certificate
 
 /**
  * REST + WebSocket client for Poster-chan AI backend.
@@ -32,6 +39,32 @@ class ApiClient(
             chain.proceed(request)
         })
         .build()
+
+    /** Longer timeouts and trust all certs for file downloads (works with self-signed / custom CA behind nginx). */
+    private val downloadClient: OkHttpClient by lazy {
+        val trustAll = object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out X509Certificate>, authType: String) {}
+            override fun checkServerTrusted(chain: Array<out X509Certificate>, authType: String) {}
+            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+        }
+        val sslContext = SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf(trustAll), java.security.SecureRandom())
+        }
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.MINUTES)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .sslSocketFactory(sslContext.socketFactory, trustAll)
+            .hostnameVerifier { _, _ -> true }
+            .addInterceptor(Interceptor { chain ->
+                val request = chain.request().newBuilder()
+                    .addHeader("User-Agent", USER_AGENT)
+                    .addHeader("Accept", "*/*")
+                    .build()
+                chain.proceed(request)
+            })
+            .build()
+    }
 
     companion object {
         /** Browser-like User-Agent; no app suffix to avoid 403 from proxies that block PosterchanAI UA on /ws/chat. */
@@ -230,10 +263,135 @@ class ApiClient(
         webSocket.send(JSONObject().apply { put("type", "stop") }.toString())
     }
 
+    /**
+     * Generate TTS audio via server (same edge_tts voice as web UI).
+     * @return base64 MP3 string or null on failure
+     */
+    fun generateTts(text: String, voice: String? = null): String? {
+        val body = JSONObject().apply {
+            put("text", text)
+            if (!voice.isNullOrBlank()) put("voice", voice)
+        }.toString()
+        val request = authRequest("/api/tts", "POST", body)
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val json = JSONObject(response.body!!.string())
+                json.optString("audio").takeIf { it.isNotEmpty() }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * List files and folders at the given path (empty string = root).
+     */
+    fun listFiles(path: String): FileListResponse {
+        val query = if (path.isBlank()) "" else "?path=" + URLEncoder.encode(path, StandardCharsets.UTF_8.name())
+        val request = authRequest("/api/files/list$query")
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, response.body?.string() ?: response.message)
+            val bodyStr = response.body?.string() ?: throw ApiException(-1, "Empty response")
+            try {
+                val json = JSONObject(bodyStr)
+                val itemsArr = json.getJSONArray("items")
+                val items = (0 until itemsArr.length()).map { i ->
+                    val o = itemsArr.getJSONObject(i)
+                    FileItem(
+                        name = o.optString("name"),
+                        path = o.optString("path"),
+                        isDirectory = o.optBoolean("is_directory"),
+                        size = o.optLong("size", 0L),
+                        modified = o.optDouble("modified", 0.0),
+                        isExternal = o.optBoolean("is_external"),
+                        thumbnailBase64 = o.optString("thumbnail").takeIf { it.isNotEmpty() }
+                    )
+                }
+                return FileListResponse(
+                    items = items,
+                    path = json.optString("path", ""),
+                    isExternal = json.optBoolean("is_external"),
+                    externalName = json.optString("external_name").takeIf { it.isNotEmpty() }
+                )
+            } catch (e: JSONException) {
+                throw ApiException(-1, "Invalid response: ${e.message ?: "parse error"}")
+            }
+        }
+    }
+
+    /**
+     * Get list of external storage mounts the user can access.
+     */
+    fun getExternalStorageMounts(): ExternalStorageResponse {
+        val request = authRequest("/api/files/external-storage")
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, response.body?.string() ?: response.message)
+            val json = JSONObject(response.body!!.string())
+            val mountsArr = json.getJSONArray("mounts")
+            val mounts = (0 until mountsArr.length()).map { i ->
+                val o = mountsArr.getJSONObject(i)
+                ExternalMount(
+                    id = o.optInt("id"),
+                    name = o.optString("name"),
+                    mountPoint = o.optString("mount_point"),
+                    description = o.optString("description").takeIf { it.isNotEmpty() },
+                    mountPath = o.optString("mount_path")
+                )
+            }
+            return ExternalStorageResponse(mounts = mounts)
+        }
+    }
+
+    /**
+     * Download a file to the given destination. Uses Bearer auth.
+     * @param filePath Path relative to user root (e.g. "Documents/foo.pdf")
+     * @param destFile Where to write the file
+     * @param asAttachment If true, server returns Content-Disposition: attachment
+     * @throws ApiException when response is not successful (caller can use e.code: 401=login, 404=not found)
+     */
+    fun downloadFileTo(filePath: String, destFile: File, asAttachment: Boolean) {
+        val encodedPath = filePath.split("/").joinToString("/") { segment ->
+            URLEncoder.encode(segment, StandardCharsets.UTF_8.name())
+        }
+        val query = if (asAttachment) "?download=true" else ""
+        val request = authRequest("/api/files/view/$encodedPath$query")
+        downloadClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw ApiException(response.code, response.body?.string() ?: response.message)
+            }
+            val body = response.body ?: throw ApiException(-1, "Empty response")
+            body.use { b -> destFile.outputStream().use { b.byteStream().copyTo(it) } }
+        }
+    }
+
     data class TokenResponse(val accessToken: String, val tokenType: String)
     data class UserResponse(val id: Int, val username: String, val email: String?, val isAdmin: Boolean)
     data class ConversationItem(val id: Int, val title: String, val createdAt: String, val updatedAt: String)
     data class MessageItem(val id: Int, val role: String, val content: String, val imagePath: String?, val createdAt: String)
+    data class FileItem(
+        val name: String,
+        val path: String,
+        val isDirectory: Boolean,
+        val size: Long,
+        val modified: Double,
+        val isExternal: Boolean,
+        val thumbnailBase64: String?
+    )
+    data class FileListResponse(
+        val items: List<FileItem>,
+        val path: String,
+        val isExternal: Boolean,
+        val externalName: String?
+    )
+    data class ExternalMount(
+        val id: Int,
+        val name: String,
+        val mountPoint: String,
+        val description: String?,
+        val mountPath: String
+    )
+    data class ExternalStorageResponse(val mounts: List<ExternalMount>)
 }
 
 interface ChatWebSocketListener {

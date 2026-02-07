@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models import User, APIKey
 from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
 import os
+import urllib.parse
 import warnings
 
 logger = logging.getLogger(__name__)
@@ -81,9 +82,11 @@ def get_current_user(
     if credentials:
         token = credentials.credentials
 
-    # If not in header, try cookie
+    # If not in header, try cookie (value may be URL-encoded by client)
     if not token:
         token = request.cookies.get("access_token")
+        if token:
+            token = urllib.parse.unquote(token)
 
     # If not in cookie, try query parameter (for streaming endpoints like music)
     if not token:
@@ -205,10 +208,12 @@ def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
 
 
 async def get_user_from_websocket(websocket: WebSocket, db: Session) -> Optional[User]:
-    # Try to get token from query params or cookies
+    # Try to get token from query params or cookies (cookie may be URL-encoded)
     token = websocket.query_params.get("token")
     if not token:
         token = websocket.cookies.get("access_token")
+        if token:
+            token = urllib.parse.unquote(token)
 
     if not token:
         return None

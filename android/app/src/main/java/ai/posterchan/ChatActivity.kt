@@ -9,16 +9,18 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.media.MediaPlayer
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
 import android.util.Base64
 import android.view.Menu
 import android.view.MenuItem
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.Toast
+import android.widget.PopupMenu
+import com.google.android.material.button.MaterialButton
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -26,7 +28,6 @@ import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.appbar.MaterialToolbar
-import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import okhttp3.WebSocket
 import ai.posterchan.api.ApiClient
@@ -49,11 +50,14 @@ class ChatActivity : AppCompatActivity() {
     private var streamingMessageId = -1L
     private var isStreaming = false
     private var lastSentUserText: String? = null
-    private var tts: TextToSpeech? = null
+    private var ttsMediaPlayer: MediaPlayer? = null
+    private var ttsTempFile: File? = null
     private lateinit var sendButton: MaterialButton
     private var cameraCaptureFile: File? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private lateinit var messageInput: TextInputEditText
+    /** Current mode prepended to next message (e.g. "search", "images", "geni"). Empty = normal chat. */
+    private var currentMode: String = ""
 
     private val requestRecordAudioLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startVoiceInput(messageInput)
@@ -80,8 +84,14 @@ class ChatActivity : AppCompatActivity() {
         if (uri == null) return@registerForActivityResult
         try {
             val mime = contentResolver.getType(uri) ?: ""
+            val maxBytes = Prefs.MAX_ATTACHMENT_MB * 1024L * 1024L
+            fun uriSize(uri: Uri): Long? = contentResolver.openFileDescriptor(uri, "r")?.use { it.getStatSize() }
             when {
                 mime.startsWith("image/") -> {
+                    if (uriSize(uri)?.let { it > maxBytes } == true) {
+                        Toast.makeText(this, getString(R.string.file_too_large, Prefs.MAX_ATTACHMENT_MB), Toast.LENGTH_SHORT).show()
+                        return@registerForActivityResult
+                    }
                     contentResolver.openInputStream(uri)?.use { input ->
                         val bytes = input.readBytes()
                         val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
@@ -91,6 +101,10 @@ class ChatActivity : AppCompatActivity() {
                     }
                 }
                 mime == "application/pdf" -> {
+                    if (uriSize(uri)?.let { it > maxBytes } == true) {
+                        Toast.makeText(this, getString(R.string.file_too_large, Prefs.MAX_ATTACHMENT_MB), Toast.LENGTH_SHORT).show()
+                        return@registerForActivityResult
+                    }
                     contentResolver.openInputStream(uri)?.use { input ->
                         val bytes = input.readBytes()
                         val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
@@ -123,6 +137,11 @@ class ChatActivity : AppCompatActivity() {
 
         conversationId = intent.getIntExtra(EXTRA_CONVERSATION_ID, 0)
         val title = intent.getStringExtra(EXTRA_TITLE) ?: getString(R.string.app_name)
+        if (conversationId <= 0) {
+            Toast.makeText(this, getString(R.string.invalid_conversation), Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
 
         findViewById<MaterialToolbar>(R.id.toolbar)?.let {
             setSupportActionBar(it)
@@ -179,11 +198,7 @@ class ChatActivity : AppCompatActivity() {
             startVoiceInput(input)
         }
 
-        tts = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.getDefault()
-            }
-        }
+        setupQuickActions()
 
         loadMessages()
         updateSendButtonState()
@@ -207,7 +222,7 @@ class ChatActivity : AppCompatActivity() {
             val newState = !Prefs.getTtsEnabled(this)
             Prefs.setTtsEnabled(this, newState)
             invalidateOptionsMenu()
-            tts?.stop()
+            stopServerTts()
             Toast.makeText(this, if (newState) getString(R.string.tts_unmute) else getString(R.string.tts_mute), Toast.LENGTH_SHORT).show()
             return true
         }
@@ -217,9 +232,7 @@ class ChatActivity : AppCompatActivity() {
     override fun onDestroy() {
         speechRecognizer?.destroy()
         speechRecognizer = null
-        tts?.stop()
-        tts?.shutdown()
-        tts = null
+        stopServerTts()
         webSocket?.close(1000, null)
         webSocket = null
         super.onDestroy()
@@ -260,6 +273,11 @@ class ChatActivity : AppCompatActivity() {
             return
         }
 
+        val contentToSend = if (currentMode.isNotBlank()) "$currentMode $text".trim() else text
+        currentMode = ""
+        updateQuickActionHighlight()
+        messageInput.hint = getString(R.string.message_hint)
+
         lastSentUserText = text
         isStreaming = true
         updateSendButtonState()
@@ -276,7 +294,7 @@ class ChatActivity : AppCompatActivity() {
             val client = ApiClient(baseUrl, token)
             webSocket = client.connectChatWebSocket(conversationId, object : ai.posterchan.api.ChatWebSocketListener {
                 override fun onOpen() {
-                    mainHandler.post { client.sendChatMessage(webSocket!!, text) }
+                    mainHandler.post { client.sendChatMessage(webSocket!!, contentToSend) }
                 }
                 override fun onStreamChunk(chunk: String) {
                     mainHandler.post {
@@ -331,7 +349,7 @@ class ChatActivity : AppCompatActivity() {
                 }
             })
         } else {
-            ApiClient(baseUrl, token).sendChatMessage(webSocket!!, text)
+            ApiClient(baseUrl, token).sendChatMessage(webSocket!!, contentToSend)
         }
     }
 
@@ -479,6 +497,101 @@ class ChatActivity : AppCompatActivity() {
         sendButton.text = if (isStreaming) getString(R.string.stop) else getString(R.string.send)
     }
 
+    private fun openWebApp() {
+        startActivity(Intent(this, WebViewActivity::class.java))
+    }
+
+    private fun updateQuickActionHighlight() {
+        // Optional: could style Chat/Generate buttons when mode is active (MaterialButton is not checkable by default)
+    }
+
+    private fun setupQuickActions() {
+        findViewById<MaterialButton>(R.id.quick_btn_chat).setOnClickListener {
+            currentMode = ""
+            updateQuickActionHighlight()
+            messageInput.hint = getString(R.string.message_hint)
+        }
+
+        findViewById<MaterialButton>(R.id.quick_btn_pim).setOnClickListener { v ->
+            val popup = PopupMenu(this, v)
+            popup.menuInflater.inflate(R.menu.quick_pim, popup.menu)
+            popup.setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    R.id.pim_mail -> { sendCommand("mail"); true }
+                    R.id.pim_mail_folders -> { sendCommand("mail folders"); true }
+                    R.id.pim_calendar -> { sendCommand("cal week"); true }
+                    R.id.pim_add_event -> { openWebApp(); true }
+                    R.id.pim_contacts -> { sendCommand("contacts all"); true }
+                    R.id.pim_todo -> { sendCommand("todo"); true }
+                    else -> false
+                }
+            }
+            popup.show()
+        }
+
+        findViewById<MaterialButton>(R.id.quick_btn_files).setOnClickListener { v ->
+            val popup = PopupMenu(this, v)
+            popup.menuInflater.inflate(R.menu.quick_files, popup.menu)
+            popup.setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    R.id.files_manager -> {
+                        startActivity(Intent(this, FileManagerActivity::class.java))
+                        true
+                    }
+                    R.id.files_photos -> {
+                        startActivity(Intent(this, FileManagerActivity::class.java))
+                        true
+                    }
+                    else -> false
+                }
+            }
+            popup.show()
+        }
+
+        findViewById<MaterialButton>(R.id.quick_btn_web).setOnClickListener { v ->
+            val popup = PopupMenu(this, v)
+            popup.menuInflater.inflate(R.menu.quick_web, popup.menu)
+            popup.setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    R.id.web_search -> {
+                        currentMode = "search"
+                        updateQuickActionHighlight()
+                        messageInput.hint = getString(R.string.quick_search_hint)
+                        true
+                    }
+                    R.id.web_images -> {
+                        currentMode = "images"
+                        updateQuickActionHighlight()
+                        messageInput.hint = getString(R.string.quick_images_hint)
+                        true
+                    }
+                    R.id.web_news, R.id.web_fourchan -> { openWebApp(); true }
+                    R.id.web_torrents -> { sendCommand("torrents"); true }
+                    R.id.web_downloading -> { sendCommand("torrents list"); true }
+                    else -> false
+                }
+            }
+            popup.show()
+        }
+
+        findViewById<MaterialButton>(R.id.quick_btn_generate).setOnClickListener {
+            currentMode = "geni"
+            updateQuickActionHighlight()
+            messageInput.hint = getString(R.string.quick_generate_hint)
+            if (messageInput.text?.isBlank() != false) messageInput.requestFocus()
+        }
+
+        findViewById<MaterialButton>(R.id.quick_btn_translate).setOnClickListener { openWebApp() }
+        findViewById<MaterialButton>(R.id.quick_btn_rag).setOnClickListener { openWebApp() }
+
+        updateQuickActionHighlight()
+    }
+
+    private fun sendCommand(cmd: String) {
+        if (isStreaming) return
+        sendMessage(cmd)
+    }
+
     private fun sendStop() {
         webSocket?.let {
             ApiClient(Prefs.getServerUrl(this), Prefs.getAccessToken(this)).sendStop(it)
@@ -558,9 +671,63 @@ class ChatActivity : AppCompatActivity() {
             .replace(Regex("""\s+"""), " ")
             .trim()
         if (cleaned.length > 5000) return
-        if (cleaned.isNotEmpty()) {
-            tts?.stop()
-            tts?.speak(cleaned, TextToSpeech.QUEUE_FLUSH, null, null)
+        if (cleaned.isEmpty()) return
+        stopServerTts()
+        val baseUrl = Prefs.getServerUrl(this)
+        val token = Prefs.getAccessToken(this)
+        if (baseUrl.isBlank() || token.isBlank()) return
+        Thread {
+            try {
+                val client = ApiClient(baseUrl, token)
+                val base64 = client.generateTts(cleaned)
+                if (base64 != null) {
+                    val bytes = Base64.decode(base64, Base64.DEFAULT)
+                    val file = File(cacheDir, "tts_${System.currentTimeMillis()}.mp3")
+                    file.writeBytes(bytes)
+                    mainHandler.post {
+                        if (isDestroyed) {
+                            file.delete()
+                            return@post
+                        }
+                        playServerTtsFile(file)
+                    }
+                }
+            } catch (_: Exception) { /* same as web: silently fail */ }
+        }.start()
+    }
+
+    private fun stopServerTts() {
+        ttsMediaPlayer?.apply {
+            try {
+                if (isPlaying) stop()
+                release()
+            } catch (_: Exception) { }
+        }
+        ttsMediaPlayer = null
+        ttsTempFile?.let { if (it.exists()) it.delete() }
+        ttsTempFile = null
+    }
+
+    private fun playServerTtsFile(file: File) {
+        stopServerTts()
+        ttsTempFile = file
+        ttsMediaPlayer = MediaPlayer().apply {
+            setOnCompletionListener {
+                release()
+                ttsMediaPlayer = null
+                if (file.exists()) file.delete()
+                ttsTempFile = null
+            }
+            setOnErrorListener { _, _, _ ->
+                release()
+                ttsMediaPlayer = null
+                if (file.exists()) file.delete()
+                ttsTempFile = null
+                true
+            }
+            setDataSource(file.absolutePath)
+            prepareAsync()
+            setOnPreparedListener { start() }
         }
     }
 }

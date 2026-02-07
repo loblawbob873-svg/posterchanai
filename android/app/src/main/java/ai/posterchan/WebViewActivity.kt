@@ -147,7 +147,8 @@ class WebViewActivity : AppCompatActivity() {
         val token = Prefs.getAccessToken(this)
         val url = baseUrl.trim().removeSuffix("/") + "/"
         val cookieManager = CookieManager.getInstance()
-        cookieManager.setCookie(url, "access_token=$token; Path=/")
+        val encodedToken = java.net.URLEncoder.encode(token, "UTF-8")
+        cookieManager.setCookie(url, "access_token=$encodedToken; Path=/")
         cookieManager.flush()
         webView.loadUrl(url)
     }

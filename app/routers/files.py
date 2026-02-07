@@ -1710,74 +1710,76 @@ async def view_file(
             url = storage_server_url.value.strip()
             if url.startswith(('http://', 'https://')):
                 logger.info(f"[FILES] Proxying view_file to storage server: {url}, username: {target_username}, path: {actual_file_path}")
-                # Proxy to storage server - NO FALLBACK
-                return await _proxy_view_file(url, target_username, actual_file_path, db, download=download)
+                try:
+                    return await _proxy_view_file(url, target_username, actual_file_path, db, download=download)
+                except Exception as e:
+                    logger.warning(f"[FILES] Storage server view failed ({e}), trying local filesystem")
             else:
                 raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
-        else:
-            # On storage server: Use local filesystem
-            storage = get_storage_service(db)
-            user_path = storage.get_user_path(target_username)
-            
-            # Build full path
-            file_path_obj = user_path / actual_file_path
-            
-            # Verify path is within user directory
-            from app.services.storage_service import _validate_path_within_base
-            if not _validate_path_within_base(file_path_obj, user_path):
-                raise HTTPException(status_code=403, detail="Access denied: path outside user directory")
-            
-            if not file_path_obj.exists():
-                raise HTTPException(status_code=404, detail="File not found")
-            
-            if file_path_obj.is_dir():
-                raise HTTPException(status_code=400, detail="Path is a directory, not a file")
-            
-            # Determine content type
-            from mimetypes import guess_type
-            content_type, _ = guess_type(str(file_path_obj))
-            if not content_type:
-                content_type = "application/octet-stream"
-            
-            # Read file
-            def _read_file_sync():
-                with open(file_path_obj, 'rb') as f:
-                    return f.read()
-            
-            file_data = await asyncio.to_thread(_read_file_sync)
-            
-            # When download=1 or non-image: return file as attachment
-            from fastapi.responses import Response
-            filename = file_path_obj.name
-            if download or not content_type.startswith('image/'):
-                safe_name = ascii_safe_header_filename(filename)
-                return Response(
-                    content=file_data,
-                    media_type=content_type,
-                    headers={
-                        "Content-Disposition": f'attachment; filename="{safe_name}"'
-                    }
-                )
-            # Image and not download: return image viewer HTML
-            from fastapi.responses import HTMLResponse
-            import base64
-            image_base64 = base64.b64encode(file_data).decode('utf-8')
-            html_content = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>{file_path_obj.name}</title>
-                <style>
-                    body {{ margin: 0; padding: 20px; background: #1a1a1a; color: #fff; text-align: center; }}
-                    img {{ max-width: 100%; max-height: 90vh; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }}
-                </style>
-            </head>
-            <body>
-                <img src="data:{content_type};base64,{image_base64}" alt="{file_path_obj.name}" />
-            </body>
-            </html>
-            """
-            return HTMLResponse(content=html_content)
+
+        # On storage server, or proxy failed: use local filesystem
+        storage = get_storage_service(db)
+        user_path = storage.get_user_path(target_username)
+
+        # Build full path
+        file_path_obj = user_path / actual_file_path
+
+        # Verify path is within user directory
+        from app.services.storage_service import _validate_path_within_base
+        if not _validate_path_within_base(file_path_obj, user_path):
+            raise HTTPException(status_code=403, detail="Access denied: path outside user directory")
+
+        if not file_path_obj.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+
+        if file_path_obj.is_dir():
+            raise HTTPException(status_code=400, detail="Path is a directory, not a file")
+
+        # Determine content type
+        from mimetypes import guess_type
+        content_type, _ = guess_type(str(file_path_obj))
+        if not content_type:
+            content_type = "application/octet-stream"
+
+        # Read file
+        def _read_file_sync():
+            with open(file_path_obj, 'rb') as f:
+                return f.read()
+
+        file_data = await asyncio.to_thread(_read_file_sync)
+
+        # When download=1 or non-image: return file as attachment
+        from fastapi.responses import Response
+        filename = file_path_obj.name
+        if download or not content_type.startswith('image/'):
+            safe_name = ascii_safe_header_filename(filename)
+            return Response(
+                content=file_data,
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{safe_name}"'
+                }
+            )
+        # Image and not download: return image viewer HTML
+        from fastapi.responses import HTMLResponse
+        import base64
+        image_base64 = base64.b64encode(file_data).decode('utf-8')
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>{file_path_obj.name}</title>
+            <style>
+                body {{ margin: 0; padding: 20px; background: #1a1a1a; color: #fff; text-align: center; }}
+                img {{ max-width: 100%; max-height: 90vh; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }}
+            </style>
+        </head>
+        <body>
+            <img src="data:{content_type};base64,{image_base64}" alt="{file_path_obj.name}" />
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content)
     
     # Handle external storage (external storage is always local filesystem)
     storage = get_storage_service(db)
