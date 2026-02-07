@@ -370,7 +370,12 @@ class ApiClient(
      * @throws ApiException when response is not successful (caller can use e.code: 401=login, 404=not found)
      */
     fun downloadFileTo(filePath: String, destFile: File, asAttachment: Boolean) {
-        val encodedPath = filePath.split("/").joinToString("/") { segment ->
+        // Normalize: trim and remove leading/trailing slashes so server path resolution is consistent
+        val normalizedPath = filePath.trim().removeSurrounding("/")
+        if (normalizedPath.isBlank()) {
+            throw ApiException(400, "Invalid file path: empty")
+        }
+        val encodedPath = normalizedPath.split("/").joinToString("/") { segment ->
             URLEncoder.encode(segment, StandardCharsets.UTF_8.name())
         }
         val query = if (asAttachment) "?download=true" else ""

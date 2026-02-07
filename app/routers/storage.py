@@ -1733,8 +1733,10 @@ async def view_file(
     storage = StorageService(db)
     user_path = storage.get_user_path(username)
 
-    # Normalize path separators (client or proxy may send backslashes from Windows list response)
-    file_path = file_path.replace("\\", "/")
+    # Normalize path: forward slashes only, no leading/trailing slashes
+    file_path = file_path.replace("\\", "/").strip("/")
+    if not file_path:
+        raise HTTPException(status_code=400, detail="Invalid file path: empty path")
 
     # Sanitize and validate path
     try:
