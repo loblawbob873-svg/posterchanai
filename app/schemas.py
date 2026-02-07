@@ -157,6 +157,7 @@ class SettingsResponse(BaseModel):
     gpu_memory_check_enabled: str = "false"
     gpu_memory_threshold: str = "99"
     gpu_type: str = "nvidia"
+    nvidia_reset_before_reload: str = "false"  # Run scripts/nvidia_reset.sh before native model reload (NVIDIA only)
     # Email settings (SMTP)
     smtp_enabled: str = "false"
     smtp_host: str = ""

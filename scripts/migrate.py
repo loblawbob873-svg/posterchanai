@@ -100,6 +100,7 @@ REQUIRED_SETTINGS = {
     "gpu_memory_check_enabled": "false",
     "gpu_memory_threshold": "99",
     "gpu_type": "nvidia",
+    "nvidia_reset_before_reload": "false",
     # Email settings (SMTP)
     "smtp_enabled": "false",
     "smtp_host": "",

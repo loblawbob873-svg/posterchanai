@@ -9,8 +9,8 @@ Each server should run its own health check for its local LLM.
 """
 import asyncio
 import logging
+import os
 import subprocess
-from datetime import datetime
 from typing import Optional
 from sqlalchemy.orm import Session
 
@@ -60,6 +60,7 @@ def _get_settings(db: Session) -> dict:
         "gpu_memory_check_enabled": settings.get("gpu_memory_check_enabled", "false").lower() == "true" and vram_mode != "image_only",
         "gpu_memory_threshold": int(settings.get("gpu_memory_threshold", "99")),
         "gpu_type": settings.get("gpu_type", "nvidia"),  # "nvidia" or "intel"
+        "nvidia_reset_before_reload": settings.get("nvidia_reset_before_reload", "false").lower() == "true",
         "vram_mode": vram_mode,
     }
 
@@ -127,6 +128,67 @@ def restart_ollama(restart_command: str):
         return False
     except Exception as e:
         logger.error(f"Ollama restart error: {e}")
+        return False
+
+
+def _run_nvidia_reset_sync() -> bool:
+    """Sync helper: path check + subprocess. Used by run_nvidia_reset (async) and check_gpu_memory_and_reload."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(script_dir))
+    script_path = os.path.join(project_root, "scripts", "nvidia_reset.sh")
+    script_path = os.path.abspath(script_path)
+
+    if not os.path.isfile(script_path):
+        logger.warning(f"NVIDIA reset script not found: {script_path}")
+        return False
+
+    # Only allow the exact project script (no symlinks to arbitrary paths)
+    try:
+        script_real = os.path.realpath(script_path)
+        expected = os.path.join(os.path.realpath(project_root), "scripts", "nvidia_reset.sh")
+        if script_real != expected:
+            logger.error("NVIDIA reset script path rejected (must be project scripts/nvidia_reset.sh)")
+            return False
+    except OSError:
+        return False
+
+    logger.warning("Resetting NVIDIA kernel modules (rmmod/modprobe)...")
+    try:
+        result = subprocess.run(
+            ["/usr/bin/sudo", "-n", script_path],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=project_root,
+        )
+        if result.returncode == 0:
+            logger.info("NVIDIA modules reset successfully")
+            return True
+        logger.warning(f"NVIDIA reset failed: {result.stderr or result.stdout}")
+        return False
+    except subprocess.TimeoutExpired:
+        logger.error("NVIDIA reset timed out")
+        return False
+    except Exception as e:
+        logger.error(f"NVIDIA reset error: {e}")
+        return False
+
+
+async def run_nvidia_reset() -> bool:
+    """
+    Unload and reload NVIDIA kernel modules (rmmod/modprobe) to recover from
+    GPU hangs or driver issues. Requires passwordless sudo for scripts/nvidia_reset.sh.
+    Returns True if the script ran successfully, False otherwise.
+    Runs in a thread pool so the event loop is not blocked.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        return await asyncio.wait_for(
+            loop.run_in_executor(None, _run_nvidia_reset_sync),
+            timeout=65,
+        )
+    except asyncio.TimeoutError:
+        logger.error("NVIDIA reset timed out")
         return False
 
 
@@ -282,6 +344,8 @@ def check_gpu_memory_and_reload(db: Session, settings: dict) -> bool:
 
         backend = settings["backend"]
         if backend == "native":
+            if settings["gpu_type"] == "nvidia" and settings["nvidia_reset_before_reload"]:
+                _run_nvidia_reset_sync()
             reload_native_model(db)
         elif backend == "ipex":
             reload_ipex_model(db)
@@ -443,6 +507,8 @@ async def health_check_loop():
                                 f"triggering model reload to free memory"
                             )
                             if backend == "native":
+                                if settings["gpu_type"] == "nvidia" and settings["nvidia_reset_before_reload"]:
+                                    await run_nvidia_reset()
                                 reload_native_model(db)
                             elif backend == "ipex":
                                 reload_ipex_model(db)
@@ -458,6 +524,8 @@ async def health_check_loop():
                         logger.error("Too many failures, attempting recovery...")
 
                         if backend == "native":
+                            if settings["gpu_type"] == "nvidia" and settings["nvidia_reset_before_reload"]:
+                                await run_nvidia_reset()
                             # For native, try to reload the model
                             reload_native_model(db)
                         elif backend == "ipex":

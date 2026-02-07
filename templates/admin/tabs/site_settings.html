@@ -71,6 +71,12 @@
                 </select>
             </div>
         </div>
+        <div class="form-group" style="margin-top: 10px;">
+            <label for="nvidia_reset_before_reload">
+                <input type="checkbox" id="nvidia_reset_before_reload" name="nvidia_reset_before_reload"> Reset NVIDIA modules before model reload
+            </label>
+            <small>When recovery or VRAM reload is triggered, run <code>scripts/nvidia_reset.sh</code> (rmmod/modprobe) first. Requires passwordless sudo for the script. Only for NVIDIA GPU.</small>
+        </div>
     </fieldset>
 
     <fieldset>
