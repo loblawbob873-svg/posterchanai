@@ -340,6 +340,58 @@ class ApiClient(
     }
 
     /**
+     * Fetch thumbnail image bytes for a file path (GET /api/files/thumbnail/{path}).
+     * Returns null on failure or non-2xx. Use for on-demand thumbnail loading in Photos grid.
+     */
+    fun getThumbnailBytes(path: String, size: Int = 200): ByteArray? {
+        val normalizedPath = path.trim().removeSurrounding("/")
+        if (normalizedPath.isBlank()) return null
+        val encodedPath = normalizedPath.split("/").joinToString("/") { segment ->
+            URLEncoder.encode(segment, StandardCharsets.UTF_8.name())
+        }
+        val request = authRequest("/api/files/thumbnail/$encodedPath?size=$size")
+        return downloadClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            response.body?.bytes()
+        }
+    }
+
+    /**
+     * Get all images/videos (same API as web picture viewer: /api/files/all-images).
+     * Returns items sorted newest first; use for Photos screen to match web UI.
+     */
+    fun getAllImages(limit: Int = 500, offset: Int = 0): AllImagesResponse {
+        val request = authRequest("/api/files/all-images?limit=$limit&offset=$offset")
+        downloadClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, response.body?.string() ?: response.message)
+            val bodyStr = response.body?.string() ?: throw ApiException(-1, "Empty response")
+            try {
+                val json = JSONObject(bodyStr)
+                val arr = json.optJSONArray("images") ?: JSONArray()
+                val items = (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    FileItem(
+                        name = o.optString("name"),
+                        path = o.optString("path"),
+                        isDirectory = false,
+                        size = o.optLong("size", 0L),
+                        modified = o.optDouble("modified", 0.0),
+                        isExternal = false,
+                        thumbnailBase64 = o.optString("thumbnail").takeIf { it.isNotEmpty() }
+                    )
+                }
+                return AllImagesResponse(
+                    images = items,
+                    total = json.optInt("total", items.size),
+                    hasMore = json.optBoolean("has_more", false)
+                )
+            } catch (e: JSONException) {
+                throw ApiException(-1, "Invalid response: ${e.message ?: "parse error"}")
+            }
+        }
+    }
+
+    /**
      * Get list of external storage mounts the user can access.
      */
     fun getExternalStorageMounts(): ExternalStorageResponse {
@@ -407,6 +459,11 @@ class ApiClient(
         val path: String,
         val isExternal: Boolean,
         val externalName: String?
+    )
+    data class AllImagesResponse(
+        val images: List<FileItem>,
+        val total: Int,
+        val hasMore: Boolean
     )
     data class ExternalMount(
         val id: Int,

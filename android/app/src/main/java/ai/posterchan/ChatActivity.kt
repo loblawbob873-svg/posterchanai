@@ -501,6 +501,13 @@ class ChatActivity : AppCompatActivity() {
         startActivity(Intent(this, WebViewActivity::class.java))
     }
 
+    /** Open full web UI and run a chat command there (torrents, nyaa, etc.) so Download and file actions work. */
+    private fun openWebWithCommand(command: String) {
+        startActivity(Intent(this, WebViewActivity::class.java).apply {
+            putExtra(WebViewActivity.EXTRA_INITIAL_COMMAND, command)
+        })
+    }
+
     private fun updateQuickActionHighlight() {
         // Optional: could style Chat/Generate buttons when mode is active (MaterialButton is not checkable by default)
     }
@@ -566,8 +573,9 @@ class ChatActivity : AppCompatActivity() {
                         true
                     }
                     R.id.web_news, R.id.web_fourchan -> { openWebApp(); true }
-                    R.id.web_torrents -> { sendCommand("torrents"); true }
-                    R.id.web_downloading -> { sendCommand("torrents list"); true }
+                    R.id.web_torrents -> { openWebWithCommand("torrents"); true }
+                    R.id.web_downloading -> { openWebWithCommand("torrents list"); true }
+                    R.id.web_nyaa -> { openWebWithCommand("nyaa"); true }
                     else -> false
                 }
             }

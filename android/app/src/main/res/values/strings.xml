@@ -61,6 +61,7 @@
     <string name="web_fourchan">📋 4chan</string>
     <string name="web_torrents">🧲 Torrents</string>
     <string name="web_downloading">⬇️ Downloading</string>
+    <string name="web_nyaa">🐱 Nyaa</string>
     <string name="open_web_app">Open Web app for this feature</string>
     <string name="quick_generate_hint">Describe what to generate…</string>
     <string name="quick_search_hint">Search the web for…</string>

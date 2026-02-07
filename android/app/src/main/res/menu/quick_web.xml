@@ -6,4 +6,5 @@
     <item android:id="@+id/web_fourchan" android:title="@string/web_fourchan" />
     <item android:id="@+id/web_torrents" android:title="@string/web_torrents" />
     <item android:id="@+id/web_downloading" android:title="@string/web_downloading" />
+    <item android:id="@+id/web_nyaa" android:title="@string/web_nyaa" />
 </menu>

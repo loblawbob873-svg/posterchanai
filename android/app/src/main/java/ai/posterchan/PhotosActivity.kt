@@ -62,7 +62,28 @@ class PhotosActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         toolbar.setNavigationOnClickListener { onBackPressedDispatcher.onBackPressed() }
 
-        adapter = PhotosAdapter(emptyList()) { item -> openFile(item) }
+        val thumbCache = mutableMapOf<String, android.graphics.Bitmap>()
+        val loadThumbnail: (String, (String, android.graphics.Bitmap?) -> Unit) -> Unit = { path, onLoaded ->
+            Thread {
+                val baseUrl = Prefs.getServerUrl(this@PhotosActivity)
+                val token = Prefs.getAccessToken(this@PhotosActivity)
+                if (baseUrl.isBlank() || token.isNullOrBlank()) {
+                    runOnUiThread { onLoaded(path, null) }
+                    return@Thread
+                }
+                val client = ApiClient(baseUrl, token)
+                val bytes = client.getThumbnailBytes(path, 200)
+                val bmp = if (!bytes.isNullOrEmpty()) {
+                    try {
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    } catch (_: Exception) {
+                        null
+                    }
+                } else null
+                runOnUiThread { onLoaded(path, bmp) }
+            }.start()
+        }
+        adapter = PhotosAdapter(emptyList(), thumbCache, loadThumbnail) { item -> openFile(item) }
         recycler.layoutManager = GridLayoutManager(this, 3)
         recycler.adapter = adapter
 
@@ -109,22 +130,13 @@ class PhotosActivity : AppCompatActivity() {
                     }
                     return@Thread
                 }
-                // List from main server; try "Photos" then discover folder from root (e.g. "photos", "Pictures")
+                // Use same API as web picture viewer: /api/files/all-images (all images/videos, newest first)
                 val client = ApiClient(baseUrl, token)
-                var response = client.listFiles("Photos")
-                if (response.items.isEmpty()) {
-                    val root = client.listFiles("")
-                    val photosFolder = root.items.asSequence()
-                        .filter { it.isDirectory }
-                        .map { it.name }
-                        .firstOrNull { name -> name.equals("photos", true) || name.equals("pictures", true) }
-                    if (photosFolder != null) {
-                        response = client.listFiles(photosFolder)
-                    }
-                }
-                val photoItems = response.items.filter { item ->
-                    !item.isDirectory && item.name.substringAfterLast(".", "").lowercase() in photoExtensions
-                }.sortedWith(compareBy<FileItem> { !it.name.lowercase().endsWith(".mp4") }.thenBy { it.name })
+                val response = client.getAllImages(limit = 500, offset = 0)
+                // API returns newest first; keep that order, images before videos in tie-break
+                val photoItems = response.images.sortedWith(
+                    compareByDescending<FileItem> { it.modified }.thenBy { it.name.lowercase().endsWith(".mp4") }
+                )
                 runOnUiThread {
                     if (!isDestroyed) {
                         loadInProgress = false
@@ -275,6 +287,8 @@ class PhotosActivity : AppCompatActivity() {
 
 private class PhotosAdapter(
     private var items: List<FileItem>,
+    private val thumbCache: MutableMap<String, android.graphics.Bitmap>,
+    private val loadThumbnail: (path: String, onLoaded: (String, android.graphics.Bitmap?) -> Unit) -> Unit,
     private val onPhotoClick: (FileItem) -> Unit
 ) : RecyclerView.Adapter<PhotosAdapter.VH>() {
 
@@ -289,16 +303,28 @@ private class PhotosAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = items[position]
-        if (!item.thumbnailBase64.isNullOrBlank()) {
-            try {
-                val bytes = Base64.decode(item.thumbnailBase64, Base64.DEFAULT)
-                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                holder.thumb.setImageBitmap(bmp)
-            } catch (_: Exception) {
-                holder.thumb.setImageResource(R.drawable.ic_file_24)
+        val path = item.path
+        when {
+            !item.thumbnailBase64.isNullOrBlank() -> {
+                try {
+                    val bytes = Base64.decode(item.thumbnailBase64, Base64.DEFAULT)
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    holder.thumb.setImageBitmap(bmp)
+                } catch (_: Exception) {
+                    holder.thumb.setImageResource(R.drawable.ic_file_24)
+                }
             }
-        } else {
-            holder.thumb.setImageResource(R.drawable.ic_file_24)
+            thumbCache[path] != null -> holder.thumb.setImageBitmap(thumbCache[path])
+            else -> {
+                holder.thumb.setImageResource(R.drawable.ic_file_24)
+                loadThumbnail(path) { loadedPath, bmp ->
+                    if (bmp != null) {
+                        thumbCache[loadedPath] = bmp
+                        val idx = items.indexOfFirst { it.path == loadedPath }
+                        if (idx >= 0) notifyItemChanged(idx)
+                    }
+                }
+            }
         }
         holder.itemView.setOnClickListener { onPhotoClick(item) }
     }

@@ -1919,6 +1919,10 @@ async def get_thumbnail(
     current_user: User = Depends(get_current_user)
 ):
     """Get thumbnail for an image file. Supports external storage. Proxies to storage server if configured (NO FALLBACK)."""
+    from urllib.parse import unquote
+    file_path = unquote(file_path).replace("+", " ").replace("\\", "/").strip("/")
+    if not file_path:
+        raise HTTPException(status_code=400, detail="Invalid file path: empty path")
     # Check if this is an external storage path (don't proxy external storage)
     path_parts = file_path.split('/')
     is_external = False
