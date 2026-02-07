@@ -203,7 +203,12 @@ class WebViewActivity : AppCompatActivity() {
 
     /** Called from WebViewDownloadBridge when the web calls PosterchanAndroid.downloadFile(path, name). */
     fun requestFileDownload(filePath: String, fileName: String?) {
-        startFileDownload(filePath, fileName, null)
+        val path = filePath.trim()
+        if (path.isBlank()) {
+            Toast.makeText(this, getString(R.string.file_manager_download_failed), Toast.LENGTH_SHORT).show()
+            return
+        }
+        startFileDownload(path, fileName?.trim()?.takeIf { it.isNotBlank() }, null)
     }
 
     /** Start authenticated download for same-origin file (torrent download button, file manager). */
