@@ -63,37 +63,12 @@ async def save_image(
     is_server_request = load_balanced_header == "true"
     
     if is_server_request:
-        # For load-balanced requests, get user and create conversation if it doesn't exist
-        # (conversations are created on client nodes, may not exist on storage server)
+        # For load-balanced requests, only verify user exists. Do not create Conversation rows:
+        # conversation_id is from the client node's DB; inserting it here can violate primary key
+        # (storage server has its own conversation ids). File path only needs username + conversation_id.
         user = db.query(User).filter(User.username == username).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        
-        # Get or create conversation for load-balanced requests
-        from app.models import Conversation
-        conversation = db.query(Conversation).filter(
-            Conversation.id == conversation_id,
-            Conversation.user_id == user.id
-        ).first()
-        
-        if not conversation:
-            # Create conversation on storage server if it doesn't exist
-            # This can happen when conversations are created on client nodes
-            logger.info(f"[STORAGE] Creating conversation {conversation_id} for user {username} on storage server")
-            conversation = Conversation(
-                id=conversation_id,
-                user_id=user.id,
-                title="",  # Title will be set by client node if needed
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
-            )
-            db.add(conversation)
-            try:
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                logger.error(f"[STORAGE] Failed to create conversation: {e}")
-                raise HTTPException(status_code=500, detail="Failed to create conversation on storage server")
     else:
         # For regular requests, require authentication and verify ownership
         if not current_user:
