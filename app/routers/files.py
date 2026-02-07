@@ -1935,6 +1935,10 @@ async def get_thumbnail(
         if external_storage and current_user in external_storage.allowed_users:
             is_external = True
     
+    storage = get_storage_service(db)
+    user_path = storage.get_user_path(current_user.username)
+    external_storage = None
+
     # Check if storage server is configured - proxy request if so (for user storage only, not external)
     if not is_external:
         storage_server_url = safe_query_setting(db, "storage_server_url")
@@ -1942,21 +1946,18 @@ async def get_thumbnail(
             url = storage_server_url.value.strip()
             if url.startswith(('http://', 'https://')):
                 logger.info(f"[FILES] Proxying get_thumbnail to storage server: {url}")
-                # Proxy to storage server - NO FALLBACK
                 return await _proxy_get_thumbnail(url, current_user.username, file_path, size, db)
             else:
                 raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
-        else:
-            raise HTTPException(status_code=500, detail="Storage server not configured. Cannot get thumbnail.")
+        # No storage server: serve thumbnail from local user storage (single-server / Android Photos)
+        full_path = (user_path / file_path).resolve()
+        if not str(full_path).startswith(str(user_path.resolve())) or not full_path.exists() or not full_path.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
     
-    # Handle external storage or local fallback (only for external storage)
-    storage = get_storage_service(db)
-    user_path = storage.get_user_path(current_user.username)
-    
-    # Check if this is an external storage path
-    external_storage = None
-    path_parts = file_path.split('/')
-    if path_parts and path_parts[0]:
+    # Handle external storage path
+    elif is_external:
+        path_parts = file_path.split('/')
+        if path_parts and path_parts[0]:
         mount_point = path_parts[0]
         external_storage = db.query(ExternalStorage).filter(
             ExternalStorage.mount_point == mount_point,
