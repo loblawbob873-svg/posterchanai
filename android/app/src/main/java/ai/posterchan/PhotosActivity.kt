@@ -120,6 +120,7 @@ class PhotosActivity : AppCompatActivity() {
                         loadInProgress = false
                         progress.visibility = View.GONE
                         if (photoItems.isEmpty()) {
+                            emptyText.setText(R.string.photos_empty)
                             emptyText.visibility = View.VISIBLE
                             recycler.visibility = View.GONE
                         } else {
@@ -135,6 +136,7 @@ class PhotosActivity : AppCompatActivity() {
                         loadInProgress = false
                         progress.visibility = View.GONE
                         if (e.code == 404) {
+                            emptyText.setText(R.string.photos_empty)
                             emptyText.visibility = View.VISIBLE
                             recycler.visibility = View.GONE
                             errorText.visibility = View.GONE
@@ -182,7 +184,8 @@ class PhotosActivity : AppCompatActivity() {
                 val cacheDir = File(cacheDir, "file_manager").apply { if (!exists()) mkdirs() }
                 val safeName = item.name.replace(Regex("[\\\\/]"), "_")
                 val destFile = File(cacheDir, "fm_" + System.currentTimeMillis() + "_" + safeName)
-                val pathToDownload = "Photos/${item.name}"
+                // Use server path when present (handles case e.g. "photos" vs "Photos"); else assume Photos/
+                val pathToDownload = item.path.takeIf { it.isNotBlank() } ?: "Photos/${item.name}"
                 try {
                     client.downloadFileTo(pathToDownload, destFile, asAttachment = true)
                 } catch (e: ApiException) {

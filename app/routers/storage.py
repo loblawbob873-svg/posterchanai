@@ -1597,8 +1597,19 @@ async def list_files(
             raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
 
     if not target_path.exists():
-        logger.warning(f"[Storage API] Path not found: {target_path}")
-        raise HTTPException(status_code=404, detail="Path not found")
+        # Case-insensitive fallback: e.g. "Photos" -> "photos" on Linux
+        path_parts = [p for p in path.split('/') if p]
+        if len(path_parts) == 1 and user_path.is_dir():
+            want = path_parts[0]
+            for child in user_path.iterdir():
+                if child.is_dir() and child.name.lower() == want.lower():
+                    target_path = child
+                    path = child.name  # use actual name so client can use it for view/download
+                    logger.info(f"[Storage API] Resolved path case-insensitively: {want!r} -> {path!r}")
+                    break
+        if not target_path.exists():
+            logger.warning(f"[Storage API] Path not found: {target_path}")
+            raise HTTPException(status_code=404, detail="Path not found")
     if not target_path.is_dir():
         raise HTTPException(status_code=400, detail="Path is not a directory")
     

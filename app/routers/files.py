@@ -1318,20 +1318,28 @@ async def list_files(
                     target_path = target_path / part
         
         if not target_path.exists():
-            # Special handling: auto-create caldav/carddav folders if they don't exist
-            # These are critical for calendar/contacts functionality
             path_parts = path.split('/') if path else []
-            if path_parts and path_parts[0].lower() in ('caldav', 'carddav'):
-                try:
-                    target_path.mkdir(parents=True, exist_ok=True)
-                    logger.info(f"[FILES] Auto-created missing {path_parts[0]} directory: {target_path}")
-                    # Invalidate cache for root directory since we added a folder
-                    cache.invalidate(f"{current_user.username}:")
-                except Exception as e:
-                    logger.error(f"[FILES] Failed to auto-create {path_parts[0]} directory: {e}", exc_info=True)
-                    raise HTTPException(status_code=500, detail=f"Failed to create {path_parts[0]} directory: {e}")
-            else:
-                raise HTTPException(status_code=404, detail="Path not found")
+            # Case-insensitive fallback: e.g. "Photos" -> "photos" on Linux
+            if len(path_parts) == 1 and user_path.is_dir():
+                want = path_parts[0]
+                for child in user_path.iterdir():
+                    if child.is_dir() and child.name.lower() == want.lower():
+                        target_path = child
+                        path = child.name
+                        logger.debug(f"[FILES] Resolved path case-insensitively: {want!r} -> {path!r}")
+                        break
+            if not target_path.exists():
+                # Special handling: auto-create caldav/carddav folders if they don't exist
+                if path_parts and path_parts[0].lower() in ('caldav', 'carddav'):
+                    try:
+                        target_path.mkdir(parents=True, exist_ok=True)
+                        logger.info(f"[FILES] Auto-created missing {path_parts[0]} directory: {target_path}")
+                        cache.invalidate(f"{current_user.username}:")
+                    except Exception as e:
+                        logger.error(f"[FILES] Failed to auto-create {path_parts[0]} directory: {e}", exc_info=True)
+                        raise HTTPException(status_code=500, detail=f"Failed to create {path_parts[0]} directory: {e}")
+                else:
+                    raise HTTPException(status_code=404, detail="Path not found")
         
         if not target_path.is_dir():
             raise HTTPException(status_code=400, detail="Path is not a directory")

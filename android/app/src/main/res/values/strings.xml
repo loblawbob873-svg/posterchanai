@@ -73,6 +73,7 @@
     <string name="file_manager_error_login">Could not load files. Please log in again.</string>
     <string name="file_manager_error_server">Could not load files. Check server URL and try again.</string>
     <string name="file_manager_empty">This folder is empty</string>
+    <string name="photos_empty">No photos yet.\n\nAdd photos to the Photos folder in File Manager.</string>
     <string name="file_manager_downloading">Downloading…</string>
     <string name="file_manager_open_error">Could not open file</string>
     <string name="file_manager_download_failed">Download failed.</string>
