@@ -539,7 +539,9 @@ class ChatActivity : AppCompatActivity() {
                         true
                     }
                     R.id.files_photos -> {
-                        startActivity(Intent(this, FileManagerActivity::class.java))
+                        startActivity(Intent(this, FileManagerActivity::class.java).apply {
+                            putExtra(FileManagerActivity.EXTRA_INITIAL_PATH, "Photos")
+                        })
                         true
                     }
                     else -> false

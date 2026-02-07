@@ -1733,8 +1733,9 @@ async def view_file(
     storage = StorageService(db)
     user_path = storage.get_user_path(username)
 
-    # Normalize path: forward slashes only, no leading/trailing slashes
-    file_path = file_path.replace("\\", "/").strip("/")
+    # Decode query param (proxy may send Photos%2Fimg.jpg) then normalize slashes
+    from urllib.parse import unquote
+    file_path = unquote(file_path).replace("\\", "/").strip("/")
     if not file_path:
         raise HTTPException(status_code=400, detail="Invalid file path: empty path")
 
