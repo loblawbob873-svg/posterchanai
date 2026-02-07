@@ -1958,41 +1958,30 @@ async def get_thumbnail(
     elif is_external:
         path_parts = file_path.split('/')
         if path_parts and path_parts[0]:
-        mount_point = path_parts[0]
-        external_storage = db.query(ExternalStorage).filter(
-            ExternalStorage.mount_point == mount_point,
-            ExternalStorage.is_active == True
-        ).first()
-        
-        # Check if user has access to this external storage
-        if external_storage and current_user in external_storage.allowed_users:
-            # This is an external storage file
-            if len(path_parts) > 1:
-                from urllib.parse import unquote
-                relative_parts = path_parts[1:]
-                external_file_path = Path(external_storage.mount_path) / Path(*relative_parts)
+            mount_point = path_parts[0]
+            external_storage = db.query(ExternalStorage).filter(
+                ExternalStorage.mount_point == mount_point,
+                ExternalStorage.is_active == True
+            ).first()
+            if external_storage and current_user in external_storage.allowed_users:
+                if len(path_parts) > 1:
+                    relative_parts = path_parts[1:]
+                    external_file_path = Path(external_storage.mount_path) / Path(*relative_parts)
+                else:
+                    raise HTTPException(status_code=400, detail="Invalid file path")
+                mount_path = Path(external_storage.mount_path).resolve()
+                external_file_path_resolved = external_file_path.resolve()
+                if not str(external_file_path_resolved).startswith(str(mount_path)):
+                    raise HTTPException(status_code=403, detail="Access denied: path outside mount")
+                if not external_file_path.exists() or not external_file_path.is_file():
+                    raise HTTPException(status_code=404, detail="File not found")
+                full_path = external_file_path
+            elif external_storage:
+                raise HTTPException(status_code=403, detail="Access denied: you don't have permission to access this storage")
             else:
                 raise HTTPException(status_code=400, detail="Invalid file path")
-            
-            # Validate external path is within mount
-            mount_path = Path(external_storage.mount_path).resolve()
-            external_file_path_resolved = external_file_path.resolve()
-            
-            if not str(external_file_path_resolved).startswith(str(mount_path)):
-                raise HTTPException(status_code=403, detail="Access denied: path outside mount")
-            
-            if not external_file_path.exists() or not external_file_path.is_file():
-                raise HTTPException(status_code=404, detail="File not found")
-            
-            full_path = external_file_path
-        elif external_storage:
-            # User doesn't have access
-            raise HTTPException(status_code=403, detail="Access denied: you don't have permission to access this storage")
         else:
-            # Regular user storage path (should not reach here if proxying is configured)
-            raise HTTPException(status_code=500, detail="Storage server not configured. Cannot get thumbnail.")
-    else:
-        raise HTTPException(status_code=400, detail="Invalid file path")
+            raise HTTPException(status_code=400, detail="Invalid file path")
     
     # Try to use stored thumbnail first, then generate if needed
     try:
