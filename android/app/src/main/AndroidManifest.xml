@@ -58,6 +58,12 @@
             android:theme="@style/Theme.PosterchanAI" />
 
         <activity
+            android:name=".TorrentsActivity"
+            android:exported="false"
+            android:parentActivityName=".MainActivity"
+            android:theme="@style/Theme.PosterchanAI" />
+
+        <activity
             android:name=".SettingsActivity"
             android:exported="false"
             android:parentActivityName=".MainActivity"

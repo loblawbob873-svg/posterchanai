@@ -501,10 +501,17 @@ class ChatActivity : AppCompatActivity() {
         startActivity(Intent(this, WebViewActivity::class.java))
     }
 
-    /** Open full web UI and run a chat command there (torrents, nyaa, etc.) so Download and file actions work. */
+    /** Open full web UI and run a chat command there (nyaa, etc.). */
     private fun openWebWithCommand(command: String) {
         startActivity(Intent(this, WebViewActivity::class.java).apply {
             putExtra(WebViewActivity.EXTRA_INITIAL_COMMAND, command)
+        })
+    }
+
+    /** Open native Torrents screen (Downloading list + Movies/TV/Anime browse). */
+    private fun openNativeTorrents(initialTab: String?) {
+        startActivity(Intent(this, TorrentsActivity::class.java).apply {
+            if (initialTab != null) putExtra(TorrentsActivity.EXTRA_TAB, initialTab)
         })
     }
 
@@ -573,9 +580,9 @@ class ChatActivity : AppCompatActivity() {
                         true
                     }
                     R.id.web_news, R.id.web_fourchan -> { openWebApp(); true }
-                    R.id.web_torrents -> { openWebWithCommand("torrents"); true }
-                    R.id.web_downloading -> { openWebWithCommand("torrents list"); true }
-                    R.id.web_nyaa -> { openWebWithCommand("nyaa"); true }
+                    R.id.web_torrents -> { openNativeTorrents(null); true }
+                    R.id.web_downloading -> { openNativeTorrents("downloading"); true }
+                    R.id.web_nyaa -> { openNativeTorrents("nyaa"); true }
                     else -> false
                 }
             }

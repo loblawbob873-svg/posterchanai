@@ -62,6 +62,24 @@
     <string name="web_torrents">🧲 Torrents</string>
     <string name="web_downloading">⬇️ Downloading</string>
     <string name="web_nyaa">🐱 Nyaa</string>
+    <!-- Native Torrents -->
+    <string name="torrents_title">Torrents</string>
+    <string name="torrents_tab_downloading">Downloading</string>
+    <string name="torrents_tab_movies">Movies</string>
+    <string name="torrents_tab_tv">TV</string>
+    <string name="torrents_tab_anime">Anime</string>
+    <string name="torrents_empty">No torrents here. Browse a category and tap Download.</string>
+    <string name="torrents_empty_downloading">No active downloads.</string>
+    <string name="torrent_download">Download</string>
+    <string name="torrent_pause">Pause</string>
+    <string name="torrent_resume">Resume</string>
+    <string name="torrent_remove">Remove</string>
+    <string name="torrent_added">Torrent added</string>
+    <string name="torrent_error">Torrents not configured. Check server settings.</string>
+    <string name="torrents_tab_nyaa">Nyaa</string>
+    <string name="torrents_nyaa_search_hint">Search nyaa.si…</string>
+    <string name="torrents_nyaa_search_btn">Search</string>
+    <string name="torrents_nyaa_empty">Search for anime torrents above.</string>
     <string name="open_web_app">Open Web app for this feature</string>
     <string name="quick_generate_hint">Describe what to generate…</string>
     <string name="quick_search_hint">Search the web for…</string>

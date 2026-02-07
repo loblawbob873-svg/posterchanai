@@ -484,6 +484,163 @@ class ApiClient(
         val mountPath: String
     )
     data class ExternalStorageResponse(val mounts: List<ExternalMount>)
+
+    // Torrent API (native torrents screen)
+    data class TorrentActiveItem(
+        val num: Int,
+        val infoHash: String,
+        val name: String,
+        val size: String,
+        val progress: Double,
+        val state: String,
+        val isPaused: Boolean,
+        val isFinished: Boolean,
+        val downloadRate: Long,
+        val uploadRate: Long,
+        val seeders: Int,
+        val peers: Int
+    )
+    data class TorrentCatalogItem(
+        val num: Int,
+        val title: String,
+        val magnet: String,
+        val size: String,
+        val seeders: Int,
+        val leechers: Int
+    )
+    data class TorrentListResponse(val torrents: List<TorrentActiveItem>)
+    data class TorrentCatalogResponse(val category: String, val items: List<TorrentCatalogItem>)
+    data class TorrentSearchResponse(val query: String, val items: List<TorrentCatalogItem>)
+
+    fun getTorrentList(): TorrentListResponse {
+        val request = authRequest("/api/torrent/list")
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, response.body?.string() ?: response.message)
+            val json = JSONObject(response.body!!.string())
+            val arr = json.getJSONArray("torrents")
+            val list = (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                TorrentActiveItem(
+                    num = o.getInt("num"),
+                    infoHash = o.optString("info_hash"),
+                    name = o.optString("name"),
+                    size = o.optString("size"),
+                    progress = o.optDouble("progress", 0.0),
+                    state = o.optString("state", ""),
+                    isPaused = o.optBoolean("is_paused", false),
+                    isFinished = o.optBoolean("is_finished", false),
+                    downloadRate = o.optLong("download_rate", 0L),
+                    uploadRate = o.optLong("upload_rate", 0L),
+                    seeders = o.optInt("seeders", 0),
+                    peers = o.optInt("peers", 0)
+                )
+            }
+            return TorrentListResponse(torrents = list)
+        }
+    }
+
+    fun getTorrentCatalog(category: String, limit: Int = 15): TorrentCatalogResponse {
+        val enc = URLEncoder.encode(category, StandardCharsets.UTF_8.name())
+        val request = authRequest("/api/torrent/catalog?category=$enc&limit=$limit")
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, response.body?.string() ?: response.message)
+            val json = JSONObject(response.body!!.string())
+            val arr = json.getJSONArray("items")
+            val list = (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                TorrentCatalogItem(
+                    num = o.getInt("num"),
+                    title = o.optString("title"),
+                    magnet = o.optString("magnet"),
+                    size = o.optString("size"),
+                    seeders = o.optInt("seeders", 0),
+                    leechers = o.optInt("leechers", 0)
+                )
+            }
+            return TorrentCatalogResponse(
+                category = json.optString("category", category),
+                items = list
+            )
+        }
+    }
+
+    fun getNyaaSearch(query: String, limit: Int = 20): TorrentSearchResponse {
+        val enc = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
+        val request = authRequest("/api/torrent/nyaa?q=$enc&limit=$limit")
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, response.body?.string() ?: response.message)
+            val json = JSONObject(response.body!!.string())
+            val arr = json.getJSONArray("items")
+            val list = (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                TorrentCatalogItem(
+                    num = o.getInt("num"),
+                    title = o.optString("title"),
+                    magnet = o.optString("magnet"),
+                    size = o.optString("size"),
+                    seeders = o.optInt("seeders", 0),
+                    leechers = o.optInt("leechers", 0)
+                )
+            }
+            return TorrentSearchResponse(query = json.optString("query", query), items = list)
+        }
+    }
+
+    fun searchTorrents(query: String, limit: Int = 15): TorrentSearchResponse {
+        val enc = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
+        val request = authRequest("/api/torrent/search?q=$enc&limit=$limit")
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, response.body?.string() ?: response.message)
+            val json = JSONObject(response.body!!.string())
+            val arr = json.getJSONArray("items")
+            val list = (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                TorrentCatalogItem(
+                    num = o.getInt("num"),
+                    title = o.optString("title"),
+                    magnet = o.optString("magnet"),
+                    size = o.optString("size"),
+                    seeders = o.optInt("seeders", 0),
+                    leechers = o.optInt("leechers", 0)
+                )
+            }
+            return TorrentSearchResponse(query = json.optString("query", query), items = list)
+        }
+    }
+
+    fun addTorrent(magnet: String): String {
+        val body = JSONObject().put("magnet", magnet).toString()
+        val request = authRequest("/api/torrent/add", "POST", body)
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, response.body?.string() ?: response.message)
+            val json = JSONObject(response.body!!.string())
+            return json.optString("info_hash", "")
+        }
+    }
+
+    fun pauseTorrent(num: Int) {
+        val body = JSONObject().put("num", num).toString()
+        val request = authRequest("/api/torrent/pause", "POST", body)
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, response.body?.string() ?: response.message)
+        }
+    }
+
+    fun resumeTorrent(num: Int) {
+        val body = JSONObject().put("num", num).toString()
+        val request = authRequest("/api/torrent/resume", "POST", body)
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, response.body?.string() ?: response.message)
+        }
+    }
+
+    fun removeTorrent(num: Int, deleteFiles: Boolean = false) {
+        val body = JSONObject().put("num", num).put("delete_files", deleteFiles).toString()
+        val request = authRequest("/api/torrent/remove", "POST", body)
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, response.body?.string() ?: response.message)
+        }
+    }
 }
 
 interface ChatWebSocketListener {

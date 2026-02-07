@@ -3,7 +3,7 @@ Torrent API router for remote access to the built-in torrent client.
 Supports both local libtorrent and remote server forwarding via bt_server_url.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -14,6 +14,8 @@ import httpx
 from app.database import get_db
 from app.auth import get_current_user
 from app.models import User, Setting
+from app.services.torrent_service import scrape_torrents, search_torrents
+from app.services.nyaa_service import search_nyaa
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/torrent", tags=["torrent"])
@@ -146,6 +148,96 @@ def get_bt_service(db: Session):
     except Exception as e:
         logger.error(f"[TORRENT] Failed to start service: {e}")
         return None
+
+
+@router.get("/catalog")
+async def catalog(
+    category: str = Query("movies", description="One of: movies, tv, music, anime"),
+    limit: int = Query(15, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_torrent_user)
+):
+    """Browse torrents by category (for native app). Returns list with title, magnet, size, seeders, leechers. Runs on this server (scraping), not forwarded to bt_server_url."""
+    category = category.lower()
+    if category not in ("movies", "tv", "music", "anime"):
+        raise HTTPException(status_code=400, detail="category must be one of: movies, tv, music, anime")
+    try:
+        results = await scrape_torrents(db, category, limit)
+        return {
+            "category": category,
+            "items": [
+                {
+                    "num": i + 1,
+                    "title": t.title,
+                    "magnet": t.magnet,
+                    "size": t.size,
+                    "seeders": t.seeders,
+                    "leechers": t.leechers,
+                    "url": t.url or "",
+                }
+                for i, t in enumerate(results)
+            ],
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/search")
+async def search(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(15, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_torrent_user)
+):
+    """Search torrents (for native app). Returns list with title, magnet, size, seeders, leechers. Runs on this server, not forwarded."""
+    try:
+        results = await search_torrents(db, q.strip(), limit)
+        return {
+            "query": q,
+            "items": [
+                {
+                    "num": i + 1,
+                    "title": t.title,
+                    "magnet": t.magnet,
+                    "size": t.size,
+                    "seeders": t.seeders,
+                    "leechers": t.leechers,
+                    "url": t.url or "",
+                }
+                for i, t in enumerate(results)
+            ],
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/nyaa")
+async def nyaa_search(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_torrent_user)
+):
+    """Search nyaa.si for anime torrents (for native app). Returns list with title, magnet, size, seeders, leechers."""
+    try:
+        results = await search_nyaa(q.strip(), limit=limit)
+        return {
+            "query": q,
+            "items": [
+                {
+                    "num": i + 1,
+                    "title": t.title,
+                    "magnet": t.magnet,
+                    "size": t.size,
+                    "seeders": t.seeders,
+                    "leechers": t.leechers,
+                    "url": t.url or "",
+                }
+                for i, t in enumerate(results)
+            ],
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/list")
